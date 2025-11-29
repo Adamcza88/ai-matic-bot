@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
-app.get("/api/health", (req, res) => {
+app.get("/health", (req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
@@ -28,7 +28,7 @@ app.get("/api/health", (req, res) => {
  *   trailingStop?: number // trailing distance (ne procenta)
  * }
  */
-app.post("/api/demo/order", async (req, res) => {
+app.post("/demo/order", async (req, res) => {
   try {
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
@@ -94,7 +94,7 @@ app.post("/api/demo/order", async (req, res) => {
 /**
  * Přehled DEMO pozic z Bybit testnetu
  */
-app.get("/api/demo/positions", async (req, res) => {
+app.get("/demo/positions", async (req, res) => {
   try {
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
