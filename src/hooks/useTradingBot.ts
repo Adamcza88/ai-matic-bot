@@ -68,7 +68,11 @@ function withinSession(settings: typeof INITIAL_RISK_SETTINGS, now: Date) {
 
 // ========== HLAVNÍ HOOK ==========
 
-export const useTradingBot = (mode: TradingMode, useTestnet: boolean) => {
+export const useTradingBot = (
+  mode: TradingMode,
+  useTestnet: boolean,
+  authToken?: string
+) => {
   const { httpBase } = useNetworkConfig(useTestnet);
 
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
@@ -310,9 +314,20 @@ export const useTradingBot = (mode: TradingMode, useTestnet: boolean) => {
 
     // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
     try {
-      await fetch("http://localhost:4000/api/demo/order", {
+      if (!authToken) {
+        addLog({
+          action: "ERROR",
+          message: "Missing auth token for placing order. Please re-login.",
+        });
+        return;
+      }
+
+      await fetch("/api/demo/order", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
           symbol: signal.symbol,
           side: side === "buy" ? "Buy" : "Sell",

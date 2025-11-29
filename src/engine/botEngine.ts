@@ -2,7 +2,7 @@
 
 import type { TradeIntent, PendingSignal } from "../types";
 
-// ===== ZÁKLADNÍ TYPY =====
+// ===== ZÁKLADNÍ TYPY ===
 
 export type Candle = {
   openTime: number;

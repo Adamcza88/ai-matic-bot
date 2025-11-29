@@ -1,22 +1,18 @@
 // server/bybitClient.js
 import axios from "axios";
 import crypto from "crypto";
-import "dotenv/config";
-
-const API_KEY = process.env.BYBIT_API_KEY;
-const API_SECRET = process.env.BYBIT_API_SECRET;
 
 // Testnet base URL (pro reálný účet by se měnil jen baseUrl)
 const BASE_URL = "https://api-testnet.bybit.com";
 
-export function ensureConfigured() {
-  if (!API_KEY || !API_SECRET) {
-    throw new Error("Missing API keys in .env");
+function ensureConfigured(creds) {
+  if (!creds?.apiKey || !creds?.apiSecret) {
+    throw new Error("Missing Bybit API credentials for user");
   }
 }
 
-function sign(payload) {
-  return crypto.createHmac("sha256", API_SECRET).update(payload).digest("hex");
+function sign(payload, apiSecret) {
+  return crypto.createHmac("sha256", apiSecret).update(payload).digest("hex");
 }
 
 // Ořezání qty na rozumné limity pro testnet
@@ -71,8 +67,8 @@ export async function getServerTime() {
  *   trailingStop?: number   // v USDT, ne v %
  * }
  */
-export async function createDemoOrder(order) {
-  ensureConfigured();
+export async function createDemoOrder(order, creds) {
+  ensureConfigured(creds);
 
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
@@ -91,12 +87,13 @@ export async function createDemoOrder(order) {
     reduceOnly: order.reduceOnly ?? false,
   };
 
-  const orderPayload = timestamp + API_KEY + recvWindow + JSON.stringify(orderBody);
-  const orderSign = sign(orderPayload);
+  const orderPayload =
+    timestamp + creds.apiKey + recvWindow + JSON.stringify(orderBody);
+  const orderSign = sign(orderPayload, creds.apiSecret);
 
   const orderRes = await axios.post(`${BASE_URL}/v5/order/create`, orderBody, {
     headers: {
-      "X-BAPI-API-KEY": API_KEY,
+      "X-BAPI-API-KEY": creds.apiKey,
       "X-BAPI-SIGN": orderSign,
       "X-BAPI-SIGN-TYPE": "2",
       "X-BAPI-TIMESTAMP": timestamp,
@@ -143,15 +140,15 @@ export async function createDemoOrder(order) {
     }
 
     const tsPayload =
-      tsTimestamp + API_KEY + recvWindow + JSON.stringify(tsBody);
-    const tsSign = sign(tsPayload);
+      tsTimestamp + creds.apiKey + recvWindow + JSON.stringify(tsBody);
+    const tsSign = sign(tsPayload, creds.apiSecret);
 
     const tsRes = await axios.post(
       `${BASE_URL}/v5/position/trading-stop`,
       tsBody,
       {
         headers: {
-          "X-BAPI-API-KEY": API_KEY,
+          "X-BAPI-API-KEY": creds.apiKey,
           "X-BAPI-SIGN": tsSign,
           "X-BAPI-SIGN-TYPE": "2",
           "X-BAPI-TIMESTAMP": tsTimestamp,
@@ -173,19 +170,19 @@ export async function createDemoOrder(order) {
   return result;
 }
 
-export async function getDemoPositions() {
-  ensureConfigured();
+export async function getDemoPositions(creds) {
+  ensureConfigured(creds);
 
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
   const query = "category=linear";
 
-  const payload = timestamp + API_KEY + recvWindow + query;
-  const signature = sign(payload);
+  const payload = timestamp + creds.apiKey + recvWindow + query;
+  const signature = sign(payload, creds.apiSecret);
 
   const res = await axios.get(`${BASE_URL}/v5/position/list?${query}`, {
     headers: {
-      "X-BAPI-API-KEY": API_KEY,
+      "X-BAPI-API-KEY": creds.apiKey,
       "X-BAPI-SIGN": signature,
       "X-BAPI-SIGN-TYPE": "2",
       "X-BAPI-TIMESTAMP": timestamp,

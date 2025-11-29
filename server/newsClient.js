@@ -1,21 +1,18 @@
 // server/newsClient.js
 import axios from "axios";
-import "dotenv/config";
 
-const CP_API_KEY = process.env.CRYPTOPANIC_API_KEY;
-
-export function ensureNewsConfigured() {
-  if (!CP_API_KEY) {
-    throw new Error("Missing CRYPTOPANIC_API_KEY in .env");
+export function ensureNewsConfigured(cryptopanicKey) {
+  if (!cryptopanicKey) {
+    throw new Error("Missing Cryptopanic API key for user");
   }
 }
 
-export async function fetchLatestNews() {
-  ensureNewsConfigured();
+export async function fetchLatestNews(cryptopanicKey) {
+  ensureNewsConfigured(cryptopanicKey);
 
   const url = "https://cryptopanic.com/api/v1/posts/";
   const params = {
-    auth_token: CP_API_KEY,
+    auth_token: cryptopanicKey,
     filter: "hot",
     kind: "news",
     public: true,
