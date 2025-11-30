@@ -101,7 +101,16 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-6">
+    <div className="min-h-screen bg-slate-950 text-white p-6 relative isolate">
+      <div
+        className="absolute inset-0 opacity-10 -z-10"
+        style={{
+          backgroundImage: "url(/loginBackground.svg)",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }}
+      />
       <header className="flex items-center justify-between mb-6 p-4 border border-white/10 rounded-xl bg-white/5 backdrop-blur-xs flex-col gap-5 sm:flex-row">
         <div className="flex items-center gap-4">
           <Logo className="w-10 h-10 text-blue-500" />

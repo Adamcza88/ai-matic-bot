@@ -25,7 +25,7 @@ export default function LoginCard({
 }: Props) {
   return (
     <div
-      className="min-h-screen flex flex-col gap-4 items-center justify-center bg-linear-to-br from-slate-950 to-slate-900 p-6"
+      className="min-h-screen flex flex-col gap-9 items-center justify-center bg-linear-to-br from-slate-950 to-slate-900 p-6"
       style={{
         backgroundImage: 'url(/loginBackground.svg)',
         backgroundSize: 'cover',
@@ -33,7 +33,7 @@ export default function LoginCard({
         backgroundRepeat: 'no-repeat',
       }}
     >
-      <div className="flex flex-col items-center justify-center h-full text-5xl font-bold text-white">AI Matic</div>
+      <div className="flex flex-col items-center justify-center h-full text-6xl font-bold text-white">AI Matic</div>
       <Card className="w-full max-w-md bg-white/5 backdrop-blur-lg border-white/10 text-white shadow-2xl p-6">
         <CardHeader className="space-y-4 text-center">
           <div className="flex justify-center">
