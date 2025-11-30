@@ -39,6 +39,32 @@ const AIStrategyPanel: React.FC<Props> = ({
       </h2>
 
       <div className="grid grid-cols-2 gap-4 text-sm">
+        <label className="flex flex-col col-span-2">
+          <span className="text-gray-500">Strategie</span>
+          <div className="flex gap-2 flex-wrap mt-2">
+            {[
+              { key: "auto", label: "Auto" },
+              { key: "scalp", label: "Scalp" },
+              { key: "intraday", label: "Intraday" },
+              { key: "swing", label: "Swing" },
+              { key: "trend", label: "Trend" },
+            ].map((opt) => (
+              <button
+                key={opt.key}
+                onClick={() => update("strategyProfile", opt.key as any)}
+                className={`px-3 py-1 rounded border ${
+                  local.strategyProfile === opt.key
+                    ? "bg-cyan-500 text-white border-cyan-400"
+                    : isDark
+                    ? "bg-gray-800 border-gray-700 text-gray-200"
+                    : "bg-white border-gray-300 text-gray-800"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </label>
         <label className="flex flex-col">
           <span className="text-gray-500">Base Risk %</span>
           <input

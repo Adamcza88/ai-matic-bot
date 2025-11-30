@@ -1,5 +1,6 @@
 // Basic smoke tests for engine utilities (run with `ts-node src/engine/botEngine.test.ts` or build+node)
 import { computePositionSize, resampleCandles, computeATR } from "./botEngine";
+import { TradingBot, BotConfig } from "./botEngine";
 
 function expect(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
@@ -37,6 +38,35 @@ function expect(cond: boolean, msg: string) {
   const atr = computeATR(highs, lows, closes, 3);
   expect(atr.length === highs.length, "ATR length mismatch");
   expect(atr[atr.length - 1] > 0, "ATR should be positive");
+}
+
+// Liquidity sweep + volatility expansion detection
+{
+  const config: Partial<BotConfig> = {
+    liquiditySweepLookback: 2,
+    liquiditySweepAtrMult: 0.5,
+    liquiditySweepVolumeMult: 1.1,
+    volExpansionAtrMult: 1.2,
+    volExpansionVolMult: 1.1,
+  };
+  const bot: any = new TradingBot(config);
+  // Build HTF candles where last candle sweeps prior high and returns
+  const df = [
+    { openTime: 0, open: 100, high: 101, low: 99, close: 100.5, volume: 10 },
+    { openTime: 1, open: 100.5, high: 102, low: 99.5, close: 100.4, volume: 20 },
+    { openTime: 2, open: 100.4, high: 103, low: 99.7, close: 100.2, volume: 30 }, // sweep high then close back below
+  ];
+  const sweep = bot["isLiquiditySweep"](df);
+  expect(sweep === true, "Liquidity sweep should be detected");
+
+  const volDf = [
+    { openTime: 0, open: 100, high: 101, low: 99, close: 100, volume: 10 },
+    { openTime: 1, open: 100, high: 102, low: 99, close: 101.5, volume: 20 },
+    { openTime: 2, open: 101.5, high: 104, low: 101, close: 103, volume: 30 },
+    { openTime: 3, open: 103, high: 106, low: 102.5, close: 105, volume: 40 },
+  ];
+  const volExp = bot["isVolatilityExpansion"](volDf);
+  expect(volExp === true, "Volatility expansion should be detected");
 }
 
 console.log("botEngine basic tests passed");

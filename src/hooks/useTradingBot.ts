@@ -205,6 +205,7 @@ export const useTradingBot = (
             );
             const decision = evaluateStrategyForSymbol(symbol, candles, {
               strategyProfile: profile,
+              riskPerTrade: settingsRef.current.baseRiskPerTrade,
             });
             const signal = decision?.signal;
             if (signal) {
