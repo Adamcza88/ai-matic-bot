@@ -53,11 +53,13 @@ export interface Position {
   side: "long" | "short";
   stopLoss: number;
   takeProfit: number;
+  initialTakeProfit: number;
   trailingStop: number;
   highWaterMark: number;
   lowWaterMark: number;
   opened: Date;
   partialTaken: boolean;
+  slDistance: number;
 }
 
 /**
@@ -72,10 +74,16 @@ export interface BotConfig {
   atrPeriod: number;
   adxPeriod: number;
   adxThreshold: number;
+  aggressiveAdxThreshold: number;
+  atrEntryMultiplier: number;
+  atrTrailMultiplier: number;
+  minAtrFractionOfPrice: number;
   swingBackoffAtr: number;
-  fixedTrailingPercent: number;
   partialExitRatio: number;
+  partialTakeProfitR: number;
+  breakevenBufferAtr: number;
   lookbackZones: number;
+  cooldownBars: number;
 }
 
 /**
@@ -90,10 +98,16 @@ export const defaultConfig: BotConfig = {
   atrPeriod: 14,
   adxPeriod: 14,
   adxThreshold: 25,
+  aggressiveAdxThreshold: 35,
+  atrEntryMultiplier: 2,
+  atrTrailMultiplier: 2,
+  minAtrFractionOfPrice: 0.001,
   swingBackoffAtr: 1,
-  fixedTrailingPercent: 0.01,
   partialExitRatio: 0.5,
+  partialTakeProfitR: 1.5,
+  breakevenBufferAtr: 0.2,
   lookbackZones: 50,
+  cooldownBars: 3,
 };
 
 /**
@@ -206,6 +220,7 @@ export class TradingBot {
   private config: BotConfig;
   private state: State;
   private position: Position | null;
+  private cooldownUntil: Date | null;
   // History of OHLCV by timeframe
   private history: Record<string, DataFrame>;
   // Exchange client interface (optional)
@@ -215,6 +230,7 @@ export class TradingBot {
     this.config = { ...defaultConfig, ...config };
     this.state = State.Scan;
     this.position = null;
+    this.cooldownUntil = null;
     this.history = {};
     this.exchange = exchange;
   }
@@ -297,6 +313,7 @@ export class TradingBot {
    * description or null.
    */
   async scanForEntry(): Promise<{ side: "long" | "short"; entry: number; stopLoss: number } | null> {
+    if (this.cooldownUntil && new Date() < this.cooldownUntil) return null;
     // Determine trend from the base timeframe
     const ht = await this.fetchOHLCV(this.config.baseTimeframe);
     const trend = this.determineTrend(ht);
@@ -309,19 +326,80 @@ export class TradingBot {
     const lows = lt.map((c) => c.low);
     const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
     const latestATR = atrArray[atrArray.length - 1];
+    const price = closes[closes.length - 1];
+    // Skip illiquid/flat conditions
+    if (latestATR < price * this.config.minAtrFractionOfPrice) return null;
+    // Helper EMAs for pullback/bounce entries
+    const ema = (period: number): number[] => {
+      const out: number[] = [];
+      const k = 2 / (period + 1);
+      closes.forEach((p, i) => {
+        if (i === 0) out.push(p);
+        else out.push(out[i - 1] + k * (p - out[i - 1]));
+      });
+      return out;
+    };
+    const ema20 = ema(20);
+    const ema50 = ema(50);
     // Simple momentum filter: two consecutive closes in trend direction
     const last3 = closes.slice(-3);
     const diff1 = last3[1] - last3[0];
     const diff2 = last3[2] - last3[1];
+    // Pattern 1: trend-following momentum
     if (trend === Trend.Bull && diff1 > 0 && diff2 > 0) {
       const entry = last3[2];
-      const stop = entry - 2 * latestATR;
+      const stop = entry - this.config.atrEntryMultiplier * latestATR;
       return { side: "long", entry, stopLoss: stop };
     }
     if (trend === Trend.Bear && diff1 < 0 && diff2 < 0) {
       const entry = last3[2];
-      const stop = entry + 2 * latestATR;
+      const stop = entry + this.config.atrEntryMultiplier * latestATR;
       return { side: "short", entry, stopLoss: stop };
+    }
+    // Pattern 2: pullback to EMA20 with bounce confirmation
+    const c0 = closes[closes.length - 1];
+    const c1 = closes[closes.length - 2];
+    const emaNow = ema20[ema20.length - 1];
+    const emaPrev = ema20[ema20.length - 2];
+    if (trend === Trend.Bull && c1 < emaPrev && c0 > emaNow) {
+      const entry = c0;
+      const stop = Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR;
+      return { side: "long", entry, stopLoss: stop };
+    }
+    if (trend === Trend.Bear && c1 > emaPrev && c0 < emaNow) {
+      const entry = c0;
+      const stop = Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR;
+      return { side: "short", entry, stopLoss: stop };
+    }
+    // Pattern 3: breakout of recent range (last N bars)
+    const lookback = 12;
+    const recentHigh = Math.max(...highs.slice(-lookback));
+    const recentLow = Math.min(...lows.slice(-lookback));
+    if (trend === Trend.Bull && price > recentHigh) {
+      const entry = price;
+      const stop = recentLow - this.config.swingBackoffAtr * latestATR;
+      return { side: "long", entry, stopLoss: stop };
+    }
+    if (trend === Trend.Bear && price < recentLow) {
+      const entry = price;
+      const stop = recentHigh + this.config.swingBackoffAtr * latestATR;
+      return { side: "short", entry, stopLoss: stop };
+    }
+    // Pattern 4: mean-reversion in low ADX regime
+    const adxLt = computeADX(highs, lows, closes, this.config.adxPeriod);
+    const latestAdx = adxLt[adxLt.length - 1];
+    if (latestAdx < this.config.adxThreshold) {
+      const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
+      if (zScore <= -1.5) {
+        const entry = price;
+        const stop = price - this.config.atrEntryMultiplier * latestATR;
+        return { side: "long", entry, stopLoss: stop };
+      }
+      if (zScore >= 1.5) {
+        const entry = price;
+        const stop = price + this.config.atrEntryMultiplier * latestATR;
+        return { side: "short", entry, stopLoss: stop };
+      }
     }
     return null;
   }
@@ -343,11 +421,13 @@ export class TradingBot {
       side: side,
       stopLoss: stopLoss,
       takeProfit: tp,
+      initialTakeProfit: tp,
       trailingStop: stopLoss,
       highWaterMark: entry,
       lowWaterMark: entry,
       opened: new Date(),
       partialTaken: false,
+      slDistance,
     };
     this.state = State.Manage;
   }
@@ -358,6 +438,10 @@ export class TradingBot {
   exitPosition(): void {
     this.position = null;
     this.state = State.Scan;
+    if (this.config.cooldownBars > 0) {
+      const now = new Date();
+      this.cooldownUntil = new Date(now.getTime() + this.config.cooldownBars * 60 * 1000);
+    }
   }
 
   /**
@@ -414,14 +498,14 @@ export class TradingBot {
     const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
     const atr = atrArray[atrArray.length - 1];
     if (this.position.side === "long") {
-      const atrStop = this.position.highWaterMark - 2 * atr;
+      const atrStop = this.position.highWaterMark - this.config.atrTrailMultiplier * atr;
       const swingStop = this.computeSwingStop(df, "long");
       const candidate = Math.max(atrStop, swingStop);
       if (candidate > this.position.trailingStop) {
         this.position.trailingStop = candidate;
       }
     } else {
-      const atrStop = this.position.lowWaterMark + 2 * atr;
+      const atrStop = this.position.lowWaterMark + this.config.atrTrailMultiplier * atr;
       const swingStop = this.computeSwingStop(df, "short");
       const candidate = Math.min(atrStop, swingStop);
       if (candidate < this.position.trailingStop) {
@@ -434,17 +518,61 @@ export class TradingBot {
    * Compute simple institutional zones from a higher timeframe.
    * Returns a sorted array of price levels.
    */
-  computeInstitutionalZones(df: DataFrame): number[] {
+  computeInstitutionalZones(df: DataFrame): { price: number; type: string; weight: number }[] {
     const lookback = df.slice(-this.config.lookbackZones);
     const highs = lookback.map((c) => c.high);
     const lows = lookback.map((c) => c.low);
+    const closes = lookback.map((c) => c.close);
+    const volumes = lookback.map((c) => c.volume);
     const high = Math.max(...highs);
     const low = Math.min(...lows);
     const midpoint = (high + low) / 2;
     const fib618 = low + 0.618 * (high - low);
     const fib382 = low + 0.382 * (high - low);
-    const zones = [low, fib382, midpoint, fib618, high];
-    return zones.sort((a, b) => a - b);
+    // Volume profile approximation: weight by volume*close
+    const weightedLevels: Record<string, { sum: number; vol: number }> = {};
+    closes.forEach((c, i) => {
+      const bucket = Math.round(c); // simple bucketing to nearest unit
+      if (!weightedLevels[bucket]) weightedLevels[bucket] = { sum: 0, vol: 0 };
+      weightedLevels[bucket].sum += volumes[i];
+      weightedLevels[bucket].vol += 1;
+    });
+    const buckets = Object.keys(weightedLevels).map((k) => ({
+      price: Number(k),
+      vol: weightedLevels[k].sum,
+    }));
+    buckets.sort((a, b) => b.vol - a.vol);
+    const poc = buckets.length ? buckets[0].price : midpoint;
+    const hvn = buckets.slice(0, 3).map((b) => b.price);
+    const lvn = buckets.slice(-3).map((b) => b.price);
+    // Recent swings as liquidity clusters
+    const swings: number[] = [];
+    for (let i = 1; i < highs.length - 1; i++) {
+      if (highs[i] > highs[i - 1] && highs[i] > highs[i + 1]) swings.push(highs[i]);
+      if (lows[i] < lows[i - 1] && lows[i] < lows[i + 1]) swings.push(lows[i]);
+    }
+    const zones: { price: number; type: string; weight: number }[] = [
+      { price: low, type: "rangeLow", weight: 0.5 },
+      { price: fib382, type: "fib382", weight: 0.6 },
+      { price: midpoint, type: "mid", weight: 0.7 },
+      { price: fib618, type: "fib618", weight: 0.6 },
+      { price: high, type: "rangeHigh", weight: 0.5 },
+      { price: poc, type: "poc", weight: 1 },
+      ...hvn.map((p) => ({ price: p, type: "hvn", weight: 0.9 })),
+      ...lvn.map((p) => ({ price: p, type: "lvn", weight: 0.7 })),
+      ...swings.map((p) => ({ price: p, type: "swing", weight: 0.8 })),
+    ];
+    // Deduplicate similar levels
+    const dedup: { price: number; type: string; weight: number }[] = [];
+    zones.forEach((z) => {
+      const existing = dedup.find((d) => Math.abs(d.price - z.price) < (z.price * 0.001));
+      if (existing) {
+        existing.weight = Math.max(existing.weight, z.weight);
+      } else {
+        dedup.push(z);
+      }
+    });
+    return dedup.sort((a, b) => a.price - b.price);
   }
 
   /**
@@ -469,14 +597,21 @@ export class TradingBot {
     if (currentAdx < this.config.adxThreshold) return;
     const zones = this.computeInstitutionalZones(ht);
     if (this.position.side === "long") {
-      const higher = zones.filter((z) => z > this.position.takeProfit);
+      const higher = zones.filter((z) => z.price > this.position.takeProfit);
       if (higher.length > 0) {
-        this.position.takeProfit = Math.min(...higher);
+        const best = higher.sort((a, b) => b.weight - a.weight || a.price - b.price)[0];
+        this.position.takeProfit = best.price;
+      } else {
+        // No higher zone -> rely on trailing stop
+        this.position.takeProfit = Infinity;
       }
     } else {
-      const lower = zones.filter((z) => z < this.position.takeProfit);
+      const lower = zones.filter((z) => z.price < this.position.takeProfit);
       if (lower.length > 0) {
-        this.position.takeProfit = Math.max(...lower);
+        const best = lower.sort((a, b) => b.weight - a.weight || b.price - a.price)[0];
+        this.position.takeProfit = best.price;
+      } else {
+        this.position.takeProfit = -Infinity;
       }
     }
   }
@@ -494,20 +629,28 @@ export class TradingBot {
     // Update trailing stop and take profit
     this.updateTrailingStop(lt);
     this.updateTakeProfit(ht, lt);
+    const atrArray = computeATR(
+      lt.map((c) => c.high),
+      lt.map((c) => c.low),
+      lt.map((c) => c.close),
+      this.config.atrPeriod,
+    );
+    const atr = atrArray[atrArray.length - 1];
+    const rMultiple = this.position.slDistance > 0 ? (this.position.side === "long"
+      ? (currentPrice - this.position.entryPrice) / this.position.slDistance
+      : (this.position.entryPrice - currentPrice) / this.position.slDistance) : 0;
     // Exit conditions
     if (this.position.side === "long") {
       if (currentPrice <= this.position.stopLoss || currentPrice <= this.position.trailingStop) {
         this.exitPosition();
         return;
       }
-      if (currentPrice >= this.position.takeProfit) {
-        // partial exit
+      if (currentPrice >= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
         if (!this.position.partialTaken) {
           this.position.size *= 1 - this.config.partialExitRatio;
           this.position.partialTaken = true;
-          // move SL to break even
-          this.position.stopLoss = this.position.entryPrice;
-          // reset TP so it can be moved again
+          // move SL to break even + small buffer
+          this.position.stopLoss = this.position.entryPrice + this.config.breakevenBufferAtr * atr;
           this.position.takeProfit = Infinity;
         } else {
           this.exitPosition();
@@ -519,11 +662,11 @@ export class TradingBot {
         this.exitPosition();
         return;
       }
-      if (currentPrice <= this.position.takeProfit) {
+      if (currentPrice <= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
         if (!this.position.partialTaken) {
           this.position.size *= 1 - this.config.partialExitRatio;
           this.position.partialTaken = true;
-          this.position.stopLoss = this.position.entryPrice;
+          this.position.stopLoss = this.position.entryPrice - this.config.breakevenBufferAtr * atr;
           this.position.takeProfit = -Infinity;
         } else {
           this.exitPosition();
