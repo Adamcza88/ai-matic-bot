@@ -3,14 +3,12 @@ import { ActivePosition } from "../types";
 
 interface Props {
   theme: string;
-  lang: string;
   activePositions: ActivePosition[];
   currentPrices: Record<string, number>;
 }
 
 const ActivePositionsPanel: React.FC<Props> = ({
   theme,
-  lang,
   activePositions,
   currentPrices,
 }) => {
@@ -23,18 +21,16 @@ const ActivePositionsPanel: React.FC<Props> = ({
   return (
     <div className={`rounded-xl p-4 border ${card}`}>
       <h2
-        className={`text-lg font-semibold mb-4 ${
-          isDark ? "text-white" : "text-gray-900"
-        }`}
+        className={`text-lg font-semibold mb-4 ${isDark ? "text-white" : "text-gray-900"
+          }`}
       >
         Active Positions
       </h2>
 
       {activePositions.length === 0 ? (
         <div
-          className={`text-sm ${
-            isDark ? "text-gray-500" : "text-gray-600"
-          } italic`}
+          className={`text-sm ${isDark ? "text-gray-500" : "text-gray-600"
+            } italic`}
         >
           No open positions.
         </div>
@@ -50,11 +46,10 @@ const ActivePositionsPanel: React.FC<Props> = ({
             return (
               <div
                 key={pos.id}
-                className={`p-3 rounded border ${
-                  isDark
+                className={`p-3 rounded border ${isDark
                     ? "border-gray-700 bg-gray-800/40"
                     : "border-gray-200 bg-gray-100"
-                }`}
+                  }`}
               >
                 <div className="flex justify-between items-center">
                   <div>
@@ -71,9 +66,8 @@ const ActivePositionsPanel: React.FC<Props> = ({
                   </div>
 
                   <div
-                    className={`text-sm font-bold ml-4 ${
-                      pnlValue >= 0 ? "text-green-400" : "text-red-400"
-                    }`}
+                    className={`text-sm font-bold ml-4 ${pnlValue >= 0 ? "text-green-400" : "text-red-400"
+                      }`}
                   >
                     {pnlValue.toFixed(2)} USD
                   </div>

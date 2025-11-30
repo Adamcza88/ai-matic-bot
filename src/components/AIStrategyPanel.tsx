@@ -9,17 +9,9 @@ interface Props {
 }
 
 const AIStrategyPanel: React.FC<Props> = ({
-  theme,
-  lang,
   settings,
   onUpdateSettings,
 }) => {
-  const isDark = theme === "dark";
-
-  const card = isDark
-    ? "bg-gray-900/50 border-gray-700/50"
-    : "bg-white border-gray-200";
-
   const [local, setLocal] = useState(settings);
 
   const update = (field: keyof AISettings, value: any) => {
@@ -29,19 +21,15 @@ const AIStrategyPanel: React.FC<Props> = ({
   };
 
   return (
-    <div className={`rounded-xl p-4 border ${card}`}>
-      <h2
-        className={`text-lg font-semibold mb-4 ${
-          isDark ? "text-white" : "text-gray-900"
-        }`}
-      >
-        AI Strategy Settings
-      </h2>
+    <div className="rounded-xl border bg-card text-card-foreground shadow-sm">
+      <div className="flex flex-col space-y-1.5 p-6">
+        <h3 className="font-semibold leading-none tracking-tight">AI Strategy Settings</h3>
+      </div>
 
-      <div className="grid grid-cols-2 gap-4 text-sm">
-        <label className="flex flex-col col-span-2">
-          <span className="text-gray-500">Strategie</span>
-          <div className="flex gap-2 flex-wrap mt-2">
+      <div className="p-6 pt-0 grid gap-4">
+        <div className="grid gap-2">
+          <label className="text-sm font-medium leading-none">Strategy</label>
+          <div className="flex gap-2 flex-wrap">
             {[
               { key: "auto", label: "Auto" },
               { key: "scalp", label: "Scalp" },
@@ -52,65 +40,49 @@ const AIStrategyPanel: React.FC<Props> = ({
               <button
                 key={opt.key}
                 onClick={() => update("strategyProfile", opt.key as any)}
-                className={`px-3 py-1 rounded border ${
-                  local.strategyProfile === opt.key
-                    ? "bg-cyan-500 text-white border-cyan-400"
-                    : isDark
-                    ? "bg-gray-800 border-gray-700 text-gray-200"
-                    : "bg-white border-gray-300 text-gray-800"
-                }`}
+                className={`inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring border border-input hover:bg-accent hover:text-accent-foreground h-8 px-3 ${local.strategyProfile === opt.key
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90 border-primary"
+                    : "bg-background"
+                  }`}
               >
                 {opt.label}
               </button>
             ))}
           </div>
-        </label>
-        <label className="flex flex-col">
-          <span className="text-gray-500">Base Risk %</span>
-          <input
-            type="number"
-            value={local.baseRiskPerTrade}
-            onChange={(e) =>
-              update("baseRiskPerTrade", Number(e.target.value))
-            }
-            className={`px-2 py-1 rounded border ${
-              isDark
-                ? "bg-gray-800 border-gray-700 text-gray-200"
-                : "bg-white border-gray-300 text-gray-800"
-            }`}
-            step="0.01"
-          />
-        </label>
+        </div>
 
-        <label className="flex flex-col">
-          <span className="text-gray-500">Max Drawdown %</span>
-          <input
-            type="number"
-            value={local.maxDrawdownPercent}
-            onChange={(e) =>
-              update("maxDrawdownPercent", Number(e.target.value))
-            }
-            className={`px-2 py-1 rounded border ${
-              isDark
-                ? "bg-gray-800 border-gray-700 text-gray-200"
-                : "bg-white border-gray-300 text-gray-800"
-            }`}
-            step="0.01"
-          />
-        </label>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none">Base Risk %</label>
+            <input
+              type="number"
+              value={local.baseRiskPerTrade}
+              onChange={(e) => update("baseRiskPerTrade", Number(e.target.value))}
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              step="0.01"
+            />
+          </div>
 
-        <label className="flex flex-col col-span-2">
-          <span className="text-gray-500">Custom Strategy Text</span>
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none">Max Drawdown %</label>
+            <input
+              type="number"
+              value={local.maxDrawdownPercent}
+              onChange={(e) => update("maxDrawdownPercent", Number(e.target.value))}
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              step="0.01"
+            />
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <label className="text-sm font-medium leading-none">Custom Strategy Text</label>
           <textarea
             value={local.customStrategy}
             onChange={(e) => update("customStrategy", e.target.value)}
-            className={`px-2 py-1 rounded border h-20 ${
-              isDark
-                ? "bg-gray-800 border-gray-700 text-gray-200"
-                : "bg-white border-gray-300 text-gray-800"
-            }`}
+            className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           />
-        </label>
+        </div>
       </div>
     </div>
   );

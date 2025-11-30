@@ -3,7 +3,6 @@ import { PortfolioState, PriceAlert } from "../types";
 
 interface Props {
   theme: string;
-  lang: string;
   portfolioState: PortfolioState;
   priceAlerts: PriceAlert[];
   onAddAlert: (symbol: string, price: number) => void;
@@ -13,7 +12,6 @@ interface Props {
 
 const PortfolioRiskPanel: React.FC<Props> = ({
   theme,
-  lang,
   portfolioState,
   priceAlerts,
   onAddAlert,
@@ -29,9 +27,8 @@ const PortfolioRiskPanel: React.FC<Props> = ({
   return (
     <div className={`rounded-xl p-4 border ${card}`}>
       <h2
-        className={`text-lg font-semibold mb-4 ${
-          isDark ? "text-white" : "text-gray-900"
-        }`}
+        className={`text-lg font-semibold mb-4 ${isDark ? "text-white" : "text-gray-900"
+          }`}
       >
         Portfolio & Risk
       </h2>
@@ -78,9 +75,8 @@ const PortfolioRiskPanel: React.FC<Props> = ({
 
       <div className="mb-4 pt-3 border-t border-gray-700/40">
         <h3
-          className={`text-sm font-semibold mb-2 ${
-            isDark ? "text-gray-300" : "text-gray-700"
-          }`}
+          className={`text-sm font-semibold mb-2 ${isDark ? "text-gray-300" : "text-gray-700"
+            }`}
         >
           Price Alerts
         </h3>
@@ -89,11 +85,10 @@ const PortfolioRiskPanel: React.FC<Props> = ({
           {priceAlerts.map((a) => (
             <div
               key={a.id}
-              className={`flex justify-between items-center p-2 rounded border ${
-                isDark
+              className={`flex justify-between items-center p-2 rounded border ${isDark
                   ? "border-gray-700 bg-gray-800/40"
                   : "border-gray-200 bg-gray-100"
-              }`}
+                }`}
             >
               <div className="text-sm">
                 <span className="font-semibold">{a.symbol}</span>{" "}
@@ -111,11 +106,10 @@ const PortfolioRiskPanel: React.FC<Props> = ({
 
         <button
           onClick={() => onAddAlert("BTCUSDT", 100000)}
-          className={`mt-3 px-3 py-1.5 text-xs rounded border ${
-            isDark
+          className={`mt-3 px-3 py-1.5 text-xs rounded border ${isDark
               ? "border-gray-600 text-gray-300 hover:bg-gray-800"
               : "border-gray-300 text-gray-700 hover:bg-gray-200"
-          }`}
+            }`}
         >
           + Add BTC 100k Alert
         </button>
@@ -123,11 +117,10 @@ const PortfolioRiskPanel: React.FC<Props> = ({
 
       <button
         onClick={onResetRisk}
-        className={`w-full py-2 rounded text-sm font-semibold ${
-          isDark
+        className={`w-full py-2 rounded text-sm font-semibold ${isDark
             ? "bg-red-600/70 text-white hover:bg-red-600"
             : "bg-red-500 text-white hover:bg-red-600"
-        }`}
+          }`}
       >
         Reset Risk State
       </button>

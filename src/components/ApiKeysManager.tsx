@@ -1,5 +1,22 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Loader2, Save, Key } from "lucide-react";
 
 type ApiKeyRow = {
   id?: string;
@@ -42,6 +59,20 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
   useEffect(() => {
     const fetchKeys = async () => {
       setIsLoading(true);
+
+      if (userId === "guest") {
+        const stored = localStorage.getItem("guest_api_keys");
+        if (stored) {
+          try {
+            setRecords(JSON.parse(stored));
+          } catch (e) {
+            console.error("Failed to parse guest keys", e);
+          }
+        }
+        setIsLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase
         .from("user_api_keys")
         .select("id, service, api_key, updated_at")
@@ -74,6 +105,31 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
       api_key: apiKey.trim(),
     };
 
+    if (userId === "guest") {
+      // LocalStorage logic
+      const stored = localStorage.getItem("guest_api_keys");
+      let currentKeys: ApiKeyRow[] = stored ? JSON.parse(stored) : [];
+
+      // Remove existing key for this service if any
+      currentKeys = currentKeys.filter((k) => k.service !== payload.service);
+
+      // Add new key
+      const newKey: ApiKeyRow = {
+        ...payload,
+        updated_at: new Date().toISOString(),
+      };
+      currentKeys.push(newKey);
+
+      localStorage.setItem("guest_api_keys", JSON.stringify(currentKeys));
+
+      setStatus("Key saved (Guest mode).");
+      setApiKey("");
+      setRecords(currentKeys);
+      setIsSaving(false);
+      onKeysUpdated?.();
+      return;
+    }
+
     const { error } = await supabase
       .from("user_api_keys")
       .upsert(payload, { onConflict: "user_id,service" });
@@ -98,131 +154,111 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
   };
 
   return (
-    <section
-      style={{
-        background: "rgba(255,255,255,0.06)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: "12px",
-        padding: "16px",
-        marginBottom: "16px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "12px",
-          gap: "12px",
-        }}
-      >
-        <div>
-          <h3 style={{ margin: 0 }}>API Keys</h3>
-          <p style={{ margin: "4px 0", color: "rgba(255,255,255,0.7)" }}>
-            Stored securely per account. Only you can read your keys.
-          </p>
+    <Card className="bg-slate-900/50 border-white/10 text-white mb-6">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="space-y-1">
+            <CardTitle className="flex items-center gap-2">
+              <Key className="w-5 h-5 text-emerald-500" />
+              API Keys
+            </CardTitle>
+            <CardDescription className="text-slate-400">
+              Stored securely per account. Only you can read your keys.
+            </CardDescription>
+          </div>
+          {isLoading && (
+            <div className="flex items-center text-slate-400 text-sm">
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Loading...
+            </div>
+          )}
         </div>
-        {isLoading && (
-          <span style={{ color: "rgba(255,255,255,0.7)", fontSize: "14px" }}>
-            Loading...
-          </span>
+      </CardHeader>
+      <CardContent>
+        <form
+          onSubmit={onSubmit}
+          className="flex flex-col md:flex-row gap-4 mb-6"
+        >
+          <div className="flex-1 min-w-[200px]">
+            <Select value={service} onValueChange={setService}>
+              <SelectTrigger className="bg-slate-950 border-white/10 text-white">
+                <SelectValue placeholder="Select service" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-900 border-white/10 text-white">
+                {SERVICE_OPTIONS.map((opt) => (
+                  <SelectItem
+                    key={opt.value}
+                    value={opt.value}
+                    className="focus:bg-slate-800 focus:text-white"
+                  >
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex-[2]">
+            <Input
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Secret value"
+              className="bg-slate-950 border-white/10 text-white placeholder:text-slate-500"
+            />
+          </div>
+          <Button
+            type="submit"
+            disabled={isSaving}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold min-w-[100px]"
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Saving
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4 mr-2" />
+                Save
+              </>
+            )}
+          </Button>
+        </form>
+
+        {status && (
+          <div className="mb-4 p-3 rounded bg-amber-500/10 border border-amber-500/20 text-amber-500 text-sm">
+            {status}
+          </div>
         )}
-      </div>
 
-      <form
-        onSubmit={onSubmit}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr auto",
-          gap: "10px",
-          marginBottom: "12px",
-        }}
-      >
-        <select
-          value={service}
-          onChange={(e) => setService(e.target.value)}
-          style={{
-            padding: "10px",
-            borderRadius: "8px",
-            border: "1px solid rgba(255,255,255,0.2)",
-            background: "rgba(0,0,0,0.35)",
-            color: "white",
-          }}
-        >
-          {SERVICE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-        <input
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder="Secret value"
-          style={{
-            padding: "10px",
-            borderRadius: "8px",
-            border: "1px solid rgba(255,255,255,0.2)",
-            background: "rgba(0,0,0,0.35)",
-            color: "white",
-          }}
-        />
-        <button
-          type="submit"
-          disabled={isSaving}
-          style={{
-            padding: "10px 14px",
-            borderRadius: "8px",
-            border: "none",
-            background: "#22c55e",
-            color: "#0b0f1a",
-            fontWeight: 700,
-            cursor: "pointer",
-            opacity: isSaving ? 0.85 : 1,
-          }}
-        >
-          {isSaving ? "Saving..." : "Save"}
-        </button>
-      </form>
-
-      {status && (
-        <p style={{ color: "#fbbf24", marginTop: 0, marginBottom: "10px" }}>
-          {status}
-        </p>
-      )}
-
-      {maskedRecords.length === 0 ? (
-        <p style={{ color: "rgba(255,255,255,0.7)", margin: 0 }}>
-          No keys saved yet.
-        </p>
-      ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {maskedRecords.map((row) => (
-            <li
-              key={row.id ?? row.service}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "8px 0",
-                borderBottom: "1px solid rgba(255,255,255,0.08)",
-              }}
-            >
-              <div>
-                <div style={{ fontWeight: 600 }}>{row.service}</div>
-                <div style={{ color: "rgba(255,255,255,0.7)" }}>
-                  {row.masked}
-                </div>
-              </div>
-              {row.updated_at && (
-                <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>
-                  Updated {new Date(row.updated_at).toLocaleDateString()}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+        {maskedRecords.length === 0 ? (
+          <div className="text-center py-8 text-slate-500 italic border border-dashed border-slate-800 rounded-lg">
+            No keys saved yet.
+          </div>
+        ) : (
+          <div className="rounded-md border border-white/10 overflow-hidden">
+            <ul className="divide-y divide-white/10">
+              {maskedRecords.map((row) => (
+                <li
+                  key={row.id ?? row.service}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-white/5 hover:bg-white/10 transition-colors gap-2"
+                >
+                  <div>
+                    <div className="font-semibold text-white">{row.service}</div>
+                    <div className="text-slate-400 font-mono text-sm">
+                      {row.masked}
+                    </div>
+                  </div>
+                  {row.updated_at && (
+                    <span className="text-xs text-slate-500">
+                      Updated {new Date(row.updated_at).toLocaleDateString()}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

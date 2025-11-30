@@ -3,7 +3,6 @@ import { SystemState, TradingMode } from "../types";
 
 interface Props {
   theme: string;
-  lang: string;
   systemState: SystemState;
   mode: TradingMode;
   onModeChange: (m: TradingMode) => void;
@@ -11,7 +10,6 @@ interface Props {
 
 const SystemStatusPanel: React.FC<Props> = ({
   theme,
-  lang,
   systemState,
   mode,
   onModeChange,
@@ -26,15 +24,14 @@ const SystemStatusPanel: React.FC<Props> = ({
     systemState.bybitStatus === "Connected"
       ? "text-green-400"
       : systemState.bybitStatus === "Error"
-      ? "text-red-400"
-      : "text-yellow-400";
+        ? "text-red-400"
+        : "text-yellow-400";
 
   return (
     <div className={`rounded-xl p-4 border ${card}`}>
       <h2
-        className={`text-lg font-semibold mb-4 ${
-          isDark ? "text-white" : "text-gray-900"
-        }`}
+        className={`text-lg font-semibold mb-4 ${isDark ? "text-white" : "text-gray-900"
+          }`}
       >
         System Status
       </h2>
@@ -64,9 +61,8 @@ const SystemStatusPanel: React.FC<Props> = ({
 
       <div className="mt-4 pt-4 border-t border-gray-700/40">
         <h3
-          className={`text-sm font-semibold mb-2 ${
-            isDark ? "text-gray-300" : "text-gray-700"
-          }`}
+          className={`text-sm font-semibold mb-2 ${isDark ? "text-gray-300" : "text-gray-700"
+            }`}
         >
           Trading Mode
         </h3>
@@ -79,15 +75,14 @@ const SystemStatusPanel: React.FC<Props> = ({
               <button
                 key={m}
                 onClick={() => onModeChange(m)}
-                className={`px-3 py-1.5 text-xs rounded border font-semibold transition ${
-                  active
+                className={`px-3 py-1.5 text-xs rounded border font-semibold transition ${active
                     ? isDark
                       ? "bg-cyan-600 text-white border-cyan-500"
                       : "bg-cyan-500 text-white border-cyan-600"
                     : isDark
-                    ? "border-gray-600 text-gray-300 hover:bg-gray-800"
-                    : "border-gray-300 text-gray-700 hover:bg-gray-200"
-                }`}
+                      ? "border-gray-600 text-gray-300 hover:bg-gray-800"
+                      : "border-gray-300 text-gray-700 hover:bg-gray-200"
+                  }`}
               >
                 {m}
               </button>

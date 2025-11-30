@@ -7,6 +7,12 @@ import NotReleased from "./components/NotReleased";
 import ApiKeysManager, { SERVICE_OPTIONS } from "./components/ApiKeysManager";
 import { useAuth } from "./hooks/useAuth";
 import { supabase } from "./lib/supabaseClient";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { LogOut, User, Settings } from "lucide-react";
+import Logo from "./components/Logo";
+
+const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS === "true";
 
 export default function App() {
   const auth = useAuth();
@@ -14,15 +20,17 @@ export default function App() {
   const [useTestnet, setUseTestnet] = useState(true);
   const [showKeyPanel, setShowKeyPanel] = useState(false);
   const [missingServices, setMissingServices] = useState<string[]>([]);
-  const [keysLoading, setKeysLoading] = useState(false);
   const [keysError, setKeysError] = useState<string | null>(null);
+  const [isGuest, setIsGuest] = useState(false);
 
   const bot = useTradingBot(mode, useTestnet, auth.session?.access_token);
-  const userEmail = useMemo(() => auth.user?.email ?? "", [auth.user]);
+  const userEmail = useMemo(() => {
+    if (isGuest) return "Guest";
+    return auth.user?.email ?? "";
+  }, [auth.user, isGuest]);
 
   const refreshKeyStatus = useCallback(async () => {
     if (!auth.user) return;
-    setKeysLoading(true);
     setKeysError(null);
     const { data, error } = await supabase
       .from("user_api_keys")
@@ -32,7 +40,6 @@ export default function App() {
     if (error) {
       setKeysError(error.message);
       setMissingServices(SERVICE_OPTIONS.map((s) => s.label));
-      setKeysLoading(false);
       return;
     }
 
@@ -48,7 +55,6 @@ export default function App() {
     if (missing.length > 0) {
       setShowKeyPanel(true);
     }
-    setKeysLoading(false);
   }, [auth.user]);
 
   useEffect(() => {
@@ -78,139 +84,98 @@ export default function App() {
     return <NotReleased message={auth.error} />;
   }
 
-  if (auth.status === "signed_out") {
+  if (auth.status === "signed_out" && !isGuest) {
     return (
       <LoginCard
         onLogin={auth.signInWithGoogle}
         isAuthenticating={auth.isAuthenticating}
+        allowGuests={ALLOW_GUESTS}
+        onGuestLogin={() => setIsGuest(true)}
         error={auth.error}
       />
     );
   }
 
-  if (auth.status !== "ready" || !auth.user) {
+  if ((auth.status !== "ready" || !auth.user) && !isGuest) {
     return <NotReleased message="Unable to verify access." />;
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#0b1224",
-        color: "white",
-        padding: "20px",
-      }}
-    >
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "16px",
-          padding: "12px 14px",
-          border: "1px solid rgba(255,255,255,0.08)",
-          borderRadius: "10px",
-          background: "rgba(255,255,255,0.04)",
-        }}
-      >
-        <div>
-          <div style={{ fontWeight: 700 }}>AI-Matic</div>
-          <div style={{ color: "rgba(255,255,255,0.7)", fontSize: "14px" }}>
-            Signed in as {userEmail}
+    <div className="min-h-screen bg-slate-950 text-white p-6">
+      <header className="flex items-center justify-between mb-6 p-4 border border-white/10 rounded-xl bg-white/5 backdrop-blur-sm">
+        <div className="flex items-center gap-4">
+          <Logo className="w-10 h-10 text-blue-500" />
+          <div>
+            <div className="font-bold text-xl tracking-tight">AI-Matic</div>
+            <div className="text-slate-400 text-sm flex items-center gap-2">
+              <User className="w-3 h-3" />
+              Signed in as {userEmail}
+            </div>
           </div>
         </div>
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <button
+        <div className="flex gap-2 items-center">
+          <Button
+            variant={missingServices.length > 0 ? "destructive" : "outline"}
+            size="sm"
             onClick={() => setShowKeyPanel((v) => !v)}
-            style={{
-              padding: "8px 12px",
-              borderRadius: "8px",
-              border: "1px solid rgba(255,255,255,0.2)",
-              background: missingServices.length ? "rgba(248,113,113,0.15)" : "transparent",
-              color: "white",
-              cursor: "pointer",
-              position: "relative",
-            }}
+            className={
+              missingServices.length > 0
+                ? "bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20"
+                : "border-white/20 text-white hover:bg-white/10 hover:text-white"
+            }
           >
+            <Settings className="w-4 h-4 mr-2" />
             Profile / API keys
             {missingServices.length > 0 && (
-              <span
-                style={{
-                  marginLeft: "8px",
-                  background: "#ef4444",
-                  color: "#0b0f1a",
-                  borderRadius: "999px",
-                  padding: "2px 8px",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                }}
-              >
+              <Badge variant="destructive" className="ml-2 px-1.5 py-0.5 h-5">
                 {missingServices.length}
-              </span>
+              </Badge>
             )}
-          </button>
-          <button
-            onClick={auth.signOut}
-            style={{
-              padding: "8px 12px",
-              borderRadius: "8px",
-              border: "1px solid rgba(255,255,255,0.2)",
-              background: "transparent",
-              color: "white",
-              cursor: "pointer",
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              if (isGuest) {
+                setIsGuest(false);
+              } else {
+                auth.signOut();
+              }
             }}
+            className="text-slate-400 hover:text-white hover:bg-white/10"
           >
+            <LogOut className="w-4 h-4 mr-2" />
             Sign out
-          </button>
+          </Button>
         </div>
       </header>
 
       {missingServices.length > 0 && !showKeyPanel && (
-        <div
-          style={{
-            marginBottom: "16px",
-            padding: "12px 14px",
-            borderRadius: "10px",
-            border: "1px solid rgba(239,68,68,0.35)",
-            background: "rgba(239,68,68,0.12)",
-            color: "white",
-            display: "flex",
-            justifyContent: "space-between",
-            gap: "12px",
-            alignItems: "center",
-          }}
-        >
+        <div className="mb-6 p-4 rounded-xl border border-red-500/30 bg-red-500/10 flex items-center justify-between gap-4">
           <div>
-            <div style={{ fontWeight: 700 }}>Chybí API klíče</div>
-            <div style={{ fontSize: "14px", color: "rgba(255,255,255,0.8)" }}>
+            <div className="font-bold text-red-400">Chybí API klíče</div>
+            <div className="text-sm text-red-300/80">
               Doplň: {missingServices.join(", ")}
             </div>
             {keysError && (
-              <div style={{ color: "#fbbf24", marginTop: "6px", fontSize: 12 }}>
-                {keysError}
-              </div>
+              <div className="text-amber-400 mt-1.5 text-xs">{keysError}</div>
             )}
           </div>
-          <button
+          <Button
+            size="sm"
             onClick={() => setShowKeyPanel(true)}
-            style={{
-              padding: "8px 12px",
-              borderRadius: "8px",
-              border: "none",
-              background: "#22c55e",
-              color: "#0b0f1a",
-              fontWeight: 700,
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-none"
           >
             Otevřít nastavení
-          </button>
+          </Button>
         </div>
       )}
 
       {showKeyPanel && (
-        <ApiKeysManager userId={auth.user.id} onKeysUpdated={refreshKeyStatus} />
+        <ApiKeysManager
+          userId={isGuest ? "guest" : auth.user?.id ?? ""}
+          onKeysUpdated={refreshKeyStatus}
+        />
       )}
 
       <Dashboard

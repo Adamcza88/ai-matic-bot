@@ -3,13 +3,11 @@ import { ClosedPosition } from "../types";
 
 interface Props {
   theme: string;
-  lang: string;
   closedPositions: ClosedPosition[];
 }
 
 const ClosedPositionsPanel: React.FC<Props> = ({
   theme,
-  lang,
   closedPositions,
 }) => {
   const isDark = theme === "dark";
@@ -21,18 +19,16 @@ const ClosedPositionsPanel: React.FC<Props> = ({
   return (
     <div className={`rounded-xl p-4 border ${card}`}>
       <h2
-        className={`text-lg font-semibold mb-4 ${
-          isDark ? "text-white" : "text-gray-900"
-        }`}
+        className={`text-lg font-semibold mb-4 ${isDark ? "text-white" : "text-gray-900"
+          }`}
       >
         Closed Positions
       </h2>
 
       {closedPositions.length === 0 ? (
         <div
-          className={`text-sm ${
-            isDark ? "text-gray-500" : "text-gray-600"
-          } italic`}
+          className={`text-sm ${isDark ? "text-gray-500" : "text-gray-600"
+            } italic`}
         >
           No closed trades yet.
         </div>
@@ -41,11 +37,10 @@ const ClosedPositionsPanel: React.FC<Props> = ({
           {closedPositions.map((pos) => (
             <div
               key={pos.id}
-              className={`p-3 rounded border ${
-                isDark
+              className={`p-3 rounded border ${isDark
                   ? "border-gray-700 bg-gray-800/40"
                   : "border-gray-200 bg-gray-100"
-              }`}
+                }`}
             >
               <div className="flex justify-between items-start">
                 <div>
@@ -65,9 +60,8 @@ const ClosedPositionsPanel: React.FC<Props> = ({
                 </div>
 
                 <div
-                  className={`text-sm font-bold ml-4 ${
-                    pos.pnlValue >= 0 ? "text-green-400" : "text-red-400"
-                  }`}
+                  className={`text-sm font-bold ml-4 ${pos.pnlValue >= 0 ? "text-green-400" : "text-red-400"
+                    }`}
                 >
                   {pos.pnlValue.toFixed(2)} USD
                 </div>
