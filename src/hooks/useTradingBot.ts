@@ -152,6 +152,7 @@ export const useTradingBot = (
 
         const newPrices: Record<string, number> = {};
         const newHistory: any = { ...priceHistoryRef.current };
+        const engineActive: ActivePosition[] = [];
 
         for (const symbol of SYMBOLS) {
           const url = `${URL_KLINE}&symbol=${symbol}&interval=1&limit=200`;
@@ -175,6 +176,34 @@ export const useTradingBot = (
                 message: `${signal.intent.side} ${symbol} @ ${signal.intent.entry} | TESTNET=${useTestnet}`,
               });
             }
+            if (decision?.position) {
+              const pos = decision.position;
+              const dir = pos.side === "long" ? 1 : -1;
+              const currentPrice = candles[candles.length - 1].close;
+              const pnl = (currentPrice - pos.entryPrice) * dir * pos.size;
+              const mapped: ActivePosition = {
+                id: `${symbol}-${pos.opened}`,
+                symbol,
+                side: pos.side === "long" ? "buy" : "sell",
+                entryPrice: pos.entryPrice,
+                sl: pos.stopLoss,
+                tp: Number.isFinite(pos.takeProfit) ? pos.takeProfit : pos.initialTakeProfit,
+                size: pos.size,
+                openedAt: new Date(pos.opened).toISOString(),
+                unrealizedPnl: pnl,
+                pnl,
+                pnlValue: pnl,
+                rrr:
+                  Math.abs((Number.isFinite(pos.takeProfit) ? pos.takeProfit : pos.initialTakeProfit) - pos.entryPrice) /
+                    Math.abs(pos.entryPrice - pos.stopLoss || 1e-8) || 0,
+                peakPrice: pos.highWaterMark,
+                currentTrailingStop: pos.trailingStop,
+                volatilityFactor: undefined,
+                lastUpdateReason: undefined,
+                timestamp: new Date().toISOString(),
+              };
+              engineActive.push(mapped);
+            }
           }
         }
 
@@ -182,6 +211,7 @@ export const useTradingBot = (
 
         priceHistoryRef.current = newHistory;
         setCurrentPrices(newPrices);
+        setActivePositions(engineActive);
 
         const latency = Math.round(performance.now() - started);
         setSystemState((p) => ({ ...p, bybitStatus: "Connected", latency, lastError: null }));

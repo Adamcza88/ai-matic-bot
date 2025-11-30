@@ -36,7 +36,7 @@ export enum State {
  * Candle represents a single OHLCV bar.
  */
 export interface Candle {
-  timestamp: Date;
+  openTime: number;
   open: number;
   high: number;
   low: number;
@@ -57,9 +57,10 @@ export interface Position {
   trailingStop: number;
   highWaterMark: number;
   lowWaterMark: number;
-  opened: Date;
+  opened: number;
   partialTaken: boolean;
   slDistance: number;
+  closed?: number;
 }
 
 /**
@@ -71,6 +72,7 @@ export interface BotConfig {
   signalTimeframe: string;
   targetTradesPerDay: number;
   riskPerTrade: number;
+  accountBalance: number;
   atrPeriod: number;
   adxPeriod: number;
   adxThreshold: number;
@@ -84,6 +86,10 @@ export interface BotConfig {
   breakevenBufferAtr: number;
   lookbackZones: number;
   cooldownBars: number;
+  maxDailyLossPercent: number;
+  maxDailyProfitPercent: number;
+  tradingHours: { start: number; end: number; days: number[] };
+  maxOpenPositions: number;
 }
 
 /**
@@ -95,6 +101,7 @@ export const defaultConfig: BotConfig = {
   signalTimeframe: "5m",
   targetTradesPerDay: 20,
   riskPerTrade: 0.01,
+  accountBalance: 100000,
   atrPeriod: 14,
   adxPeriod: 14,
   adxThreshold: 25,
@@ -108,6 +115,10 @@ export const defaultConfig: BotConfig = {
   breakevenBufferAtr: 0.2,
   lookbackZones: 50,
   cooldownBars: 3,
+  maxDailyLossPercent: 0.05,
+  maxDailyProfitPercent: 0.1,
+  tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
+  maxOpenPositions: 1,
 };
 
 /**
@@ -221,6 +232,9 @@ export class TradingBot {
   private state: State;
   private position: Position | null;
   private cooldownUntil: Date | null;
+  private dailyPnl: number;
+  private tradingDay: number | null;
+  private closedToday: number;
   // History of OHLCV by timeframe
   private history: Record<string, DataFrame>;
   // Exchange client interface (optional)
@@ -231,6 +245,9 @@ export class TradingBot {
     this.state = State.Scan;
     this.position = null;
     this.cooldownUntil = null;
+    this.dailyPnl = 0;
+    this.closedToday = 0;
+    this.tradingDay = null;
     this.history = {};
     this.exchange = exchange;
   }
@@ -249,9 +266,14 @@ export class TradingBot {
       throw new Error("No exchange client or history available for timeframe " + timeframe);
     }
     // Example ccxt call; adapt as needed
-    const ohlcv = await this.exchange.fetchOHLCV(this.config.symbol, timeframe, undefined, limit);
+    const ohlcv = await this.exchange.fetchOHLCV(
+      this.config.symbol,
+      timeframe,
+      undefined,
+      limit,
+    );
     const result: DataFrame = ohlcv.map((c: any[]) => ({
-      timestamp: new Date(c[0]),
+      openTime: Number(c[0]),
       open: c[1],
       high: c[2],
       low: c[3],
@@ -308,11 +330,42 @@ export class TradingBot {
     return Trend.Neutral;
   }
 
+  private resetDaily(now: number): void {
+    const day = new Date(now).getUTCDate();
+    if (this.tradingDay === null || this.tradingDay !== day) {
+      this.tradingDay = day;
+      this.dailyPnl = 0;
+      this.closedToday = 0;
+    }
+  }
+
+  private withinSession(now: number): boolean {
+    const d = new Date(now);
+    const hour = d.getUTCHours();
+    const day = d.getUTCDay();
+    const { start, end, days } = this.config.tradingHours;
+    if (!days.includes(day)) return false;
+    if (hour < start || hour > end) return false;
+    return true;
+  }
+
+  private riskHalted(): boolean {
+    const lossLimit = -this.config.accountBalance * this.config.maxDailyLossPercent;
+    const profitLimit = this.config.accountBalance * this.config.maxDailyProfitPercent;
+    if (this.dailyPnl <= lossLimit) return true;
+    if (this.dailyPnl >= profitLimit) return true;
+    return false;
+  }
+
   /**
    * Scan for entry signals on the configured timeframes. Returns a signal
    * description or null.
    */
   async scanForEntry(): Promise<{ side: "long" | "short"; entry: number; stopLoss: number } | null> {
+    const now = Date.now();
+    this.resetDaily(now);
+    if (!this.withinSession(now)) return null;
+    if (this.riskHalted()) return null;
     if (this.cooldownUntil && new Date() < this.cooldownUntil) return null;
     // Determine trend from the base timeframe
     const ht = await this.fetchOHLCV(this.config.baseTimeframe);
@@ -410,8 +463,7 @@ export class TradingBot {
    */
   enterPosition(side: "long" | "short", entry: number, stopLoss: number): void {
     // Compute risk per trade
-    const balance = 1; // placeholder; supply real account balance
-    const riskAmount = this.config.riskPerTrade * balance;
+    const riskAmount = this.config.riskPerTrade * this.config.accountBalance;
     const slDistance = side === "long" ? entry - stopLoss : stopLoss - entry;
     const size = riskAmount / Math.max(slDistance, 1e-8);
     const tp = side === "long" ? entry + 2 * slDistance : entry - 2 * slDistance;
@@ -425,7 +477,7 @@ export class TradingBot {
       trailingStop: stopLoss,
       highWaterMark: entry,
       lowWaterMark: entry,
-      opened: new Date(),
+      opened: Date.now(),
       partialTaken: false,
       slDistance,
     };
@@ -435,7 +487,15 @@ export class TradingBot {
   /**
    * Reset position and return to SCAN state.
    */
-  exitPosition(): void {
+  exitPosition(exitPrice?: number): void {
+    if (this.position && typeof exitPrice === "number") {
+      const dir = this.position.side === "long" ? 1 : -1;
+      const pnl = (exitPrice - this.position.entryPrice) * dir * this.position.size;
+      this.dailyPnl += pnl;
+      this.closedToday += 1;
+      this.config.accountBalance += pnl;
+      this.position.closed = Date.now();
+    }
     this.position = null;
     this.state = State.Scan;
     if (this.config.cooldownBars > 0) {
@@ -642,7 +702,7 @@ export class TradingBot {
     // Exit conditions
     if (this.position.side === "long") {
       if (currentPrice <= this.position.stopLoss || currentPrice <= this.position.trailingStop) {
-        this.exitPosition();
+        this.exitPosition(currentPrice);
         return;
       }
       if (currentPrice >= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
@@ -653,13 +713,13 @@ export class TradingBot {
           this.position.stopLoss = this.position.entryPrice + this.config.breakevenBufferAtr * atr;
           this.position.takeProfit = Infinity;
         } else {
-          this.exitPosition();
+          this.exitPosition(currentPrice);
           return;
         }
       }
     } else {
       if (currentPrice >= this.position.stopLoss || currentPrice >= this.position.trailingStop) {
-        this.exitPosition();
+        this.exitPosition(currentPrice);
         return;
       }
       if (currentPrice <= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
@@ -669,7 +729,7 @@ export class TradingBot {
           this.position.stopLoss = this.position.entryPrice - this.config.breakevenBufferAtr * atr;
           this.position.takeProfit = -Infinity;
         } else {
-          this.exitPosition();
+          this.exitPosition(currentPrice);
           return;
         }
       }
@@ -691,4 +751,304 @@ export class TradingBot {
       await this.managePosition();
     }
   }
+
+  /**
+   * Deterministická varianta – používá již připravené higher/low TF rámce.
+   */
+  stepWithFrames(ht: DataFrame, lt: DataFrame): void {
+    const now = lt[lt.length - 1]?.openTime ?? Date.now();
+    this.resetDaily(now);
+    if (!this.withinSession(now) || this.riskHalted()) {
+      return;
+    }
+    if (this.state === State.Scan) {
+      const signal = this.scanForEntryFromFrames(ht, lt);
+      if (signal) {
+        this.enterPosition(signal.side, signal.entry, signal.stopLoss);
+      }
+    } else if (this.state === State.Manage) {
+      this.managePositionWithFrames(ht, lt);
+    }
+  }
+
+  scanForEntryFromFrames(
+    ht: DataFrame,
+    lt: DataFrame,
+  ): { side: "long" | "short"; entry: number; stopLoss: number } | null {
+    if (this.cooldownUntil && new Date() < this.cooldownUntil) return null;
+    const trend = this.determineTrend(ht);
+    if (trend === Trend.Neutral) return null;
+    if (lt.length < 3) return null;
+    const closes = lt.map((c) => c.close);
+    const highs = lt.map((c) => c.high);
+    const lows = lt.map((c) => c.low);
+    const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
+    const latestATR = atrArray[atrArray.length - 1];
+    const price = closes[closes.length - 1];
+    if (latestATR < price * this.config.minAtrFractionOfPrice) return null;
+    const ema = (period: number): number[] => {
+      const out: number[] = [];
+      const k = 2 / (period + 1);
+      closes.forEach((p, i) => {
+        if (i === 0) out.push(p);
+        else out.push(out[i - 1] + k * (p - out[i - 1]));
+      });
+      return out;
+    };
+    const ema20 = ema(20);
+    const ema50 = ema(50);
+    const last3 = closes.slice(-3);
+    const diff1 = last3[1] - last3[0];
+    const diff2 = last3[2] - last3[1];
+    if (trend === Trend.Bull && diff1 > 0 && diff2 > 0) {
+      const entry = last3[2];
+      const stop = entry - this.config.atrEntryMultiplier * latestATR;
+      return { side: "long", entry, stopLoss: stop };
+    }
+    if (trend === Trend.Bear && diff1 < 0 && diff2 < 0) {
+      const entry = last3[2];
+      const stop = entry + this.config.atrEntryMultiplier * latestATR;
+      return { side: "short", entry, stopLoss: stop };
+    }
+    const c0 = closes[closes.length - 1];
+    const c1 = closes[closes.length - 2];
+    const emaNow = ema20[ema20.length - 1];
+    const emaPrev = ema20[ema20.length - 2];
+    if (trend === Trend.Bull && c1 < emaPrev && c0 > emaNow) {
+      const entry = c0;
+      const stop = Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR;
+      return { side: "long", entry, stopLoss: stop };
+    }
+    if (trend === Trend.Bear && c1 > emaPrev && c0 < emaNow) {
+      const entry = c0;
+      const stop = Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR;
+      return { side: "short", entry, stopLoss: stop };
+    }
+    const lookback = 12;
+    const recentHigh = Math.max(...highs.slice(-lookback));
+    const recentLow = Math.min(...lows.slice(-lookback));
+    if (trend === Trend.Bull && price > recentHigh) {
+      const entry = price;
+      const stop = recentLow - this.config.swingBackoffAtr * latestATR;
+      return { side: "long", entry, stopLoss: stop };
+    }
+    if (trend === Trend.Bear && price < recentLow) {
+      const entry = price;
+      const stop = recentHigh + this.config.swingBackoffAtr * latestATR;
+      return { side: "short", entry, stopLoss: stop };
+    }
+    const adxLt = computeADX(highs, lows, closes, this.config.adxPeriod);
+    const latestAdx = adxLt[adxLt.length - 1];
+    if (latestAdx < this.config.adxThreshold) {
+      const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
+      if (zScore <= -1.5) {
+        const entry = price;
+        const stop = price - this.config.atrEntryMultiplier * latestATR;
+        return { side: "long", entry, stopLoss: stop };
+      }
+      if (zScore >= 1.5) {
+        const entry = price;
+        const stop = price + this.config.atrEntryMultiplier * latestATR;
+        return { side: "short", entry, stopLoss: stop };
+      }
+    }
+    return null;
+  }
+
+  private managePositionWithFrames(ht: DataFrame, lt: DataFrame): void {
+    if (!this.position) return;
+    const currentPrice = lt[lt.length - 1].close;
+    this.updateWaterMarks(currentPrice);
+    this.updateTrailingStop(lt);
+    this.updateTakeProfit(ht, lt);
+    const atrArray = computeATR(
+      lt.map((c) => c.high),
+      lt.map((c) => c.low),
+      lt.map((c) => c.close),
+      this.config.atrPeriod,
+    );
+    const atr = atrArray[atrArray.length - 1];
+    const rMultiple = this.position.slDistance > 0
+      ? (this.position.side === "long"
+        ? (currentPrice - this.position.entryPrice) / this.position.slDistance
+        : (this.position.entryPrice - currentPrice) / this.position.slDistance)
+      : 0;
+
+    if (this.position.side === "long") {
+      if (currentPrice <= this.position.stopLoss || currentPrice <= this.position.trailingStop) {
+        this.exitPosition(currentPrice);
+        return;
+      }
+      if (currentPrice >= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
+        if (!this.position.partialTaken) {
+          this.position.size *= 1 - this.config.partialExitRatio;
+          this.position.partialTaken = true;
+          this.position.stopLoss = this.position.entryPrice + this.config.breakevenBufferAtr * atr;
+          this.position.takeProfit = Infinity;
+        } else {
+          this.exitPosition(currentPrice);
+          return;
+        }
+      }
+    } else {
+      if (currentPrice >= this.position.stopLoss || currentPrice >= this.position.trailingStop) {
+        this.exitPosition(currentPrice);
+        return;
+      }
+      if (currentPrice <= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
+        if (!this.position.partialTaken) {
+          this.position.size *= 1 - this.config.partialExitRatio;
+          this.position.partialTaken = true;
+          this.position.stopLoss = this.position.entryPrice - this.config.breakevenBufferAtr * atr;
+          this.position.takeProfit = -Infinity;
+        } else {
+          this.exitPosition(currentPrice);
+          return;
+        }
+      }
+    }
+  }
+
+  getState(): State {
+    return this.state;
+  }
+
+  getConfig(): BotConfig {
+    return this.config;
+  }
+
+  getPosition(): Position | null {
+    return this.position;
+  }
+
+  isHalted(): boolean {
+    return this.riskHalted();
+  }
+}
+
+/**
+ * Resample lower timeframe candles (e.g. 1m) to target resolution in minutes.
+ */
+export function resampleCandles(candles: Candle[], targetMinutes: number): Candle[] {
+  if (!candles.length) return [];
+  const sorted = [...candles].sort((a, b) => a.openTime - b.openTime);
+  const result: Candle[] = [];
+  const ms = targetMinutes * 60 * 1000;
+  let bucketStart = Math.floor(sorted[0].openTime / ms) * ms;
+  let bucket: Candle[] = [];
+  for (const c of sorted) {
+    const bucketKey = Math.floor(c.openTime / ms) * ms;
+    if (bucketKey !== bucketStart) {
+      if (bucket.length) {
+        const first = bucket[0];
+        const high = Math.max(...bucket.map((x) => x.high));
+        const low = Math.min(...bucket.map((x) => x.low));
+        const close = bucket[bucket.length - 1].close;
+        const volume = bucket.reduce((s, x) => s + x.volume, 0);
+        result.push({ openTime: bucketStart, open: first.open, high, low, close, volume });
+      }
+      bucketStart = bucketKey;
+      bucket = [];
+    }
+    bucket.push(c);
+  }
+  if (bucket.length) {
+    const first = bucket[0];
+    const high = Math.max(...bucket.map((x) => x.high));
+    const low = Math.min(...bucket.map((x) => x.low));
+    const close = bucket[bucket.length - 1].close;
+    const volume = bucket.reduce((s, x) => s + x.volume, 0);
+    result.push({ openTime: bucketStart, open: first.open, high, low, close, volume });
+  }
+  return result;
+}
+
+function timeframeToMinutes(tf: string): number {
+  const num = parseInt(tf, 10);
+  if (tf.endsWith("h")) return num * 60;
+  if (tf.endsWith("d")) return num * 60 * 24;
+  return num; // assume minutes
+}
+
+export type EngineSignal = {
+  id: string;
+  symbol: string;
+  intent: { side: "buy" | "sell"; entry: number; sl: number; tp: number };
+  risk: number;
+  message: string;
+  createdAt: string;
+};
+
+export type EngineDecision = {
+  state: State;
+  trend: Trend;
+  signal?: EngineSignal | null;
+  position?: Position | null;
+  halted?: boolean;
+};
+
+const botRegistry: Record<string, TradingBot> = {};
+
+function ensureBot(symbol: string, config?: Partial<BotConfig>): TradingBot {
+  if (!botRegistry[symbol]) {
+    botRegistry[symbol] = new TradingBot({ symbol, ...config });
+  }
+  return botRegistry[symbol];
+}
+
+/**
+ * Hlavní vstup pro UI / feed: z nižšího TF (např. 1m) resampluje na
+ * baseTimeframe/signalTimeframe, spustí stavový automat a vrátí signál.
+ */
+export function evaluateStrategyForSymbol(
+  symbol: string,
+  candles: Candle[],
+  config: Partial<BotConfig> = {},
+): EngineDecision {
+  const bot = ensureBot(symbol, config);
+  const botConfig = bot.getConfig();
+  const tfBaseMin = timeframeToMinutes(botConfig.baseTimeframe);
+  const tfSigMin = timeframeToMinutes(botConfig.signalTimeframe);
+  const ht = resampleCandles(candles, tfBaseMin);
+  const lt = resampleCandles(candles, tfSigMin);
+  if (!ht.length || !lt.length) {
+    return { state: bot.getState(), trend: Trend.Neutral, halted: true };
+  }
+  const prevState = bot.getState();
+  const prevOpened = bot.getPosition()?.opened;
+  bot.stepWithFrames(ht, lt);
+  const trend = bot.determineTrend(ht);
+  let signal: EngineSignal | null = null;
+  const position = bot.getPosition();
+  if (
+    prevState === State.Scan &&
+    bot.getState() === State.Manage &&
+    position &&
+    position.opened !== prevOpened
+  ) {
+    const slDistance =
+      position.side === "long"
+        ? position.entryPrice - position.stopLoss
+        : position.stopLoss - position.entryPrice;
+    signal = {
+      id: `${symbol}-${Date.now()}`,
+      symbol,
+      intent: {
+        side: position.side === "long" ? "buy" : "sell",
+        entry: position.entryPrice,
+        sl: position.stopLoss,
+        tp: position.initialTakeProfit,
+      },
+      risk: 0.7,
+      message: `Entered ${position.side} with SL ${position.stopLoss.toFixed(2)} | TP ${position.initialTakeProfit.toFixed(2)}`,
+      createdAt: new Date().toISOString(),
+    };
+  }
+  return {
+    state: bot.getState(),
+    trend,
+    signal,
+    position,
+    halted: bot.isHalted(),
+  };
 }

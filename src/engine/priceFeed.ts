@@ -32,14 +32,14 @@ function ensureBuffer(symbol: string): Candle[] {
 
 // normalizace Bybit WS kline dat
 function normalizeWsKline(row: any) {
-  const startTime = Number(row.start ?? row.startTime ?? row[0]);
+  const openTime = Number(row.start ?? row.startTime ?? row[0]);
   const open = parseFloat(row.open ?? row[1]);
   const high = parseFloat(row.high ?? row[2]);
   const low = parseFloat(row.low ?? row[3]);
   const close = parseFloat(row.close ?? row[4]);
   const volume = parseFloat(row.volume ?? row[5]);
 
-  return { startTime, open, high, low, close, volume };
+  return { openTime, open, high, low, close, volume };
 }
 
 export function startPriceFeed(
@@ -85,13 +85,13 @@ export function startPriceFeed(
       if (!Array.isArray(list) || list.length === 0) return;
 
       const row = list[list.length - 1];
-      const { startTime, open, high, low, close, volume } =
+      const { openTime, open, high, low, close, volume } =
         normalizeWsKline(row);
 
       const buffer = ensureBuffer(symbol);
 
       const candle: Candle = {
-        openTime: startTime,
+        openTime,
         open,
         high,
         low,
