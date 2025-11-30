@@ -1,5 +1,5 @@
-import { getDemoPositions } from "../../bybitClient.js";
-import { getUserApiKeys, getUserFromToken } from "../../userCredentials.js";
+import { getDemoPositions } from "../../server/bybitClient.js";
+import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 
 export default async function handler(req, res) {
     if (req.method !== "GET") {
