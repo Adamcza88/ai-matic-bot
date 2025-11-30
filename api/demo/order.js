@@ -1,7 +1,7 @@
 // /api/demo/order.ts
 
-import { createDemoOrder } from "../server/bybitClient.js";
-import { getUserApiKeys, getUserFromToken } from "../server/userCredentials.js";
+import { createDemoOrder } from "../../server/bybitClient.js";
+import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
