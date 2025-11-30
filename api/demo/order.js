@@ -1,66 +1,53 @@
-import { createDemoOrder } from "../../bybitClient.js";
-import { getUserApiKeys, getUserFromToken } from "../../userCredentials.js";
+// /api/demo/order.ts
+
+import { createDemoOrder } from "../../../server/bybitClient";
 
 export default async function handler(req, res) {
-    if (req.method !== "POST") {
-        res.status(405).json({ ok: false, error: "Method not allowed" });
-        return;
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  try {
+    const { symbol, side, price, sl, tp, qty } = req.body;
+
+    // ===== VALIDACE =====
+    if (!symbol || !side || !price) {
+      return res.status(400).json({
+        error: "Missing required fields: symbol, side, price",
+      });
     }
-    try {
-        const authHeader = req.headers.authorization || "";
-        const token = authHeader.startsWith("Bearer ")
-            ? authHeader.split(" ")[1]
-            : null;
 
-        if (!token) {
-            res.status(401).json({ ok: false, error: "Missing auth token" });
-            return;
-        }
+    // ===== DEFAULT QTY PRO TEST MODE =====
+    const safeQty = qty && qty > 0 ? qty : 1;
 
-        const user = await getUserFromToken(token);
-        const keys = await getUserApiKeys(user.id);
+    // ===== BYBIT PAYLOAD =====
+    const payload = {
+      symbol: symbol,
+      side: side.toUpperCase(), // BUY / SELL
+      qty: safeQty,
+      price: Number(price),
+      sl: sl ? Number(sl) : undefined,
+      tp: tp ? Number(tp) : undefined,
+      timeInForce: "GoodTillCancel",
+      reduceOnly: false,
+    };
 
-        if (!keys.bybitKey || !keys.bybitSecret) {
-            res.status(400).json({
-                ok: false,
-                error: "Bybit API key/secret not configured for this user",
-            });
-            return;
-        }
+    // ===== CALL BYBIT =====
+    const result = await createDemoOrder(payload);
 
-        const { symbol, side, qty, price, sl, tp, trailingStop } =
-            req.body || {};
+    return res.status(200).json({
+      ok: true,
+      message: "Demo order created",
+      payload: payload,
+      bybitResponse: result,
+    });
 
-        if (!symbol || !side || !qty) {
-            res.status(400).json({
-                ok: false,
-                error: "Missing symbol/side/qty in request body",
-            });
-            return;
-        }
+  } catch (err) {
+    console.error("DEMO ORDER ERROR:", err);
 
-        const orderResult = await createDemoOrder(
-            {
-                symbol,
-                side,
-                qty,
-                price,
-                sl,
-                tp,
-                trailingStop,
-            },
-            { apiKey: keys.bybitKey, apiSecret: keys.bybitSecret }
-        );
-
-        res.json({
-            ok: true,
-            order: orderResult,
-        });
-    } catch (err) {
-        console.error("POST /api/demo/order error:", err);
-        res.status(500).json({
-            ok: false,
-            error: err?.response?.data || err.message || "Unknown error",
-        });
-    }
+    return res.status(500).json({
+      error: "Server error during demoOrder",
+      details: err?.message || String(err),
+    });
+  }
 }
