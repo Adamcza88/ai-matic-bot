@@ -58,7 +58,7 @@ function calcATR(candles: Candle[], length = 14): number {
 
 function detectTrend(ema21: number, ema50: number): Trend {
   const diff = ema21 - ema50;
-  const tol = Math.abs(ema50) * 0.001; // 0.1 %
+  const tol = Math.abs(ema50) * 0.001;
   if (diff > tol) return "up";
   if (diff < -tol) return "down";
   return "sideways";
@@ -76,13 +76,7 @@ function isBear(c: Candle) {
   return c.close < c.open;
 }
 
-// ===== HLAVNÍ STRATEGIE =====
-//
-// Cíl: víc signálů, ale pořád rozumný filtr.
-// - Trend podle EMA21 vs EMA50
-// - Vstup po pullbacku k EMA21 (s tolerancí)
-// - ATR > malá minimální hodnota (ne příliš mrtvý trh)
-// - Risk score ~ kombinace: trend, pullback, velikost těla, ATR
+// ===== HLAVNÍ ENGINE – S TESTOVACÍM REŽIMEM =====
 
 export function evaluateStrategyForSymbol(
   symbol: string,
@@ -112,101 +106,31 @@ export function evaluateStrategyForSymbol(
 
   const trend = detectTrend(ema21, ema50);
 
-  // základní ATR práh – dost nízký, aby chodilo víc signálů
-  const minAtr = last.close * 0.001; // 0.1 %
-  const atrOk = atr > minAtr;
-
-  // vzdálenost od EMA21 v % – čím blíž, tím lepší pullback
-  const distFromEma21 = Math.abs(last.close - ema21);
-  const distPct = ema21 !== 0 ? distFromEma21 / ema21 : 0;
-
-  // tolerance pullbacku zvětšená, aby bylo víc signálů
-  const pullbackOk = distPct < 0.008; // 0.8 %
-
-  const lastBody = bodySize(last);
-  const avgBody =
-    candles.length > 10
-      ? candles
-          .slice(-10)
-          .reduce((s, c) => s + bodySize(c), 0) / Math.min(10, candles.length)
-      : lastBody;
-
-  const bodyBoost = avgBody > 0 ? Math.min(lastBody / avgBody, 2) : 1;
-
-  // ===== Long / Short kandidáti =====
-  let intent: TradeIntent | null = null;
-  let baseRiskScore = 0;
-
-  if (trend === "up" && atrOk && pullbackOk && isBull(last)) {
-    // LONG
-    const entry = last.close;
-    const sl = Math.min(last.low, ema50 - atr * 0.3);
-    const tp = entry + (entry - sl) * 2.0; // RRR ~2:1
-
-    baseRiskScore =
-      0.4 + // trend
-      0.25 * (1 - distPct / 0.008) + // kvalita pullbacku
-      0.2 * Math.min(atr / (minAtr * 2), 1) + // volatilita
-      0.15 * Math.min(bodyBoost / 1.5, 1); // momentum svíčky
-
-    intent = {
-      side: "buy",
-      entry,
-      sl,
-      tp,
-    } as TradeIntent;
-  } else if (trend === "down" && atrOk && pullbackOk && isBear(last)) {
-    // SHORT
-    const entry = last.close;
-    const sl = Math.max(last.high, ema50 + atr * 0.3);
-    const tp = entry - (sl - entry) * 2.0;
-
-    baseRiskScore =
-      0.4 +
-      0.25 * (1 - distPct / 0.008) +
-      0.2 * Math.min(atr / (minAtr * 2), 1) +
-      0.15 * Math.min(bodyBoost / 1.5, 1);
-
-    intent = {
-      side: "sell",
-      entry,
-      sl,
-      tp,
-    } as TradeIntent;
-  }
-
-  // lehké “rozvolnění” – posuneme dolní hranici na 0.55,
-  // ale typicky bude signál kolem 0.60–0.85.
-  const riskScore = Math.max(0, Math.min(baseRiskScore, 0.95));
+  // ===== STANDARDNÍ VÝPOČET ZŮSTÁVÁ, ALE BUDE IGNOROVÁN =====
 
   let signal: PendingSignal | null = null;
 
-  if (intent && riskScore >= 0.55) {
-    const rr =
-      intent.side === "buy"
-        ? Math.abs(intent.tp - intent.entry) /
-          Math.abs(intent.entry - intent.sl || intent.entry - intent.tp)
-        : Math.abs(intent.entry - intent.tp) /
-          Math.abs(intent.sl - intent.entry || intent.entry - intent.tp);
+  // ===== TESTOVACÍ REŽIM – VŽDY GENERUJ SIGNÁL =====
 
-    const msgParts: string[] = [];
-    msgParts.push(
-      `${trend.toUpperCase()} trend (+) EMA21/EMA50 stack | recent pullback to EMA21`
-    );
-    msgParts.push(`ATR=${atr.toFixed(4)}, distEMA21=${(distPct * 100).toFixed(2)}%`);
-    msgParts.push(`RRR≈${rr.toFixed(2)}`);
+  const entry = last.close;
+  const sl = entry * 0.995;
+  const tp = entry * 1.01;
 
-    const now = new Date().toISOString();
+  const intentTest: TradeIntent = {
+    side: isBull(last) ? "buy" : "sell",
+    entry,
+    sl,
+    tp,
+  };
 
-signal = {
-  id: `${symbol}-${Date.now()}`,
-  symbol,
-  intent,
-  risk: riskScore,
-  message: msgParts.join(" | "),
-  createdAt: now,        // nyní string
-} as PendingSignal;
-  }
+  signal = {
+    id: `${symbol}-TEST-${Date.now()}`,
+    symbol,
+    intent: intentTest,
+    risk: 0.90,
+    message: "TEST MODE: forced signal",
+    createdAt: new Date().toISOString(),
+  };
 
   return {
     symbol,
@@ -218,11 +142,11 @@ signal = {
     ema50,
     signal,
     debug: {
-      distPct,
-      bodyBoost, 
-      atrOk,
-      pullbackOk,
+      forcedTestMode: true,
       lastClose: last.close,
+      ema21,
+      ema50,
+      atr,
     },
   };
 }
