@@ -102,11 +102,11 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-6">
-      <header className="flex items-center justify-between mb-6 p-4 border border-white/10 rounded-xl bg-white/5 backdrop-blur-sm">
+      <header className="flex items-center justify-between mb-6 p-4 border border-white/10 rounded-xl bg-white/5 backdrop-blur-xs flex-col gap-5 sm:flex-row">
         <div className="flex items-center gap-4">
           <Logo className="w-10 h-10 text-blue-500" />
           <div>
-            <div className="font-bold text-xl tracking-tight">AI-Matic</div>
+            <div className="font-bold text-xl tracking-tight">AI Matic</div>
             <div className="text-slate-400 text-sm flex items-center gap-2">
               <User className="w-3 h-3" />
               Signed in as {userEmail}

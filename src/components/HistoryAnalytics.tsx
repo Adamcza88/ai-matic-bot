@@ -38,7 +38,7 @@ const HistoryAnalytics: React.FC<HistoryAnalyticsProps> = ({
 
   const cardBg = isDark
     ? "bg-gray-900/50 border-gray-700/50"
-    : "bg-white border-gray-200 shadow-sm";
+    : "bg-white border-gray-200 shadow-xs";
 
   const labelColor = isDark ? "text-gray-400" : "text-gray-500";
   const valueColor = isDark ? "text-white" : "text-gray-900";

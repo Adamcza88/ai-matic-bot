@@ -46,12 +46,12 @@ export default function Dashboard({
           <h2 className="text-3xl font-bold tracking-tight text-white">
             Dashboard
           </h2>
-          <p className="text-slate-400">
+          <p className="text-slate-400 hidden lg:block">
             Autonomous trading system control center
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-4 items-end sm:items-center">
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
           <div className="flex items-center bg-slate-900 p-1 rounded-lg border border-white/10">
             <Button
               variant={useTestnet ? "secondary" : "ghost"}

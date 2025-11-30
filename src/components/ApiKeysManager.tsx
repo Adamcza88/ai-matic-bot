@@ -197,7 +197,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex-[2]">
+          <div className="flex-2">
             <Input
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}

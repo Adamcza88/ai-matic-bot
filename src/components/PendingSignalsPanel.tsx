@@ -15,7 +15,7 @@ const PendingSignalsPanel: React.FC<Props> = ({
   onReject,
 }) => {
   return (
-    <div className="rounded-xl border bg-card text-card-foreground shadow-sm">
+    <div className="rounded-xl border bg-card text-card-foreground shadow-xs">
       <div className="flex flex-col space-y-1.5 p-6">
         <h3 className="font-semibold leading-none tracking-tight">
           Pending Signals
@@ -59,13 +59,13 @@ const PendingSignalsPanel: React.FC<Props> = ({
                 <div className="flex gap-2 mt-1">
                   <button
                     onClick={() => onExecute(s.id)}
-                    className="flex-1 inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring bg-primary text-primary-foreground hover:bg-primary/90 h-7 px-2"
+                    className="flex-1 inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring bg-primary text-primary-foreground hover:bg-primary/90 h-7 px-2"
                   >
                     Execute
                   </button>
                   <button
                     onClick={() => onReject(s.id)}
-                    className="flex-1 inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring bg-destructive text-destructive-foreground hover:bg-destructive/90 h-7 px-2"
+                    className="flex-1 inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring bg-destructive text-destructive-foreground hover:bg-destructive/90 h-7 px-2"
                   >
                     Reject
                   </button>

@@ -9,7 +9,7 @@ interface Props {
 
 const LiveFeedPanel: React.FC<Props> = ({ logs }) => {
   return (
-    <div className="rounded-xl border bg-card text-card-foreground shadow-sm h-full">
+    <div className="rounded-xl border bg-card text-card-foreground shadow-xs h-full">
       <div className="flex flex-col space-y-1.5 p-6">
         <h3 className="font-semibold leading-none tracking-tight">Live Feed</h3>
       </div>

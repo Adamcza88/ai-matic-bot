@@ -15,7 +15,7 @@ const NewsTicker: React.FC<Props> = ({ theme, news }) => {
 
   return (
     <div
-      className={`w-full border rounded-lg px-3 py-2 overflow-hidden ${bg} backdrop-blur`}
+      className={`w-full border rounded-lg px-3 py-2 overflow-hidden ${bg} backdrop-blur-sm`}
     >
       <div className="animate-marquee whitespace-nowrap text-sm flex space-x-10">
         {news.map((item) => (

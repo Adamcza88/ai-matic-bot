@@ -25,7 +25,7 @@ export default function LoginCard({
 }: Props) {
   return (
     <div
-      className="min-h-screen flex flex-col gap-4 items-center justify-center bg-gradient-to-br from-slate-950 to-slate-900 p-6"
+      className="min-h-screen flex flex-col gap-4 items-center justify-center bg-linear-to-br from-slate-950 to-slate-900 p-6"
       style={{
         backgroundImage: 'url(/loginBackground.svg)',
         backgroundSize: 'cover',
