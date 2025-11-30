@@ -27,6 +27,7 @@ export const INITIAL_RISK_SETTINGS = {
   maxDailyProfitPercent: 0.03,
   maxDrawdownPercent: 0.05,
   baseRiskPerTrade: 0.02,
+  strategyProfile: "auto",
   maxAllocatedCapitalPercent: 0.5,
   requireConfirmationInAuto: true,
   positionSizingMultiplier: 1.0,
@@ -64,6 +65,37 @@ function withinSession(settings: typeof INITIAL_RISK_SETTINGS, now: Date) {
   if (!settings.tradingDays.includes(day)) return false;
   if (hour < settings.tradingStartHour || hour > settings.tradingEndHour) return false;
   return true;
+}
+
+function chooseStrategyProfile(
+  candles: Candle[],
+  preferred: typeof INITIAL_RISK_SETTINGS["strategyProfile"],
+): "trend" | "scalp" | "swing" {
+  if (preferred === "trend") return "trend";
+  if (preferred === "scalp") return "scalp";
+  if (preferred === "swing") return "swing";
+  if (preferred === "intraday") return "trend";
+  // auto: heuristika podle volatility
+  if (candles.length < 20) return "trend";
+  const closes = candles.map((c) => c.close);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+  const atr = (() => {
+    let res = 0;
+    for (let i = 1; i < closes.length; i++) {
+      const hl = highs[i] - lows[i];
+      const hc = Math.abs(highs[i] - closes[i - 1]);
+      const lc = Math.abs(lows[i] - closes[i - 1]);
+      res += Math.max(hl, hc, lc);
+    }
+    const avg = res / Math.max(1, closes.length - 1);
+    return avg;
+  })();
+  const price = closes[closes.length - 1] || 1;
+  const atrPct = atr / price;
+  if (atrPct < 0.0015) return "scalp";
+  if (atrPct > 0.006) return "swing";
+  return "trend";
 }
 
 // ========== HLAVNÍ HOOK ==========
@@ -167,7 +199,13 @@ export const useTradingBot = (
           newPrices[symbol] = candles[candles.length - 1].close;
 
           if (mode !== TradingMode.BACKTEST) {
-            const decision = evaluateStrategyForSymbol(symbol, candles);
+            const profile = chooseStrategyProfile(
+              candles,
+              settingsRef.current.strategyProfile as any,
+            );
+            const decision = evaluateStrategyForSymbol(symbol, candles, {
+              strategyProfile: profile,
+            });
             const signal = decision?.signal;
             if (signal) {
               setPendingSignals((prev) => [signal, ...prev]);

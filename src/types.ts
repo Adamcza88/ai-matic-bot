@@ -14,6 +14,7 @@ export interface AISettings {
   smcScalpMode: boolean;
   useLiquiditySweeps: boolean;
   useVolatilityExpansion: boolean;
+  strategyProfile: "auto" | "trend" | "scalp" | "swing" | "intraday";
   haltOnDailyLoss: boolean;
   haltOnDrawdown: boolean;
   useDynamicPositionSizing: boolean;

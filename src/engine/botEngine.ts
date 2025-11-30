@@ -27,6 +27,16 @@ export enum Trend {
   Neutral = "neutral",
 }
 
+/**
+ * Helper: position sizing based on balance, risk %, and SL distance.
+ */
+export function computePositionSize(balance: number, riskPct: number, entry: number, sl: number): number {
+  const riskAmount = balance * riskPct;
+  const slDistance = Math.abs(entry - sl);
+  if (slDistance <= 0) return 0;
+  return riskAmount / slDistance;
+}
+
 export enum State {
   Scan = "SCAN",
   Manage = "MANAGE",
@@ -72,6 +82,7 @@ export interface BotConfig {
   signalTimeframe: string;
   targetTradesPerDay: number;
   riskPerTrade: number;
+  strategyProfile: "trend" | "scalp" | "swing";
   accountBalance: number;
   atrPeriod: number;
   adxPeriod: number;
@@ -88,8 +99,15 @@ export interface BotConfig {
   cooldownBars: number;
   maxDailyLossPercent: number;
   maxDailyProfitPercent: number;
+  maxDrawdownPercent: number;
   tradingHours: { start: number; end: number; days: number[] };
   maxOpenPositions: number;
+  // Liquidity sweep / volatility expansion params
+  liquiditySweepAtrMult: number;
+  liquiditySweepLookback: number;
+  liquiditySweepVolumeMult: number;
+  volExpansionAtrMult: number;
+  volExpansionVolMult: number;
 }
 
 /**
@@ -101,6 +119,7 @@ export const defaultConfig: BotConfig = {
   signalTimeframe: "5m",
   targetTradesPerDay: 20,
   riskPerTrade: 0.01,
+  strategyProfile: "trend",
   accountBalance: 100000,
   atrPeriod: 14,
   adxPeriod: 14,
@@ -117,8 +136,14 @@ export const defaultConfig: BotConfig = {
   cooldownBars: 3,
   maxDailyLossPercent: 0.05,
   maxDailyProfitPercent: 0.1,
+  maxDrawdownPercent: 0.1,
   tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
   maxOpenPositions: 1,
+  liquiditySweepAtrMult: 0.5,
+  liquiditySweepLookback: 5,
+  liquiditySweepVolumeMult: 1.2,
+  volExpansionAtrMult: 1.5,
+  volExpansionVolMult: 1.3,
 };
 
 /**
@@ -235,6 +260,8 @@ export class TradingBot {
   private dailyPnl: number;
   private tradingDay: number | null;
   private closedToday: number;
+  private equityPeak: number;
+  private currentDrawdown: number;
   // History of OHLCV by timeframe
   private history: Record<string, DataFrame>;
   // Exchange client interface (optional)
@@ -248,6 +275,8 @@ export class TradingBot {
     this.dailyPnl = 0;
     this.closedToday = 0;
     this.tradingDay = null;
+    this.equityPeak = this.config.accountBalance;
+    this.currentDrawdown = 0;
     this.history = {};
     this.exchange = exchange;
   }
@@ -336,6 +365,7 @@ export class TradingBot {
       this.tradingDay = day;
       this.dailyPnl = 0;
       this.closedToday = 0;
+      this.equityPeak = Math.max(this.equityPeak, this.config.accountBalance);
     }
   }
 
@@ -354,6 +384,7 @@ export class TradingBot {
     const profitLimit = this.config.accountBalance * this.config.maxDailyProfitPercent;
     if (this.dailyPnl <= lossLimit) return true;
     if (this.dailyPnl >= profitLimit) return true;
+    if (this.currentDrawdown >= this.config.maxDrawdownPercent) return true;
     return false;
   }
 
@@ -438,17 +469,18 @@ export class TradingBot {
       const stop = recentHigh + this.config.swingBackoffAtr * latestATR;
       return { side: "short", entry, stopLoss: stop };
     }
-    // Pattern 4: mean-reversion in low ADX regime
+    // Pattern 4: mean-reversion in low ADX regime with confluence
     const adxLt = computeADX(highs, lows, closes, this.config.adxPeriod);
     const latestAdx = adxLt[adxLt.length - 1];
+    const { score } = this.computeConfluence(ht, lt, trend);
     if (latestAdx < this.config.adxThreshold) {
       const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
-      if (zScore <= -1.5) {
+      if (zScore <= -1.5 && score >= 2) {
         const entry = price;
         const stop = price - this.config.atrEntryMultiplier * latestATR;
         return { side: "long", entry, stopLoss: stop };
       }
-      if (zScore >= 1.5) {
+      if (zScore >= 1.5 && score >= 2) {
         const entry = price;
         const stop = price + this.config.atrEntryMultiplier * latestATR;
         return { side: "short", entry, stopLoss: stop };
@@ -462,11 +494,21 @@ export class TradingBot {
    * size based on risk management settings.
    */
   enterPosition(side: "long" | "short", entry: number, stopLoss: number): void {
-    // Compute risk per trade
-    const riskAmount = this.config.riskPerTrade * this.config.accountBalance;
+    const profileRisk =
+      this.config.strategyProfile === "trend"
+        ? 0.015
+        : this.config.strategyProfile === "scalp"
+        ? 0.005
+        : 0.01;
+    const riskPct = Math.min(profileRisk, this.config.riskPerTrade);
     const slDistance = side === "long" ? entry - stopLoss : stopLoss - entry;
-    const size = riskAmount / Math.max(slDistance, 1e-8);
-    const tp = side === "long" ? entry + 2 * slDistance : entry - 2 * slDistance;
+    const size = computePositionSize(this.config.accountBalance, riskPct, entry, stopLoss);
+    const rrMap: Record<BotConfig["strategyProfile"], number> = {
+      trend: 3,
+      scalp: 1,
+      swing: 2,
+    };
+    const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
     this.position = {
       entryPrice: entry,
       size: size,
@@ -495,6 +537,10 @@ export class TradingBot {
       this.closedToday += 1;
       this.config.accountBalance += pnl;
       this.position.closed = Date.now();
+      // update equity peak / drawdown
+      this.equityPeak = Math.max(this.equityPeak, this.config.accountBalance);
+      const dd = (this.equityPeak - this.config.accountBalance) / Math.max(this.equityPeak, 1e-8);
+      this.currentDrawdown = dd;
     }
     this.position = null;
     this.state = State.Scan;
@@ -674,6 +720,60 @@ export class TradingBot {
         this.position.takeProfit = -Infinity;
       }
     }
+  }
+
+  private computeConfluence(ht: DataFrame, lt: DataFrame, trend: Trend): { score: number; liquiditySweep: boolean; volExpansion: boolean } {
+    const liquiditySweep = this.isLiquiditySweep(ht);
+    const volExpansion = this.isVolatilityExpansion(lt);
+    let score = 0;
+    if (trend !== Trend.Neutral) score += 2;
+    if (liquiditySweep) score += 2;
+    if (volExpansion) score += 1;
+    const adxArray = computeADX(
+      lt.map((c) => c.high),
+      lt.map((c) => c.low),
+      lt.map((c) => c.close),
+      this.config.adxPeriod,
+    );
+    const adxNow = adxArray[adxArray.length - 1];
+    if (adxNow >= this.config.aggressiveAdxThreshold) score += 1;
+    return { score, liquiditySweep, volExpansion };
+  }
+
+  private isLiquiditySweep(df: DataFrame): boolean {
+    if (df.length < this.config.liquiditySweepLookback + 2) return false;
+    const highs = df.map((c) => c.high);
+    const lows = df.map((c) => c.low);
+    const closes = df.map((c) => c.close);
+    const vols = df.map((c) => c.volume);
+    const atrArr = computeATR(highs, lows, closes, this.config.atrPeriod);
+    const atr = atrArr[atrArr.length - 1] || 0;
+    const lb = this.config.liquiditySweepLookback;
+    const swingHigh = Math.max(...highs.slice(-lb - 1, -1));
+    const swingLow = Math.min(...lows.slice(-lb - 1, -1));
+    const last = df[df.length - 1];
+    const volSmaWindow = Math.min(vols.length, 50);
+    const volSma = vols.slice(-volSmaWindow).reduce((a, b) => a + b, 0) / Math.max(1, volSmaWindow);
+    const volOk = last.volume > this.config.liquiditySweepVolumeMult * volSma;
+    const sweptHigh = last.high > swingHigh + this.config.liquiditySweepAtrMult * atr && last.close < swingHigh;
+    const sweptLow = last.low < swingLow - this.config.liquiditySweepAtrMult * atr && last.close > swingLow;
+    return volOk && (sweptHigh || sweptLow);
+  }
+
+  private isVolatilityExpansion(df: DataFrame): boolean {
+    if (df.length < 20) return false;
+    const highs = df.map((c) => c.high);
+    const lows = df.map((c) => c.low);
+    const closes = df.map((c) => c.close);
+    const vols = df.map((c) => c.volume);
+    const atrArr = computeATR(highs, lows, closes, this.config.atrPeriod);
+    const atrNow = atrArr[atrArr.length - 1] || 0;
+    const atrWindow = Math.min(atrArr.length, 20);
+    const atrSma = atrArr.slice(-atrWindow).reduce((a, b) => a + b, 0) / Math.max(1, atrWindow);
+    const volWindow = Math.min(vols.length, 50);
+    const volSma = vols.slice(-volWindow).reduce((a, b) => a + b, 0) / Math.max(1, volWindow);
+    const volNow = vols[vols.length - 1] || 0;
+    return atrNow > this.config.volExpansionAtrMult * atrSma && volNow > this.config.volExpansionVolMult * volSma;
   }
 
   /**
@@ -923,6 +1023,10 @@ export class TradingBot {
 
   isHalted(): boolean {
     return this.riskHalted();
+  }
+
+  getDrawdown(): number {
+    return this.currentDrawdown;
   }
 }
 
