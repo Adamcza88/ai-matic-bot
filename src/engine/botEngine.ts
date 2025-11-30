@@ -127,13 +127,13 @@ export const defaultConfig: BotConfig = {
   aggressiveAdxThreshold: 35,
   atrEntryMultiplier: 2,
   atrTrailMultiplier: 2,
-  minAtrFractionOfPrice: 0.001,
-  swingBackoffAtr: 1,
+  minAtrFractionOfPrice: 0.0006,
+  swingBackoffAtr: 0.7,
   partialExitRatio: 0.5,
   partialTakeProfitR: 1.5,
   breakevenBufferAtr: 0.2,
   lookbackZones: 50,
-  cooldownBars: 3,
+  cooldownBars: 1,
   maxDailyLossPercent: 0.05,
   maxDailyProfitPercent: 0.1,
   maxDrawdownPercent: 0.1,
@@ -141,9 +141,9 @@ export const defaultConfig: BotConfig = {
   maxOpenPositions: 1,
   liquiditySweepAtrMult: 0.5,
   liquiditySweepLookback: 5,
-  liquiditySweepVolumeMult: 1.2,
-  volExpansionAtrMult: 1.5,
-  volExpansionVolMult: 1.3,
+  liquiditySweepVolumeMult: 1.05,
+  volExpansionAtrMult: 1.3,
+  volExpansionVolMult: 1.2,
 };
 
 /**
@@ -456,7 +456,7 @@ export class TradingBot {
       return { side: "short", entry, stopLoss: stop };
     }
     // Pattern 3: breakout of recent range (last N bars)
-    const lookback = 12;
+    const lookback = 8;
     const recentHigh = Math.max(...highs.slice(-lookback));
     const recentLow = Math.min(...lows.slice(-lookback));
     if (trend === Trend.Bull && price > recentHigh) {
@@ -475,12 +475,12 @@ export class TradingBot {
     const { score } = this.computeConfluence(ht, lt, trend);
     if (latestAdx < this.config.adxThreshold) {
       const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
-      if (zScore <= -1.5 && score >= 2) {
+      if (zScore <= -1.2 && score >= 2) {
         const entry = price;
         const stop = price - this.config.atrEntryMultiplier * latestATR;
         return { side: "long", entry, stopLoss: stop };
       }
-      if (zScore >= 1.5 && score >= 2) {
+      if (zScore >= 1.2 && score >= 2) {
         const entry = price;
         const stop = price + this.config.atrEntryMultiplier * latestATR;
         return { side: "short", entry, stopLoss: stop };
