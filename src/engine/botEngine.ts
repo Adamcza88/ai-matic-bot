@@ -82,7 +82,7 @@ export interface BotConfig {
   signalTimeframe: string;
   targetTradesPerDay: number;
   riskPerTrade: number;
-  strategyProfile: "trend" | "scalp" | "swing";
+  strategyProfile: "trend" | "scalp" | "swing" | "intraday";
   accountBalance: number;
   atrPeriod: number;
   adxPeriod: number;
@@ -499,6 +499,8 @@ export class TradingBot {
         ? 0.015
         : this.config.strategyProfile === "scalp"
         ? 0.005
+        : this.config.strategyProfile === "intraday"
+        ? 0.008
         : 0.01;
     const riskPct = Math.min(profileRisk, this.config.riskPerTrade);
     const slDistance = side === "long" ? entry - stopLoss : stopLoss - entry;
@@ -507,6 +509,7 @@ export class TradingBot {
       trend: 3,
       scalp: 1,
       swing: 2,
+      intraday: 1.5,
     };
     const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
     this.position = {
@@ -885,7 +888,16 @@ export class TradingBot {
     const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
     const latestATR = atrArray[atrArray.length - 1];
     const price = closes[closes.length - 1];
-    if (latestATR < price * this.config.minAtrFractionOfPrice) return null;
+    const relaxationLevel =
+      this.config.strategyProfile === "intraday"
+        ? "ultra"
+        : this.config.strategyProfile === "scalp"
+        ? "relaxed"
+        : "base";
+    const minAtrThreshold =
+      this.config.minAtrFractionOfPrice *
+      (relaxationLevel === "ultra" ? 0.25 : relaxationLevel === "relaxed" ? 0.5 : 1);
+    if (latestATR < price * minAtrThreshold) return null;
     const ema = (period: number): number[] => {
       const out: number[] = [];
       const k = 2 / (period + 1);
@@ -897,16 +909,16 @@ export class TradingBot {
     };
     const ema20 = ema(20);
     const ema50 = ema(50);
-    const last3 = closes.slice(-3);
-    const diff1 = last3[1] - last3[0];
-    const diff2 = last3[2] - last3[1];
-    if (trend === Trend.Bull && diff1 > 0 && diff2 > 0) {
-      const entry = last3[2];
+    const momentumLen = relaxationLevel === "base" ? 3 : 2;
+    const lastN = closes.slice(-momentumLen);
+    const diffs = lastN.slice(1).map((v, i) => v - lastN[i]);
+    if (trend === Trend.Bull && diffs.every((d) => d > 0)) {
+      const entry = lastN[lastN.length - 1];
       const stop = entry - this.config.atrEntryMultiplier * latestATR;
       return { side: "long", entry, stopLoss: stop };
     }
-    if (trend === Trend.Bear && diff1 < 0 && diff2 < 0) {
-      const entry = last3[2];
+    if (trend === Trend.Bear && diffs.every((d) => d < 0)) {
+      const entry = lastN[lastN.length - 1];
       const stop = entry + this.config.atrEntryMultiplier * latestATR;
       return { side: "short", entry, stopLoss: stop };
     }
@@ -924,7 +936,7 @@ export class TradingBot {
       const stop = Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR;
       return { side: "short", entry, stopLoss: stop };
     }
-    const lookback = 12;
+    const lookback = relaxationLevel === "ultra" ? 5 : relaxationLevel === "relaxed" ? 8 : 12;
     const recentHigh = Math.max(...highs.slice(-lookback));
     const recentLow = Math.min(...lows.slice(-lookback));
     if (trend === Trend.Bull && price > recentHigh) {
@@ -939,17 +951,31 @@ export class TradingBot {
     }
     const adxLt = computeADX(highs, lows, closes, this.config.adxPeriod);
     const latestAdx = adxLt[adxLt.length - 1];
-    if (latestAdx < this.config.adxThreshold) {
+    const zCut = relaxationLevel === "ultra" ? 0.8 : relaxationLevel === "relaxed" ? 1.0 : 1.5;
+    const adxLimit =
+      relaxationLevel === "ultra" ? this.config.adxThreshold * 1.3 : this.config.adxThreshold;
+    if (latestAdx < adxLimit) {
       const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
-      if (zScore <= -1.5) {
+      if (zScore <= -zCut) {
         const entry = price;
         const stop = price - this.config.atrEntryMultiplier * latestATR;
         return { side: "long", entry, stopLoss: stop };
       }
-      if (zScore >= 1.5) {
+      if (zScore >= zCut) {
         const entry = price;
         const stop = price + this.config.atrEntryMultiplier * latestATR;
         return { side: "short", entry, stopLoss: stop };
+      }
+    }
+    if (relaxationLevel === "ultra") {
+      const emaBias = trend === Trend.Bull ? price > ema20[ema20.length - 1] : price < ema20[ema20.length - 1];
+      if (emaBias) {
+        const entry = price;
+        const stop =
+          trend === Trend.Bull
+            ? price - this.config.atrEntryMultiplier * latestATR
+            : price + this.config.atrEntryMultiplier * latestATR;
+        return { side: trend === Trend.Bull ? "long" : "short", entry, stopLoss: stop };
       }
     }
     return null;

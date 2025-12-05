@@ -71,12 +71,12 @@ function withinSession(settings: typeof INITIAL_RISK_SETTINGS, now: Date) {
 function chooseStrategyProfile(
     candles: Candle[],
     preferred: (typeof INITIAL_RISK_SETTINGS)["strategyProfile"]
-): "trend" | "scalp" | "swing" | null {
+): "trend" | "scalp" | "swing" | "intraday" | null {
     if (preferred === "off") return null;
     if (preferred === "trend") return "trend";
     if (preferred === "scalp") return "scalp";
     if (preferred === "swing") return "swing";
-    if (preferred === "intraday") return "trend";
+    if (preferred === "intraday") return "intraday";
     // auto: heuristika podle volatility
     if (candles.length < 20) return "trend";
     const closes = candles.map((c) => c.close);
