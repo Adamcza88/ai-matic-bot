@@ -74,6 +74,7 @@ function parseKlines(list: any[]): Candle[] {
 }
 
 function withinSession(settings: typeof INITIAL_RISK_SETTINGS, now: Date) {
+    if (settings.entryStrictness === "test") return true;
     if (!settings.enforceSessionHours) return true;
     const day = now.getDay();
     const hour = now.getHours();

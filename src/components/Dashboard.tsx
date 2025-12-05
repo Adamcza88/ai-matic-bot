@@ -223,6 +223,7 @@ export default function Dashboard({
                   { key: "base", label: "Base" },
                   { key: "relaxed", label: "Relaxed" },
                   { key: "ultra", label: "Ultra" },
+                  { key: "test", label: "Test" },
                 ].map((opt) => (
                   <Button
                     key={opt.key}

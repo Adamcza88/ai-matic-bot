@@ -83,7 +83,7 @@ export interface BotConfig {
   targetTradesPerDay: number;
   riskPerTrade: number;
   strategyProfile: "trend" | "scalp" | "swing" | "intraday";
-  entryStrictness: "base" | "relaxed" | "ultra";
+  entryStrictness: "base" | "relaxed" | "ultra" | "test";
   accountBalance: number;
   atrPeriod: number;
   adxPeriod: number;
@@ -372,6 +372,7 @@ export class TradingBot {
   }
 
   private withinSession(now: number): boolean {
+    if (this.config.entryStrictness === "test") return true;
     const d = new Date(now);
     const hour = d.getUTCHours();
     const day = d.getUTCDay();
@@ -382,6 +383,7 @@ export class TradingBot {
   }
 
   private riskHalted(): boolean {
+    if (this.config.entryStrictness === "test") return false;
     const lossLimit = -this.config.accountBalance * this.config.maxDailyLossPercent;
     const profitLimit = this.config.accountBalance * this.config.maxDailyProfitPercent;
     if (this.dailyPnl <= lossLimit) return true;
@@ -881,8 +883,7 @@ export class TradingBot {
     lt: DataFrame,
   ): { side: "long" | "short"; entry: number; stopLoss: number } | null {
     if (this.cooldownUntil && new Date() < this.cooldownUntil) return null;
-    const trend = this.determineTrend(ht);
-    if (trend === Trend.Neutral) return null;
+    let trend = this.determineTrend(ht);
     if (lt.length < 3) return null;
     const closes = lt.map((c) => c.close);
     const highs = lt.map((c) => c.high);
@@ -890,17 +891,26 @@ export class TradingBot {
     const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
     const latestATR = atrArray[atrArray.length - 1];
     const price = closes[closes.length - 1];
-    const relaxationLevel =
+    const strictness =
       this.config.entryStrictness ??
       (this.config.strategyProfile === "intraday"
         ? "ultra"
         : this.config.strategyProfile === "scalp"
         ? "relaxed"
         : "base");
+    const isTest = strictness === "test";
+    if (trend === Trend.Neutral && isTest) {
+      // fallback trend by short-term momentum
+      const last = closes.slice(-3);
+      const net = (last[last.length - 1] ?? 0) - (last[0] ?? 0);
+      trend = net >= 0 ? Trend.Bull : Trend.Bear;
+    } else if (trend === Trend.Neutral) {
+      return null;
+    }
     const minAtrThreshold =
       this.config.minAtrFractionOfPrice *
-      (relaxationLevel === "ultra" ? 0.25 : relaxationLevel === "relaxed" ? 0.5 : 1);
-    if (latestATR < price * minAtrThreshold) return null;
+      (isTest ? 0 : strictness === "ultra" ? 0.25 : strictness === "relaxed" ? 0.5 : 1);
+    if (!isTest && latestATR < price * minAtrThreshold) return null;
     const ema = (period: number): number[] => {
       const out: number[] = [];
       const k = 2 / (period + 1);
@@ -912,7 +922,7 @@ export class TradingBot {
     };
     const ema20 = ema(20);
     const ema50 = ema(50);
-    const momentumLen = relaxationLevel === "base" ? 3 : 2;
+    const momentumLen = strictness === "base" ? 3 : 2;
     const lastN = closes.slice(-momentumLen);
     const diffs = lastN.slice(1).map((v, i) => v - lastN[i]);
     if (trend === Trend.Bull && diffs.every((d) => d > 0)) {
@@ -939,7 +949,7 @@ export class TradingBot {
       const stop = Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR;
       return { side: "short", entry, stopLoss: stop };
     }
-    const lookback = relaxationLevel === "ultra" ? 5 : relaxationLevel === "relaxed" ? 8 : 12;
+    const lookback = strictness === "ultra" ? 5 : strictness === "relaxed" ? 8 : strictness === "test" ? 3 : 12;
     const recentHigh = Math.max(...highs.slice(-lookback));
     const recentLow = Math.min(...lows.slice(-lookback));
     if (trend === Trend.Bull && price > recentHigh) {
@@ -954,10 +964,14 @@ export class TradingBot {
     }
     const adxLt = computeADX(highs, lows, closes, this.config.adxPeriod);
     const latestAdx = adxLt[adxLt.length - 1];
-    const zCut = relaxationLevel === "ultra" ? 0.8 : relaxationLevel === "relaxed" ? 1.0 : 1.5;
+    const zCut = strictness === "ultra" ? 0.8 : strictness === "relaxed" ? 1.0 : strictness === "test" ? 0.5 : 1.5;
     const adxLimit =
-      relaxationLevel === "ultra" ? this.config.adxThreshold * 1.3 : this.config.adxThreshold;
-    if (latestAdx < adxLimit) {
+      strictness === "ultra"
+        ? this.config.adxThreshold * 1.3
+        : strictness === "test"
+        ? this.config.adxThreshold * 2
+        : this.config.adxThreshold;
+    if (isTest || latestAdx < adxLimit) {
       const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
       if (zScore <= -zCut) {
         const entry = price;
@@ -970,7 +984,7 @@ export class TradingBot {
         return { side: "short", entry, stopLoss: stop };
       }
     }
-    if (relaxationLevel === "ultra") {
+    if (strictness === "ultra" || isTest) {
       const emaBias = trend === Trend.Bull ? price > ema20[ema20.length - 1] : price < ema20[ema20.length - 1];
       if (emaBias) {
         const entry = price;
@@ -980,6 +994,17 @@ export class TradingBot {
             : price + this.config.atrEntryMultiplier * latestATR;
         return { side: trend === Trend.Bull ? "long" : "short", entry, stopLoss: stop };
       }
+    }
+    if (isTest) {
+      // Final permissive trigger: allow either momentum or EMA bias alone
+      const last = closes.slice(-2);
+      const dir = (last[last.length - 1] ?? 0) - (last[0] ?? 0) >= 0 ? "long" : "short";
+      const entry = price;
+      const stop =
+        dir === "long"
+          ? price - this.config.atrEntryMultiplier * latestATR
+          : price + this.config.atrEntryMultiplier * latestATR;
+      return { side: dir as "long" | "short", entry, stopLoss: stop };
     }
     return null;
   }

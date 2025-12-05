@@ -15,7 +15,7 @@ export interface AISettings {
   useLiquiditySweeps: boolean;
   useVolatilityExpansion: boolean;
   strategyProfile: "off" | "auto" | "trend" | "scalp" | "swing" | "intraday";
-  entryStrictness: "base" | "relaxed" | "ultra";
+  entryStrictness: "base" | "relaxed" | "ultra" | "test";
   enforceSessionHours: boolean;
   haltOnDailyLoss: boolean;
   haltOnDrawdown: boolean;

@@ -59,6 +59,7 @@ const AIStrategyPanel: React.FC<Props> = ({
               { key: "base", label: "Base" },
               { key: "relaxed", label: "Relaxed" },
               { key: "ultra", label: "Ultra" },
+              { key: "test", label: "Test" },
             ].map((opt) => (
               <button
                 key={opt.key}
