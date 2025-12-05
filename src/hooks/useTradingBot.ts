@@ -405,6 +405,7 @@ export const useTradingBot = (
 
         // callbackRate v %
         const trailingStopPct = (trailingDistance / entry) * 100;
+        const trailingStopDistance = trailingDistance;
 
         const position: ActivePosition = {
             id: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -454,7 +455,7 @@ export const useTradingBot = (
                 return;
             }
 
-            await fetch("/api/demo/order", {
+            const res = await fetch("/api/demo/order", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -466,10 +467,19 @@ export const useTradingBot = (
                     qty: Number(size.toFixed(3)),
                     sl,
                     tp,
+                    trailingStop: trailingStopDistance,
                     trailingStopPct,
                     trailingActivationPrice,
                 }),
             });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                addLog({
+                    action: "ERROR",
+                    message: `Order API failed (${res.status}): ${errText}`,
+                });
+            }
         } catch (err: any) {
             addLog({
                 action: "ERROR",
