@@ -193,6 +193,7 @@ export default function Dashboard({
                   { key: "off", label: "Off" },
                   { key: "auto", label: "Auto" },
                   { key: "scalp", label: "Scalp" },
+                  { key: "intraday", label: "Intraday" },
                   { key: "swing", label: "Swing" },
                   { key: "trend", label: "Trend" },
                 ].map((opt) => (
