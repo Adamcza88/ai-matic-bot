@@ -406,6 +406,50 @@ export const useTradingBot = (
         const trailingStopPct = (trailingDistance / entry) * 100;
         const trailingStopDistance = trailingDistance;
 
+        try {
+            if (!authToken) {
+                addLog({
+                    action: "ERROR",
+                    message:
+                        "Missing auth token for placing order. Please re-login.",
+                });
+                return;
+            }
+
+            const res = await fetch("/api/demo/order", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({
+                    symbol: signal.symbol,
+                    side: side === "buy" ? "Buy" : "Sell",
+                    qty: Number(size.toFixed(3)),
+                    sl,
+                    tp,
+                    trailingStop: trailingStopDistance,
+                    trailingStopPct,
+                    trailingActivationPrice,
+                }),
+            });
+
+            const resText = await res.text();
+            if (!res.ok) {
+                addLog({
+                    action: "ERROR",
+                    message: `Order API failed (${res.status}): ${resText || "unknown"}`,
+                });
+                return;
+            }
+        } catch (err: any) {
+            addLog({
+                action: "ERROR",
+                message: `Demo API order failed: ${err?.message || "unknown"}`,
+            });
+            return;
+        }
+
         const position: ActivePosition = {
             id: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`,
             symbol: signal.symbol,
@@ -442,49 +486,6 @@ export const useTradingBot = (
                 2
             )} USD, TS≈${trailingStopPct.toFixed(2)}% from 1R)`,
         });
-
-        // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
-        try {
-            if (!authToken) {
-                addLog({
-                    action: "ERROR",
-                    message:
-                        "Missing auth token for placing order. Please re-login.",
-                });
-                return;
-            }
-
-            const res = await fetch("/api/demo/order", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${authToken}`,
-                },
-                body: JSON.stringify({
-                    symbol: signal.symbol,
-                    side: side === "buy" ? "Buy" : "Sell",
-                    qty: Number(size.toFixed(3)),
-                    sl,
-                    tp,
-                    trailingStop: trailingStopDistance,
-                    trailingStopPct,
-                    trailingActivationPrice,
-                }),
-            });
-
-            if (!res.ok) {
-                const errText = await res.text();
-                addLog({
-                    action: "ERROR",
-                    message: `Order API failed (${res.status}): ${errText}`,
-                });
-            }
-        } catch (err: any) {
-            addLog({
-                action: "ERROR",
-                message: `Demo API order failed: ${err?.message || "unknown"}`,
-            });
-        }
     }
 
     // ========== AUTO MODE ==========
