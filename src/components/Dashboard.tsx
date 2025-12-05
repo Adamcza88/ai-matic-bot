@@ -213,6 +213,33 @@ export default function Dashboard({
                 ))}
               </div>
               <div className="flex justify-between">
+                <span className="text-slate-400">Entry Strictness</span>
+                <Badge variant="outline" className="capitalize border-slate-700 text-slate-300 bg-slate-800">
+                  {settings.entryStrictness}
+                </Badge>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {[
+                  { key: "base", label: "Base" },
+                  { key: "relaxed", label: "Relaxed" },
+                  { key: "ultra", label: "Ultra" },
+                ].map((opt) => (
+                  <Button
+                    key={opt.key}
+                    size="sm"
+                    variant={settings.entryStrictness === opt.key ? "secondary" : "ghost"}
+                    className={
+                      settings.entryStrictness === opt.key
+                        ? "bg-blue-600 text-white hover:bg-blue-700"
+                        : "text-slate-300 hover:text-white"
+                    }
+                    onClick={() => updateSettings({ ...settings, entryStrictness: opt.key as any })}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex justify-between">
                 <span className="text-slate-400">Base Risk</span>
                 <span className="font-mono">{(settings.baseRiskPerTrade * 100).toFixed(2)}%</span>
               </div>

@@ -83,6 +83,7 @@ export interface BotConfig {
   targetTradesPerDay: number;
   riskPerTrade: number;
   strategyProfile: "trend" | "scalp" | "swing" | "intraday";
+  entryStrictness: "base" | "relaxed" | "ultra";
   accountBalance: number;
   atrPeriod: number;
   adxPeriod: number;
@@ -120,6 +121,7 @@ export const defaultConfig: BotConfig = {
   targetTradesPerDay: 20,
   riskPerTrade: 0.01,
   strategyProfile: "trend",
+  entryStrictness: "base",
   accountBalance: 100000,
   atrPeriod: 14,
   adxPeriod: 14,
@@ -889,11 +891,12 @@ export class TradingBot {
     const latestATR = atrArray[atrArray.length - 1];
     const price = closes[closes.length - 1];
     const relaxationLevel =
-      this.config.strategyProfile === "intraday"
+      this.config.entryStrictness ??
+      (this.config.strategyProfile === "intraday"
         ? "ultra"
         : this.config.strategyProfile === "scalp"
         ? "relaxed"
-        : "base";
+        : "base");
     const minAtrThreshold =
       this.config.minAtrFractionOfPrice *
       (relaxationLevel === "ultra" ? 0.25 : relaxationLevel === "relaxed" ? 0.5 : 1);

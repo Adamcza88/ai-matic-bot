@@ -28,6 +28,7 @@ export const INITIAL_RISK_SETTINGS = {
     maxDrawdownPercent: 0.05,
     baseRiskPerTrade: 0.02,
     strategyProfile: "auto",
+    entryStrictness: "base",
     maxAllocatedCapitalPercent: 0.5,
     requireConfirmationInAuto: true,
     positionSizingMultiplier: 1.0,
@@ -224,6 +225,8 @@ export const useTradingBot = (
                             candles,
                             {
                                 strategyProfile: profile,
+                                entryStrictness:
+                                    settingsRef.current.entryStrictness,
                                 riskPerTrade:
                                     settingsRef.current.baseRiskPerTrade,
                             }
