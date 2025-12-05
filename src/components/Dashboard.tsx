@@ -32,12 +32,13 @@ export default function Dashboard({
     settings,
     pendingSignals,
     activePositions,
-    logEntries,
-    priceAlerts,
-    addPriceAlert,
-    removePriceAlert,
-    updateSettings,
-  } = bot;
+  logEntries,
+  priceAlerts,
+  addPriceAlert,
+  removePriceAlert,
+  updateSettings,
+  closePosition,
+} = bot;
 
   const setProfile = (profile: AISettings["strategyProfile"]) => {
     updateSettings({ ...settings, strategyProfile: profile });
@@ -323,6 +324,14 @@ export default function Dashboard({
                       <div className="text-xs text-slate-400 mt-1 font-mono">
                         TP: {p.tp} | SL: {p.currentTrailingStop ?? p.sl}
                       </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="mt-2 text-red-400 hover:text-white hover:bg-red-500/10"
+                        onClick={() => closePosition(p.id)}
+                      >
+                        Close
+                      </Button>
                     </div>
                   </div>
                 ))}

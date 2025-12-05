@@ -527,6 +527,18 @@ export const useTradingBot = (
         setPriceAlerts((p) => p.filter((a) => a.id !== id));
     };
 
+    const closePosition = (id: string) => {
+        setActivePositions((prev) => prev.filter((p) => p.id !== id));
+        setPortfolioState((prev) => ({
+            ...prev,
+            openPositions: Math.max(0, prev.openPositions - 1),
+        }));
+        addLog({
+            action: "CLOSE",
+            message: `Position ${id} closed manually`,
+        });
+    };
+
     const resetRiskState = () => {
         setPortfolioState((p) => ({
             ...p,
@@ -576,6 +588,7 @@ export const useTradingBot = (
         resetRiskState,
         executeTrade,
         rejectSignal,
+        closePosition,
     };
 };
 
