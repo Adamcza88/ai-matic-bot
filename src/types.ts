@@ -16,6 +16,7 @@ export interface AISettings {
   useVolatilityExpansion: boolean;
   strategyProfile: "off" | "auto" | "trend" | "scalp" | "swing" | "intraday";
   entryStrictness: "base" | "relaxed" | "ultra";
+  enforceSessionHours: boolean;
   haltOnDailyLoss: boolean;
   haltOnDrawdown: boolean;
   useDynamicPositionSizing: boolean;

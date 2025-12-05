@@ -239,6 +239,26 @@ export default function Dashboard({
                   </Button>
                 ))}
               </div>
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-slate-400">Enforce Trading Hours</span>
+                <Button
+                  size="sm"
+                  variant={settings.enforceSessionHours ? "secondary" : "ghost"}
+                  className={
+                    settings.enforceSessionHours
+                      ? "bg-amber-500 text-black hover:bg-amber-600"
+                      : "text-slate-300 hover:text-white"
+                  }
+                  onClick={() =>
+                    updateSettings({
+                      ...settings,
+                      enforceSessionHours: !settings.enforceSessionHours,
+                    })
+                  }
+                >
+                  {settings.enforceSessionHours ? "On" : "Off"}
+                </Button>
+              </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Base Risk</span>
                 <span className="font-mono">{(settings.baseRiskPerTrade * 100).toFixed(2)}%</span>

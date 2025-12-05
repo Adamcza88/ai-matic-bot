@@ -37,6 +37,7 @@ export const INITIAL_RISK_SETTINGS: AISettings = {
     baseRiskPerTrade: 0.02,
     strategyProfile: "auto",
     entryStrictness: "base",
+    enforceSessionHours: true,
     haltOnDailyLoss: true,
     haltOnDrawdown: true,
     useDynamicPositionSizing: true,
@@ -73,6 +74,7 @@ function parseKlines(list: any[]): Candle[] {
 }
 
 function withinSession(settings: typeof INITIAL_RISK_SETTINGS, now: Date) {
+    if (!settings.enforceSessionHours) return true;
     const day = now.getDay();
     const hour = now.getHours();
     if (!settings.tradingDays.includes(day)) return false;

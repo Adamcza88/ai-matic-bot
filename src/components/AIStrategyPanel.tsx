@@ -75,6 +75,30 @@ const AIStrategyPanel: React.FC<Props> = ({
           </div>
         </div>
 
+        <div className="grid gap-2">
+          <label className="text-sm font-medium leading-none">Enforce Trading Hours</label>
+          <div className="flex gap-2 flex-wrap">
+            {[
+              { key: true, label: "On" },
+              { key: false, label: "Off" },
+            ].map((opt) => (
+              <button
+                key={opt.label}
+                onClick={() => update("enforceSessionHours", opt.key)}
+                className={`inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring border border-input hover:bg-accent hover:text-accent-foreground h-8 px-3 ${
+                  local.enforceSessionHours === opt.key
+                    ? opt.key
+                      ? "bg-amber-500 text-black hover:bg-amber-600 border-amber-500"
+                      : "bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600"
+                    : "bg-background"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-4">
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none">Base Risk %</label>

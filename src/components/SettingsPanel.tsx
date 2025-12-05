@@ -88,6 +88,34 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           </div>
 
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              Enforce Trading Hours
+            </label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => update("enforceSessionHours", true)}
+                className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border h-9 px-3 ${
+                  local.enforceSessionHours
+                    ? "bg-amber-500 text-black hover:bg-amber-600 border-amber-500"
+                    : "bg-background text-slate-300 border-input hover:bg-accent hover:text-accent-foreground"
+                }`}
+              >
+                On
+              </button>
+              <button
+                onClick={() => update("enforceSessionHours", false)}
+                className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border h-9 px-3 ${
+                  !local.enforceSessionHours
+                    ? "bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600"
+                    : "bg-background text-slate-300 border-input hover:bg-accent hover:text-accent-foreground"
+                }`}
+              >
+                Off
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none">
