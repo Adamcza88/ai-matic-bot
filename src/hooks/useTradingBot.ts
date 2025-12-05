@@ -71,7 +71,8 @@ function withinSession(settings: typeof INITIAL_RISK_SETTINGS, now: Date) {
 function chooseStrategyProfile(
     candles: Candle[],
     preferred: (typeof INITIAL_RISK_SETTINGS)["strategyProfile"]
-): "trend" | "scalp" | "swing" {
+): "trend" | "scalp" | "swing" | null {
+    if (preferred === "off") return null;
     if (preferred === "trend") return "trend";
     if (preferred === "scalp") return "scalp";
     if (preferred === "swing") return "swing";
@@ -217,6 +218,7 @@ export const useTradingBot = (
                             candles,
                             settingsRef.current.strategyProfile as any
                         );
+                        if (!profile) continue;
                         const decision = evaluateStrategyForSymbol(
                             symbol,
                             candles,

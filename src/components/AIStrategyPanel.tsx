@@ -31,6 +31,7 @@ const AIStrategyPanel: React.FC<Props> = ({
           <label className="text-sm font-medium leading-none">Strategy</label>
           <div className="flex gap-2 flex-wrap">
             {[
+              { key: "off", label: "Off" },
               { key: "auto", label: "Auto" },
               { key: "scalp", label: "Scalp" },
               { key: "intraday", label: "Intraday" },

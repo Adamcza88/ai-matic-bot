@@ -41,6 +41,7 @@ const SettingsPanel: React.FC<Props> = ({
             </label>
             <div className="flex gap-2 flex-wrap">
               {[
+                { key: "off", label: "Off" },
                 { key: "auto", label: "Auto" },
                 { key: "scalp", label: "Scalp" },
                 { key: "intraday", label: "Intraday" },
@@ -49,11 +50,12 @@ const SettingsPanel: React.FC<Props> = ({
               ].map((opt) => (
                 <button
                   key={opt.key}
-                  onClick={() => update("strategyProfile", opt.key)}
-                  className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input hover:bg-accent hover:text-accent-foreground h-9 px-3 ${local.strategyProfile === opt.key
+                  onClick={() => update("strategyProfile", opt.key as any)}
+                  className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input hover:bg-accent hover:text-accent-foreground h-9 px-3 ${
+                    local.strategyProfile === opt.key
                       ? "bg-primary text-primary-foreground hover:bg-primary/90 border-primary"
                       : "bg-background"
-                    }`}
+                  }`}
                 >
                   {opt.label}
                 </button>
