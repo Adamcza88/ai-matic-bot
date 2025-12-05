@@ -63,6 +63,31 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           </div>
 
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              Entry Strictness
+            </label>
+            <div className="flex gap-2 flex-wrap">
+              {[
+                { key: "base", label: "Base" },
+                { key: "relaxed", label: "Relaxed" },
+                { key: "ultra", label: "Ultra" },
+              ].map((opt) => (
+                <button
+                  key={opt.key}
+                  onClick={() => update("entryStrictness", opt.key as any)}
+                  className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input hover:bg-accent hover:text-accent-foreground h-9 px-3 ${
+                    local.entryStrictness === opt.key
+                      ? "bg-blue-600 text-white hover:bg-blue-700 border-blue-600"
+                      : "bg-background"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none">

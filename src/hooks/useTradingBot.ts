@@ -9,6 +9,7 @@ import {
     LogEntry,
     NewsItem,
     PriceAlert,
+    AISettings,
 } from "../types";
 
 import { Candle, evaluateStrategyForSymbol } from "../engine/botEngine";
@@ -22,13 +23,24 @@ const INITIAL_CAPITAL = 100000;
 const MAX_SINGLE_POSITION_VALUE = 10000;
 
 // RISK / STRATEGY
-export const INITIAL_RISK_SETTINGS = {
+export const INITIAL_RISK_SETTINGS: AISettings = {
+    strictRiskAdherence: false,
+    pauseOnHighVolatility: false,
+    avoidLowLiquidity: false,
+    useTrendFollowing: true,
+    smcScalpMode: false,
+    useLiquiditySweeps: false,
+    useVolatilityExpansion: false,
     maxDailyLossPercent: 0.02,
     maxDailyProfitPercent: 0.03,
     maxDrawdownPercent: 0.05,
     baseRiskPerTrade: 0.02,
     strategyProfile: "auto",
     entryStrictness: "base",
+    haltOnDailyLoss: true,
+    haltOnDrawdown: true,
+    useDynamicPositionSizing: true,
+    lockProfitsWithTrail: true,
     maxAllocatedCapitalPercent: 0.5,
     requireConfirmationInAuto: true,
     positionSizingMultiplier: 1.0,

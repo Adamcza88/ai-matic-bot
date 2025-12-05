@@ -48,6 +48,29 @@ const AIStrategyPanel: React.FC<Props> = ({
               >
                 {opt.label}
               </button>
+              ))}
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <label className="text-sm font-medium leading-none">Entry Strictness</label>
+          <div className="flex gap-2 flex-wrap">
+            {[
+              { key: "base", label: "Base" },
+              { key: "relaxed", label: "Relaxed" },
+              { key: "ultra", label: "Ultra" },
+            ].map((opt) => (
+              <button
+                key={opt.key}
+                onClick={() => update("entryStrictness", opt.key as any)}
+                className={`inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring border border-input hover:bg-accent hover:text-accent-foreground h-8 px-3 ${
+                  local.entryStrictness === opt.key
+                    ? "bg-blue-600 text-white hover:bg-blue-700 border-blue-600"
+                    : "bg-background"
+                }`}
+              >
+                {opt.label}
+              </button>
             ))}
           </div>
         </div>
