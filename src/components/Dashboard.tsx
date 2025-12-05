@@ -1,5 +1,5 @@
 // src/components/Dashboard.tsx
-import { TradingMode } from "../types";
+import { AISettings, TradingMode } from "../types";
 import type { TradingBotApi } from "../hooks/useTradingBot";
 import {
   Card,
@@ -36,7 +36,12 @@ export default function Dashboard({
     priceAlerts,
     addPriceAlert,
     removePriceAlert,
+    updateSettings,
   } = bot;
+
+  const setProfile = (profile: AISettings["strategyProfile"]) => {
+    updateSettings({ ...settings, strategyProfile: profile });
+  };
 
   return (
     <div className="space-y-6">
@@ -182,6 +187,29 @@ export default function Dashboard({
                 <Badge variant="secondary" className="capitalize bg-slate-800 text-slate-300 hover:bg-slate-700">
                   {settings.strategyProfile}
                 </Badge>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {[
+                  { key: "off", label: "Off" },
+                  { key: "auto", label: "Auto" },
+                  { key: "scalp", label: "Scalp" },
+                  { key: "swing", label: "Swing" },
+                  { key: "trend", label: "Trend" },
+                ].map((opt) => (
+                  <Button
+                    key={opt.key}
+                    size="sm"
+                    variant={settings.strategyProfile === opt.key ? "secondary" : "ghost"}
+                    className={
+                      settings.strategyProfile === opt.key
+                        ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                        : "text-slate-300 hover:text-white"
+                    }
+                    onClick={() => setProfile(opt.key as any)}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Base Risk</span>
