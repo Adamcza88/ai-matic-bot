@@ -339,8 +339,7 @@ export const useTradingBot = (
         if (!signal) return;
 
         // Jednoduchý risk-engine: hlídá max. risk / capital allocation
-        const maxAlloc =
-            portfolioState.totalCapital * settings.baseRiskPerTrade;
+        const maxAlloc = portfolioState.maxAllocatedCapital;
         const currentAlloc = portfolioState.allocatedCapital;
 
         const plannedNotional =
