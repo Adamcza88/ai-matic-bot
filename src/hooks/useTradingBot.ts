@@ -167,17 +167,32 @@ export const useTradingBot = (
         maxOpenPositions: 5,
     });
 
-    // Dynamicky uprav maxAllocation pro testovací režim
+    // Dynamicky uprav capital/max allocation pro testovací režim
     useEffect(() => {
-        const capPct =
-            settings.entryStrictness === "test"
-                ? 0.9
-                : settings.maxAllocatedCapitalPercent;
+        const isTest = settings.entryStrictness === "test";
+        const totalCapital = isTest ? 200000 : INITIAL_CAPITAL;
+        const maxAlloc = isTest
+            ? 150000
+            : totalCapital * settings.maxAllocatedCapitalPercent;
         setPortfolioState((prev) => ({
             ...prev,
-            maxAllocatedCapital: prev.totalCapital * capPct,
+            totalCapital,
+            maxAllocatedCapital: maxAlloc,
+            allocatedCapital: Math.min(prev.allocatedCapital, maxAlloc),
         }));
     }, [settings.entryStrictness, settings.maxAllocatedCapitalPercent]);
+
+    // Přepočet denního PnL podle otevřených pozic (unrealized)
+    useEffect(() => {
+        const unrealized = activePositions.reduce(
+            (sum, p) => sum + (p.pnl ?? 0),
+            0
+        );
+        setPortfolioState((prev) => ({
+            ...prev,
+            dailyPnl: realizedPnlRef.current + unrealized,
+        }));
+    }, [activePositions]);
 
     const [aiModelState, _setAiModelState] = useState({
         version: "1.0.0-real-strategy",
