@@ -23,7 +23,7 @@ function normalizeQty(symbol, qtyInput) {
     throw new Error(`Invalid qty value: ${qtyInput}`);
   }
 
-  let min = 1;
+  let min = 0.001;
   let max = 1000;
 
   if (symbol === "BTCUSDT") {
@@ -80,7 +80,7 @@ export async function createDemoOrder(order, creds) {
     category: order.category || "linear",
     symbol: order.symbol,
     side: order.side, // "Buy" | "Sell"
-    orderType: order.orderType || "Market",
+    orderType: order.orderType || "Market", 
     qty: safeQty,
     price: order.price ? String(order.price) : "",
     timeInForce: order.timeInForce || "IOC",

@@ -23,7 +23,7 @@ import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../
 import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
 
 // SYMBOLS
-const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT"];
+const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT",];
 
 // SIMULOVANÝ KAPITÁL
 const INITIAL_CAPITAL = 200000;

@@ -69,7 +69,7 @@ const ActivePositionsPanel: React.FC<Props> = ({
                     className={`text-sm font-bold ml-4 ${pnlValue >= 0 ? "text-green-400" : "text-red-400"
                       }`}
                   >
-                    {pnlValue.toFixed(2)} USD
+                    {pnlValue.toFixed(2)} USDT
                   </div>
                 </div>
               </div>
