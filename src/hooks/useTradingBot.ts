@@ -1,5 +1,5 @@
 // hooks/useTradingBot.ts
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
     TradingMode,
     TradeIntent,
@@ -10,10 +10,15 @@ import {
     NewsItem,
     PriceAlert,
     AISettings,
+    EntryHistoryRecord,
+    TestnetOrder,
+    AssetPnlRecord,
 } from "../types";
 
 import { Candle, evaluateStrategyForSymbol } from "../engine/botEngine";
 import { useNetworkConfig } from "../engine/networkConfig";
+import { addEntryToHistory, loadEntryHistory } from "../lib/entryHistory";
+import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
 
 // SYMBOLS
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
@@ -21,6 +26,7 @@ const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 // SIMULOVANÝ KAPITÁL
 const INITIAL_CAPITAL = 100000;
 const MAX_SINGLE_POSITION_VALUE = 10000;
+const MIN_ENTRY_SPACING_MS = 3000;
 
 // RISK / STRATEGY
 export const INITIAL_RISK_SETTINGS: AISettings = {
@@ -116,6 +122,13 @@ function chooseStrategyProfile(
     return "trend";
 }
 
+function snapshotSettings(settings: AISettings): AISettings {
+    return {
+        ...settings,
+        tradingDays: [...settings.tradingDays],
+    };
+}
+
 // ========== HLAVNÍ HOOK ==========
 
 export const useTradingBot = (
@@ -133,6 +146,7 @@ export const useTradingBot = (
         []
     );
     const [pendingSignals, setPendingSignals] = useState<PendingSignal[]>([]);
+    const pendingSignalsRef = useRef<PendingSignal[]>([]);
     const [currentPrices, setCurrentPrices] = useState<Record<string, number>>(
         {}
     );
@@ -141,6 +155,10 @@ export const useTradingBot = (
     >([]);
     const [newsHeadlines, setNewsHeadlines] = useState<NewsItem[]>([]);
     const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>([]);
+    const [entryHistory, setEntryHistory] = useState<EntryHistoryRecord[]>([]);
+    const [testnetOrders, setTestnetOrders] = useState<TestnetOrder[]>([]);
+    const [ordersError, setOrdersError] = useState<string | null>(null);
+    const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap>({});
     const [settings, setSettings] = useState(INITIAL_RISK_SETTINGS);
 
     const [systemState, setSystemState] = useState({
@@ -166,20 +184,23 @@ export const useTradingBot = (
         openPositions: 0,
         maxOpenPositions: 5,
     });
+    const lastEntryAtRef = useRef<number | null>(null);
+    const entryQueueRef = useRef<Promise<void>>(Promise.resolve());
 
     // Dynamicky uprav capital/max allocation pro testovací režim
     useEffect(() => {
         const isTest = settings.entryStrictness === "test";
-        const totalCapital = isTest ? 200000 : INITIAL_CAPITAL;
-        const maxAlloc = isTest
-            ? 150000
-            : totalCapital * settings.maxAllocatedCapitalPercent;
-        setPortfolioState((prev) => ({
-            ...prev,
-            totalCapital,
-            maxAllocatedCapital: maxAlloc,
-            allocatedCapital: Math.min(prev.allocatedCapital, maxAlloc),
-        }));
+        setPortfolioState((prev) => {
+            const totalCapital = isTest ? prev.totalCapital || 200000 : INITIAL_CAPITAL;
+            const pctCap = totalCapital * settings.maxAllocatedCapitalPercent;
+            const maxAlloc = isTest ? Math.min(1_000_000, pctCap) : pctCap;
+            return {
+                ...prev,
+                totalCapital,
+                maxAllocatedCapital: maxAlloc,
+                allocatedCapital: Math.min(prev.allocatedCapital, maxAlloc),
+            };
+        });
     }, [settings.entryStrictness, settings.maxAllocatedCapitalPercent]);
 
     // Přepočet denního PnL podle otevřených pozic (unrealized)
@@ -193,6 +214,66 @@ export const useTradingBot = (
             dailyPnl: realizedPnlRef.current + unrealized,
         }));
     }, [activePositions]);
+
+    useEffect(() => {
+        setEntryHistory(loadEntryHistory());
+        setAssetPnlHistory(loadPnlHistory());
+    }, []);
+
+    useEffect(() => {
+        pendingSignalsRef.current = pendingSignals;
+    }, [pendingSignals]);
+
+    const fetchTestnetOrders = useCallback(async () => {
+        if (!authToken) {
+            setTestnetOrders([]);
+            return;
+        }
+        if (!useTestnet) {
+            setTestnetOrders([]);
+            return;
+        }
+        try {
+            setOrdersError(null);
+            const res = await fetch("/api/demo/orders", {
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+            });
+            if (!res.ok) {
+                const txt = await res.text();
+                throw new Error(`Orders API failed (${res.status}): ${txt || "unknown"}`);
+            }
+            const data = await res.json();
+            const list = data?.data?.list || data?.list || data?.result?.list || [];
+            const mapped: TestnetOrder[] = Array.isArray(list)
+                ? list.map((o: any) => {
+                    const toIso = (ts: any) => {
+                        const n = Number(ts);
+                        return Number.isFinite(n) && n > 0
+                            ? new Date(n).toISOString()
+                            : new Date().toISOString();
+                    };
+                    return {
+                        orderId: o.orderId || o.orderLinkId || o.id || `${Date.now()}`,
+                        symbol: o.symbol || "",
+                        side: (o.side as "Buy" | "Sell") || "Buy",
+                        qty: Number(o.qty ?? o.cumExecQty ?? 0),
+                        price: o.price != null ? Number(o.price) : o.avgPrice != null ? Number(o.avgPrice) : null,
+                        status: o.orderStatus || o.status || "unknown",
+                        createdTime: toIso(o.createdTime ?? o.created_at ?? Date.now()),
+                    };
+                })
+                : [];
+            setTestnetOrders(mapped);
+        } catch (err: any) {
+            setOrdersError(err?.message || "Failed to load orders");
+        }
+    }, [authToken, useTestnet]);
+
+    useEffect(() => {
+        void fetchTestnetOrders();
+    }, [fetchTestnetOrders]);
 
     const [aiModelState, _setAiModelState] = useState({
         version: "1.0.0-real-strategy",
@@ -361,9 +442,9 @@ export const useTradingBot = (
     }, [mode, useTestnet, httpBase]);
 
     // ========== EXECUTE TRADE (simulated + backend order) ==========
-    async function executeTrade(signalId: string) {
-        const signal = pendingSignals.find((s) => s.id === signalId);
-        if (!signal) return;
+    const performTrade = async (signalId: string): Promise<boolean> => {
+        const signal = pendingSignalsRef.current.find((s) => s.id === signalId);
+        if (!signal) return false;
 
         // Jednoduchý risk-engine: hlídá max. risk / capital allocation
         const maxAlloc = portfolioState.maxAllocatedCapital;
@@ -384,7 +465,7 @@ export const useTradingBot = (
                 },
                 ...prev,
             ]);
-            return;
+            return false;
         }
 
         const intent: TradeIntent = signal.intent;
@@ -396,7 +477,7 @@ export const useTradingBot = (
             settings.positionSizingMultiplier;
 
         const riskPerUnit = Math.abs(entry - sl);
-        if (riskPerUnit <= 0) return;
+        if (riskPerUnit <= 0) return false;
 
         let size = riskPerTrade / riskPerUnit;
         let notional = size * entry;
@@ -415,7 +496,7 @@ export const useTradingBot = (
                 action: "RISK_BLOCK",
                 message: `Signal on ${signal.symbol} exceeds capital allocation limit.`,
             });
-            return;
+            return false;
         }
 
         // ===== DYNAMICKÝ TRAILING STOP (odvozený z 1R) =====
@@ -470,6 +551,21 @@ export const useTradingBot = (
             )} USD, TS≈${trailingStopPct.toFixed(2)}% from 1R)`,
         });
 
+        const settingsSnapshot = snapshotSettings(settingsRef.current);
+        const historyRecord: EntryHistoryRecord = {
+            id: position.id,
+            symbol: signal.symbol,
+            side,
+            entryPrice: entry,
+            sl,
+            tp,
+            size,
+            createdAt: new Date().toISOString(),
+            settingsNote: `profile=${settingsSnapshot.strategyProfile}, strictness=${settingsSnapshot.entryStrictness}, risk=${settingsSnapshot.baseRiskPerTrade}, mult=${settingsSnapshot.positionSizingMultiplier}`,
+            settingsSnapshot,
+        };
+        setEntryHistory(() => addEntryToHistory(historyRecord));
+
         // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
         try {
             if (!authToken) {
@@ -478,7 +574,7 @@ export const useTradingBot = (
                     message:
                         "Missing auth token for placing order. Please re-login.",
                 });
-                return;
+                return true;
             }
 
             const res = await fetch("/api/demo/order", {
@@ -512,6 +608,34 @@ export const useTradingBot = (
                 message: `Demo API order failed: ${err?.message || "unknown"}`,
             });
         }
+        return true;
+    };
+
+    function executeTrade(signalId: string): Promise<void> {
+        entryQueueRef.current = entryQueueRef.current
+            .catch(() => {
+                // swallow to keep queue alive
+            })
+            .then(async () => {
+                const last = lastEntryAtRef.current;
+                const sinceLast = last ? Date.now() - last : Infinity;
+                const waitMs =
+                    sinceLast < MIN_ENTRY_SPACING_MS
+                        ? MIN_ENTRY_SPACING_MS - sinceLast
+                        : 0;
+
+                // Delay only when více vstupů čeká zároveň.
+                if (pendingSignalsRef.current.length > 0 && waitMs > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, waitMs));
+                }
+
+                const executed = await performTrade(signalId);
+                if (executed) {
+                    lastEntryAtRef.current = Date.now();
+                }
+            });
+
+        return entryQueueRef.current;
     }
 
     // ========== AUTO MODE ==========
@@ -555,14 +679,34 @@ export const useTradingBot = (
     };
 
     const closePosition = (id: string) => {
-        setActivePositions((prev) => prev.filter((p) => p.id !== id));
-        setPortfolioState((prev) => ({
-            ...prev,
-            openPositions: Math.max(0, prev.openPositions - 1),
-        }));
-        addLog({
-            action: "CLOSE",
-            message: `Position ${id} closed manually`,
+        setActivePositions((prev) => {
+            const target = prev.find((p) => p.id === id);
+            if (!target) return prev;
+
+            const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
+            const dir = target.side === "buy" ? 1 : -1;
+            const pnl = (currentPrice - target.entryPrice) * dir * target.size;
+
+            realizedPnlRef.current += pnl;
+
+            const record: AssetPnlRecord = {
+                symbol: target.symbol,
+                pnl,
+                timestamp: new Date().toISOString(),
+                note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
+            };
+            setAssetPnlHistory(addPnlRecord(record));
+
+            setPortfolioState((p) => ({
+                ...p,
+                openPositions: Math.max(0, p.openPositions - 1),
+            }));
+            addLog({
+                action: "CLOSE",
+                message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USD`,
+            });
+
+            return prev.filter((p) => p.id !== id);
         });
     };
 
@@ -616,6 +760,11 @@ export const useTradingBot = (
         executeTrade,
         rejectSignal,
         closePosition,
+        entryHistory,
+        testnetOrders,
+        ordersError,
+        refreshTestnetOrders: fetchTestnetOrders,
+        assetPnlHistory,
     };
 };
 

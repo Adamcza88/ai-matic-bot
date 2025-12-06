@@ -192,3 +192,26 @@ export async function getDemoPositions(creds) {
 
   return res.data;
 }
+
+export async function listDemoOrders(creds, { limit = 50 } = {}) {
+  ensureConfigured(creds);
+
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  const query = `category=linear&limit=${limit}`;
+
+  const payload = timestamp + creds.apiKey + recvWindow + query;
+  const signature = sign(payload, creds.apiSecret);
+
+  const res = await axios.get(`${BASE_URL}/v5/order/realtime?${query}`, {
+    headers: {
+      "X-BAPI-API-KEY": creds.apiKey,
+      "X-BAPI-SIGN": signature,
+      "X-BAPI-SIGN-TYPE": "2",
+      "X-BAPI-TIMESTAMP": timestamp,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+    },
+  });
+
+  return res.data;
+}

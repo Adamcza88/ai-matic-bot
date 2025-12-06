@@ -167,3 +167,35 @@ export interface PriceAlert {
   createdAt: string;
   triggered: boolean;
 }
+
+// ===== ENTRY HISTORY / ORDERS =====
+
+export interface EntryHistoryRecord {
+  id: string;
+  symbol: string;
+  side: "buy" | "sell";
+  entryPrice: number;
+  sl?: number;
+  tp?: number;
+  size: number;
+  createdAt: string;
+  settingsNote: string;
+  settingsSnapshot: AISettings;
+}
+
+export interface TestnetOrder {
+  orderId: string;
+  symbol: string;
+  side: "Buy" | "Sell";
+  qty: number;
+  price: number | null;
+  status: string;
+  createdTime: string;
+}
+
+export interface AssetPnlRecord {
+  symbol: string;
+  pnl: number;
+  timestamp: string;
+  note?: string;
+}

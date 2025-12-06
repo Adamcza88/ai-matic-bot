@@ -32,13 +32,18 @@ export default function Dashboard({
     settings,
     pendingSignals,
     activePositions,
-  logEntries,
-  priceAlerts,
-  addPriceAlert,
-  removePriceAlert,
-  updateSettings,
-  closePosition,
-} = bot;
+    logEntries,
+    priceAlerts,
+    addPriceAlert,
+    removePriceAlert,
+    updateSettings,
+    closePosition,
+    entryHistory,
+    testnetOrders,
+    ordersError,
+    refreshTestnetOrders,
+    assetPnlHistory,
+  } = bot;
 
   const setProfile = (profile: AISettings["strategyProfile"]) => {
     updateSettings({ ...settings, strategyProfile: profile });
@@ -151,12 +156,19 @@ export default function Dashboard({
                   ${portfolioState.totalCapital.toFixed(2)}
                 </span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Allocated</span>
-                <span className="font-mono text-slate-300">
-                  ${portfolioState.allocatedCapital.toFixed(2)}
-                </span>
-              </div>
+              {settings.entryStrictness !== "test" ? (
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Allocated</span>
+                  <span className="font-mono text-slate-300">
+                    ${portfolioState.allocatedCapital.toFixed(2)}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Allocated</span>
+                  <span className="font-mono text-slate-500">Disabled in TEST</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-slate-400">Daily PnL</span>
                 <span
@@ -468,6 +480,148 @@ export default function Dashboard({
                 </li>
               )}
             </ul>
+          </CardContent>
+        </Card>
+
+        {/* === ENTRY HISTORY === */}
+        <Card className="bg-slate-900/50 border-white/10 text-white">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-slate-400">Entry History</CardTitle>
+            <span className="text-xs text-slate-500">
+              {entryHistory.length} uložených vstupů
+            </span>
+          </CardHeader>
+          <CardContent>
+            {entryHistory.length === 0 ? (
+              <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
+                Zatím žádné uložené vstupy.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {entryHistory.slice(0, 8).map((h) => (
+                  <div
+                    key={h.id}
+                    className="p-3 rounded-lg border border-white/5 bg-white/5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-semibold">{h.symbol}</span>
+                      <Badge
+                        variant="outline"
+                        className={h.side === "buy" ? "border-emerald-500/50 text-emerald-500" : "border-red-500/50 text-red-500"}
+                      >
+                        {h.side.toUpperCase()}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono mt-1">
+                      Entry {h.entryPrice} | SL {h.sl ?? "-"} | TP {h.tp ?? "-"} | Size {h.size.toFixed(3)}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      {new Date(h.createdAt).toLocaleString()} · {h.settingsNote}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* === TESTNET ORDERS === */}
+        <Card className="bg-slate-900/50 border-white/10 text-white">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-slate-400">Testnet Orders</CardTitle>
+            <div className="flex items-center gap-2">
+              {ordersError && (
+                <span className="text-xs text-red-400 truncate max-w-[160px]" title={ordersError}>
+                  {ordersError}
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refreshTestnetOrders()}
+                className="h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white"
+              >
+                Refresh
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {testnetOrders.length === 0 ? (
+              <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
+                Žádné otevřené testnet orders.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {testnetOrders.slice(0, 8).map((o) => (
+                  <div
+                    key={o.orderId}
+                    className="p-3 rounded-lg border border-white/5 bg-white/5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-semibold">{o.symbol}</span>
+                      <Badge
+                        variant="outline"
+                        className={o.side === "Buy" ? "border-emerald-500/50 text-emerald-500" : "border-red-500/50 text-red-500"}
+                      >
+                        {o.side}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono mt-1">
+                      Qty {o.qty} @ {o.price ?? "mkt"} | {o.status}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      {new Date(o.createdTime).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* === ASSET PnL HISTORY === */}
+        <Card className="bg-slate-900/50 border-white/10 text-white">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-slate-400">Asset PnL History</CardTitle>
+            <span className="text-xs text-slate-500">
+              {Object.keys(assetPnlHistory).length} assets
+            </span>
+          </CardHeader>
+          <CardContent>
+            {Object.keys(assetPnlHistory).length === 0 ? (
+              <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
+                Žádný historický PnL zatím uložen.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {Object.entries(assetPnlHistory).map(([symbol, records]) => {
+                  const latest = records[0];
+                  const sum = records.reduce((acc, r) => acc + (r.pnl ?? 0), 0);
+                  return (
+                    <div
+                      key={symbol}
+                      className="p-3 rounded-lg border border-white/5 bg-white/5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-semibold">{symbol}</span>
+                        <span
+                          className={`font-mono text-sm ${sum >= 0 ? "text-emerald-400" : "text-red-400"}`}
+                        >
+                          Σ {sum >= 0 ? "+" : ""}
+                          {sum.toFixed(2)} USD
+                        </span>
+                      </div>
+                      {latest && (
+                        <div className="text-xs text-slate-400 font-mono mt-1">
+                          Poslední: {latest.pnl >= 0 ? "+" : ""}
+                          {latest.pnl.toFixed(2)} · {new Date(latest.timestamp).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
