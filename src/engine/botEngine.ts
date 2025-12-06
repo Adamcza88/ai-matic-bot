@@ -115,13 +115,13 @@ export interface BotConfig {
  * Default configuration values.
  */
 export const defaultConfig: BotConfig = {
-  symbol: "BTC/USDT",
+  symbol: "BTCUSDT",
   baseTimeframe: "1h",
   signalTimeframe: "5m",
-  targetTradesPerDay: 20,
+  targetTradesPerDay: 100,
   riskPerTrade: 0.01,
-  strategyProfile: "trend",
-  entryStrictness: "base",
+  strategyProfile: "scalp",
+  entryStrictness: "ultra",
   accountBalance: 200000,
   atrPeriod: 14,
   adxPeriod: 14,
@@ -136,8 +136,8 @@ export const defaultConfig: BotConfig = {
   breakevenBufferAtr: 0.2,
   lookbackZones: 50,
   cooldownBars: 1,
-  maxDailyLossPercent: 0.05,
-  maxDailyProfitPercent: 0.1,
+  maxDailyLossPercent: 0.07,
+  maxDailyProfitPercent: 0.5,
   maxDrawdownPercent: 0.1,
   tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
   maxOpenPositions: 1,

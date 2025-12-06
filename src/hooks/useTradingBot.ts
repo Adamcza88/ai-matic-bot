@@ -23,7 +23,7 @@ import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../
 import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
 
 // SYMBOLS
-const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT",];
+const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 
 // SIMULOVANÝ KAPITÁL
 const INITIAL_CAPITAL = 200000;
@@ -43,16 +43,16 @@ export const INITIAL_RISK_SETTINGS: AISettings = {
     maxDailyProfitPercent: 0.1,
     maxDrawdownPercent: 0.09,
     baseRiskPerTrade: 0.07,
-    strategyProfile: "auto",
-    entryStrictness: "base",
+    strategyProfile: "scalp",
+    entryStrictness: "ultra",
     enforceSessionHours: true,
-    haltOnDailyLoss: true,
-    haltOnDrawdown: true,
+    haltOnDailyLoss: false,
+    haltOnDrawdown: false,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
-    maxAllocatedCapitalPercent: 0.7,
+    maxAllocatedCapitalPercent: 1,
     requireConfirmationInAuto: false,
-    positionSizingMultiplier: 5.0,
+    positionSizingMultiplier: 1.0,
     customInstructions: "",
     customStrategy: "",
     min24hVolume: 50,
@@ -189,7 +189,7 @@ export const useTradingBot = (
         currentDrawdown: 0,
         maxDrawdown: INITIAL_RISK_SETTINGS.maxDrawdownPercent,
         openPositions: 0,
-        maxOpenPositions: 5,
+        maxOpenPositions: 4,
     });
     const lastEntryAtRef = useRef<number | null>(null);
     const entryQueueRef = useRef<Promise<void>>(Promise.resolve());
