@@ -35,15 +35,16 @@ export default function Dashboard({
     logEntries,
     priceAlerts,
     addPriceAlert,
-    removePriceAlert,
-    updateSettings,
-    closePosition,
-    entryHistory,
-    testnetOrders,
-    ordersError,
-    refreshTestnetOrders,
-    assetPnlHistory,
-  } = bot;
+  removePriceAlert,
+  updateSettings,
+  closePosition,
+  entryHistory,
+  testnetOrders,
+  ordersError,
+  refreshTestnetOrders,
+  assetPnlHistory,
+  removeEntryHistoryItem,
+} = bot;
 
   const setProfile = (profile: AISettings["strategyProfile"]) => {
     updateSettings({ ...settings, strategyProfile: profile });
@@ -430,7 +431,12 @@ export default function Dashboard({
                     className="text-sm flex gap-3 py-2 border-b border-white/5 last:border-0"
                   >
                     <span className="text-slate-500 text-xs whitespace-nowrap font-mono w-20">
-                      {l.timestamp.split("T")[1].split(".")[0]}
+                      {new Date(l.timestamp).toLocaleTimeString([], {
+                        hour12: false,
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
                     </span>
                     <span className="font-medium text-blue-400 w-24 text-xs uppercase tracking-wider">
                       {l.action}
@@ -503,14 +509,23 @@ export default function Dashboard({
                     key={h.id}
                     className="p-3 rounded-lg border border-white/5 bg-white/5"
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono font-semibold">{h.symbol}</span>
-                      <Badge
-                        variant="outline"
-                        className={h.side === "buy" ? "border-emerald-500/50 text-emerald-500" : "border-red-500/50 text-red-500"}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-semibold">{h.symbol}</span>
+                        <Badge
+                          variant="outline"
+                          className={h.side === "buy" ? "border-emerald-500/50 text-emerald-500" : "border-red-500/50 text-red-500"}
+                        >
+                          {h.side.toUpperCase()}
+                        </Badge>
+                      </div>
+                      <button
+                        onClick={() => removeEntryHistoryItem(h.id)}
+                        className="text-xs text-slate-500 hover:text-red-400"
+                        title="Odstranit uložený signál"
                       >
-                        {h.side.toUpperCase()}
-                      </Badge>
+                        ✕
+                      </button>
                     </div>
                     <div className="text-xs text-slate-400 font-mono mt-1">
                       Entry {h.entryPrice} | SL {h.sl ?? "-"} | TP {h.tp ?? "-"} | Size {h.size.toFixed(3)}
@@ -546,7 +561,11 @@ export default function Dashboard({
             </div>
           </CardHeader>
           <CardContent>
-            {testnetOrders.length === 0 ? (
+            {ordersError ? (
+              <div className="text-sm text-red-400 italic py-6 text-center border border-red-500/30 bg-red-500/5 rounded-lg">
+                Orders API failed: {ordersError}
+              </div>
+            ) : testnetOrders.length === 0 ? (
               <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
                 Žádné otevřené testnet orders.
               </div>

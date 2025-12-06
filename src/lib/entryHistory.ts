@@ -42,3 +42,10 @@ export function addEntryToHistory(record: EntryHistoryRecord): EntryHistoryRecor
   persistEntryHistory(next);
   return next;
 }
+
+export function removeEntryFromHistory(id: string): EntryHistoryRecord[] {
+  const current = loadEntryHistory();
+  const next = current.filter((r) => r.id !== id);
+  persistEntryHistory(next);
+  return next;
+}

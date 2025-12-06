@@ -17,7 +17,7 @@ import {
 
 import { Candle, evaluateStrategyForSymbol } from "../engine/botEngine";
 import { useNetworkConfig } from "../engine/networkConfig";
-import { addEntryToHistory, loadEntryHistory } from "../lib/entryHistory";
+import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../lib/entryHistory";
 import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
 
 // SYMBOLS
@@ -137,6 +137,8 @@ export const useTradingBot = (
     authToken?: string
 ) => {
     const { httpBase } = useNetworkConfig(useTestnet);
+    const apiBase =
+        (import.meta as any).env?.VITE_API_BASE?.replace(/\/$/, "") || "";
 
     const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
     const [activePositions, setActivePositions] = useState<ActivePosition[]>(
@@ -235,7 +237,7 @@ export const useTradingBot = (
         }
         try {
             setOrdersError(null);
-            const res = await fetch("/api/demo/orders", {
+            const res = await fetch(`${apiBase}/api/demo/orders`, {
                 headers: {
                     Authorization: `Bearer ${authToken}`,
                 },
@@ -577,7 +579,7 @@ export const useTradingBot = (
                 return true;
             }
 
-            const res = await fetch("/api/demo/order", {
+            const res = await fetch(`${apiBase}/api/demo/order`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -725,6 +727,10 @@ export const useTradingBot = (
         settingsRef.current = newS;
     };
 
+    const removeEntryHistoryItem = (id: string) => {
+        setEntryHistory(() => removeEntryFromHistory(id));
+    };
+
     const rejectSignal = (id: string) => {
         setPendingSignals((prev) => prev.filter((s) => s.id !== id));
 
@@ -765,6 +771,7 @@ export const useTradingBot = (
         ordersError,
         refreshTestnetOrders: fetchTestnetOrders,
         assetPnlHistory,
+        removeEntryHistoryItem,
     };
 };
 
