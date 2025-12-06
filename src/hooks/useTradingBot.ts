@@ -229,10 +229,16 @@ export const useTradingBot = (
     const fetchTestnetOrders = useCallback(async () => {
         if (!authToken) {
             setTestnetOrders([]);
+            setOrdersError("Missing auth token");
             return;
         }
         if (!useTestnet) {
             setTestnetOrders([]);
+            setOrdersError("Testnet off");
+            return;
+        }
+        if (!apiBase) {
+            setOrdersError("Missing VITE_API_BASE (backend URL)");
             return;
         }
         try {
@@ -271,7 +277,7 @@ export const useTradingBot = (
         } catch (err: any) {
             setOrdersError(err?.message || "Failed to load orders");
         }
-    }, [authToken, useTestnet]);
+    }, [authToken, useTestnet, apiBase]);
 
     useEffect(() => {
         void fetchTestnetOrders();
