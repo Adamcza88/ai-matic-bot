@@ -137,8 +137,10 @@ export const useTradingBot = (
     authToken?: string
 ) => {
     const { httpBase } = useNetworkConfig(useTestnet);
-    const apiBase =
-        (import.meta as any).env?.VITE_API_BASE?.replace(/\/$/, "") || "";
+    const envBase = (import.meta as any).env?.VITE_API_BASE;
+    const inferredBase =
+        typeof window !== "undefined" ? window.location.origin : "";
+    const apiBase = (envBase || inferredBase || "").replace(/\/$/, "");
 
     const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
     const [activePositions, setActivePositions] = useState<ActivePosition[]>(
