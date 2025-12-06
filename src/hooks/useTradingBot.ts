@@ -13,6 +13,7 @@ import {
     EntryHistoryRecord,
     TestnetOrder,
     AssetPnlRecord,
+    TestnetTrade,
 } from "../types";
 
 import { Candle, evaluateStrategyForSymbol } from "../engine/botEngine";
@@ -161,6 +162,7 @@ export const useTradingBot = (
     const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>([]);
     const [entryHistory, setEntryHistory] = useState<EntryHistoryRecord[]>([]);
     const [testnetOrders, setTestnetOrders] = useState<TestnetOrder[]>([]);
+    const [testnetTrades, setTestnetTrades] = useState<TestnetTrade[]>([]);
     const [ordersError, setOrdersError] = useState<string | null>(null);
     const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap>({});
     const [settings, setSettings] = useState(INITIAL_RISK_SETTINGS);
@@ -287,8 +289,53 @@ export const useTradingBot = (
         }
     }, [authToken, useTestnet, apiBase]);
 
+    const fetchTestnetTrades = useCallback(async () => {
+        if (!authToken || !useTestnet) {
+            setTestnetTrades([]);
+            return;
+        }
+        const baseProvided = Boolean(envBase);
+        const sameOrigin =
+            typeof window !== "undefined" &&
+            inferredBase === window.location.origin;
+        if (!baseProvided && sameOrigin) {
+            setTestnetTrades([]);
+            return;
+        }
+        try {
+            const res = await fetch(`${apiBase}/api/demo/trades`, {
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            if (!res.ok) {
+                const txt = await res.text();
+                throw new Error(`Trades API failed (${res.status}): ${txt || "unknown"}`);
+            }
+            const data = await res.json();
+            const list = data?.data?.list || data?.list || data?.result?.list || [];
+            const mapped: TestnetTrade[] = Array.isArray(list)
+                ? list.map((t: any) => {
+                    const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
+                    return {
+                        id: t.execId || t.tradeId || `${Date.now()}`,
+                        symbol: t.symbol || "",
+                        side: (t.side as "Buy" | "Sell") || "Buy",
+                        price: Number(t.execPrice ?? t.price ?? 0),
+                        qty: Number(t.execQty ?? t.qty ?? 0),
+                        value: Number(t.execValue ?? t.value ?? 0),
+                        fee: Number(t.execFee ?? t.fee ?? 0),
+                        time: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
+                    };
+                })
+                : [];
+            setTestnetTrades(mapped);
+        } catch (err: any) {
+            setOrdersError((prev) => prev || err?.message || "Failed to load trades");
+        }
+    }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
+
     useEffect(() => {
         void fetchTestnetOrders();
+        void fetchTestnetTrades();
     }, [fetchTestnetOrders]);
 
     const [aiModelState, _setAiModelState] = useState({

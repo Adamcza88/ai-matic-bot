@@ -1,7 +1,7 @@
 // server/index.js
 import express from "express";
 import cors from "cors";
-import { createDemoOrder, getDemoPositions, listDemoOrders } from "./bybitClient.js";
+import { createDemoOrder, getDemoPositions, listDemoOrders, listDemoOpenOrders, listDemoTrades } from "./bybitClient.js";
 import { getUserApiKeys, getUserFromToken } from "./userCredentials.js";
 
 const app = express();
@@ -160,6 +160,76 @@ app.get("/api/demo/orders", async (req, res) => {
     res.json({ ok: true, data });
   } catch (err) {
     console.error("GET /api/demo/orders error:", err);
+    res.status(500).json({
+      ok: false,
+      error: err?.response?.data || err.message || "Unknown error",
+    });
+  }
+});
+
+app.get("/api/demo/open-orders", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "Missing auth token" });
+    }
+
+    const user = await getUserFromToken(token);
+    const keys = await getUserApiKeys(user.id);
+
+    if (!keys.bybitKey || !keys.bybitSecret) {
+      return res.status(400).json({
+        ok: false,
+        error: "Bybit API key/secret not configured for this user",
+      });
+    }
+
+    const data = await listDemoOpenOrders({
+      apiKey: keys.bybitKey,
+      apiSecret: keys.bybitSecret,
+    });
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error("GET /api/demo/open-orders error:", err);
+    res.status(500).json({
+      ok: false,
+      error: err?.response?.data || err.message || "Unknown error",
+    });
+  }
+});
+
+app.get("/api/demo/trades", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "Missing auth token" });
+    }
+
+    const user = await getUserFromToken(token);
+    const keys = await getUserApiKeys(user.id);
+
+    if (!keys.bybitKey || !keys.bybitSecret) {
+      return res.status(400).json({
+        ok: false,
+        error: "Bybit API key/secret not configured for this user",
+      });
+    }
+
+    const data = await listDemoTrades({
+      apiKey: keys.bybitKey,
+      apiSecret: keys.bybitSecret,
+    });
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error("GET /api/demo/trades error:", err);
     res.status(500).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",

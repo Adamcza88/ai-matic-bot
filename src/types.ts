@@ -199,3 +199,14 @@ export interface AssetPnlRecord {
   timestamp: string;
   note?: string;
 }
+
+export interface TestnetTrade {
+  id: string;
+  symbol: string;
+  side: "Buy" | "Sell";
+  price: number;
+  qty: number;
+  value: number;
+  fee: number;
+  time: string;
+}

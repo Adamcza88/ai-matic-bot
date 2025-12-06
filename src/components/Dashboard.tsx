@@ -40,6 +40,7 @@ export default function Dashboard({
   closePosition,
   entryHistory,
   testnetOrders,
+  testnetTrades,
   ordersError,
   refreshTestnetOrders,
   assetPnlHistory,
@@ -593,6 +594,22 @@ export default function Dashboard({
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+            {testnetTrades.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-white/10">
+                <div className="text-xs text-slate-400 mb-2">Latest fills</div>
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                  {testnetTrades.slice(0, 10).map((t) => (
+                    <div key={t.id} className="text-xs font-mono text-slate-300 flex justify-between">
+                      <span className="flex-1 truncate">{t.symbol}</span>
+                      <span className={t.side === "Buy" ? "text-emerald-400" : "text-red-400"}>{t.side}</span>
+                      <span>{t.qty}</span>
+                      <span>@{t.price}</span>
+                      <span>{new Date(t.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </CardContent>
