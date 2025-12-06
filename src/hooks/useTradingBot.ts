@@ -239,10 +239,6 @@ export const useTradingBot = (
             setOrdersError("Testnet off");
             return;
         }
-        if (!apiBase) {
-            setOrdersError("Missing VITE_API_BASE (backend URL)");
-            return;
-        }
         try {
             setOrdersError(null);
             const res = await fetch(`${apiBase}/api/demo/orders`, {
