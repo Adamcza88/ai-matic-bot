@@ -239,6 +239,16 @@ export const useTradingBot = (
             setOrdersError("Testnet off");
             return;
         }
+        // Pokud není definován explicitní backend, nezkoušej fetchovat – předejdeme 404 na statickém hostu
+        const baseProvided = Boolean(envBase);
+        const sameOrigin =
+            typeof window !== "undefined" &&
+            inferredBase === window.location.origin;
+        if (!baseProvided && sameOrigin) {
+            setTestnetOrders([]);
+            setOrdersError("Orders API unavailable: configure VITE_API_BASE to point to backend");
+            return;
+        }
         try {
             setOrdersError(null);
             const res = await fetch(`${apiBase}/api/demo/orders`, {
