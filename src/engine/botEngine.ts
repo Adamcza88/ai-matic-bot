@@ -122,7 +122,7 @@ export const defaultConfig: BotConfig = {
   riskPerTrade: 0.01,
   strategyProfile: "trend",
   entryStrictness: "base",
-  accountBalance: 100000,
+  accountBalance: 200000,
   atrPeriod: 14,
   adxPeriod: 14,
   adxThreshold: 25,

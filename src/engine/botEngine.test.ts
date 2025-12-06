@@ -8,7 +8,7 @@ function expect(cond: boolean, msg: string) {
 
 // Position sizing
 {
-  const size = computePositionSize(100000, 0.01, 100, 95);
+  const size = computePositionSize(200000, 0.01, 100, 95);
   expect(Math.abs(size - 200) < 1e-6, "Position size mismatch");
 }
 

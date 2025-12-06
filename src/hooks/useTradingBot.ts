@@ -12,8 +12,9 @@ import {
     AISettings,
     EntryHistoryRecord,
     TestnetOrder,
-    AssetPnlRecord,
     TestnetTrade,
+    AssetPnlRecord,
+    
 } from "../types";
 
 import { Candle, evaluateStrategyForSymbol } from "../engine/botEngine";
@@ -22,26 +23,26 @@ import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../
 import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
 
 // SYMBOLS
-const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
+const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT"];
 
 // SIMULOVANÝ KAPITÁL
-const INITIAL_CAPITAL = 100000;
+const INITIAL_CAPITAL = 200000;
 const MAX_SINGLE_POSITION_VALUE = 10000;
 const MIN_ENTRY_SPACING_MS = 3000;
 
 // RISK / STRATEGY
 export const INITIAL_RISK_SETTINGS: AISettings = {
-    strictRiskAdherence: false,
+    strictRiskAdherence: true,
     pauseOnHighVolatility: false,
     avoidLowLiquidity: false,
     useTrendFollowing: true,
-    smcScalpMode: false,
-    useLiquiditySweeps: false,
-    useVolatilityExpansion: false,
-    maxDailyLossPercent: 0.02,
-    maxDailyProfitPercent: 0.03,
-    maxDrawdownPercent: 0.05,
-    baseRiskPerTrade: 0.02,
+    smcScalpMode: true,
+    useLiquiditySweeps: true,
+    useVolatilityExpansion: true,
+    maxDailyLossPercent: 0.1,
+    maxDailyProfitPercent: 0.1,
+    maxDrawdownPercent: 0.09,
+    baseRiskPerTrade: 0.07,
     strategyProfile: "auto",
     entryStrictness: "base",
     enforceSessionHours: true,
@@ -49,13 +50,13 @@ export const INITIAL_RISK_SETTINGS: AISettings = {
     haltOnDrawdown: true,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
-    maxAllocatedCapitalPercent: 0.5,
-    requireConfirmationInAuto: true,
-    positionSizingMultiplier: 1.0,
+    maxAllocatedCapitalPercent: 0.7,
+    requireConfirmationInAuto: false,
+    positionSizingMultiplier: 5.0,
     customInstructions: "",
     customStrategy: "",
     min24hVolume: 50,
-    minProfitFactor: 1.5,
+    minProfitFactor: 1.2,
     minWinRate: 65,
     tradingStartHour: 0,
     tradingEndHour: 23,
@@ -199,7 +200,7 @@ export const useTradingBot = (
         setPortfolioState((prev) => {
             const totalCapital = isTest ? prev.totalCapital || 200000 : INITIAL_CAPITAL;
             const pctCap = totalCapital * settings.maxAllocatedCapitalPercent;
-            const maxAlloc = isTest ? Math.min(1_000_000, pctCap) : pctCap;
+            const maxAlloc = isTest ? Math.min(1000000, pctCap) : pctCap;
             return {
                 ...prev,
                 totalCapital,
@@ -611,7 +612,7 @@ export const useTradingBot = (
                 4
             )}, notional ≈ ${notional.toFixed(
                 2
-            )} USD, TS≈${trailingStopPct.toFixed(2)}% from 1R)`,
+            )} USDT, TS≈${trailingStopPct.toFixed(2)}% from 1R)`,
         });
 
         const settingsSnapshot = snapshotSettings(settingsRef.current);
@@ -718,7 +719,7 @@ export const useTradingBot = (
         setNewsHeadlines([
             {
                 id: "n1",
-                headline: "Volatility rising in BTC",
+                headline: "Volatility rising in BTCUSDT",
                 sentiment: "neutral",
                 source: "scanner",
                 time: new Date().toISOString(),
@@ -766,7 +767,7 @@ export const useTradingBot = (
             }));
             addLog({
                 action: "CLOSE",
-                message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USD`,
+                message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USDT`,
             });
 
             return prev.filter((p) => p.id !== id);
@@ -829,6 +830,7 @@ export const useTradingBot = (
         closePosition,
         entryHistory,
         testnetOrders,
+        testnetTrades,
         ordersError,
         refreshTestnetOrders: fetchTestnetOrders,
         assetPnlHistory,

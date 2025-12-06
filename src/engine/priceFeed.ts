@@ -10,7 +10,7 @@ import {
 const FEED_URL = "wss://stream-testnet.bybit.com/v5/public/linear";
 
 // WS ping interval (Bybit vyžaduje každých ~20s)
-const PING_INTERVAL = 15000;
+const PING_INTERVAL = 20000;
 
 // Engine decision – bereme přímo návrat evaluateStrategyForSymbol
 export type PriceFeedDecision = ReturnType<typeof evaluateStrategyForSymbol>;
