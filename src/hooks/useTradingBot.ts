@@ -167,6 +167,18 @@ export const useTradingBot = (
         maxOpenPositions: 5,
     });
 
+    // Dynamicky uprav maxAllocation pro testovací režim
+    useEffect(() => {
+        const capPct =
+            settings.entryStrictness === "test"
+                ? 0.9
+                : settings.maxAllocatedCapitalPercent;
+        setPortfolioState((prev) => ({
+            ...prev,
+            maxAllocatedCapital: prev.totalCapital * capPct,
+        }));
+    }, [settings.entryStrictness, settings.maxAllocatedCapitalPercent]);
+
     const [aiModelState, _setAiModelState] = useState({
         version: "1.0.0-real-strategy",
         lastRetrain: new Date(Date.now() - 7 * 24 * 3600 * 1000)
