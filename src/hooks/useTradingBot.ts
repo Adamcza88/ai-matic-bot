@@ -98,6 +98,7 @@ function chooseStrategyProfile(
     preferred: (typeof INITIAL_RISK_SETTINGS)["strategyProfile"]
 ): "trend" | "scalp" | "swing" | "intraday" | null {
     if (preferred === "off") return null;
+    if (preferred === "coach") return "scalp";
     if (preferred === "trend") return "trend";
     if (preferred === "scalp") return "scalp";
     if (preferred === "swing") return "swing";
@@ -1052,8 +1053,31 @@ export const useTradingBot = (
     };
 
     const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
-        setSettings(newS);
-        settingsRef.current = newS;
+        let patched = newS;
+        if (newS.strategyProfile === "coach") {
+            const clamp = (v: number, min: number, max: number) =>
+                Math.min(max, Math.max(min, v));
+            patched = {
+                ...newS,
+                baseRiskPerTrade: clamp(newS.baseRiskPerTrade || 0.02, 0.01, 0.03),
+                maxDailyLossPercent: Math.min(newS.maxDailyLossPercent || 0.05, 0.05),
+                positionSizingMultiplier: clamp(
+                    newS.positionSizingMultiplier || 1,
+                    0.5,
+                    1
+                ),
+                maxAllocatedCapitalPercent: clamp(
+                    newS.maxAllocatedCapitalPercent || 1,
+                    0.25,
+                    1
+                ),
+            };
+            if (newS.entryStrictness === "ultra") {
+                patched = { ...patched, entryStrictness: "base" };
+            }
+        }
+        setSettings(patched);
+        settingsRef.current = patched;
     };
 
     const removeEntryHistoryItem = (id: string) => {
