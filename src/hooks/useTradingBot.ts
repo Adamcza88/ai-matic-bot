@@ -27,9 +27,16 @@ const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 
 // SIMULOVANÝ KAPITÁL
 const INITIAL_CAPITAL = 200000;
-const MAX_SINGLE_POSITION_VALUE = 10000;
+const MAX_SINGLE_POSITION_VALUE = 5000;
 const MIN_ENTRY_SPACING_MS = 3000;
 const MAX_TEST_PENDING = 4;
+const KEEPALIVE_SIGNAL_INTERVAL_MS = 12000;
+const QTY_LIMITS: Record<string, { min: number; max: number }> = {
+    BTCUSDT: { min: 0.001, max: 0.01 },
+    ETHUSDT: { min: 1, max: 5 },
+    SOLUSDT: { min: 50, max: 100 },
+    ADAUSDT: { min: 5000, max: 10000 },
+};
 
 // RISK / STRATEGY
 export const INITIAL_RISK_SETTINGS: AISettings = {
@@ -44,8 +51,8 @@ export const INITIAL_RISK_SETTINGS: AISettings = {
     maxDailyProfitPercent: 0.1,
     maxDrawdownPercent: 0.09,
     baseRiskPerTrade: 0.07,
-    strategyProfile: "scalp",
-    entryStrictness: "ultra",
+    strategyProfile: "intraday",
+    entryStrictness: "test",
     enforceSessionHours: true,
     haltOnDailyLoss: false,
     haltOnDrawdown: false,
@@ -131,6 +138,30 @@ function snapshotSettings(settings: AISettings): AISettings {
         ...settings,
         tradingDays: [...settings.tradingDays],
     };
+}
+
+const clampQtyForSymbol = (symbol: string, qty: number) => {
+    const limits = QTY_LIMITS[symbol];
+    if (!limits) return qty;
+    return Math.min(limits.max, Math.max(limits.min, qty));
+};
+
+function computeAtrFromHistory(candles: Candle[], period: number = 20): number {
+    if (!candles || candles.length < 2) return 0;
+    const highs = candles.map((c) => c.high);
+    const lows = candles.map((c) => c.low);
+    const closes = candles.map((c) => c.close);
+    const trs: number[] = [];
+    for (let i = 1; i < closes.length; i++) {
+        const hl = highs[i] - lows[i];
+        const hc = Math.abs(highs[i] - closes[i - 1]);
+        const lc = Math.abs(lows[i] - closes[i - 1]);
+        trs.push(Math.max(hl, hc, lc));
+    }
+    if (!trs.length) return 0;
+    const slice = trs.slice(-period);
+    const sum = slice.reduce((a, b) => a + b, 0);
+    return sum / slice.length;
 }
 
 // ========== HLAVNÍ HOOK ==========
@@ -353,6 +384,14 @@ export const useTradingBot = (
                         const dir = p.side === "buy" ? 1 : -1;
                         const pnl = (exitPrice - p.entryPrice) * dir * p.size;
                         realizedPnlRef.current += pnl;
+                        const limits = QTY_LIMITS[p.symbol];
+                        if (settingsRef.current.strategyProfile === "coach" && limits) {
+                            const nextStake = Math.max(
+                                limits.min * p.entryPrice,
+                                Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl)
+                            );
+                            coachStakeRef.current[p.symbol] = nextStake;
+                        }
                         setAssetPnlHistory(() =>
                             addPnlRecord({
                                 symbol: p.symbol,
@@ -482,6 +521,8 @@ export const useTradingBot = (
     settingsRef.current = settings;
     const realizedPnlRef = useRef(0);
     const lastTestSignalAtRef = useRef<number | null>(null);
+    const lastKeepaliveAtRef = useRef<number | null>(null);
+    const coachStakeRef = useRef<Record<string, number>>({});
 
     // ========== LOG ==========
     const addLog = (entry: Omit<LogEntry, "id" | "timestamp">) => {
@@ -621,6 +662,14 @@ export const useTradingBot = (
                         const pnl =
                             (exitPrice - p.entryPrice) * dir * p.size;
                         realizedPnlRef.current += pnl;
+                        const limits = QTY_LIMITS[p.symbol];
+                        if (settingsRef.current.strategyProfile === "coach" && limits) {
+                            const nextStake = Math.max(
+                                limits.min * p.entryPrice,
+                                Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl)
+                            );
+                            coachStakeRef.current[p.symbol] = nextStake;
+                        }
                         const record: AssetPnlRecord = {
                             symbol: p.symbol,
                             pnl,
@@ -744,6 +793,54 @@ export const useTradingBot = (
                         }
                     }
                 }
+
+                // Keepalive signály pro ostatní profily: pokud není žádný pending/aktivní delší dobu, vytvoř fallback
+                if (
+                    settingsRef.current.entryStrictness !== "test" &&
+                    pendingSignalsRef.current.length === 0 &&
+                    activePositionsRef.current.length === 0
+                ) {
+                    const now = Date.now();
+                    if (
+                        !lastKeepaliveAtRef.current ||
+                        now - lastKeepaliveAtRef.current > KEEPALIVE_SIGNAL_INTERVAL_MS
+                    ) {
+                        lastKeepaliveAtRef.current = now;
+                        const keepSignals: PendingSignal[] = [];
+                        const nowIso = new Date().toISOString();
+                        for (const symbol of SYMBOLS) {
+                            if (keepSignals.length >= MAX_TEST_PENDING) break;
+                            const price = newPrices[symbol];
+                            if (!price) continue;
+                            const hist = priceHistoryRef.current[symbol] || [];
+                            const atr = computeAtrFromHistory(hist, 20) || price * 0.005;
+                            const side: "buy" | "sell" =
+                                Math.random() > 0.5 ? "buy" : "sell";
+                            const sl =
+                                side === "buy" ? price - 1.5 * atr : price + 1.5 * atr;
+                            const tp =
+                                side === "buy" ? price + 2.5 * atr : price - 2.5 * atr;
+                            keepSignals.push({
+                                id: `${symbol}-keep-${Date.now()}-${Math.random()
+                                    .toString(16)
+                                    .slice(2)}`,
+                                symbol,
+                                intent: { side, entry: price, sl, tp },
+                                risk: 0.6,
+                                message: `Keepalive ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
+                                    4
+                                )}`,
+                                createdAt: nowIso,
+                            });
+                        }
+                        if (keepSignals.length) {
+                            setPendingSignals((prev) => [...keepSignals, ...prev]);
+                            keepSignals.forEach((s) =>
+                                addLog({ action: "SIGNAL", message: s.message })
+                            );
+                        }
+                    }
+                }
             } catch (err: any) {
                 if (cancel) return;
                 const msg = err.message ?? "unknown";
@@ -793,7 +890,20 @@ export const useTradingBot = (
         }
 
         const intent: TradeIntent = signal.intent;
-        const { entry, sl, tp, side } = intent;
+        const side = intent.side;
+        const entry = intent.entry;
+
+        // Dynamické SL/TP/TS dle ATR
+        const history = priceHistoryRef.current[signal.symbol] || [];
+        const atr = computeAtrFromHistory(history, 20) || entry * 0.005;
+        let sl = intent.sl;
+        let tp = intent.tp;
+        if (!sl) {
+            sl = side === "buy" ? entry - 1.5 * atr : entry + 1.5 * atr;
+        }
+        if (!tp) {
+            tp = side === "buy" ? entry + 2.5 * atr : entry - 2.5 * atr;
+        }
 
         const riskPerTrade =
             portfolioState.totalCapital *
@@ -803,13 +913,30 @@ export const useTradingBot = (
         const riskPerUnit = Math.abs(entry - sl);
         if (riskPerUnit <= 0) return false;
 
-        let size = riskPerTrade / riskPerUnit;
-        let notional = size * entry;
+        const limits = QTY_LIMITS[signal.symbol];
 
-        if (notional > MAX_SINGLE_POSITION_VALUE) {
-            const factor = MAX_SINGLE_POSITION_VALUE / notional;
-            size *= factor;
-            notional = MAX_SINGLE_POSITION_VALUE;
+        let size: number;
+        let notional: number;
+
+        if (settings.strategyProfile === "coach") {
+            const prevStake =
+                coachStakeRef.current[signal.symbol] ??
+                (limits ? limits.min * entry : riskPerTrade);
+            const targetQty = prevStake / entry;
+            size = limits ? clampQtyForSymbol(signal.symbol, targetQty) : targetQty;
+            notional = size * entry;
+        } else {
+            size = riskPerTrade / riskPerUnit;
+            notional = size * entry;
+
+            if (notional > MAX_SINGLE_POSITION_VALUE) {
+                const factor = MAX_SINGLE_POSITION_VALUE / notional;
+                size *= factor;
+                notional = MAX_SINGLE_POSITION_VALUE;
+            }
+
+            size = limits ? clampQtyForSymbol(signal.symbol, size) : size;
+            notional = size * entry;
         }
 
         if (
@@ -1005,6 +1132,18 @@ export const useTradingBot = (
             const freedNotional = target.entryPrice * target.size;
 
             realizedPnlRef.current += pnl;
+
+            const limits = QTY_LIMITS[target.symbol];
+            if (settingsRef.current.strategyProfile === "coach" && limits) {
+                const nextStake = Math.max(
+                    limits.min * target.entryPrice,
+                    Math.min(
+                        limits.max * target.entryPrice,
+                        freedNotional + pnl
+                    )
+                );
+                coachStakeRef.current[target.symbol] = nextStake;
+            }
 
             const record: AssetPnlRecord = {
                 symbol: target.symbol,
