@@ -12,7 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { LogOut, User, Settings } from "lucide-react";
 import Logo from "./components/Logo";
 
-const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS === "false";
+// Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
+const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
 
 export default function App() {
   const auth = useAuth();
