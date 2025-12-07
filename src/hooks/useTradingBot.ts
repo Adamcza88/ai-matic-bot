@@ -295,6 +295,85 @@ export const useTradingBot = (
         }
     }, [authToken, useTestnet, apiBase]);
 
+    // Testnet pozice přímo z Bybitu – přepíší simulované activePositions
+    useEffect(() => {
+        if (!authToken || !useTestnet) return;
+
+        let cancel = false;
+        const baseProvided = Boolean(envBase);
+        const sameOrigin =
+            typeof window !== "undefined" &&
+            inferredBase === window.location.origin;
+        if (!baseProvided && sameOrigin) return;
+
+        const fetchPositions = async () => {
+            try {
+                const res = await fetch(`${apiBase}/api/demo/positions`, {
+                    headers: { Authorization: `Bearer ${authToken}` },
+                });
+                if (!res.ok) {
+                    const txt = await res.text();
+                    throw new Error(`Positions API failed (${res.status}): ${txt || "unknown"}`);
+                }
+                const data = await res.json();
+                const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+                const mapped: ActivePosition[] = Array.isArray(list)
+                    ? list.map((p: any, idx: number) => {
+                        const avgPrice = Number(p.avgPrice ?? p.entryPrice ?? p.lastPrice ?? 0);
+                        const size = Number(p.size ?? 0);
+                        const pnl = Number(p.unrealisedPnl ?? 0);
+                        return {
+                            id: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`,
+                            symbol: p.symbol || "UNKNOWN",
+                            side: (p.side === "Buy" ? "buy" : "sell") as "buy" | "sell",
+                            entryPrice: avgPrice,
+                            sl: p.stopLoss != null ? Number(p.stopLoss) : p.side === "Buy" ? avgPrice * 0.99 : avgPrice * 1.01,
+                            tp: p.takeProfit != null ? Number(p.takeProfit) : avgPrice,
+                            size,
+                            openedAt: new Date(Number(p.updatedTime ?? p.createdTime ?? Date.now())).toISOString(),
+                            unrealizedPnl: pnl,
+                            pnl,
+                            pnlValue: pnl,
+                            rrr: 0,
+                            peakPrice: Number(p.markPrice ?? p.lastPrice ?? avgPrice),
+                            currentTrailingStop: undefined,
+                            volatilityFactor: undefined,
+                            lastUpdateReason: undefined,
+                            timestamp: new Date().toISOString(),
+                        };
+                    })
+                    : [];
+                if (cancel) return;
+                setActivePositions(() => {
+                    activePositionsRef.current = mapped;
+                    return mapped;
+                });
+                setPortfolioState((p) => ({
+                    ...p,
+                    openPositions: mapped.length,
+                    allocatedCapital: mapped.reduce(
+                        (sum, pos) => sum + pos.entryPrice * pos.size,
+                        0
+                    ),
+                }));
+            } catch (err: any) {
+                if (cancel) return;
+                setSystemState((p) => ({
+                    ...p,
+                    bybitStatus: "Error",
+                    lastError: err?.message || "Failed to load positions",
+                }));
+            }
+        };
+
+        void fetchPositions();
+        const id = setInterval(fetchPositions, 10000);
+        return () => {
+            cancel = true;
+            clearInterval(id);
+        };
+    }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
+
     const fetchTestnetTrades = useCallback(async () => {
         if (!authToken || !useTestnet) {
             setTestnetTrades([]);
@@ -403,6 +482,12 @@ export const useTradingBot = (
     useEffect(() => {
         if (mode === TradingMode.OFF) {
             setSystemState((p) => ({ ...p, bybitStatus: "Disconnected" }));
+            return;
+        }
+
+        // Při aktivním testnetu s platným tokenem neaktualizujeme simulované pozice z enginu
+        if (useTestnet && authToken) {
+            setSystemState((p) => ({ ...p, bybitStatus: "Connected", lastError: null }));
             return;
         }
 
