@@ -492,12 +492,6 @@ export const useTradingBot = (
             return;
         }
 
-        // Při aktivním testnetu s platným tokenem neaktualizujeme simulované pozice z enginu,
-        // ale necháme běžet latenci/status z fetchAll
-        if (useTestnet && authToken) {
-            // ne return – chceme měřit latency přes fetchAll
-        }
-
         let cancel = false;
 
         const fetchAll = async () => {
@@ -623,53 +617,57 @@ export const useTradingBot = (
 
                 priceHistoryRef.current = newHistory;
                 setCurrentPrices(newPrices);
-                const prevActive = activePositionsRef.current;
-                const closed = prevActive.filter(
-                    (p) => !engineActive.some((e) => e.id === p.id)
-                );
 
-                let freedNotional = 0;
-                if (closed.length) {
-                    closed.forEach((p) => {
-                        const exitPrice =
-                            newPrices[p.symbol] ??
-                            currentPrices[p.symbol] ??
-                            p.entryPrice;
-                        const dir = p.side === "buy" ? 1 : -1;
-                        const pnl =
-                            (exitPrice - p.entryPrice) * dir * p.size;
-                        realizedPnlRef.current += pnl;
-                        const record: AssetPnlRecord = {
-                            symbol: p.symbol,
-                            pnl,
-                            timestamp: new Date().toISOString(),
-                            note: `Auto-close @ ${exitPrice.toFixed(
-                                4
-                            )} | size ${p.size.toFixed(4)}`,
-                        };
-                        setAssetPnlHistory(() => addPnlRecord(record));
-                        freedNotional += p.entryPrice * p.size;
-                        addLog({
-                            action: "AUTO_CLOSE",
-                            message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
-                                4
-                            )} | PnL ${pnl.toFixed(2)} USDT`,
+                // Simulované pozice aktualizujeme jen mimo testnet s auth tokenem.
+                if (!(useTestnet && authToken)) {
+                    const prevActive = activePositionsRef.current;
+                    const closed = prevActive.filter(
+                        (p) => !engineActive.some((e) => e.id === p.id)
+                    );
+
+                    let freedNotional = 0;
+                    if (closed.length) {
+                        closed.forEach((p) => {
+                            const exitPrice =
+                                newPrices[p.symbol] ??
+                                currentPrices[p.symbol] ??
+                                p.entryPrice;
+                            const dir = p.side === "buy" ? 1 : -1;
+                            const pnl =
+                                (exitPrice - p.entryPrice) * dir * p.size;
+                            realizedPnlRef.current += pnl;
+                            const record: AssetPnlRecord = {
+                                symbol: p.symbol,
+                                pnl,
+                                timestamp: new Date().toISOString(),
+                                note: `Auto-close @ ${exitPrice.toFixed(
+                                    4
+                                )} | size ${p.size.toFixed(4)}`,
+                            };
+                            setAssetPnlHistory(() => addPnlRecord(record));
+                            freedNotional += p.entryPrice * p.size;
+                            addLog({
+                                action: "AUTO_CLOSE",
+                                message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
+                                    4
+                                )} | PnL ${pnl.toFixed(2)} USDT`,
+                            });
                         });
-                    });
-                }
+                    }
 
-                setActivePositions(() => {
-                    activePositionsRef.current = engineActive;
-                    return engineActive;
-                });
-                setPortfolioState((p) => ({
-                    ...p,
-                    openPositions: engineActive.length,
-                    allocatedCapital: Math.max(
-                        0,
-                        p.allocatedCapital - freedNotional
-                    ),
-                }));
+                    setActivePositions(() => {
+                        activePositionsRef.current = engineActive;
+                        return engineActive;
+                    });
+                    setPortfolioState((p) => ({
+                        ...p,
+                        openPositions: engineActive.length,
+                        allocatedCapital: Math.max(
+                            0,
+                            p.allocatedCapital - freedNotional
+                        ),
+                    }));
+                }
 
                 const latency = Math.round(performance.now() - started);
                 setSystemState((p) => ({
