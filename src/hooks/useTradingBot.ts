@@ -866,6 +866,4 @@ export const useTradingBot = (
 };
 
 // ========= API TYPE EXPORT ==========
-export type TradingBotApi = ReturnType<typeof useTradingBot> & {
-    testnetTrades: TestnetTrade[];
-};
+export type TradingBotApi = ReturnType<typeof useTradingBot>;
