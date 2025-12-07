@@ -493,6 +493,30 @@ export const useTradingBot = (
 
             if (!withinSession(settingsRef.current, now)) return;
 
+            // Testnet + auth token → nepouštíme simulovaný engine, jen udržujeme status/latency
+            if (useTestnet && authToken) {
+                try {
+                    const ping = await fetch(`${httpBase}/v5/market/time`);
+                    const latency = Math.round(performance.now() - started);
+                    if (!ping.ok) throw new Error(`Ping failed ${ping.status}`);
+                    setSystemState((p) => ({
+                        ...p,
+                        bybitStatus: "Connected",
+                        latency,
+                        lastError: null,
+                    }));
+                } catch (err: any) {
+                    const msg = err?.message || "ping failed";
+                    setSystemState((p) => ({
+                        ...p,
+                        bybitStatus: "Error",
+                        lastError: msg,
+                        recentErrors: [msg, ...p.recentErrors].slice(0, 10),
+                    }));
+                }
+                return;
+            }
+
             try {
                 const URL_KLINE = `${httpBase}/v5/market/kline?category=linear`;
 
