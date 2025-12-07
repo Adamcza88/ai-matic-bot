@@ -334,6 +334,33 @@ export const useTradingBot = (
         }
     }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
 
+    // Sync reálně fillnuté trady z testnetu do Entry History (aby UI odpovídalo skutečným obchodům)
+    useEffect(() => {
+        if (!testnetTrades.length) return;
+        setEntryHistory(() => {
+            let current = loadEntryHistory();
+            const existingIds = new Set(current.map((r) => r.id));
+            const toAdd = testnetTrades.filter((t) => !existingIds.has(t.id));
+            if (!toAdd.length) return current;
+            toAdd.forEach((t) => {
+                const record: EntryHistoryRecord = {
+                    id: t.id,
+                    symbol: t.symbol,
+                    side: t.side.toLowerCase() as "buy" | "sell",
+                    entryPrice: t.price,
+                    sl: undefined,
+                    tp: undefined,
+                    size: t.qty,
+                    createdAt: t.time,
+                    settingsNote: "imported from testnet trade",
+                    settingsSnapshot: snapshotSettings(settingsRef.current),
+                };
+                current = addEntryToHistory(record);
+            });
+            return current;
+        });
+    }, [testnetTrades]);
+
     useEffect(() => {
         void fetchTestnetOrders();
         void fetchTestnetTrades();
@@ -839,4 +866,6 @@ export const useTradingBot = (
 };
 
 // ========= API TYPE EXPORT ==========
-export type TradingBotApi = ReturnType<typeof useTradingBot>;
+export type TradingBotApi = ReturnType<typeof useTradingBot> & {
+    testnetTrades: TestnetTrade[];
+};
