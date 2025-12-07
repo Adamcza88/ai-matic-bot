@@ -300,12 +300,6 @@ export const useTradingBot = (
         if (!authToken || !useTestnet) return;
 
         let cancel = false;
-        const baseProvided = Boolean(envBase);
-        const sameOrigin =
-            typeof window !== "undefined" &&
-            inferredBase === window.location.origin;
-        if (!baseProvided && sameOrigin) return;
-
         const fetchPositions = async () => {
             try {
                 const res = await fetch(`${apiBase}/api/demo/positions`, {
@@ -485,10 +479,10 @@ export const useTradingBot = (
             return;
         }
 
-        // Při aktivním testnetu s platným tokenem neaktualizujeme simulované pozice z enginu
+        // Při aktivním testnetu s platným tokenem neaktualizujeme simulované pozice z enginu,
+        // ale necháme běžet latenci/status z fetchAll
         if (useTestnet && authToken) {
-            setSystemState((p) => ({ ...p, bybitStatus: "Connected", lastError: null }));
-            return;
+            // ne return – chceme měřit latency přes fetchAll
         }
 
         let cancel = false;
