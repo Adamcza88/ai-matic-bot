@@ -11,6 +11,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Activity, AlertTriangle, TrendingUp, Wallet, Zap } from "lucide-react";
 
+const QTY_LIMITS: Record<string, { min: number; max: number }> = {
+  BTCUSDT: { min: 0.001, max: 0.01 },
+  ETHUSDT: { min: 0.01, max: 5 },
+  SOLUSDT: { min: 0.1, max: 100 },
+  ADAUSDT: { min: 1, max: 10000 },
+};
+
 type DashboardProps = {
   mode: TradingMode;
   setMode: (m: TradingMode) => void;
@@ -339,6 +346,12 @@ export default function Dashboard({
                 ))}
               </div>
             )}
+            <div className="mt-4 text-xs text-slate-500">
+              Limits per asset (qty):{" "}
+              {Object.entries(QTY_LIMITS)
+                .map(([sym, lim]) => `${sym} ${lim.min}–${lim.max}`)
+                .join(" · ")}
+            </div>
           </CardContent>
         </Card>
 
