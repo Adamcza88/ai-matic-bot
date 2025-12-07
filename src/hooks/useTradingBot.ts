@@ -156,6 +156,7 @@ export const useTradingBot = (
     const [currentPrices, setCurrentPrices] = useState<Record<string, number>>(
         {}
     );
+    const currentPricesRef = useRef<Record<string, number>>({});
     const [portfolioHistory, _setPortfolioHistory] = useState<
         { timestamp: string; totalCapital: number }[]
     >([]);
@@ -338,6 +339,37 @@ export const useTradingBot = (
                     })
                     : [];
                 if (cancel) return;
+
+                const prevActive = activePositionsRef.current;
+                const closed = prevActive.filter(
+                    (p) => !mapped.some((m) => m.id === p.id)
+                );
+                if (closed.length) {
+                    closed.forEach((p) => {
+                        const exitPrice =
+                            currentPricesRef.current[p.symbol] ?? p.entryPrice;
+                        const dir = p.side === "buy" ? 1 : -1;
+                        const pnl = (exitPrice - p.entryPrice) * dir * p.size;
+                        realizedPnlRef.current += pnl;
+                        setAssetPnlHistory(() =>
+                            addPnlRecord({
+                                symbol: p.symbol,
+                                pnl,
+                                timestamp: new Date().toISOString(),
+                                note: `Closed on testnet @ ${exitPrice.toFixed(
+                                    4
+                                )} | size ${p.size.toFixed(4)}`,
+                            })
+                        );
+                        addLog({
+                            action: "CLOSE",
+                            message: `${p.symbol} testnet position closed @ ${exitPrice.toFixed(
+                                4
+                            )} | PnL ${pnl.toFixed(2)} USDT`,
+                        });
+                    });
+                }
+
                 setActivePositions(() => {
                     activePositionsRef.current = mapped;
                     return mapped;
@@ -424,33 +456,6 @@ export const useTradingBot = (
             setOrdersError((prev) => prev || err?.message || "Failed to load trades");
         }
     }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
-
-    // Sync reálně fillnuté trady z testnetu do Entry History (aby UI odpovídalo skutečným obchodům)
-    useEffect(() => {
-        if (!testnetTrades.length) return;
-        setEntryHistory(() => {
-            let current = loadEntryHistory();
-            const existingIds = new Set(current.map((r) => r.id));
-            const toAdd = testnetTrades.filter((t) => !existingIds.has(t.id));
-            if (!toAdd.length) return current;
-            toAdd.forEach((t) => {
-                const record: EntryHistoryRecord = {
-                    id: t.id,
-                    symbol: t.symbol,
-                    side: t.side.toLowerCase() as "buy" | "sell",
-                    entryPrice: t.price,
-                    sl: undefined,
-                    tp: undefined,
-                    size: t.qty,
-                    createdAt: t.time,
-                    settingsNote: "imported from testnet trade",
-                    settingsSnapshot: snapshotSettings(settingsRef.current),
-                };
-                current = addEntryToHistory(record);
-            });
-            return current;
-        });
-    }, [testnetTrades]);
 
     useEffect(() => {
         void fetchTestnetOrders();
@@ -593,6 +598,7 @@ export const useTradingBot = (
 
                 priceHistoryRef.current = newHistory;
                 setCurrentPrices(newPrices);
+                currentPricesRef.current = newPrices;
 
                 // Simulované pozice aktualizujeme jen mimo testnet s auth tokenem.
                 if (!(useTestnet && authToken)) {
@@ -602,30 +608,46 @@ export const useTradingBot = (
                     );
 
                     let freedNotional = 0;
-                    if (closed.length) {
-                        closed.forEach((p) => {
-                            const exitPrice =
-                                newPrices[p.symbol] ??
-                                currentPrices[p.symbol] ??
-                                p.entryPrice;
-                            const dir = p.side === "buy" ? 1 : -1;
-                            const pnl =
-                                (exitPrice - p.entryPrice) * dir * p.size;
-                            realizedPnlRef.current += pnl;
-                            const record: AssetPnlRecord = {
+                if (closed.length) {
+                    closed.forEach((p) => {
+                        const exitPrice =
+                            newPrices[p.symbol] ??
+                            currentPrices[p.symbol] ??
+                            p.entryPrice;
+                        const dir = p.side === "buy" ? 1 : -1;
+                        const pnl =
+                            (exitPrice - p.entryPrice) * dir * p.size;
+                        realizedPnlRef.current += pnl;
+                        const record: AssetPnlRecord = {
+                            symbol: p.symbol,
+                            pnl,
+                            timestamp: new Date().toISOString(),
+                            note: `Auto-close @ ${exitPrice.toFixed(
+                                4
+                            )} | size ${p.size.toFixed(4)}`,
+                        };
+                        setAssetPnlHistory(() => addPnlRecord(record));
+                        setEntryHistory(() =>
+                            addEntryToHistory({
+                                id: `${p.id}-auto-closed`,
                                 symbol: p.symbol,
-                                pnl,
-                                timestamp: new Date().toISOString(),
-                                note: `Auto-close @ ${exitPrice.toFixed(
+                                side: p.side,
+                                entryPrice: p.entryPrice,
+                                sl: p.sl,
+                                tp: p.tp,
+                                size: p.size,
+                                createdAt: new Date().toISOString(),
+                                settingsNote: `Auto-closed @ ${exitPrice.toFixed(
                                     4
-                                )} | size ${p.size.toFixed(4)}`,
-                            };
-                            setAssetPnlHistory(() => addPnlRecord(record));
-                            freedNotional += p.entryPrice * p.size;
-                            addLog({
-                                action: "AUTO_CLOSE",
-                                message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
-                                    4
+                                )} | PnL ${pnl.toFixed(2)} USDT`,
+                                settingsSnapshot: snapshotSettings(settingsRef.current),
+                            })
+                        );
+                        freedNotional += p.entryPrice * p.size;
+                        addLog({
+                            action: "AUTO_CLOSE",
+                            message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
+                                4
                                 )} | PnL ${pnl.toFixed(2)} USDT`,
                             });
                         });
@@ -828,19 +850,6 @@ export const useTradingBot = (
         });
 
         const settingsSnapshot = snapshotSettings(settingsRef.current);
-        const historyRecord: EntryHistoryRecord = {
-            id: position.id,
-            symbol: signal.symbol,
-            side,
-            entryPrice: entry,
-            sl,
-            tp,
-            size,
-            createdAt: new Date().toISOString(),
-            settingsNote: `profile=${settingsSnapshot.strategyProfile}, strictness=${settingsSnapshot.entryStrictness}, risk=${settingsSnapshot.baseRiskPerTrade}, mult=${settingsSnapshot.positionSizingMultiplier}`,
-            settingsSnapshot,
-        };
-
         // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
         try {
             if (!authToken) {
@@ -882,9 +891,6 @@ export const useTradingBot = (
                     action: "ERROR",
                     message: `Order API failed (${res.status}): ${errText}`,
                 });
-            } else {
-                // Záznam vstupu ukládáme jen pokud order API prošlo
-                setEntryHistory(() => addEntryToHistory(historyRecord));
             }
         } catch (err: any) {
             addLog({
@@ -981,6 +987,20 @@ export const useTradingBot = (
                 note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
             };
             setAssetPnlHistory(() => addPnlRecord(record));
+            setEntryHistory(() =>
+                addEntryToHistory({
+                    id: `${target.id}-closed`,
+                    symbol: target.symbol,
+                    side: target.side,
+                    entryPrice: target.entryPrice,
+                    sl: target.sl,
+                    tp: target.tp,
+                    size: target.size,
+                    createdAt: new Date().toISOString(),
+                    settingsNote: `Closed at ${currentPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
+                    settingsSnapshot: snapshotSettings(settingsRef.current),
+                })
+            );
 
             setPortfolioState((p) => ({
                 ...p,
