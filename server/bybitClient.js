@@ -175,8 +175,8 @@ export async function getDemoPositions(creds) {
 
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
-  // UTA na testnetu vyžaduje accountType=UNIFIED, jinak vrací prázdný seznam
-  const query = "category=linear&accountType=UNIFIED";
+  // UTA na testnetu vyžaduje accountType=UNIFIED, a pro USDT kontrakty settleCoin=USDT
+  const query = "category=linear&accountType=UNIFIED&settleCoin=USDT";
 
   const payload = timestamp + creds.apiKey + recvWindow + query;
   const signature = sign(payload, creds.apiSecret);
