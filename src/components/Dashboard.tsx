@@ -111,7 +111,7 @@ export default function Dashboard({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+            <div className="space-y-4 text-sm">
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span className="text-slate-400">Bybit Connection</span>
@@ -132,12 +132,12 @@ export default function Dashboard({
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-400">Last Error</span>
-                  <span className="text-red-400 truncate max-w-[150px]" title={systemState.lastError ?? ""}>
+                  <span className="text-red-400 truncate max-w-[200px]" title={systemState.lastError ?? ""}>
                     {systemState.lastError ?? "None"}
                   </span>
                 </div>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2 pt-3 border-t border-white/10">
                 <div className="flex justify-between">
                   <span className="text-slate-400">Total Capital</span>
                   <span className="font-mono font-medium text-lg">
