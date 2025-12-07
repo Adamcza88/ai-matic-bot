@@ -1,7 +1,7 @@
 // hooks/useTradingBot.ts
 import { useState, useEffect, useRef, useCallback } from "react";
 import { TradingMode, } from "../types";
-import { evaluateStrategyForSymbol } from "../engine/botEngine";
+import { evaluateStrategyForSymbol } from "@/engine/botEngine";
 import { useNetworkConfig } from "../engine/networkConfig";
 import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../lib/entryHistory";
 import { addPnlRecord, loadPnlHistory } from "../lib/pnlHistory";

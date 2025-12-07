@@ -35,17 +35,17 @@ export default function Dashboard({
     logEntries,
     priceAlerts,
     addPriceAlert,
-  removePriceAlert,
-  updateSettings,
-  closePosition,
-  entryHistory,
-  testnetOrders,
-  testnetTrades,
-  ordersError,
-  refreshTestnetOrders,
-  assetPnlHistory,
-  removeEntryHistoryItem,
-} = bot;
+    removePriceAlert,
+    updateSettings,
+    closePosition,
+    entryHistory,
+    testnetOrders,
+    testnetTrades,
+    ordersError,
+    refreshTestnetOrders,
+    assetPnlHistory,
+    removeEntryHistoryItem,
+  } = bot;
 
   const setProfile = (profile: AISettings["strategyProfile"]) => {
     updateSettings({ ...settings, strategyProfile: profile });
