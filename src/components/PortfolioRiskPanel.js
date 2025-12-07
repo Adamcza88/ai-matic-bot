@@ -1,0 +1,17 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+const PortfolioRiskPanel = ({ theme, portfolioState, priceAlerts, onAddAlert, onRemoveAlert, onResetRisk, }) => {
+    const isDark = theme === "dark";
+    const card = isDark
+        ? "bg-gray-900/50 border-gray-700/50"
+        : "bg-white border-gray-200";
+    return (_jsxs("div", { className: `rounded-xl p-4 border ${card}`, children: [_jsx("h2", { className: `text-lg font-semibold mb-4 ${isDark ? "text-white" : "text-gray-900"}`, children: "Portfolio & Risk" }), _jsxs("div", { className: "grid grid-cols-2 gap-4 mb-4 text-sm", children: [_jsxs("div", { children: [_jsx("span", { className: "text-gray-500", children: "Total Capital:" }), " ", _jsxs("span", { className: isDark ? "text-gray-200" : "text-gray-700", children: ["$", portfolioState.totalCapital.toFixed(2)] })] }), _jsxs("div", { children: [_jsx("span", { className: "text-gray-500", children: "Allocated:" }), " ", _jsxs("span", { className: "text-cyan-400", children: ["$", portfolioState.allocatedCapital.toFixed(2)] })] }), _jsxs("div", { children: [_jsx("span", { className: "text-gray-500", children: "Daily PnL:" }), " ", _jsxs("span", { className: portfolioState.dailyPnl >= 0 ? "text-green-400" : "text-red-400", children: [portfolioState.dailyPnl.toFixed(2), " USD"] })] }), _jsxs("div", { children: [_jsx("span", { className: "text-gray-500", children: "Drawdown:" }), " ", _jsxs("span", { className: portfolioState.currentDrawdown >= portfolioState.maxDrawdown
+                                    ? "text-red-500"
+                                    : "text-yellow-400", children: [(portfolioState.currentDrawdown * 100).toFixed(1), "%"] })] })] }), _jsxs("div", { className: "mb-4 pt-3 border-t border-gray-700/40", children: [_jsx("h3", { className: `text-sm font-semibold mb-2 ${isDark ? "text-gray-300" : "text-gray-700"}`, children: "Price Alerts" }), _jsx("div", { className: "space-y-2", children: priceAlerts.map((a) => (_jsxs("div", { className: `flex justify-between items-center p-2 rounded border ${isDark
+                                ? "border-gray-700 bg-gray-800/40"
+                                : "border-gray-200 bg-gray-100"}`, children: [_jsxs("div", { className: "text-sm", children: [_jsx("span", { className: "font-semibold", children: a.symbol }), " ", _jsxs("span", { className: "text-gray-400", children: ["@ ", a.price] })] }), _jsx("button", { onClick: () => onRemoveAlert(a.id), className: "text-red-400 hover:text-red-600 text-xs font-semibold", children: "Remove" })] }, a.id))) }), _jsx("button", { onClick: () => onAddAlert("BTCUSDT", 100000), className: `mt-3 px-3 py-1.5 text-xs rounded border ${isDark
+                            ? "border-gray-600 text-gray-300 hover:bg-gray-800"
+                            : "border-gray-300 text-gray-700 hover:bg-gray-200"}`, children: "+ Add BTC 100k Alert" })] }), _jsx("button", { onClick: onResetRisk, className: `w-full py-2 rounded text-sm font-semibold ${isDark
+                    ? "bg-red-600/70 text-white hover:bg-red-600"
+                    : "bg-red-500 text-white hover:bg-red-600"}`, children: "Reset Risk State" })] }));
+};
+export default PortfolioRiskPanel;

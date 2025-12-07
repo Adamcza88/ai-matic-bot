@@ -1,37 +1,18 @@
 // hooks/useTradingBot.ts
 import { useState, useEffect, useRef, useCallback } from "react";
-import {
-    TradingMode,
-    TradeIntent,
-    PendingSignal,
-    ActivePosition,
-    ClosedPosition,
-    LogEntry,
-    NewsItem,
-    PriceAlert,
-    AISettings,
-    EntryHistoryRecord,
-    TestnetOrder,
-    TestnetTrade,
-    AssetPnlRecord,
-    
-} from "../types";
-
-import { Candle, evaluateStrategyForSymbol } from "@/engine/botEngine";
+import { TradingMode, } from "../types";
+import { evaluateStrategyForSymbol } from "../engine/botEngine";
 import { useNetworkConfig } from "../engine/networkConfig";
 import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../lib/entryHistory";
-import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
-
+import { addPnlRecord, loadPnlHistory } from "../lib/pnlHistory";
 // SYMBOLS
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
-
 // SIMULOVANÝ KAPITÁL
 const INITIAL_CAPITAL = 200000;
 const MAX_SINGLE_POSITION_VALUE = 10000;
 const MIN_ENTRY_SPACING_MS = 3000;
-
 // RISK / STRATEGY
-export const INITIAL_RISK_SETTINGS: AISettings = {
+export const INITIAL_RISK_SETTINGS = {
     strictRiskAdherence: true,
     pauseOnHighVolatility: false,
     avoidLowLiquidity: false,
@@ -62,47 +43,51 @@ export const INITIAL_RISK_SETTINGS: AISettings = {
     tradingEndHour: 23,
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
 };
-
 // UTILS
-function parseKlines(list: any[]): Candle[] {
-    if (!Array.isArray(list)) return [];
+function parseKlines(list) {
+    if (!Array.isArray(list))
+        return [];
     return list
-        .map((row: any) => {
-            const [ts, open, high, low, close, volume] = row;
-            return {
-                openTime: Number(ts),
-                open: parseFloat(open),
-                high: parseFloat(high),
-                low: parseFloat(low),
-                close: parseFloat(close),
-                volume: parseFloat(volume),
-            } as Candle;
-        })
+        .map((row) => {
+        const [ts, open, high, low, close, volume] = row;
+        return {
+            openTime: Number(ts),
+            open: parseFloat(open),
+            high: parseFloat(high),
+            low: parseFloat(low),
+            close: parseFloat(close),
+            volume: parseFloat(volume),
+        };
+    })
         .sort((a, b) => a.openTime - b.openTime);
 }
-
-function withinSession(settings: typeof INITIAL_RISK_SETTINGS, now: Date) {
-    if (settings.entryStrictness === "test") return true;
-    if (!settings.enforceSessionHours) return true;
+function withinSession(settings, now) {
+    if (settings.entryStrictness === "test")
+        return true;
+    if (!settings.enforceSessionHours)
+        return true;
     const day = now.getDay();
     const hour = now.getHours();
-    if (!settings.tradingDays.includes(day)) return false;
+    if (!settings.tradingDays.includes(day))
+        return false;
     if (hour < settings.tradingStartHour || hour > settings.tradingEndHour)
         return false;
     return true;
 }
-
-function chooseStrategyProfile(
-    candles: Candle[],
-    preferred: (typeof INITIAL_RISK_SETTINGS)["strategyProfile"]
-): "trend" | "scalp" | "swing" | "intraday" | null {
-    if (preferred === "off") return null;
-    if (preferred === "trend") return "trend";
-    if (preferred === "scalp") return "scalp";
-    if (preferred === "swing") return "swing";
-    if (preferred === "intraday") return "intraday";
+function chooseStrategyProfile(candles, preferred) {
+    if (preferred === "off")
+        return null;
+    if (preferred === "trend")
+        return "trend";
+    if (preferred === "scalp")
+        return "scalp";
+    if (preferred === "swing")
+        return "swing";
+    if (preferred === "intraday")
+        return "intraday";
     // auto: heuristika podle volatility
-    if (candles.length < 20) return "trend";
+    if (candles.length < 20)
+        return "trend";
     const closes = candles.map((c) => c.close);
     const highs = candles.map((c) => c.high);
     const lows = candles.map((c) => c.low);
@@ -119,81 +104,60 @@ function chooseStrategyProfile(
     })();
     const price = closes[closes.length - 1] || 1;
     const atrPct = atr / price;
-    if (atrPct < 0.0015) return "scalp";
-    if (atrPct > 0.006) return "swing";
+    if (atrPct < 0.0015)
+        return "scalp";
+    if (atrPct > 0.006)
+        return "swing";
     return "trend";
 }
-
-function snapshotSettings(settings: AISettings): AISettings {
+function snapshotSettings(settings) {
     return {
         ...settings,
         tradingDays: [...settings.tradingDays],
     };
 }
-
 // ========== HLAVNÍ HOOK ==========
-
-export const useTradingBot = (
-    mode: TradingMode,
-    useTestnet: boolean,
-    authToken?: string
-) => {
+export const useTradingBot = (mode, useTestnet, authToken) => {
     const { httpBase } = useNetworkConfig(useTestnet);
-    const envBase = (import.meta as any).env?.VITE_API_BASE;
-    const inferredBase =
-        typeof window !== "undefined" ? window.location.origin : "";
+    const envBase = import.meta.env?.VITE_API_BASE;
+    const inferredBase = typeof window !== "undefined" ? window.location.origin : "";
     const apiBase = (envBase || inferredBase || "").replace(/\/$/, "");
-
-    const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
-    const [activePositions, setActivePositions] = useState<ActivePosition[]>(
-        []
-    );
-    const [closedPositions, _setClosedPositions] = useState<ClosedPosition[]>(
-        []
-    );
-    const [pendingSignals, setPendingSignals] = useState<PendingSignal[]>([]);
-    const pendingSignalsRef = useRef<PendingSignal[]>([]);
-    const [currentPrices, setCurrentPrices] = useState<Record<string, number>>(
-        {}
-    );
-    const [portfolioHistory, _setPortfolioHistory] = useState<
-        { timestamp: string; totalCapital: number }[]
-    >([]);
-    const [newsHeadlines, setNewsHeadlines] = useState<NewsItem[]>([]);
-    const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>([]);
-    const [entryHistory, setEntryHistory] = useState<EntryHistoryRecord[]>([]);
-    const [testnetOrders, setTestnetOrders] = useState<TestnetOrder[]>([]);
-    const [testnetTrades, setTestnetTrades] = useState<TestnetTrade[]>([]);
-    const [ordersError, setOrdersError] = useState<string | null>(null);
-    const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap>({});
+    const [logEntries, setLogEntries] = useState([]);
+    const [activePositions, setActivePositions] = useState([]);
+    const [closedPositions, _setClosedPositions] = useState([]);
+    const [pendingSignals, setPendingSignals] = useState([]);
+    const pendingSignalsRef = useRef([]);
+    const [currentPrices, setCurrentPrices] = useState({});
+    const [portfolioHistory, _setPortfolioHistory] = useState([]);
+    const [newsHeadlines, setNewsHeadlines] = useState([]);
+    const [priceAlerts, setPriceAlerts] = useState([]);
+    const [entryHistory, setEntryHistory] = useState([]);
+    const [testnetOrders, setTestnetOrders] = useState([]);
+    const [testnetTrades, setTestnetTrades] = useState([]);
+    const [ordersError, setOrdersError] = useState(null);
+    const [assetPnlHistory, setAssetPnlHistory] = useState({});
     const [settings, setSettings] = useState(INITIAL_RISK_SETTINGS);
-
     const [systemState, setSystemState] = useState({
         bybitStatus: "Connecting...",
         latency: 0,
-        lastError: null as string | null,
-        recentErrors: [] as string[],
+        lastError: null,
+        recentErrors: [],
     });
-
     const [portfolioState, setPortfolioState] = useState({
         totalCapital: INITIAL_CAPITAL,
         allocatedCapital: 0,
-        maxAllocatedCapital:
-            INITIAL_CAPITAL * INITIAL_RISK_SETTINGS.maxAllocatedCapitalPercent,
+        maxAllocatedCapital: INITIAL_CAPITAL * INITIAL_RISK_SETTINGS.maxAllocatedCapitalPercent,
         dailyPnl: 0,
-        maxDailyLoss:
-            INITIAL_CAPITAL * INITIAL_RISK_SETTINGS.maxDailyLossPercent,
-        maxDailyProfit:
-            INITIAL_CAPITAL * INITIAL_RISK_SETTINGS.maxDailyProfitPercent,
+        maxDailyLoss: INITIAL_CAPITAL * INITIAL_RISK_SETTINGS.maxDailyLossPercent,
+        maxDailyProfit: INITIAL_CAPITAL * INITIAL_RISK_SETTINGS.maxDailyProfitPercent,
         peakCapital: INITIAL_CAPITAL,
         currentDrawdown: 0,
         maxDrawdown: INITIAL_RISK_SETTINGS.maxDrawdownPercent,
         openPositions: 0,
         maxOpenPositions: 4,
     });
-    const lastEntryAtRef = useRef<number | null>(null);
-    const entryQueueRef = useRef<Promise<void>>(Promise.resolve());
-
+    const lastEntryAtRef = useRef(null);
+    const entryQueueRef = useRef(Promise.resolve());
     // Dynamicky uprav capital/max allocation pro testovací režim
     useEffect(() => {
         const isTest = settings.entryStrictness === "test";
@@ -209,28 +173,21 @@ export const useTradingBot = (
             };
         });
     }, [settings.entryStrictness, settings.maxAllocatedCapitalPercent]);
-
     // Přepočet denního PnL podle otevřených pozic (unrealized)
     useEffect(() => {
-        const unrealized = activePositions.reduce(
-            (sum, p) => sum + (p.pnl ?? 0),
-            0
-        );
+        const unrealized = activePositions.reduce((sum, p) => sum + (p.pnl ?? 0), 0);
         setPortfolioState((prev) => ({
             ...prev,
             dailyPnl: realizedPnlRef.current + unrealized,
         }));
     }, [activePositions]);
-
     useEffect(() => {
         setEntryHistory(loadEntryHistory());
         setAssetPnlHistory(loadPnlHistory());
     }, []);
-
     useEffect(() => {
         pendingSignalsRef.current = pendingSignals;
     }, [pendingSignals]);
-
     const fetchTestnetOrders = useCallback(async () => {
         if (!authToken) {
             setTestnetOrders([]);
@@ -244,8 +201,7 @@ export const useTradingBot = (
         }
         // Pokud není definován explicitní backend, nezkoušej fetchovat – předejdeme 404 na statickém hostu
         const baseProvided = Boolean(envBase);
-        const sameOrigin =
-            typeof window !== "undefined" &&
+        const sameOrigin = typeof window !== "undefined" &&
             inferredBase === window.location.origin;
         if (!baseProvided && sameOrigin) {
             setTestnetOrders([]);
@@ -265,9 +221,9 @@ export const useTradingBot = (
             }
             const data = await res.json();
             const list = data?.data?.list || data?.list || data?.result?.list || [];
-            const mapped: TestnetOrder[] = Array.isArray(list)
-                ? list.map((o: any) => {
-                    const toIso = (ts: any) => {
+            const mapped = Array.isArray(list)
+                ? list.map((o) => {
+                    const toIso = (ts) => {
                         const n = Number(ts);
                         return Number.isFinite(n) && n > 0
                             ? new Date(n).toISOString()
@@ -276,7 +232,7 @@ export const useTradingBot = (
                     return {
                         orderId: o.orderId || o.orderLinkId || o.id || `${Date.now()}`,
                         symbol: o.symbol || "",
-                        side: (o.side as "Buy" | "Sell") || "Buy",
+                        side: o.side || "Buy",
                         qty: Number(o.qty ?? o.cumExecQty ?? 0),
                         price: o.price != null ? Number(o.price) : o.avgPrice != null ? Number(o.avgPrice) : null,
                         status: o.orderStatus || o.status || "unknown",
@@ -285,19 +241,18 @@ export const useTradingBot = (
                 })
                 : [];
             setTestnetOrders(mapped);
-        } catch (err: any) {
+        }
+        catch (err) {
             setOrdersError(err?.message || "Failed to load orders");
         }
     }, [authToken, useTestnet, apiBase]);
-
     const fetchTestnetTrades = useCallback(async () => {
         if (!authToken || !useTestnet) {
             setTestnetTrades([]);
             return;
         }
         const baseProvided = Boolean(envBase);
-        const sameOrigin =
-            typeof window !== "undefined" &&
+        const sameOrigin = typeof window !== "undefined" &&
             inferredBase === window.location.origin;
         if (!baseProvided && sameOrigin) {
             setTestnetTrades([]);
@@ -313,13 +268,13 @@ export const useTradingBot = (
             }
             const data = await res.json();
             const list = data?.data?.list || data?.list || data?.result?.list || [];
-            const mapped: TestnetTrade[] = Array.isArray(list)
-                ? list.map((t: any) => {
+            const mapped = Array.isArray(list)
+                ? list.map((t) => {
                     const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
                     return {
                         id: t.execId || t.tradeId || `${Date.now()}`,
                         symbol: t.symbol || "",
-                        side: (t.side as "Buy" | "Sell") || "Buy",
+                        side: t.side || "Buy",
                         price: Number(t.execPrice ?? t.price ?? 0),
                         qty: Number(t.execQty ?? t.qty ?? 0),
                         value: Number(t.execValue ?? t.value ?? 0),
@@ -329,24 +284,26 @@ export const useTradingBot = (
                 })
                 : [];
             setTestnetTrades(mapped);
-        } catch (err: any) {
+        }
+        catch (err) {
             setOrdersError((prev) => prev || err?.message || "Failed to load trades");
         }
     }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
-
     // Sync reálně fillnuté trady z testnetu do Entry History (aby UI odpovídalo skutečným obchodům)
     useEffect(() => {
-        if (!testnetTrades.length) return;
+        if (!testnetTrades.length)
+            return;
         setEntryHistory(() => {
             let current = loadEntryHistory();
             const existingIds = new Set(current.map((r) => r.id));
             const toAdd = testnetTrades.filter((t) => !existingIds.has(t.id));
-            if (!toAdd.length) return current;
+            if (!toAdd.length)
+                return current;
             toAdd.forEach((t) => {
-                const record: EntryHistoryRecord = {
+                const record = {
                     id: t.id,
                     symbol: t.symbol,
-                    side: t.side.toLowerCase() as "buy" | "sell",
+                    side: t.side.toLowerCase(),
                     entryPrice: t.price,
                     sl: undefined,
                     tp: undefined,
@@ -360,12 +317,10 @@ export const useTradingBot = (
             return current;
         });
     }, [testnetTrades]);
-
     useEffect(() => {
         void fetchTestnetOrders();
         void fetchTestnetTrades();
     }, [fetchTestnetOrders]);
-
     const [aiModelState, _setAiModelState] = useState({
         version: "1.0.0-real-strategy",
         lastRetrain: new Date(Date.now() - 7 * 24 * 3600 * 1000)
@@ -374,77 +329,60 @@ export const useTradingBot = (
         nextRetrain: new Date(Date.now() + 7 * 24 * 3600 * 1000)
             .toISOString()
             .split("T")[0],
-        status: "Idle" as "Idle" | "Training",
+        status: "Idle",
     });
-
-    const priceHistoryRef = useRef<Record<string, Candle[]>>({});
+    const priceHistoryRef = useRef({});
     const modeRef = useRef(mode);
     modeRef.current = mode;
     const settingsRef = useRef(settings);
     settingsRef.current = settings;
     const realizedPnlRef = useRef(0);
-
     // ========== LOG ==========
-    const addLog = (entry: Omit<LogEntry, "id" | "timestamp">) => {
-        const log: LogEntry = {
+    const addLog = (entry) => {
+        const log = {
             id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
             timestamp: new Date().toISOString(),
             ...entry,
         };
         setLogEntries((prev) => [log, ...prev].slice(0, 200));
     };
-
     // ========== FETCH CEN Z BYBIT (mainnet / testnet) ==========
     useEffect(() => {
         if (mode === TradingMode.OFF) {
             setSystemState((p) => ({ ...p, bybitStatus: "Disconnected" }));
             return;
         }
-
         let cancel = false;
-
         const fetchAll = async () => {
             const started = performance.now();
             const now = new Date();
-
-            if (!withinSession(settingsRef.current, now)) return;
-
+            if (!withinSession(settingsRef.current, now))
+                return;
             try {
                 const URL_KLINE = `${httpBase}/v5/market/kline?category=linear`;
-
-                const newPrices: Record<string, number> = {};
-                const newHistory: any = { ...priceHistoryRef.current };
-                const engineActive: ActivePosition[] = [];
-
+                const newPrices = {};
+                const newHistory = { ...priceHistoryRef.current };
+                const engineActive = [];
                 for (const symbol of SYMBOLS) {
                     const url = `${URL_KLINE}&symbol=${symbol}&interval=1&limit=200`;
                     const r = await fetch(url);
                     const j = await r.json();
-                    if (j.retCode !== 0) throw new Error(j.retMsg);
-
+                    if (j.retCode !== 0)
+                        throw new Error(j.retMsg);
                     const candles = parseKlines(j.result?.list ?? []);
-                    if (!candles.length) continue;
-
+                    if (!candles.length)
+                        continue;
                     newHistory[symbol] = candles;
                     newPrices[symbol] = candles[candles.length - 1].close;
-
                     if (mode !== TradingMode.BACKTEST) {
-                        const profile = chooseStrategyProfile(
-                            candles,
-                            settingsRef.current.strategyProfile as any
-                        );
-                        if (!profile) continue;
-                        const decision = evaluateStrategyForSymbol(
-                            symbol,
-                            candles,
-                            {
-                                strategyProfile: profile,
-                                entryStrictness:
-                                    settingsRef.current.entryStrictness,
-                                riskPerTrade:
-                                    settingsRef.current.baseRiskPerTrade,
-                            }
-                        );
+                        const profile = chooseStrategyProfile(candles, settingsRef.current.strategyProfile);
+                        if (!profile)
+                            continue;
+                        const decision = evaluateStrategyForSymbol(symbol, candles, {
+                            strategyProfile: profile,
+                            entryStrictness: settingsRef.current.entryStrictness,
+                            riskPerTrade: settingsRef.current.baseRiskPerTrade,
+                        });
                         const signal = decision?.signal;
                         if (signal) {
                             setPendingSignals((prev) => [signal, ...prev]);
@@ -456,13 +394,11 @@ export const useTradingBot = (
                         if (decision?.position) {
                             const pos = decision.position;
                             const dir = pos.side === "long" ? 1 : -1;
-                            const currentPrice =
-                                candles[candles.length - 1].close;
-                            const pnl =
-                                (currentPrice - pos.entryPrice) *
+                            const currentPrice = candles[candles.length - 1].close;
+                            const pnl = (currentPrice - pos.entryPrice) *
                                 dir *
                                 pos.size;
-                            const mapped: ActivePosition = {
+                            const mapped = {
                                 id: `${symbol}-${pos.opened}`,
                                 symbol,
                                 side: pos.side === "long" ? "buy" : "sell",
@@ -476,17 +412,12 @@ export const useTradingBot = (
                                 unrealizedPnl: pnl,
                                 pnl,
                                 pnlValue: pnl,
-                                rrr:
-                                    Math.abs(
-                                        (Number.isFinite(pos.takeProfit)
-                                            ? pos.takeProfit
-                                            : pos.initialTakeProfit) -
-                                            pos.entryPrice
-                                    ) /
-                                        Math.abs(
-                                            pos.entryPrice - pos.stopLoss ||
-                                                1e-8
-                                        ) || 0,
+                                rrr: Math.abs((Number.isFinite(pos.takeProfit)
+                                    ? pos.takeProfit
+                                    : pos.initialTakeProfit) -
+                                    pos.entryPrice) /
+                                    Math.abs(pos.entryPrice - pos.stopLoss ||
+                                        1e-8) || 0,
                                 peakPrice: pos.highWaterMark,
                                 currentTrailingStop: pos.trailingStop,
                                 volatilityFactor: undefined,
@@ -497,13 +428,11 @@ export const useTradingBot = (
                         }
                     }
                 }
-
-                if (cancel) return;
-
+                if (cancel)
+                    return;
                 priceHistoryRef.current = newHistory;
                 setCurrentPrices(newPrices);
                 setActivePositions(engineActive);
-
                 const latency = Math.round(performance.now() - started);
                 setSystemState((p) => ({
                     ...p,
@@ -511,8 +440,10 @@ export const useTradingBot = (
                     latency,
                     lastError: null,
                 }));
-            } catch (err: any) {
-                if (cancel) return;
+            }
+            catch (err) {
+                if (cancel)
+                    return;
                 const msg = err.message ?? "unknown";
                 setSystemState((p) => ({
                     ...p,
@@ -523,7 +454,6 @@ export const useTradingBot = (
                 addLog({ action: "ERROR", message: msg });
             }
         };
-
         fetchAll();
         const id = setInterval(fetchAll, 12000);
         return () => {
@@ -531,21 +461,17 @@ export const useTradingBot = (
             clearInterval(id);
         };
     }, [mode, useTestnet, httpBase]);
-
     // ========== EXECUTE TRADE (simulated + backend order) ==========
-    const performTrade = async (signalId: string): Promise<boolean> => {
+    const performTrade = async (signalId) => {
         const signal = pendingSignalsRef.current.find((s) => s.id === signalId);
-        if (!signal) return false;
-
+        if (!signal)
+            return false;
         // Jednoduchý risk-engine: hlídá max. risk / capital allocation
         const maxAlloc = portfolioState.maxAllocatedCapital;
         const currentAlloc = portfolioState.allocatedCapital;
-
-        const plannedNotional =
-            portfolioState.totalCapital *
+        const plannedNotional = portfolioState.totalCapital *
             settings.baseRiskPerTrade *
             settings.positionSizingMultiplier;
-
         if (currentAlloc + plannedNotional > maxAlloc) {
             setLogEntries((prev) => [
                 {
@@ -558,54 +484,43 @@ export const useTradingBot = (
             ]);
             return false;
         }
-
-        const intent: TradeIntent = signal.intent;
+        const intent = signal.intent;
         const { entry, sl, tp, side } = intent;
-
-        const riskPerTrade =
-            portfolioState.totalCapital *
+        const riskPerTrade = portfolioState.totalCapital *
             settings.baseRiskPerTrade *
             settings.positionSizingMultiplier;
-
         const riskPerUnit = Math.abs(entry - sl);
-        if (riskPerUnit <= 0) return false;
-
+        if (riskPerUnit <= 0)
+            return false;
         let size = riskPerTrade / riskPerUnit;
         let notional = size * entry;
-
         if (notional > MAX_SINGLE_POSITION_VALUE) {
             const factor = MAX_SINGLE_POSITION_VALUE / notional;
             size *= factor;
             notional = MAX_SINGLE_POSITION_VALUE;
         }
-
-        if (
-            portfolioState.allocatedCapital + notional >
-            portfolioState.maxAllocatedCapital
-        ) {
+        if (portfolioState.allocatedCapital + notional >
+            portfolioState.maxAllocatedCapital) {
             addLog({
                 action: "RISK_BLOCK",
                 message: `Signal on ${signal.symbol} exceeds capital allocation limit.`,
             });
             return false;
         }
-
         // ===== DYNAMICKÝ TRAILING STOP (odvozený z 1R) =====
         const oneR = Math.abs(entry - sl); // velikost SL
         const trailingDistance = oneR * 0.5; // 0.5R
-        let trailingActivationPrice: number | null = null;
-
+        let trailingActivationPrice = null;
         if (side === "buy") {
             trailingActivationPrice = entry + oneR; // aktivace při +1R
-        } else {
+        }
+        else {
             trailingActivationPrice = entry - oneR;
         }
-
         // callbackRate v %
         const trailingStopPct = (trailingDistance / entry) * 100;
         const trailingStopDistance = trailingDistance;
-
-        const position: ActivePosition = {
+        const position = {
             id: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`,
             symbol: signal.symbol,
             side,
@@ -622,7 +537,6 @@ export const useTradingBot = (
             timestamp: new Date().toISOString(),
             peakPrice: entry,
         };
-
         setActivePositions((prev) => [position, ...prev]);
         setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
         setPortfolioState((prev) => ({
@@ -630,20 +544,12 @@ export const useTradingBot = (
             allocatedCapital: prev.allocatedCapital + notional,
             openPositions: prev.openPositions + 1,
         }));
-
         addLog({
             action: "OPEN",
-            message: `Opened ${side.toUpperCase()} ${
-                signal.symbol
-            } at ${entry.toFixed(4)} (size ≈ ${size.toFixed(
-                4
-            )}, notional ≈ ${notional.toFixed(
-                2
-            )} USDT, TS≈${trailingStopPct.toFixed(2)}% from 1R)`,
+            message: `Opened ${side.toUpperCase()} ${signal.symbol} at ${entry.toFixed(4)} (size ≈ ${size.toFixed(4)}, notional ≈ ${notional.toFixed(2)} USDT, TS≈${trailingStopPct.toFixed(2)}% from 1R)`,
         });
-
         const settingsSnapshot = snapshotSettings(settingsRef.current);
-        const historyRecord: EntryHistoryRecord = {
+        const historyRecord = {
             id: position.id,
             symbol: signal.symbol,
             side,
@@ -656,18 +562,15 @@ export const useTradingBot = (
             settingsSnapshot,
         };
         setEntryHistory(() => addEntryToHistory(historyRecord));
-
         // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
         try {
             if (!authToken) {
                 addLog({
                     action: "ERROR",
-                    message:
-                        "Missing auth token for placing order. Please re-login.",
+                    message: "Missing auth token for placing order. Please re-login.",
                 });
                 return true;
             }
-
             const res = await fetch(`${apiBase}/api/demo/order`, {
                 method: "POST",
                 headers: {
@@ -685,7 +588,6 @@ export const useTradingBot = (
                     trailingActivationPrice,
                 }),
             });
-
             if (!res.ok) {
                 const errText = await res.text();
                 addLog({
@@ -693,7 +595,8 @@ export const useTradingBot = (
                     message: `Order API failed (${res.status}): ${errText}`,
                 });
             }
-        } catch (err: any) {
+        }
+        catch (err) {
             addLog({
                 action: "ERROR",
                 message: `Demo API order failed: ${err?.message || "unknown"}`,
@@ -701,46 +604,39 @@ export const useTradingBot = (
         }
         return true;
     };
-
-    function executeTrade(signalId: string): Promise<void> {
+    function executeTrade(signalId) {
         entryQueueRef.current = entryQueueRef.current
             .catch(() => {
-                // swallow to keep queue alive
-            })
+            // swallow to keep queue alive
+        })
             .then(async () => {
-                const last = lastEntryAtRef.current;
-                const sinceLast = last ? Date.now() - last : Infinity;
-                const waitMs =
-                    sinceLast < MIN_ENTRY_SPACING_MS
-                        ? MIN_ENTRY_SPACING_MS - sinceLast
-                        : 0;
-
-                // Delay only when více vstupů čeká zároveň.
-                if (pendingSignalsRef.current.length > 0 && waitMs > 0) {
-                    await new Promise((resolve) => setTimeout(resolve, waitMs));
-                }
-
-                const executed = await performTrade(signalId);
-                if (executed) {
-                    lastEntryAtRef.current = Date.now();
-                }
-            });
-
+            const last = lastEntryAtRef.current;
+            const sinceLast = last ? Date.now() - last : Infinity;
+            const waitMs = sinceLast < MIN_ENTRY_SPACING_MS
+                ? MIN_ENTRY_SPACING_MS - sinceLast
+                : 0;
+            // Delay only when více vstupů čeká zároveň.
+            if (pendingSignalsRef.current.length > 0 && waitMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+            }
+            const executed = await performTrade(signalId);
+            if (executed) {
+                lastEntryAtRef.current = Date.now();
+            }
+        });
         return entryQueueRef.current;
     }
-
     // ========== AUTO MODE ==========
     useEffect(() => {
-        if (modeRef.current !== TradingMode.AUTO_ON) return;
-        if (!pendingSignals.length) return;
-
+        if (modeRef.current !== TradingMode.AUTO_ON)
+            return;
+        if (!pendingSignals.length)
+            return;
         const sig = pendingSignals[0];
         if (settingsRef.current.requireConfirmationInAuto && sig.risk < 0.65)
             return;
-
         void executeTrade(sig.id);
     }, [pendingSignals]);
-
     // MOCK NEWS
     useEffect(() => {
         setNewsHeadlines([
@@ -753,9 +649,8 @@ export const useTradingBot = (
             },
         ]);
     }, []);
-
-    const addPriceAlert = (symbol: string, price: number) => {
-        const alert: PriceAlert = {
+    const addPriceAlert = (symbol, price) => {
+        const alert = {
             id: `a-${Date.now()}`,
             symbol,
             price,
@@ -764,30 +659,25 @@ export const useTradingBot = (
         };
         setPriceAlerts((p) => [...p, alert]);
     };
-
-    const removePriceAlert = (id: string) => {
+    const removePriceAlert = (id) => {
         setPriceAlerts((p) => p.filter((a) => a.id !== id));
     };
-
-    const closePosition = (id: string) => {
+    const closePosition = (id) => {
         setActivePositions((prev) => {
             const target = prev.find((p) => p.id === id);
-            if (!target) return prev;
-
+            if (!target)
+                return prev;
             const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
             const dir = target.side === "buy" ? 1 : -1;
             const pnl = (currentPrice - target.entryPrice) * dir * target.size;
-
             realizedPnlRef.current += pnl;
-
-            const record: AssetPnlRecord = {
+            const record = {
                 symbol: target.symbol,
                 pnl,
                 timestamp: new Date().toISOString(),
                 note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
             };
             setAssetPnlHistory(addPnlRecord(record));
-
             setPortfolioState((p) => ({
                 ...p,
                 openPositions: Math.max(0, p.openPositions - 1),
@@ -796,11 +686,9 @@ export const useTradingBot = (
                 action: "CLOSE",
                 message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USDT`,
             });
-
             return prev.filter((p) => p.id !== id);
         });
     };
-
     const resetRiskState = () => {
         setPortfolioState((p) => ({
             ...p,
@@ -810,19 +698,15 @@ export const useTradingBot = (
         }));
         realizedPnlRef.current = 0;
     };
-
-    const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
+    const updateSettings = (newS) => {
         setSettings(newS);
         settingsRef.current = newS;
     };
-
-    const removeEntryHistoryItem = (id: string) => {
+    const removeEntryHistoryItem = (id) => {
         setEntryHistory(() => removeEntryFromHistory(id));
     };
-
-    const rejectSignal = (id: string) => {
+    const rejectSignal = (id) => {
         setPendingSignals((prev) => prev.filter((s) => s.id !== id));
-
         setLogEntries((prev) => [
             {
                 id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -833,7 +717,6 @@ export const useTradingBot = (
             ...prev,
         ]);
     };
-
     // ========= RETURN API ==========
     return {
         logEntries,
@@ -864,6 +747,3 @@ export const useTradingBot = (
         removeEntryHistoryItem,
     };
 };
-
-// ========= API TYPE EXPORT ==========
-export type TradingBotApi = ReturnType<typeof useTradingBot>;

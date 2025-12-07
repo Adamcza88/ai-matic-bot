@@ -4,7 +4,7 @@
 import {
   Candle,
   evaluateStrategyForSymbol,
-} from "./botEngine";
+} from "@/engine/botEngine";
 
 // Pro teď fixně testnet WS (můžeš přepnout na mainnet změnou URL)
 const FEED_URL = "wss://stream-testnet.bybit.com/v5/public/linear";
