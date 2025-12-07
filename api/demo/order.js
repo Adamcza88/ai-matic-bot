@@ -28,7 +28,18 @@ export default async function handler(req, res) {
       });
     }
 
-    const { symbol, side, price, sl, tp, qty, trailingStop } = req.body || {};
+    const {
+      symbol,
+      side,
+      price,
+      sl,
+      tp,
+      qty,
+      trailingStop,
+      orderType,
+      timeInForce,
+      reduceOnly,
+    } = req.body || {};
 
     // ===== VALIDACE =====
     const normalizedSide =
@@ -59,6 +70,9 @@ export default async function handler(req, res) {
       sl: sl != null ? Number(sl) : undefined,
       tp: tp != null ? Number(tp) : undefined,
       trailingStop: trailingStop != null ? Number(trailingStop) : undefined,
+      orderType,
+      timeInForce,
+      reduceOnly,
     };
 
     // ===== CALL BYBIT =====

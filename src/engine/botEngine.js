@@ -71,6 +71,7 @@ export const defaultConfig = {
     maxDrawdownPercent: 0.1,
     tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
     maxOpenPositions: 1,
+    maxExitChunks: 2,
     liquiditySweepAtrMult: 0.5,
     liquiditySweepLookback: 5,
     liquiditySweepVolumeMult: 1.05,
@@ -445,6 +446,7 @@ export class TradingBot {
             opened: Date.now(),
             partialTaken: false,
             slDistance,
+            exitCount: 0,
         };
         this.state = State.Manage;
     }
@@ -728,9 +730,10 @@ export class TradingBot {
                 return;
             }
             if (currentPrice >= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
-                if (!this.position.partialTaken) {
+                if (!this.position.partialTaken && this.position.exitCount < this.config.maxExitChunks - 1) {
                     this.position.size *= 1 - this.config.partialExitRatio;
                     this.position.partialTaken = true;
+                    this.position.exitCount += 1;
                     // move SL to break even + small buffer
                     this.position.stopLoss = this.position.entryPrice + this.config.breakevenBufferAtr * atr;
                     this.position.takeProfit = Infinity;
@@ -747,9 +750,10 @@ export class TradingBot {
                 return;
             }
             if (currentPrice <= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
-                if (!this.position.partialTaken) {
+                if (!this.position.partialTaken && this.position.exitCount < this.config.maxExitChunks - 1) {
                     this.position.size *= 1 - this.config.partialExitRatio;
                     this.position.partialTaken = true;
+                    this.position.exitCount += 1;
                     this.position.stopLoss = this.position.entryPrice - this.config.breakevenBufferAtr * atr;
                     this.position.takeProfit = -Infinity;
                 }
@@ -943,9 +947,10 @@ export class TradingBot {
                 return;
             }
             if (currentPrice >= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
-                if (!this.position.partialTaken) {
+                if (!this.position.partialTaken && this.position.exitCount < this.config.maxExitChunks - 1) {
                     this.position.size *= 1 - this.config.partialExitRatio;
                     this.position.partialTaken = true;
+                    this.position.exitCount += 1;
                     this.position.stopLoss = this.position.entryPrice + this.config.breakevenBufferAtr * atr;
                     this.position.takeProfit = Infinity;
                 }
@@ -961,9 +966,10 @@ export class TradingBot {
                 return;
             }
             if (currentPrice <= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
-                if (!this.position.partialTaken) {
+                if (!this.position.partialTaken && this.position.exitCount < this.config.maxExitChunks - 1) {
                     this.position.size *= 1 - this.config.partialExitRatio;
                     this.position.partialTaken = true;
+                    this.position.exitCount += 1;
                     this.position.stopLoss = this.position.entryPrice - this.config.breakevenBufferAtr * atr;
                     this.position.takeProfit = -Infinity;
                 }

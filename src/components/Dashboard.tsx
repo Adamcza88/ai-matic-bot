@@ -30,17 +30,14 @@ export default function Dashboard({
     systemState,
     portfolioState,
     settings,
-    pendingSignals,
-    activePositions,
-    logEntries,
-    priceAlerts,
-    addPriceAlert,
-    removePriceAlert,
-    updateSettings,
-    closePosition,
-    entryHistory,
-    testnetOrders,
-    testnetTrades,
+  pendingSignals,
+  activePositions,
+  logEntries,
+  updateSettings,
+  closePosition,
+  entryHistory,
+  testnetOrders,
+  testnetTrades,
     ordersError,
     refreshTestnetOrders,
     assetPnlHistory,
@@ -105,83 +102,73 @@ export default function Dashboard({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {/* === SYSTEM STATUS === */}
+        {/* === SYSTEM + PORTFOLIO === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-slate-400 flex items-center gap-2">
               <Activity className="w-4 h-4" />
-              System Status
+              System & Portfolio
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Bybit Connection</span>
-                <Badge
-                  variant="outline"
-                  className={
-                    systemState.bybitStatus === "Connected"
-                      ? "border-emerald-500/50 text-emerald-500 bg-emerald-500/10"
-                      : "border-red-500/50 text-red-500 bg-red-500/10"
-                  }
-                >
-                  {systemState.bybitStatus}
-                </Badge>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400">Latency</span>
-                <span className="font-mono">{systemState.latency} ms</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400">Last Error</span>
-                <span className="text-red-400 truncate max-w-[150px]" title={systemState.lastError ?? ""}>
-                  {systemState.lastError ?? "None"}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* === PORTFOLIO & RISK === */}
-        <Card className="bg-slate-900/50 border-white/10 text-white">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-slate-400 flex items-center gap-2">
-              <Wallet className="w-4 h-4" />
-              Portfolio & Risk
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Total Capital</span>
-                <span className="font-mono font-medium text-lg">
-                  ${portfolioState.totalCapital.toFixed(2)}
-                </span>
-              </div>
-              {settings.entryStrictness !== "test" ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Allocated</span>
-                  <span className="font-mono text-slate-300">
-                    ${portfolioState.allocatedCapital.toFixed(2)}
+                  <span className="text-slate-400">Bybit Connection</span>
+                  <Badge
+                    variant="outline"
+                    className={
+                      systemState.bybitStatus === "Connected"
+                        ? "border-emerald-500/50 text-emerald-500 bg-emerald-500/10"
+                        : "border-red-500/50 text-red-500 bg-red-500/10"
+                    }
+                  >
+                    {systemState.bybitStatus}
+                  </Badge>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Latency</span>
+                  <span className="font-mono">{systemState.latency} ms</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Last Error</span>
+                  <span className="text-red-400 truncate max-w-[150px]" title={systemState.lastError ?? ""}>
+                    {systemState.lastError ?? "None"}
                   </span>
                 </div>
-              ) : (
+              </div>
+              <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Allocated</span>
-                  <span className="font-mono text-slate-500">Disabled in TEST</span>
+                  <span className="text-slate-400">Total Capital</span>
+                  <span className="font-mono font-medium text-lg">
+                    ${portfolioState.totalCapital.toFixed(2)}
+                  </span>
                 </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-slate-400">Daily PnL</span>
-                <span
-                  className={`font-mono ${portfolioState.dailyPnl >= 0
-                    ? "text-emerald-500"
-                    : "text-red-500"
-                    }`}
-                >
-                  {portfolioState.dailyPnl > 0 ? "+" : ""}
-                  {portfolioState.dailyPnl.toFixed(2)} USD
-                </span>
+                {settings.entryStrictness !== "test" ? (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Allocated</span>
+                    <span className="font-mono text-slate-300">
+                      ${portfolioState.allocatedCapital.toFixed(2)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Allocated</span>
+                    <span className="font-mono text-slate-500">Disabled in TEST</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Daily PnL</span>
+                  <span
+                    className={`font-mono ${portfolioState.dailyPnl >= 0
+                      ? "text-emerald-500"
+                      : "text-red-500"
+                      }`}
+                  >
+                    {portfolioState.dailyPnl > 0 ? "+" : ""}
+                    {portfolioState.dailyPnl.toFixed(2)} USD
+                  </span>
+                </div>
               </div>
             </div>
           </CardContent>
@@ -447,46 +434,6 @@ export default function Dashboard({
                 ))
               )}
             </div>
-          </CardContent>
-        </Card>
-
-        {/* === PRICE ALERTS === */}
-        <Card className="bg-slate-900/50 border-white/10 text-white">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-slate-400">Price Alerts</CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => addPriceAlert("BTCUSDT", 100000)}
-              className="h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white"
-            >
-              + Add BTC 100k
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2 mt-2">
-              {priceAlerts.map((a) => (
-                <li
-                  key={a.id}
-                  className="flex justify-between items-center text-sm p-2 bg-white/5 rounded border border-white/5"
-                >
-                  <span className="font-mono">
-                    {a.symbol} @ {a.price}
-                  </span>
-                  <button
-                    onClick={() => removePriceAlert(a.id)}
-                    className="text-slate-500 hover:text-red-400 transition-colors"
-                  >
-                    ×
-                  </button>
-                </li>
-              ))}
-              {priceAlerts.length === 0 && (
-                <li className="text-sm text-slate-500 italic">
-                  No alerts set.
-                </li>
-              )}
-            </ul>
           </CardContent>
         </Card>
 

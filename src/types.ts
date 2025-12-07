@@ -139,6 +139,7 @@ export interface LogEntry {
   action:
     | "OPEN"
     | "CLOSE"
+    | "AUTO_CLOSE"
     | "SIGNAL"
     | "ERROR"
     | "RISK_HALT"

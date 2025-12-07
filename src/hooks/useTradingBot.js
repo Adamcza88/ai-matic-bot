@@ -143,6 +143,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         lastError: null,
         recentErrors: [],
     });
+    const activePositionsRef = useRef([]);
     const [portfolioState, setPortfolioState] = useState({
         totalCapital: INITIAL_CAPITAL,
         allocatedCapital: 0,
@@ -188,6 +189,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     useEffect(() => {
         pendingSignalsRef.current = pendingSignals;
     }, [pendingSignals]);
+    useEffect(() => {
+        activePositionsRef.current = activePositions;
+    }, [activePositions]);
     const fetchTestnetOrders = useCallback(async () => {
         if (!authToken) {
             setTestnetOrders([]);
@@ -432,7 +436,40 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     return;
                 priceHistoryRef.current = newHistory;
                 setCurrentPrices(newPrices);
-                setActivePositions(engineActive);
+                const prevActive = activePositionsRef.current;
+                const closed = prevActive.filter((p) => !engineActive.some((e) => e.id === p.id));
+                let freedNotional = 0;
+                if (closed.length) {
+                    closed.forEach((p) => {
+                        const exitPrice = newPrices[p.symbol] ??
+                            currentPrices[p.symbol] ??
+                            p.entryPrice;
+                        const dir = p.side === "buy" ? 1 : -1;
+                        const pnl = (exitPrice - p.entryPrice) * dir * p.size;
+                        realizedPnlRef.current += pnl;
+                        const record = {
+                            symbol: p.symbol,
+                            pnl,
+                            timestamp: new Date().toISOString(),
+                            note: `Auto-close @ ${exitPrice.toFixed(4)} | size ${p.size.toFixed(4)}`,
+                        };
+                        setAssetPnlHistory(() => addPnlRecord(record));
+                        freedNotional += p.entryPrice * p.size;
+                        addLog({
+                            action: "AUTO_CLOSE",
+                            message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
+                        });
+                    });
+                }
+                setActivePositions(() => {
+                    activePositionsRef.current = engineActive;
+                    return engineActive;
+                });
+                setPortfolioState((p) => ({
+                    ...p,
+                    openPositions: engineActive.length,
+                    allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
+                }));
                 const latency = Math.round(performance.now() - started);
                 setSystemState((p) => ({
                     ...p,
@@ -581,6 +618,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     symbol: signal.symbol,
                     side: side === "buy" ? "Buy" : "Sell",
                     qty: Number(size.toFixed(3)),
+                    orderType: "Limit",
+                    timeInForce: "IOC",
+                    price: side === "buy"
+                        ? entry * 1.001 // lehce nad vstupní cenu, aby se limit rychle fillnul
+                        : entry * 0.999,
                     sl,
                     tp,
                     trailingStop: trailingStopDistance,
@@ -670,6 +712,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
             const dir = target.side === "buy" ? 1 : -1;
             const pnl = (currentPrice - target.entryPrice) * dir * target.size;
+            const freedNotional = target.entryPrice * target.size;
             realizedPnlRef.current += pnl;
             const record = {
                 symbol: target.symbol,
@@ -677,9 +720,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 timestamp: new Date().toISOString(),
                 note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
             };
-            setAssetPnlHistory(addPnlRecord(record));
+            setAssetPnlHistory(() => addPnlRecord(record));
             setPortfolioState((p) => ({
                 ...p,
+                allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
                 openPositions: Math.max(0, p.openPositions - 1),
             }));
             addLog({
