@@ -106,6 +106,11 @@ export async function createDemoOrder(order, creds) {
 
   const result = orderRes.data;
 
+  // Pokud order selhal, nepokračujeme do trading-stop
+  if (result.retCode !== 0) {
+    return result;
+  }
+
   // Pokud TP/SL/TS nejsou zadány → končíme
   const hasStops =
     order.sl != null || order.tp != null || order.trailingStop != null;
