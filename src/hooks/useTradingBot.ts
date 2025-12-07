@@ -314,7 +314,7 @@ export const useTradingBot = (
                 const mapped: ActivePosition[] = Array.isArray(list)
                     ? list.map((p: any, idx: number) => {
                         const avgPrice = Number(p.avgPrice ?? p.entryPrice ?? p.lastPrice ?? 0);
-                        const size = Number(p.size ?? 0);
+                        const size = Math.abs(Number(p.size ?? 0));
                         const pnl = Number(p.unrealisedPnl ?? 0);
                         return {
                             id: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`,
@@ -350,8 +350,21 @@ export const useTradingBot = (
                         0
                     ),
                 }));
+                setSystemState((prev) => ({
+                    ...prev,
+                    bybitStatus: "Connected",
+                    lastError: null,
+                }));
+                addLog({
+                    action: "SYSTEM",
+                    message: `Synced ${mapped.length} testnet positions`,
+                });
             } catch (err: any) {
                 if (cancel) return;
+                addLog({
+                    action: "ERROR",
+                    message: `Positions sync failed: ${err?.message || "unknown"}`,
+                });
                 setSystemState((p) => ({
                     ...p,
                     bybitStatus: "Error",
