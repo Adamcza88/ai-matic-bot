@@ -29,6 +29,7 @@ const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 const INITIAL_CAPITAL = 200000;
 const MAX_SINGLE_POSITION_VALUE = 10000;
 const MIN_ENTRY_SPACING_MS = 3000;
+const MAX_TEST_PENDING = 4;
 
 // RISK / STRATEGY
 export const INITIAL_RISK_SETTINGS: AISettings = {
@@ -479,6 +480,7 @@ export const useTradingBot = (
     const settingsRef = useRef(settings);
     settingsRef.current = settings;
     const realizedPnlRef = useRef(0);
+    const lastTestSignalAtRef = useRef<number | null>(null);
 
     // ========== LOG ==========
     const addLog = (entry: Omit<LogEntry, "id" | "timestamp">) => {
@@ -677,45 +679,68 @@ export const useTradingBot = (
 
                 // === TEST MODE: GENERUJ RYCHLÉ SIGNÁLY PRO VŠECHNY ASSETY, KTERÉ NEJSOU OTEVŘENÉ ===
                 if (settingsRef.current.entryStrictness === "test") {
-                    const activeSymbols = new Set(
-                        activePositionsRef.current.map((p) => p.symbol)
-                    );
-                    const nowIso = new Date().toISOString();
-                    const newTestSignals: PendingSignal[] = [];
-                    for (const symbol of SYMBOLS) {
-                        if (activeSymbols.has(symbol)) continue;
-                        const price = newPrices[symbol];
-                        if (!price) continue;
-                        const side: "buy" | "sell" =
-                            Math.random() > 0.5 ? "buy" : "sell";
-                        const sl =
-                            side === "buy" ? price * 0.99 : price * 1.01;
-                        const tp =
-                            side === "buy" ? price * 1.01 : price * 0.99;
-                        newTestSignals.push({
-                            id: `${symbol}-${Date.now()}-${Math.random()
-                                .toString(16)
-                                .slice(2)}`,
-                            symbol,
-                            intent: { side, entry: price, sl, tp },
-                            risk: 0.7,
-                            message: `TEST signal ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
-                                4
-                            )}`,
-                            createdAt: nowIso,
-                        });
-                    }
-                    if (newTestSignals.length) {
-                        setPendingSignals((prev) => [
-                            ...newTestSignals,
-                            ...prev,
-                        ]);
-                        newTestSignals.forEach((s) =>
-                            addLog({
-                                action: "SIGNAL",
-                                message: s.message,
-                            })
+                    const now = Date.now();
+                    if (
+                        lastTestSignalAtRef.current &&
+                        now - lastTestSignalAtRef.current < 4000
+                    ) {
+                        // Throttle generování test signálů
+                    } else {
+                        lastTestSignalAtRef.current = now;
+                        const activeSymbols = new Set(
+                            activePositionsRef.current.map((p) => p.symbol)
                         );
+                        const pendingSymbols = new Set(
+                            pendingSignalsRef.current.map((p) => p.symbol)
+                        );
+                        const nowIso = new Date().toISOString();
+                        const newTestSignals: PendingSignal[] = [];
+                        for (const symbol of SYMBOLS) {
+                            if (activeSymbols.has(symbol)) continue;
+                            if (pendingSymbols.has(symbol)) continue;
+                            if (
+                                pendingSignalsRef.current.length + newTestSignals.length >=
+                                MAX_TEST_PENDING
+                            )
+                                break;
+                            const price = newPrices[symbol];
+                            if (!price) continue;
+                            const side: "buy" | "sell" =
+                                Math.random() > 0.5 ? "buy" : "sell";
+                            const offsetPct = 0.003 + Math.random() * 0.01; // 0.3% – 1.3%
+                            const sl =
+                                side === "buy"
+                                    ? price * (1 - offsetPct)
+                                    : price * (1 + offsetPct);
+                            const tp =
+                                side === "buy"
+                                    ? price * (1 + offsetPct)
+                                    : price * (1 - offsetPct);
+                            newTestSignals.push({
+                                id: `${symbol}-${Date.now()}-${Math.random()
+                                    .toString(16)
+                                    .slice(2)}`,
+                                symbol,
+                                intent: { side, entry: price, sl, tp },
+                                risk: 0.7,
+                                message: `TEST signal ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
+                                    4
+                                )}`,
+                                createdAt: nowIso,
+                            });
+                        }
+                        if (newTestSignals.length) {
+                            setPendingSignals((prev) => [
+                                ...newTestSignals,
+                                ...prev,
+                            ]);
+                            newTestSignals.forEach((s) =>
+                                addLog({
+                                    action: "SIGNAL",
+                                    message: s.message,
+                                })
+                            );
+                        }
                     }
                 }
             } catch (err: any) {
