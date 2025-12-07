@@ -652,6 +652,50 @@ export const useTradingBot = (
                     latency,
                     lastError: null,
                 }));
+
+                // === TEST MODE: GENERUJ RYCHLÉ SIGNÁLY PRO VŠECHNY ASSETY, KTERÉ NEJSOU OTEVŘENÉ ===
+                if (settingsRef.current.entryStrictness === "test") {
+                    const activeSymbols = new Set(
+                        activePositionsRef.current.map((p) => p.symbol)
+                    );
+                    const nowIso = new Date().toISOString();
+                    const newTestSignals: PendingSignal[] = [];
+                    for (const symbol of SYMBOLS) {
+                        if (activeSymbols.has(symbol)) continue;
+                        const price = newPrices[symbol];
+                        if (!price) continue;
+                        const side: "buy" | "sell" =
+                            Math.random() > 0.5 ? "buy" : "sell";
+                        const sl =
+                            side === "buy" ? price * 0.99 : price * 1.01;
+                        const tp =
+                            side === "buy" ? price * 1.01 : price * 0.99;
+                        newTestSignals.push({
+                            id: `${symbol}-${Date.now()}-${Math.random()
+                                .toString(16)
+                                .slice(2)}`,
+                            symbol,
+                            intent: { side, entry: price, sl, tp },
+                            risk: 0.7,
+                            message: `TEST signal ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
+                                4
+                            )}`,
+                            createdAt: nowIso,
+                        });
+                    }
+                    if (newTestSignals.length) {
+                        setPendingSignals((prev) => [
+                            ...newTestSignals,
+                            ...prev,
+                        ]);
+                        newTestSignals.forEach((s) =>
+                            addLog({
+                                action: "SIGNAL",
+                                message: s.message,
+                            })
+                        );
+                    }
+                }
             } catch (err: any) {
                 if (cancel) return;
                 const msg = err.message ?? "unknown";
