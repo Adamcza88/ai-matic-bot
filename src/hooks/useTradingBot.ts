@@ -706,7 +706,6 @@ export const useTradingBot = (
             settingsNote: `profile=${settingsSnapshot.strategyProfile}, strictness=${settingsSnapshot.entryStrictness}, risk=${settingsSnapshot.baseRiskPerTrade}, mult=${settingsSnapshot.positionSizingMultiplier}`,
             settingsSnapshot,
         };
-        setEntryHistory(() => addEntryToHistory(historyRecord));
 
         // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
         try {
@@ -737,9 +736,9 @@ export const useTradingBot = (
                                 : entry * 0.999,
                         sl,
                         tp,
-                        trailingStop: trailingStopDistance,
-                        trailingStopPct,
-                        trailingActivationPrice,
+                    trailingStop: trailingStopDistance,
+                    trailingStopPct,
+                    trailingActivationPrice,
                 }),
             });
 
@@ -749,6 +748,9 @@ export const useTradingBot = (
                     action: "ERROR",
                     message: `Order API failed (${res.status}): ${errText}`,
                 });
+            } else {
+                // Záznam vstupu ukládáme jen pokud order API prošlo
+                setEntryHistory(() => addEntryToHistory(historyRecord));
             }
         } catch (err: any) {
             addLog({
