@@ -1348,7 +1348,7 @@ export const useTradingBot = (
                 ? presetFor(incomingMode)
                 : settingsRef.current;
 
-        let patched = { ...basePreset, ...newS, riskMode: incomingMode };
+        let patched: AISettings = { ...basePreset, ...newS, riskMode: incomingMode };
 
         if (incomingMode !== settingsRef.current.riskMode) {
             const presetKeys: (keyof AISettings)[] = [
@@ -1367,7 +1367,7 @@ export const useTradingBot = (
                 "maxOpenPositions",
             ];
             presetKeys.forEach((k) => {
-                patched[k] = basePreset[k];
+                patched = { ...patched, [k]: basePreset[k] };
             });
         }
 
