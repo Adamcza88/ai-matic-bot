@@ -7,6 +7,7 @@ export type Theme = "dark" | "light";
 export type Language = "en" | "cs";
 
 export interface AISettings {
+  riskMode: "ai-matic" | "ai-matic-x";
   strictRiskAdherence: boolean;
   pauseOnHighVolatility: boolean;
   avoidLowLiquidity: boolean;
@@ -26,6 +27,8 @@ export interface AISettings {
   maxDrawdownPercent: number;
   baseRiskPerTrade: number;
   maxAllocatedCapitalPercent: number;
+  maxPortfolioRiskPercent: number;
+  maxOpenPositions: number;
   requireConfirmationInAuto: boolean;
   positionSizingMultiplier: number;
   customInstructions: string;

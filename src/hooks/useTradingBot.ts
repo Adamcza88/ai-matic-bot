@@ -39,27 +39,30 @@ const QTY_LIMITS: Record<string, { min: number; max: number }> = {
 };
 
 // RISK / STRATEGY
-export const INITIAL_RISK_SETTINGS: AISettings = {
+const AI_MATIC_PRESET: AISettings = {
+    riskMode: "ai-matic",
     strictRiskAdherence: true,
-    pauseOnHighVolatility: false,
-    avoidLowLiquidity: false,
+    pauseOnHighVolatility: true,
+    avoidLowLiquidity: true,
     useTrendFollowing: true,
-    smcScalpMode: true,
+    smcScalpMode: false,
     useLiquiditySweeps: true,
     useVolatilityExpansion: true,
-    maxDailyLossPercent: 0.1,
-    maxDailyProfitPercent: 0.1,
-    maxDrawdownPercent: 0.09,
-    baseRiskPerTrade: 0.07,
-    strategyProfile: "intraday",
-    entryStrictness: "test",
+    maxDailyLossPercent: 0.05,
+    maxDailyProfitPercent: 0.12,
+    maxDrawdownPercent: 0.18,
+    baseRiskPerTrade: 0.02,
+    maxPortfolioRiskPercent: 0.08,
+    maxAllocatedCapitalPercent: 0.4,
+    maxOpenPositions: 2,
+    strategyProfile: "auto",
+    entryStrictness: "base",
     enforceSessionHours: true,
-    haltOnDailyLoss: false,
-    haltOnDrawdown: false,
+    haltOnDailyLoss: true,
+    haltOnDrawdown: true,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
-    maxAllocatedCapitalPercent: 1,
-    requireConfirmationInAuto: false,
+    requireConfirmationInAuto: true,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
     customStrategy: "",
@@ -70,6 +73,43 @@ export const INITIAL_RISK_SETTINGS: AISettings = {
     tradingEndHour: 23,
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
 };
+
+const AI_MATIC_X_PRESET: AISettings = {
+    riskMode: "ai-matic-x",
+    strictRiskAdherence: true,
+    pauseOnHighVolatility: false,
+    avoidLowLiquidity: false,
+    useTrendFollowing: true,
+    smcScalpMode: true,
+    useLiquiditySweeps: true,
+    useVolatilityExpansion: true,
+    maxDailyLossPercent: 0.12,
+    maxDailyProfitPercent: 0.5,
+    maxDrawdownPercent: 0.38,
+    baseRiskPerTrade: 0.04,
+    maxPortfolioRiskPercent: 0.15,
+    maxAllocatedCapitalPercent: 0.8,
+    maxOpenPositions: 5,
+    strategyProfile: "auto",
+    entryStrictness: "ultra",
+    enforceSessionHours: false,
+    haltOnDailyLoss: true,
+    haltOnDrawdown: true,
+    useDynamicPositionSizing: true,
+    lockProfitsWithTrail: true,
+    requireConfirmationInAuto: false,
+    positionSizingMultiplier: 1.5,
+    customInstructions: "",
+    customStrategy: "",
+    min24hVolume: 50,
+    minProfitFactor: 1.1,
+    minWinRate: 55,
+    tradingStartHour: 0,
+    tradingEndHour: 23,
+    tradingDays: [0, 1, 2, 3, 4, 5, 6],
+};
+
+export const INITIAL_RISK_SETTINGS: AISettings = AI_MATIC_X_PRESET;
 
 // UTILS
 function parseKlines(list: any[]): Candle[] {
@@ -129,8 +169,9 @@ function chooseStrategyProfile(
     const price = closes[closes.length - 1] || 1;
     const atrPct = atr / price;
     if (atrPct < 0.0015) return "scalp";
-    if (atrPct > 0.006) return "swing";
-    return "trend";
+    if (atrPct > 0.0075) return "swing";
+    if (atrPct > 0.0045) return "trend";
+    return "intraday";
 }
 
 function snapshotSettings(settings: AISettings): AISettings {
@@ -139,6 +180,9 @@ function snapshotSettings(settings: AISettings): AISettings {
         tradingDays: [...settings.tradingDays],
     };
 }
+
+const presetFor = (mode: AISettings["riskMode"]): AISettings =>
+    mode === "ai-matic-x" ? AI_MATIC_X_PRESET : AI_MATIC_PRESET;
 
 const clampQtyForSymbol = (symbol: string, qty: number) => {
     const limits = QTY_LIMITS[symbol];
@@ -163,6 +207,25 @@ function computeAtrFromHistory(candles: Candle[], period: number = 20): number {
     const sum = slice.reduce((a, b) => a + b, 0);
     return sum / slice.length;
 }
+
+const resolveRiskPct = (settings: AISettings) => {
+    if (settings.strategyProfile === "scalp") {
+        return Math.min(settings.baseRiskPerTrade, 0.02);
+    }
+    if (settings.strategyProfile === "trend" || settings.strategyProfile === "swing") {
+        return Math.max(settings.baseRiskPerTrade, 0.03);
+    }
+    if (settings.strategyProfile === "intraday") {
+        return Math.max(settings.baseRiskPerTrade, 0.025);
+    }
+    return settings.baseRiskPerTrade;
+};
+
+const computePositionRisk = (p: ActivePosition) => {
+    const stop = p.currentTrailingStop ?? p.sl ?? p.entryPrice;
+    const distance = Math.max(0, Math.abs(p.entryPrice - stop));
+    return distance * p.size;
+};
 
 // ========== HLAVNÍ HOOK ==========
 
@@ -224,7 +287,7 @@ export const useTradingBot = (
         currentDrawdown: 0,
         maxDrawdown: INITIAL_RISK_SETTINGS.maxDrawdownPercent,
         openPositions: 0,
-        maxOpenPositions: 4,
+        maxOpenPositions: INITIAL_RISK_SETTINGS.maxOpenPositions,
     });
     const lastEntryAtRef = useRef<number | null>(null);
     const entryQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -241,9 +304,20 @@ export const useTradingBot = (
                 totalCapital,
                 maxAllocatedCapital: maxAlloc,
                 allocatedCapital: Math.min(prev.allocatedCapital, maxAlloc),
+                maxDailyLoss: totalCapital * settings.maxDailyLossPercent,
+                maxDailyProfit: totalCapital * settings.maxDailyProfitPercent,
+                maxDrawdown: settings.maxDrawdownPercent,
+                maxOpenPositions: settings.maxOpenPositions,
             };
         });
-    }, [settings.entryStrictness, settings.maxAllocatedCapitalPercent]);
+    }, [
+        settings.entryStrictness,
+        settings.maxAllocatedCapitalPercent,
+        settings.maxDailyLossPercent,
+        settings.maxDailyProfitPercent,
+        settings.maxDrawdownPercent,
+        settings.maxOpenPositions,
+    ]);
 
     // Přepočet denního PnL podle otevřených pozic (unrealized)
     useEffect(() => {
@@ -256,6 +330,22 @@ export const useTradingBot = (
             dailyPnl: realizedPnlRef.current + unrealized,
         }));
     }, [activePositions]);
+
+    useEffect(() => {
+        setPortfolioState((prev) => {
+            const equity = prev.totalCapital + prev.dailyPnl;
+            const peakCapital = Math.max(prev.peakCapital, equity);
+            const currentDrawdown =
+                peakCapital > 0 ? (peakCapital - equity) / peakCapital : 0;
+            if (
+                peakCapital === prev.peakCapital &&
+                currentDrawdown === prev.currentDrawdown
+            ) {
+                return prev;
+            }
+            return { ...prev, peakCapital, currentDrawdown };
+        });
+    }, [portfolioState.dailyPnl, portfolioState.totalCapital]);
 
     useEffect(() => {
         setEntryHistory(loadEntryHistory());
@@ -561,6 +651,11 @@ export const useTradingBot = (
                             settingsRef.current.strategyProfile as any
                         );
                         if (!profile) continue;
+                        const resolvedRiskPct = Math.min(
+                            resolveRiskPct(settingsRef.current) *
+                                (settingsRef.current.positionSizingMultiplier || 1),
+                            0.07
+                        );
                         const decision = evaluateStrategyForSymbol(
                             symbol,
                             candles,
@@ -568,8 +663,19 @@ export const useTradingBot = (
                                 strategyProfile: profile,
                                 entryStrictness:
                                     settingsRef.current.entryStrictness,
-                                riskPerTrade:
-                                    settingsRef.current.baseRiskPerTrade,
+                                riskPerTrade: resolvedRiskPct,
+                                accountBalance: portfolioState.totalCapital,
+                                maxDailyLossPercent: settingsRef.current.maxDailyLossPercent,
+                                maxDrawdownPercent: settingsRef.current.maxDrawdownPercent,
+                                maxDailyProfitPercent: settingsRef.current.maxDailyProfitPercent,
+                                maxOpenPositions: settingsRef.current.maxOpenPositions,
+                                maxPortfolioRiskPercent: settingsRef.current.maxPortfolioRiskPercent,
+                                enforceSessionHours: settingsRef.current.enforceSessionHours,
+                                tradingHours: {
+                                    start: settingsRef.current.tradingStartHour,
+                                    end: settingsRef.current.tradingEndHour,
+                                    days: settingsRef.current.tradingDays,
+                                },
                             }
                         );
                         const signal = decision?.signal;
@@ -854,14 +960,53 @@ export const useTradingBot = (
         const signal = pendingSignalsRef.current.find((s) => s.id === signalId);
         if (!signal) return false;
 
-        // Jednoduchý risk-engine: hlídá max. risk / capital allocation
+        // Risk-engine: guardrails for capital allocation, portfolio risk, and halts
         const maxAlloc = portfolioState.maxAllocatedCapital;
         const currentAlloc = portfolioState.allocatedCapital;
+        const baseRiskPct = resolveRiskPct(settings);
+        const riskPctWithMult = Math.min(
+            baseRiskPct * (settings.positionSizingMultiplier || 1),
+            0.07
+        );
+
+        if (
+            settings.haltOnDailyLoss &&
+            portfolioState.dailyPnl <= -portfolioState.maxDailyLoss
+        ) {
+            addLog({
+                action: "RISK_HALT",
+                message: `Trading halted: daily loss limit hit (${(
+                    portfolioState.maxDailyLoss * 100 /
+                    Math.max(1, portfolioState.totalCapital)
+                ).toFixed(2)}%).`,
+            });
+            return false;
+        }
+
+        if (
+            settings.haltOnDrawdown &&
+            portfolioState.currentDrawdown >= portfolioState.maxDrawdown
+        ) {
+            addLog({
+                action: "RISK_HALT",
+                message: `Trading halted: drawdown cap reached (${(
+                    portfolioState.maxDrawdown * 100
+                ).toFixed(1)}%).`,
+            });
+            return false;
+        }
+
+        if (portfolioState.openPositions >= settings.maxOpenPositions) {
+            addLog({
+                action: "RISK_BLOCK",
+                message: `Signal on ${signal.symbol} blocked: max open positions (${settings.maxOpenPositions}) reached.`,
+            });
+            return false;
+        }
 
         const plannedNotional =
             portfolioState.totalCapital *
-            settings.baseRiskPerTrade *
-            settings.positionSizingMultiplier;
+            riskPctWithMult;
 
         if (currentAlloc + plannedNotional > maxAlloc) {
             setLogEntries((prev) => [
@@ -894,8 +1039,7 @@ export const useTradingBot = (
 
         const riskPerTrade =
             portfolioState.totalCapital *
-            settings.baseRiskPerTrade *
-            settings.positionSizingMultiplier;
+            riskPctWithMult;
 
         const riskPerUnit = Math.abs(entry - sl);
         if (riskPerUnit <= 0) return false;
@@ -924,6 +1068,25 @@ export const useTradingBot = (
 
             size = limits ? clampQtyForSymbol(signal.symbol, size) : size;
             notional = size * entry;
+        }
+
+        const newRiskAmount = riskPerUnit * size;
+        const openRiskAmount = activePositionsRef.current.reduce(
+            (sum, p) => sum + computePositionRisk(p),
+            0
+        );
+        const riskBudget =
+            portfolioState.totalCapital *
+            settings.maxPortfolioRiskPercent;
+
+        if (openRiskAmount + newRiskAmount > riskBudget) {
+            addLog({
+                action: "RISK_BLOCK",
+                message: `Signal on ${signal.symbol} blocked: portfolio risk cap (${(
+                    settings.maxPortfolioRiskPercent * 100
+                ).toFixed(1)}%) would be exceeded.`,
+            });
+            return false;
         }
 
         if (
@@ -1179,31 +1342,77 @@ export const useTradingBot = (
     };
 
     const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
-        let patched = newS;
-        if (newS.strategyProfile === "coach") {
+        const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
+        const basePreset =
+            incomingMode !== settingsRef.current.riskMode
+                ? presetFor(incomingMode)
+                : settingsRef.current;
+
+        let patched = { ...basePreset, ...newS, riskMode: incomingMode };
+
+        if (incomingMode !== settingsRef.current.riskMode) {
+            const presetKeys: (keyof AISettings)[] = [
+                "baseRiskPerTrade",
+                "maxAllocatedCapitalPercent",
+                "maxPortfolioRiskPercent",
+                "maxDailyLossPercent",
+                "maxDailyProfitPercent",
+                "maxDrawdownPercent",
+                "positionSizingMultiplier",
+                "entryStrictness",
+                "strategyProfile",
+                "enforceSessionHours",
+                "haltOnDailyLoss",
+                "haltOnDrawdown",
+                "maxOpenPositions",
+            ];
+            presetKeys.forEach((k) => {
+                patched[k] = basePreset[k];
+            });
+        }
+
+        if (patched.strategyProfile === "coach") {
             const clamp = (v: number, min: number, max: number) =>
                 Math.min(max, Math.max(min, v));
             patched = {
-                ...newS,
-                baseRiskPerTrade: clamp(newS.baseRiskPerTrade || 0.02, 0.01, 0.03),
-                maxDailyLossPercent: Math.min(newS.maxDailyLossPercent || 0.05, 0.05),
+                ...patched,
+                baseRiskPerTrade: clamp(patched.baseRiskPerTrade || 0.02, 0.01, 0.03),
+                maxDailyLossPercent: Math.min(patched.maxDailyLossPercent || 0.05, 0.05),
                 positionSizingMultiplier: clamp(
-                    newS.positionSizingMultiplier || 1,
+                    patched.positionSizingMultiplier || 1,
                     0.5,
                     1
                 ),
                 maxAllocatedCapitalPercent: clamp(
-                    newS.maxAllocatedCapitalPercent || 1,
+                    patched.maxAllocatedCapitalPercent || 1,
                     0.25,
                     1
                 ),
+                maxPortfolioRiskPercent: clamp(
+                    patched.maxPortfolioRiskPercent || 0.08,
+                    0.05,
+                    0.1
+                ),
+                maxOpenPositions: 2,
             };
-            if (newS.entryStrictness === "ultra") {
+            if (patched.entryStrictness === "ultra") {
                 patched = { ...patched, entryStrictness: "base" };
             }
         }
         setSettings(patched);
         settingsRef.current = patched;
+        setPortfolioState((p) => {
+            const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
+            return {
+                ...p,
+                maxOpenPositions: patched.maxOpenPositions,
+                maxAllocatedCapital: maxAlloc,
+                allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
+                maxDailyLoss: p.totalCapital * patched.maxDailyLossPercent,
+                maxDailyProfit: p.totalCapital * patched.maxDailyProfitPercent,
+                maxDrawdown: patched.maxDrawdownPercent,
+            };
+        });
     };
 
     const removeEntryHistoryItem = (id: string) => {

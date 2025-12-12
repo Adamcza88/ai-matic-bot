@@ -197,6 +197,19 @@ export default function Dashboard({
                   {settings.strategyProfile}
                 </Badge>
               </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Risk Engine</span>
+                <Badge
+                  variant="outline"
+                  className={
+                    settings.riskMode === "ai-matic-x"
+                      ? "border-emerald-500/50 text-emerald-400 bg-emerald-500/10"
+                      : "border-slate-600 text-slate-200 bg-slate-800"
+                  }
+                >
+                  {settings.riskMode === "ai-matic-x" ? "AI-Matic-X" : "AI-Matic"}
+                </Badge>
+              </div>
               <div className="flex flex-wrap gap-2 pt-1">
                   {[
                     { key: "off", label: "Off" },
@@ -217,6 +230,26 @@ export default function Dashboard({
                         : "text-slate-300 hover:text-white"
                     }
                     onClick={() => setProfile(opt.key as any)}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {[
+                  { key: "ai-matic", label: "AI-Matic" },
+                  { key: "ai-matic-x", label: "AI-Matic-X" },
+                ].map((opt) => (
+                  <Button
+                    key={opt.key}
+                    size="sm"
+                    variant={settings.riskMode === opt.key ? "secondary" : "ghost"}
+                    className={
+                      settings.riskMode === opt.key
+                        ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                        : "text-slate-300 hover:text-white"
+                    }
+                    onClick={() => updateSettings({ ...settings, riskMode: opt.key as any })}
                   >
                     {opt.label}
                   </Button>
@@ -273,6 +306,18 @@ export default function Dashboard({
               <div className="flex justify-between">
                 <span className="text-slate-400">Base Risk</span>
                 <span className="font-mono">{(settings.baseRiskPerTrade * 100).toFixed(2)}%</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Risk Budget</span>
+                <span className="font-mono">
+                  {(settings.maxPortfolioRiskPercent * 100).toFixed(1)}% / {settings.maxOpenPositions} pos
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Max Allocation</span>
+                <span className="font-mono">
+                  {(settings.maxAllocatedCapitalPercent * 100).toFixed(1)}%
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Max Drawdown</span>

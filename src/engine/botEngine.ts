@@ -61,6 +61,7 @@ export interface Candle {
 export interface Position {
   entryPrice: number;
   size: number;
+  baseSize: number;
   side: "long" | "short";
   stopLoss: number;
   takeProfit: number;
@@ -71,6 +72,8 @@ export interface Position {
   opened: number;
   partialTaken: boolean;
   slDistance: number;
+  pyramidLevel: number;
+  partialIndex: number;
   closed?: number;
   exitCount: number;
 }
@@ -103,9 +106,17 @@ export interface BotConfig {
   maxDailyLossPercent: number;
   maxDailyProfitPercent: number;
   maxDrawdownPercent: number;
+  maxPortfolioRiskPercent: number;
+  maxRiskPerTradeCap: number;
   tradingHours: { start: number; end: number; days: number[] };
+  enforceSessionHours?: boolean;
   maxOpenPositions: number;
   maxExitChunks: number;
+  trailingActivationR: number;
+  minStopPercent: number;
+  pyramidAddScale: number;
+  pyramidLevels: { triggerR: number; stopToR: number }[];
+  partialSteps: { r: number; exitFraction: number }[];
   // Liquidity sweep / volatility expansion params
   liquiditySweepAtrMult: number;
   liquiditySweepLookback: number;
@@ -122,8 +133,8 @@ export const defaultConfig: BotConfig = {
   baseTimeframe: "1h",
   signalTimeframe: "5m",
   targetTradesPerDay: 100,
-  riskPerTrade: 0.01,
-  strategyProfile: "scalp",
+  riskPerTrade: 0.04,
+  strategyProfile: "trend",
   entryStrictness: "ultra",
   accountBalance: 200000,
   atrPeriod: 14,
@@ -139,12 +150,26 @@ export const defaultConfig: BotConfig = {
   breakevenBufferAtr: 0.2,
   lookbackZones: 50,
   cooldownBars: 1,
-  maxDailyLossPercent: 0.07,
+  maxDailyLossPercent: 0.12,
   maxDailyProfitPercent: 0.5,
-  maxDrawdownPercent: 0.1,
+  maxDrawdownPercent: 0.38,
+  maxPortfolioRiskPercent: 0.15,
+  maxRiskPerTradeCap: 0.07,
   tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
-  maxOpenPositions: 1,
-  maxExitChunks: 2,
+  enforceSessionHours: false,
+  maxOpenPositions: 5,
+  maxExitChunks: 3,
+  trailingActivationR: 2,
+  minStopPercent: 0.0035,
+  pyramidAddScale: 0.5,
+  pyramidLevels: [
+    { triggerR: 1, stopToR: 0 },
+    { triggerR: 2, stopToR: 1 },
+  ],
+  partialSteps: [
+    { r: 1, exitFraction: 0.3 },
+    { r: 2, exitFraction: 0.3 },
+  ],
   liquiditySweepAtrMult: 0.5,
   liquiditySweepLookback: 5,
   liquiditySweepVolumeMult: 1.05,
@@ -287,6 +312,11 @@ export class TradingBot {
     this.exchange = exchange;
   }
 
+  updateConfig(config: Partial<BotConfig>): void {
+    this.config = { ...this.config, ...config };
+    this.equityPeak = Math.max(this.equityPeak, this.config.accountBalance);
+  }
+
   /**
    * Fetch OHLCV data. In a live system this would call the exchange API;
    * here it relies on preloaded history for offline testing.
@@ -365,6 +395,116 @@ export class TradingBot {
     return Trend.Neutral;
   }
 
+  private enforceMinimumStop(entry: number, stop: number, side: "long" | "short", atr: number): number {
+    const minDistance = Math.max(this.config.minStopPercent * entry, atr);
+    const currentDistance = Math.abs(entry - stop);
+    if (currentDistance >= minDistance) return stop;
+    return side === "long" ? entry - minDistance : entry + minDistance;
+  }
+
+  private openPositionsCount(): number {
+    return Object.values(botRegistry).filter((b) => b.getPosition()).length;
+  }
+
+  private aggregateOpenRisk(): number {
+    return Object.values(botRegistry).reduce((sum, bot) => {
+      const pos = bot.getPosition();
+      if (!pos) return sum;
+      const protectiveStop =
+        pos.side === "long"
+          ? Math.max(pos.stopLoss, pos.trailingStop)
+          : Math.min(pos.stopLoss, pos.trailingStop);
+      const dist = Math.abs(pos.entryPrice - protectiveStop);
+      return sum + dist * pos.size;
+    }, 0);
+  }
+
+  private moveStopToR(targetR: number): void {
+    if (!this.position) return;
+    const target =
+      this.position.side === "long"
+        ? this.position.entryPrice + targetR * this.position.slDistance
+        : this.position.entryPrice - targetR * this.position.slDistance;
+    if (this.position.side === "long") {
+      this.position.stopLoss = Math.max(this.position.stopLoss, target);
+      this.position.trailingStop = Math.max(this.position.trailingStop, target);
+    } else {
+      this.position.stopLoss = Math.min(this.position.stopLoss, target);
+      this.position.trailingStop = Math.min(this.position.trailingStop, target);
+    }
+  }
+
+  private applyPyramiding(rMultiple: number): void {
+    if (!this.position) return;
+    const steps = this.config.pyramidLevels || [];
+    while (this.position.pyramidLevel < steps.length && rMultiple >= steps[this.position.pyramidLevel].triggerR) {
+      const addSize = this.position.baseSize * this.config.pyramidAddScale;
+      this.position.size += addSize;
+      const step = steps[this.position.pyramidLevel];
+      this.position.pyramidLevel += 1;
+      this.moveStopToR(step.stopToR);
+    }
+  }
+
+  private applyPartialExits(rMultiple: number): void {
+    if (!this.position) return;
+    const steps = this.config.partialSteps || [];
+    while (this.position.partialIndex < steps.length && rMultiple >= steps[this.position.partialIndex].r) {
+      const step = steps[this.position.partialIndex];
+      const reduceBy = this.position.size * step.exitFraction;
+      this.position.size = Math.max(0, this.position.size - reduceBy);
+      this.position.partialIndex += 1;
+      this.position.exitCount = this.position.partialIndex;
+      this.moveStopToR(step.r >= 2 ? 1 : 0);
+    }
+    if (this.position.partialIndex >= steps.length) {
+      this.position.takeProfit = this.position.side === "long" ? Infinity : -Infinity;
+    }
+  }
+
+  private handleManage(ht: DataFrame, lt: DataFrame): void {
+    if (!this.position) return;
+    const currentPrice = lt[lt.length - 1].close;
+    this.updateWaterMarks(currentPrice);
+    const highs = lt.map((c) => c.high);
+    const lows = lt.map((c) => c.low);
+    const closes = lt.map((c) => c.close);
+    const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
+    const atr = atrArray[atrArray.length - 1];
+    const rMultiple = this.position.slDistance > 0
+      ? (this.position.side === "long"
+        ? (currentPrice - this.position.entryPrice) / this.position.slDistance
+        : (this.position.entryPrice - currentPrice) / this.position.slDistance)
+      : 0;
+
+    if (rMultiple >= this.config.trailingActivationR) {
+      this.updateTrailingStop(lt);
+    }
+    this.updateTakeProfit(ht, lt);
+    this.applyPyramiding(rMultiple);
+    this.applyPartialExits(rMultiple);
+
+    if (this.position.size <= 0) {
+      this.exitPosition(currentPrice);
+      return;
+    }
+
+    const stopHit =
+      (this.position.side === "long" && (currentPrice <= this.position.stopLoss || currentPrice <= this.position.trailingStop)) ||
+      (this.position.side === "short" && (currentPrice >= this.position.stopLoss || currentPrice >= this.position.trailingStop));
+    if (stopHit) {
+      this.exitPosition(currentPrice);
+      return;
+    }
+
+    const tpHit = Number.isFinite(this.position.takeProfit)
+      ? (this.position.side === "long" ? currentPrice >= this.position.takeProfit : currentPrice <= this.position.takeProfit)
+      : false;
+    if (tpHit) {
+      this.exitPosition(currentPrice);
+    }
+  }
+
   private resetDaily(now: number): void {
     const day = new Date(now).getUTCDate();
     if (this.tradingDay === null || this.tradingDay !== day) {
@@ -376,7 +516,7 @@ export class TradingBot {
   }
 
   private withinSession(now: number): boolean {
-    if (this.config.entryStrictness === "test") return true;
+    if (this.config.entryStrictness === "test" || this.config.enforceSessionHours === false) return true;
     const d = new Date(now);
     const hour = d.getUTCHours();
     const day = d.getUTCDay();
@@ -419,6 +559,8 @@ export class TradingBot {
     const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
     const latestATR = atrArray[atrArray.length - 1];
     const price = closes[closes.length - 1];
+    const ensureStop = (side: "long" | "short", entry: number, stop: number) =>
+      this.enforceMinimumStop(entry, stop, side, latestATR);
     // Skip illiquid/flat conditions
     if (latestATR < price * this.config.minAtrFractionOfPrice) return null;
     // Helper EMAs for pullback/bounce entries
@@ -440,12 +582,12 @@ export class TradingBot {
     // Pattern 1: trend-following momentum
     if (trend === Trend.Bull && diff1 > 0 && diff2 > 0) {
       const entry = last3[2];
-      const stop = entry - this.config.atrEntryMultiplier * latestATR;
+      const stop = ensureStop("long", entry, entry - this.config.atrEntryMultiplier * latestATR);
       return { side: "long", entry, stopLoss: stop };
     }
     if (trend === Trend.Bear && diff1 < 0 && diff2 < 0) {
       const entry = last3[2];
-      const stop = entry + this.config.atrEntryMultiplier * latestATR;
+      const stop = ensureStop("short", entry, entry + this.config.atrEntryMultiplier * latestATR);
       return { side: "short", entry, stopLoss: stop };
     }
     // Pattern 2: pullback to EMA20 with bounce confirmation
@@ -455,12 +597,12 @@ export class TradingBot {
     const emaPrev = ema20[ema20.length - 2];
     if (trend === Trend.Bull && c1 < emaPrev && c0 > emaNow) {
       const entry = c0;
-      const stop = Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR;
+      const stop = ensureStop("long", entry, Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR);
       return { side: "long", entry, stopLoss: stop };
     }
     if (trend === Trend.Bear && c1 > emaPrev && c0 < emaNow) {
       const entry = c0;
-      const stop = Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR;
+      const stop = ensureStop("short", entry, Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR);
       return { side: "short", entry, stopLoss: stop };
     }
     // Pattern 3: breakout of recent range (last N bars)
@@ -469,12 +611,12 @@ export class TradingBot {
     const recentLow = Math.min(...lows.slice(-lookback));
     if (trend === Trend.Bull && price > recentHigh) {
       const entry = price;
-      const stop = recentLow - this.config.swingBackoffAtr * latestATR;
+      const stop = ensureStop("long", entry, recentLow - this.config.swingBackoffAtr * latestATR);
       return { side: "long", entry, stopLoss: stop };
     }
     if (trend === Trend.Bear && price < recentLow) {
       const entry = price;
-      const stop = recentHigh + this.config.swingBackoffAtr * latestATR;
+      const stop = ensureStop("short", entry, recentHigh + this.config.swingBackoffAtr * latestATR);
       return { side: "short", entry, stopLoss: stop };
     }
     // Pattern 4: mean-reversion in low ADX regime with confluence
@@ -485,12 +627,12 @@ export class TradingBot {
       const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
       if (zScore <= -1.2 && score >= 2) {
         const entry = price;
-        const stop = price - this.config.atrEntryMultiplier * latestATR;
+        const stop = ensureStop("long", entry, price - this.config.atrEntryMultiplier * latestATR);
         return { side: "long", entry, stopLoss: stop };
       }
       if (zScore >= 1.2 && score >= 2) {
         const entry = price;
-        const stop = price + this.config.atrEntryMultiplier * latestATR;
+        const stop = ensureStop("short", entry, price + this.config.atrEntryMultiplier * latestATR);
         return { side: "short", entry, stopLoss: stop };
       }
     }
@@ -504,25 +646,38 @@ export class TradingBot {
   enterPosition(side: "long" | "short", entry: number, stopLoss: number): void {
     const profileRisk =
       this.config.strategyProfile === "trend"
-        ? 0.015
+        ? 0.05
         : this.config.strategyProfile === "scalp"
-        ? 0.005
+        ? 0.02
         : this.config.strategyProfile === "intraday"
-        ? 0.008
-        : 0.01;
-    const riskPct = Math.min(profileRisk, this.config.riskPerTrade);
+        ? 0.03
+        : 0.04;
+    const riskPct = Math.min(
+      this.config.maxRiskPerTradeCap,
+      Math.max(profileRisk, this.config.riskPerTrade),
+    );
     const slDistance = side === "long" ? entry - stopLoss : stopLoss - entry;
     const size = computePositionSize(this.config.accountBalance, riskPct, entry, stopLoss);
+    const riskAmount = Math.abs(slDistance * size);
+    const openRisk = this.aggregateOpenRisk();
+    const openCount = this.openPositionsCount();
+    if (openCount >= this.config.maxOpenPositions) {
+      return;
+    }
+    if (openRisk + riskAmount > this.config.accountBalance * this.config.maxPortfolioRiskPercent) {
+      return;
+    }
     const rrMap: Record<BotConfig["strategyProfile"], number> = {
-      trend: 3,
+      trend: 4,
       scalp: 1,
-      swing: 2,
-      intraday: 1.5,
+      swing: 3.5,
+      intraday: 2.5,
     };
     const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
     this.position = {
       entryPrice: entry,
       size: size,
+      baseSize: size,
       side: side,
       stopLoss: stopLoss,
       takeProfit: tp,
@@ -533,6 +688,8 @@ export class TradingBot {
       opened: Date.now(),
       partialTaken: false,
       slDistance,
+      pyramidLevel: 0,
+      partialIndex: 0,
       exitCount: 0,
     };
     this.state = State.Manage;
@@ -795,59 +952,7 @@ export class TradingBot {
     if (!this.position) return;
     const ht = await this.fetchOHLCV(this.config.baseTimeframe);
     const lt = await this.fetchOHLCV(this.config.signalTimeframe);
-    const currentPrice = lt[lt.length - 1].close;
-    // Update water marks
-    this.updateWaterMarks(currentPrice);
-    // Update trailing stop and take profit
-    this.updateTrailingStop(lt);
-    this.updateTakeProfit(ht, lt);
-    const atrArray = computeATR(
-      lt.map((c) => c.high),
-      lt.map((c) => c.low),
-      lt.map((c) => c.close),
-      this.config.atrPeriod,
-    );
-    const atr = atrArray[atrArray.length - 1];
-    const rMultiple = this.position.slDistance > 0 ? (this.position.side === "long"
-      ? (currentPrice - this.position.entryPrice) / this.position.slDistance
-      : (this.position.entryPrice - currentPrice) / this.position.slDistance) : 0;
-    // Exit conditions
-    if (this.position.side === "long") {
-      if (currentPrice <= this.position.stopLoss || currentPrice <= this.position.trailingStop) {
-        this.exitPosition(currentPrice);
-        return;
-      }
-      if (currentPrice >= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
-        if (!this.position.partialTaken && this.position.exitCount < this.config.maxExitChunks - 1) {
-          this.position.size *= 1 - this.config.partialExitRatio;
-          this.position.partialTaken = true;
-          this.position.exitCount += 1;
-          // move SL to break even + small buffer
-          this.position.stopLoss = this.position.entryPrice + this.config.breakevenBufferAtr * atr;
-          this.position.takeProfit = Infinity;
-        } else {
-          this.exitPosition(currentPrice);
-          return;
-        }
-      }
-    } else {
-      if (currentPrice >= this.position.stopLoss || currentPrice >= this.position.trailingStop) {
-        this.exitPosition(currentPrice);
-        return;
-      }
-      if (currentPrice <= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
-        if (!this.position.partialTaken && this.position.exitCount < this.config.maxExitChunks - 1) {
-          this.position.size *= 1 - this.config.partialExitRatio;
-          this.position.partialTaken = true;
-          this.position.exitCount += 1;
-          this.position.stopLoss = this.position.entryPrice - this.config.breakevenBufferAtr * atr;
-          this.position.takeProfit = -Infinity;
-        } else {
-          this.exitPosition(currentPrice);
-          return;
-        }
-      }
-    }
+    this.handleManage(ht, lt);
   }
 
   /**
@@ -898,6 +1003,8 @@ export class TradingBot {
     const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
     const latestATR = atrArray[atrArray.length - 1];
     const price = closes[closes.length - 1];
+    const ensureStop = (side: "long" | "short", entry: number, stop: number) =>
+      this.enforceMinimumStop(entry, stop, side, latestATR);
     const strictness =
       this.config.entryStrictness ??
       (this.config.strategyProfile === "intraday"
@@ -934,12 +1041,12 @@ export class TradingBot {
     const diffs = lastN.slice(1).map((v, i) => v - lastN[i]);
     if (trend === Trend.Bull && diffs.every((d) => d > 0)) {
       const entry = lastN[lastN.length - 1];
-      const stop = entry - this.config.atrEntryMultiplier * latestATR;
+      const stop = ensureStop("long", entry, entry - this.config.atrEntryMultiplier * latestATR);
       return { side: "long", entry, stopLoss: stop };
     }
     if (trend === Trend.Bear && diffs.every((d) => d < 0)) {
       const entry = lastN[lastN.length - 1];
-      const stop = entry + this.config.atrEntryMultiplier * latestATR;
+      const stop = ensureStop("short", entry, entry + this.config.atrEntryMultiplier * latestATR);
       return { side: "short", entry, stopLoss: stop };
     }
     const c0 = closes[closes.length - 1];
@@ -948,12 +1055,12 @@ export class TradingBot {
     const emaPrev = ema20[ema20.length - 2];
     if (trend === Trend.Bull && c1 < emaPrev && c0 > emaNow) {
       const entry = c0;
-      const stop = Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR;
+      const stop = ensureStop("long", entry, Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR);
       return { side: "long", entry, stopLoss: stop };
     }
     if (trend === Trend.Bear && c1 > emaPrev && c0 < emaNow) {
       const entry = c0;
-      const stop = Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR;
+      const stop = ensureStop("short", entry, Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR);
       return { side: "short", entry, stopLoss: stop };
     }
     const lookback = strictness === "ultra" ? 5 : strictness === "relaxed" ? 8 : strictness === "test" ? 3 : 12;
@@ -961,12 +1068,12 @@ export class TradingBot {
     const recentLow = Math.min(...lows.slice(-lookback));
     if (trend === Trend.Bull && price > recentHigh) {
       const entry = price;
-      const stop = recentLow - this.config.swingBackoffAtr * latestATR;
+      const stop = ensureStop("long", entry, recentLow - this.config.swingBackoffAtr * latestATR);
       return { side: "long", entry, stopLoss: stop };
     }
     if (trend === Trend.Bear && price < recentLow) {
       const entry = price;
-      const stop = recentHigh + this.config.swingBackoffAtr * latestATR;
+      const stop = ensureStop("short", entry, recentHigh + this.config.swingBackoffAtr * latestATR);
       return { side: "short", entry, stopLoss: stop };
     }
     const adxLt = computeADX(highs, lows, closes, this.config.adxPeriod);
@@ -982,12 +1089,12 @@ export class TradingBot {
       const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
       if (zScore <= -zCut) {
         const entry = price;
-        const stop = price - this.config.atrEntryMultiplier * latestATR;
+        const stop = ensureStop("long", entry, price - this.config.atrEntryMultiplier * latestATR);
         return { side: "long", entry, stopLoss: stop };
       }
       if (zScore >= zCut) {
         const entry = price;
-        const stop = price + this.config.atrEntryMultiplier * latestATR;
+        const stop = ensureStop("short", entry, price + this.config.atrEntryMultiplier * latestATR);
         return { side: "short", entry, stopLoss: stop };
       }
     }
@@ -997,8 +1104,8 @@ export class TradingBot {
         const entry = price;
         const stop =
           trend === Trend.Bull
-            ? price - this.config.atrEntryMultiplier * latestATR
-            : price + this.config.atrEntryMultiplier * latestATR;
+            ? ensureStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
+            : ensureStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
         return { side: trend === Trend.Bull ? "long" : "short", entry, stopLoss: stop };
       }
     }
@@ -1009,8 +1116,8 @@ export class TradingBot {
       const entry = price;
       const stop =
         dir === "long"
-          ? price - this.config.atrEntryMultiplier * latestATR
-          : price + this.config.atrEntryMultiplier * latestATR;
+          ? ensureStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
+          : ensureStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
       return { side: dir as "long" | "short", entry, stopLoss: stop };
     }
     return null;
@@ -1018,58 +1125,7 @@ export class TradingBot {
 
   private managePositionWithFrames(ht: DataFrame, lt: DataFrame): void {
     if (!this.position) return;
-    const currentPrice = lt[lt.length - 1].close;
-    this.updateWaterMarks(currentPrice);
-    this.updateTrailingStop(lt);
-    this.updateTakeProfit(ht, lt);
-    const atrArray = computeATR(
-      lt.map((c) => c.high),
-      lt.map((c) => c.low),
-      lt.map((c) => c.close),
-      this.config.atrPeriod,
-    );
-    const atr = atrArray[atrArray.length - 1];
-    const rMultiple = this.position.slDistance > 0
-      ? (this.position.side === "long"
-        ? (currentPrice - this.position.entryPrice) / this.position.slDistance
-        : (this.position.entryPrice - currentPrice) / this.position.slDistance)
-      : 0;
-
-    if (this.position.side === "long") {
-      if (currentPrice <= this.position.stopLoss || currentPrice <= this.position.trailingStop) {
-        this.exitPosition(currentPrice);
-        return;
-      }
-      if (currentPrice >= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
-        if (!this.position.partialTaken && this.position.exitCount < this.config.maxExitChunks - 1) {
-          this.position.size *= 1 - this.config.partialExitRatio;
-          this.position.partialTaken = true;
-          this.position.exitCount += 1;
-          this.position.stopLoss = this.position.entryPrice + this.config.breakevenBufferAtr * atr;
-          this.position.takeProfit = Infinity;
-        } else {
-          this.exitPosition(currentPrice);
-          return;
-        }
-      }
-    } else {
-      if (currentPrice >= this.position.stopLoss || currentPrice >= this.position.trailingStop) {
-        this.exitPosition(currentPrice);
-        return;
-      }
-      if (currentPrice <= this.position.takeProfit || rMultiple >= this.config.partialTakeProfitR) {
-        if (!this.position.partialTaken && this.position.exitCount < this.config.maxExitChunks - 1) {
-          this.position.size *= 1 - this.config.partialExitRatio;
-          this.position.partialTaken = true;
-          this.position.exitCount += 1;
-          this.position.stopLoss = this.position.entryPrice - this.config.breakevenBufferAtr * atr;
-          this.position.takeProfit = -Infinity;
-        } else {
-          this.exitPosition(currentPrice);
-          return;
-        }
-      }
-    }
+    this.handleManage(ht, lt);
   }
 
   getState(): State {
@@ -1159,6 +1215,8 @@ const botRegistry: Record<string, TradingBot> = {};
 function ensureBot(symbol: string, config?: Partial<BotConfig>): TradingBot {
   if (!botRegistry[symbol]) {
     botRegistry[symbol] = new TradingBot({ symbol, ...config });
+  } else if (config) {
+    botRegistry[symbol].updateConfig({ symbol, ...config });
   }
   return botRegistry[symbol];
 }
