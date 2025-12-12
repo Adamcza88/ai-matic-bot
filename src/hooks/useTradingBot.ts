@@ -912,7 +912,8 @@ export const useTradingBot = (
                 if (
                     settingsRef.current.entryStrictness !== "test" &&
                     pendingSignalsRef.current.length === 0 &&
-                    activePositionsRef.current.length === 0
+                    activePositionsRef.current.length === 0 &&
+                    !(authToken && !useTestnet) // na mainnetu s přihlášeným účtem keepalive nevytvářej
                 ) {
                     const now = Date.now();
                     if (

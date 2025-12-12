@@ -786,7 +786,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 // Keepalive signály pro ostatní profily: pokud není žádný pending/aktivní delší dobu, vytvoř fallback
                 if (settingsRef.current.entryStrictness !== "test" &&
                     pendingSignalsRef.current.length === 0 &&
-                    activePositionsRef.current.length === 0) {
+                    activePositionsRef.current.length === 0 &&
+                    !(authToken && !useTestnet) // na mainnetu s přihlášeným účtem keepalive nevytvářej
+                ) {
                     const now = Date.now();
                     if (!lastKeepaliveAtRef.current ||
                         now - lastKeepaliveAtRef.current > KEEPALIVE_SIGNAL_INTERVAL_MS) {
