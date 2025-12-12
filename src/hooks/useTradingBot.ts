@@ -33,9 +33,9 @@ const MAX_TEST_PENDING = 4;
 const KEEPALIVE_SIGNAL_INTERVAL_MS = 12000;
 const QTY_LIMITS: Record<string, { min: number; max: number }> = {
     BTCUSDT: { min: 0.001, max: 0.01 },
-    ETHUSDT: { min: 1, max: 5 },
-    SOLUSDT: { min: 50, max: 100 },
-    ADAUSDT: { min: 5000, max: 10000 },
+    ETHUSDT: { min: 0.001, max: 0.2 },
+    SOLUSDT: { min: 0.01, max: 5 },
+    ADAUSDT: { min: 10, max: 5000 },
 };
 
 // RISK / STRATEGY
