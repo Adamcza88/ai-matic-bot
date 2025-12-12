@@ -407,32 +407,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     : [];
                 if (cancel)
                     return;
-                const prevActive = activePositionsRef.current;
-                const closed = prevActive.filter((p) => !mapped.some((m) => m.id === p.id));
-                if (closed.length) {
-                    closed.forEach((p) => {
-                        const exitPrice = currentPricesRef.current[p.symbol] ?? p.entryPrice;
-                        const dir = p.side === "buy" ? 1 : -1;
-                        const pnl = (exitPrice - p.entryPrice) * dir * p.size;
-                        realizedPnlRef.current += pnl;
-                        registerOutcome(pnl);
-                        const limits = QTY_LIMITS[p.symbol];
-                        if (settingsRef.current.strategyProfile === "coach" && limits) {
-                            const nextStake = Math.max(limits.min * p.entryPrice, Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl));
-                            coachStakeRef.current[p.symbol] = nextStake;
-                        }
-                        setAssetPnlHistory(() => addPnlRecord({
-                            symbol: p.symbol,
-                            pnl,
-                            timestamp: new Date().toISOString(),
-                            note: `Closed on ${useTestnet ? "testnet" : "mainnet"} @ ${exitPrice.toFixed(4)} | size ${p.size.toFixed(4)}`,
-                        }));
-                        addLog({
-                            action: "CLOSE",
-                            message: `${p.symbol} ${useTestnet ? "testnet" : "mainnet"} position closed @ ${exitPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
-                        });
-                    });
-                }
                 setActivePositions(() => {
                     activePositionsRef.current = mapped;
                     return mapped;
@@ -692,8 +666,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 priceHistoryRef.current = newHistory;
                 setCurrentPrices(newPrices);
                 currentPricesRef.current = newPrices;
-                // Simulované pozice aktualizujeme jen mimo testnet s auth tokenem.
-                if (!(useTestnet && authToken)) {
+                // Simulované pozice aktualizujeme jen pokud NEMÁME auth token (tj. není přímá vazba na burzu).
+                if (!authToken) {
                     const prevActive = activePositionsRef.current;
                     const closed = prevActive.filter((p) => !engineActive.some((e) => e.id === p.id));
                     let freedNotional = 0;
