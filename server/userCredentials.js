@@ -1,7 +1,11 @@
 import { ensureSupabase } from "./supabaseClient.js";
 
-const SERVICE_BYBIT_KEY = "bybit api key";
-const SERVICE_BYBIT_SECRET = "bybit api secret";
+const SERVICE_BYBIT_KEY = "bybit api key"; // legacy fallback (testnet)
+const SERVICE_BYBIT_SECRET = "bybit api secret"; // legacy fallback (testnet)
+const SERVICE_BYBIT_TESTNET_KEY = "bybit testnet api key";
+const SERVICE_BYBIT_TESTNET_SECRET = "bybit testnet api secret";
+const SERVICE_BYBIT_MAINNET_KEY = "bybit mainnet api key";
+const SERVICE_BYBIT_MAINNET_SECRET = "bybit mainnet api secret";
 const SERVICE_CRYPTOPANIC_KEY = "cryptopanic api key";
 
 export async function getUserFromToken(token) {
@@ -33,6 +37,12 @@ export async function getUserApiKeys(userId) {
   return {
     bybitKey: map.get(SERVICE_BYBIT_KEY),
     bybitSecret: map.get(SERVICE_BYBIT_SECRET),
+    bybitTestnetKey:
+      map.get(SERVICE_BYBIT_TESTNET_KEY) ?? map.get(SERVICE_BYBIT_KEY),
+    bybitTestnetSecret:
+      map.get(SERVICE_BYBIT_TESTNET_SECRET) ?? map.get(SERVICE_BYBIT_SECRET),
+    bybitMainnetKey: map.get(SERVICE_BYBIT_MAINNET_KEY),
+    bybitMainnetSecret: map.get(SERVICE_BYBIT_MAINNET_SECRET),
     cryptopanicKey: map.get(SERVICE_CRYPTOPANIC_KEY),
   };
 }

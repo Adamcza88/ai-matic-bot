@@ -2,8 +2,12 @@
 import axios from "axios";
 import crypto from "crypto";
 
-// Testnet base URL (pro reálný účet by se měnil jen baseUrl)
-const BASE_URL = "https://api-testnet.bybit.com";
+const BASE_URL_TESTNET = "https://api-testnet.bybit.com";
+const BASE_URL_MAINNET = "https://api.bybit.com";
+
+function resolveBase(useTestnet = true) {
+  return useTestnet ? BASE_URL_TESTNET : BASE_URL_MAINNET;
+}
 
 function ensureConfigured(creds) {
   if (!creds?.apiKey || !creds?.apiSecret) {
@@ -47,8 +51,8 @@ function normalizeQty(symbol, qtyInput) {
   return q.toString();
 }
 
-export async function getServerTime() {
-  const url = `${BASE_URL}/v5/market/time`;
+export async function getServerTime(useTestnet = true) {
+  const url = `${resolveBase(useTestnet)}/v5/market/time`;
   const res = await axios.get(url);
   return res.data;
 }
@@ -67,7 +71,7 @@ export async function getServerTime() {
  *   trailingStop?: number   // v USDT, ne v %
  * }
  */
-export async function createDemoOrder(order, creds) {
+export async function createDemoOrder(order, creds, useTestnet = true) {
   ensureConfigured(creds);
 
   const timestamp = Date.now().toString();
@@ -91,7 +95,7 @@ export async function createDemoOrder(order, creds) {
     timestamp + creds.apiKey + recvWindow + JSON.stringify(orderBody);
   const orderSign = sign(orderPayload, creds.apiSecret);
 
-  const orderRes = await axios.post(`${BASE_URL}/v5/order/create`, orderBody, {
+  const orderRes = await axios.post(`${resolveBase(useTestnet)}/v5/order/create`, orderBody, {
     headers: {
       "X-BAPI-API-KEY": creds.apiKey,
       "X-BAPI-SIGN": orderSign,
@@ -149,7 +153,7 @@ export async function createDemoOrder(order, creds) {
     const tsSign = sign(tsPayload, creds.apiSecret);
 
     const tsRes = await axios.post(
-      `${BASE_URL}/v5/position/trading-stop`,
+      `${resolveBase(useTestnet)}/v5/position/trading-stop`,
       tsBody,
       {
         headers: {
@@ -175,7 +179,7 @@ export async function createDemoOrder(order, creds) {
   return result;
 }
 
-export async function getDemoPositions(creds) {
+export async function getDemoPositions(creds, useTestnet = true) {
   ensureConfigured(creds);
 
   const timestamp = Date.now().toString();
@@ -186,7 +190,7 @@ export async function getDemoPositions(creds) {
   const payload = timestamp + creds.apiKey + recvWindow + query;
   const signature = sign(payload, creds.apiSecret);
 
-  const res = await axios.get(`${BASE_URL}/v5/position/list?${query}`, {
+  const res = await axios.get(`${resolveBase(useTestnet)}/v5/position/list?${query}`, {
     headers: {
       "X-BAPI-API-KEY": creds.apiKey,
       "X-BAPI-SIGN": signature,
@@ -199,7 +203,7 @@ export async function getDemoPositions(creds) {
   return res.data;
 }
 
-export async function listDemoOrders(creds, { limit = 50 } = {}) {
+export async function listDemoOrders(creds, { limit = 50 } = {}, useTestnet = true) {
   ensureConfigured(creds);
 
   const timestamp = Date.now().toString();
@@ -209,7 +213,7 @@ export async function listDemoOrders(creds, { limit = 50 } = {}) {
   const payload = timestamp + creds.apiKey + recvWindow + query;
   const signature = sign(payload, creds.apiSecret);
 
-  const res = await axios.get(`${BASE_URL}/v5/order/realtime?${query}`, {
+  const res = await axios.get(`${resolveBase(useTestnet)}/v5/order/realtime?${query}`, {
     headers: {
       "X-BAPI-API-KEY": creds.apiKey,
       "X-BAPI-SIGN": signature,
@@ -222,7 +226,7 @@ export async function listDemoOrders(creds, { limit = 50 } = {}) {
   return res.data;
 }
 
-export async function listDemoOpenOrders(creds, { limit = 50 } = {}) {
+export async function listDemoOpenOrders(creds, { limit = 50 } = {}, useTestnet = true) {
   ensureConfigured(creds);
 
   const timestamp = Date.now().toString();
@@ -232,7 +236,7 @@ export async function listDemoOpenOrders(creds, { limit = 50 } = {}) {
   const payload = timestamp + creds.apiKey + recvWindow + query;
   const signature = sign(payload, creds.apiSecret);
 
-  const res = await axios.get(`${BASE_URL}/v5/order/realtime?${query}`, {
+  const res = await axios.get(`${resolveBase(useTestnet)}/v5/order/realtime?${query}`, {
     headers: {
       "X-BAPI-API-KEY": creds.apiKey,
       "X-BAPI-SIGN": signature,
@@ -245,7 +249,7 @@ export async function listDemoOpenOrders(creds, { limit = 50 } = {}) {
   return res.data;
 }
 
-export async function listDemoTrades(creds, { limit = 50 } = {}) {
+export async function listDemoTrades(creds, { limit = 50 } = {}, useTestnet = true) {
   ensureConfigured(creds);
 
   const timestamp = Date.now().toString();
@@ -255,7 +259,7 @@ export async function listDemoTrades(creds, { limit = 50 } = {}) {
   const payload = timestamp + creds.apiKey + recvWindow + query;
   const signature = sign(payload, creds.apiSecret);
 
-  const res = await axios.get(`${BASE_URL}/v5/execution/list?${query}`, {
+  const res = await axios.get(`${resolveBase(useTestnet)}/v5/execution/list?${query}`, {
     headers: {
       "X-BAPI-API-KEY": creds.apiKey,
       "X-BAPI-SIGN": signature,

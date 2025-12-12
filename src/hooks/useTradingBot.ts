@@ -276,11 +276,6 @@ export const useTradingBot = (
             setOrdersError("Missing auth token");
             return;
         }
-        if (!useTestnet) {
-            setTestnetOrders([]);
-            setOrdersError("Testnet off");
-            return;
-        }
         // Pokud není definován explicitní backend, nezkoušej fetchovat – předejdeme 404 na statickém hostu
         const baseProvided = Boolean(envBase);
         const sameOrigin =
@@ -293,7 +288,7 @@ export const useTradingBot = (
         }
         try {
             setOrdersError(null);
-            const res = await fetch(`${apiBase}/api/demo/orders`, {
+            const res = await fetch(`${apiBase}/api/demo/orders?net=${useTestnet ? "testnet" : "mainnet"}`, {
                 headers: {
                     Authorization: `Bearer ${authToken}`,
                 },
@@ -331,12 +326,12 @@ export const useTradingBot = (
 
     // Testnet pozice přímo z Bybitu – přepíší simulované activePositions
     useEffect(() => {
-        if (!authToken || !useTestnet) return;
+        if (!authToken) return;
 
         let cancel = false;
         const fetchPositions = async () => {
             try {
-                const res = await fetch(`${apiBase}/api/demo/positions`, {
+                const res = await fetch(`${apiBase}/api/demo/positions?net=${useTestnet ? "testnet" : "mainnet"}`, {
                     headers: { Authorization: `Bearer ${authToken}` },
                 });
                 if (!res.ok) {
@@ -397,14 +392,14 @@ export const useTradingBot = (
                                 symbol: p.symbol,
                                 pnl,
                                 timestamp: new Date().toISOString(),
-                                note: `Closed on testnet @ ${exitPrice.toFixed(
+                                note: `Closed on ${useTestnet ? "testnet" : "mainnet"} @ ${exitPrice.toFixed(
                                     4
                                 )} | size ${p.size.toFixed(4)}`,
                             })
                         );
                         addLog({
                             action: "CLOSE",
-                            message: `${p.symbol} testnet position closed @ ${exitPrice.toFixed(
+                            message: `${p.symbol} ${useTestnet ? "testnet" : "mainnet"} position closed @ ${exitPrice.toFixed(
                                 4
                             )} | PnL ${pnl.toFixed(2)} USDT`,
                         });
@@ -430,7 +425,7 @@ export const useTradingBot = (
                 }));
                 addLog({
                     action: "SYSTEM",
-                    message: `Synced ${mapped.length} testnet positions`,
+                    message: `Synced ${mapped.length} ${useTestnet ? "testnet" : "mainnet"} positions`,
                 });
             } catch (err: any) {
                 if (cancel) return;
@@ -455,20 +450,12 @@ export const useTradingBot = (
     }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
 
     const fetchTestnetTrades = useCallback(async () => {
-        if (!authToken || !useTestnet) {
-            setTestnetTrades([]);
-            return;
-        }
-        const baseProvided = Boolean(envBase);
-        const sameOrigin =
-            typeof window !== "undefined" &&
-            inferredBase === window.location.origin;
-        if (!baseProvided && sameOrigin) {
+        if (!authToken) {
             setTestnetTrades([]);
             return;
         }
         try {
-            const res = await fetch(`${apiBase}/api/demo/trades`, {
+            const res = await fetch(`${apiBase}/api/demo/trades?net=${useTestnet ? "testnet" : "mainnet"}`, {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
             if (!res.ok) {
@@ -1014,12 +1001,12 @@ export const useTradingBot = (
                 return true;
             }
 
-            const res = await fetch(`${apiBase}/api/demo/order`, {
+            const res = await fetch(`${apiBase}/api/demo/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
                 method: "POST",
                 headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${authToken}`,
-                    },
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
                     body: JSON.stringify({
                         symbol: signal.symbol,
                         side: side === "buy" ? "Buy" : "Sell",

@@ -21,6 +21,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
@@ -32,11 +33,15 @@ export default async function handler(req, res) {
 
     const user = await getUserFromToken(token);
     const keys = await getUserApiKeys(user.id);
+    const key = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
+    const secret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
 
-    if (!keys.bybitKey || !keys.bybitSecret) {
+    if (!key || !secret) {
       return res.status(400).json({
         ok: false,
-        error: "Bybit API key/secret not configured for this user",
+        error: useTestnet
+          ? "Bybit TESTNET API key/secret not configured for this user"
+          : "Bybit MAINNET API key/secret not configured for this user",
       });
     }
 
@@ -89,9 +94,9 @@ export default async function handler(req, res) {
 
     // ===== CALL BYBIT =====
     const result = await createDemoOrder(payload, {
-      apiKey: keys.bybitKey,
-      apiSecret: keys.bybitSecret,
-    });
+      apiKey: key,
+      apiSecret: secret,
+    }, useTestnet);
 
     return res.status(200).json({
       ok: true,

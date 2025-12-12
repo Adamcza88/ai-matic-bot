@@ -31,8 +31,13 @@ type Props = {
 };
 
 export const SERVICE_OPTIONS = [
-  { value: "bybit api key", label: "Bybit API Key" },
-  { value: "bybit api secret", label: "Bybit API Secret" },
+  { value: "bybit testnet api key", label: "Bybit Testnet API Key" },
+  { value: "bybit testnet api secret", label: "Bybit Testnet API Secret" },
+  { value: "bybit mainnet api key", label: "Bybit Mainnet API Key" },
+  { value: "bybit mainnet api secret", label: "Bybit Mainnet API Secret" },
+  // legacy fallback
+  { value: "bybit api key", label: "Bybit API Key (legacy)" },
+  { value: "bybit api secret", label: "Bybit API Secret (legacy)" },
   { value: "cryptopanic api key", label: "Cryptopanic API Key" },
 ];
 

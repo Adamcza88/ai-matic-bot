@@ -18,10 +18,11 @@ export default async function handler(req, res) {
         return;
     }
     try {
-        const authHeader = req.headers.authorization || "";
-        const token = authHeader.startsWith("Bearer ")
-            ? authHeader.split(" ")[1]
-            : null;
+    const useTestnet = req.query.net !== "mainnet";
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ")
+        ? authHeader.split(" ")[1]
+        : null;
 
         if (!token) {
             res.status(401).json({ ok: false, error: "Missing auth token" });
@@ -30,19 +31,23 @@ export default async function handler(req, res) {
 
         const user = await getUserFromToken(token);
         const keys = await getUserApiKeys(user.id);
+        const key = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
+        const secret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
 
-        if (!keys.bybitKey || !keys.bybitSecret) {
+        if (!key || !secret) {
             res.status(400).json({
                 ok: false,
-                error: "Bybit API key/secret not configured for this user",
+                error: useTestnet
+                    ? "Bybit TESTNET API key/secret not configured for this user"
+                    : "Bybit MAINNET API key/secret not configured for this user",
             });
             return;
         }
 
         const data = await getDemoPositions({
-            apiKey: keys.bybitKey,
-            apiSecret: keys.bybitSecret,
-        });
+            apiKey: key,
+            apiSecret: secret,
+        }, useTestnet);
         res.json({ ok: true, data });
     } catch (err) {
         console.error("GET /api/demo/positions error:", err);
