@@ -1,0 +1,92 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { TradingMode } from "./types";
+import { useTradingBot } from "./hooks/useTradingBot";
+import Dashboard from "./components/Dashboard";
+import LoginCard from "./components/LoginCard";
+import NotReleased from "./components/NotReleased";
+import ApiKeysManager, { SERVICE_OPTIONS } from "./components/ApiKeysManager";
+import { useAuth } from "./hooks/useAuth";
+import { supabase } from "./lib/supabaseClient";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { LogOut, User, Settings } from "lucide-react";
+import Logo from "./components/Logo";
+// Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
+const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
+export default function App() {
+    const auth = useAuth();
+    const [mode, setMode] = useState(TradingMode.OFF);
+    const [useTestnet, setUseTestnet] = useState(true);
+    const [showKeyPanel, setShowKeyPanel] = useState(false);
+    const [missingServices, setMissingServices] = useState([]);
+    const [keysError, setKeysError] = useState(null);
+    const [isGuest, setIsGuest] = useState(false);
+    const bot = useTradingBot(mode, useTestnet, auth.session?.access_token);
+    const userEmail = useMemo(() => {
+        if (isGuest)
+            return "Guest";
+        return auth.user?.email ?? "";
+    }, [auth.user, isGuest]);
+    const refreshKeyStatus = useCallback(async () => {
+        if (!auth.user)
+            return;
+        setKeysError(null);
+        const { data, error } = await supabase
+            .from("user_api_keys")
+            .select("service")
+            .eq("user_id", auth.user.id);
+        if (error) {
+            setKeysError(error.message);
+            setMissingServices(SERVICE_OPTIONS.map((s) => s.label));
+            return;
+        }
+        const have = new Set((data ?? [])
+            .map((row) => row.service?.toLowerCase())
+            .filter(Boolean));
+        const missing = SERVICE_OPTIONS.filter((opt) => !have.has(opt.value)).map((opt) => opt.label);
+        setMissingServices(missing);
+        if (missing.length > 0) {
+            setShowKeyPanel(true);
+        }
+    }, [auth.user]);
+    useEffect(() => {
+        if (auth.status === "ready" && auth.user) {
+            void refreshKeyStatus();
+        }
+    }, [auth.status, auth.user, refreshKeyStatus]);
+    if (auth.status === "checking") {
+        return (_jsx("div", { style: {
+                minHeight: "100vh",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#0b1224",
+                color: "white",
+            }, children: "Loading session..." }));
+    }
+    if (auth.status === "blocked") {
+        return _jsx(NotReleased, { message: auth.error });
+    }
+    if (auth.status === "signed_out" && !isGuest) {
+        return (_jsx(LoginCard, { onLogin: auth.signInWithGoogle, isAuthenticating: auth.isAuthenticating, allowGuests: ALLOW_GUESTS, onGuestLogin: () => setIsGuest(true), error: auth.error }));
+    }
+    if ((auth.status !== "ready" || !auth.user) && !isGuest) {
+        return _jsx(NotReleased, { message: "Unable to verify access." });
+    }
+    return (_jsxs("div", { className: "min-h-screen bg-slate-950 text-white p-6 relative isolate", children: [_jsx("div", { className: "absolute inset-0 opacity-10 -z-10", style: {
+                    backgroundImage: "url(/loginBackground.svg)",
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                    backgroundRepeat: "no-repeat",
+                } }), _jsxs("header", { className: "flex items-center justify-between mb-6 p-4 border border-white/10 rounded-xl bg-white/5 backdrop-blur-xs flex-col gap-5 sm:flex-row", children: [_jsxs("div", { className: "flex items-center gap-4", children: [_jsx(Logo, { className: "w-10 h-10 text-blue-500" }), _jsxs("div", { children: [_jsx("div", { className: "font-bold text-xl tracking-tight", children: "AI Matic" }), _jsxs("div", { className: "text-slate-400 text-sm flex items-center gap-2", children: [_jsx(User, { className: "w-3 h-3" }), "Signed in as ", userEmail] })] })] }), _jsxs("div", { className: "flex gap-2 items-center", children: [_jsxs(Button, { variant: missingServices.length > 0 ? "destructive" : "outline", size: "sm", onClick: () => setShowKeyPanel((v) => !v), className: missingServices.length > 0
+                                    ? "bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20"
+                                    : "border-white/20 text-white hover:bg-white/10 hover:text-white", children: [_jsx(Settings, { className: "w-4 h-4 mr-2" }), "Profile / API keys", missingServices.length > 0 && (_jsx(Badge, { variant: "destructive", className: "ml-2 px-1.5 py-0.5 h-5", children: missingServices.length }))] }), _jsxs(Button, { variant: "ghost", size: "sm", onClick: () => {
+                                    if (isGuest) {
+                                        setIsGuest(false);
+                                    }
+                                    else {
+                                        auth.signOut();
+                                    }
+                                }, className: "text-slate-400 hover:text-white hover:bg-white/10", children: [_jsx(LogOut, { className: "w-4 h-4 mr-2" }), "Sign out"] })] })] }), missingServices.length > 0 && !showKeyPanel && (_jsxs("div", { className: "mb-6 p-4 rounded-xl border border-red-500/30 bg-red-500/10 flex items-center justify-between gap-4", children: [_jsxs("div", { children: [_jsx("div", { className: "font-bold text-red-400", children: "Chyb\u00ED API kl\u00ED\u010De" }), _jsxs("div", { className: "text-sm text-red-300/80", children: ["Dopl\u0148: ", missingServices.join(", ")] }), keysError && (_jsx("div", { className: "text-amber-400 mt-1.5 text-xs", children: keysError }))] }), _jsx(Button, { size: "sm", onClick: () => setShowKeyPanel(true), className: "bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-none", children: "Otev\u0159\u00EDt nastaven\u00ED" })] })), showKeyPanel && (_jsx(ApiKeysManager, { userId: isGuest ? "guest" : auth.user?.id ?? "", onKeysUpdated: refreshKeyStatus })), _jsx(Dashboard, { mode: mode, setMode: setMode, useTestnet: useTestnet, setUseTestnet: setUseTestnet, bot: bot })] }));
+}

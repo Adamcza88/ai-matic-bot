@@ -648,7 +648,7 @@ export class TradingBot {
     // Pattern 4: mean-reversion in low ADX regime with confluence
     const adxLt = computeADX(highs, lows, closes, this.config.adxPeriod);
     const latestAdx = adxLt[adxLt.length - 1];
-    const score = conf.score;
+    const score = confBase.score;
     if (latestAdx < this.config.adxThreshold) {
       const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
       if (zScore <= -1.2 && score >= 2) {
