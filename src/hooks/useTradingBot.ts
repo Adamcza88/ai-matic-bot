@@ -25,9 +25,9 @@ import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
 // SYMBOLS
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 
-// SIMULOVANÝ KAPITÁL
-const INITIAL_CAPITAL = 200000;
-const MAX_SINGLE_POSITION_VALUE = 5000;
+// SIMULOVANÝ / DEFAULT KAPITÁL
+const INITIAL_CAPITAL = 101.33; // Unified Trading balance snapshot
+const MAX_SINGLE_POSITION_VALUE = 120;
 const MIN_ENTRY_SPACING_MS = 3000;
 const MAX_TEST_PENDING = 4;
 const KEEPALIVE_SIGNAL_INTERVAL_MS = 12000;
@@ -297,7 +297,8 @@ export const useTradingBot = (
     useEffect(() => {
         const isTest = settings.entryStrictness === "test";
         setPortfolioState((prev) => {
-            const totalCapital = isTest ? prev.totalCapital || 200000 : INITIAL_CAPITAL;
+            const baseCapital = INITIAL_CAPITAL;
+            const totalCapital = isTest ? prev.totalCapital || baseCapital : baseCapital;
             const pctCap = totalCapital * settings.maxAllocatedCapitalPercent;
             const maxAlloc = isTest ? Math.min(1000000, pctCap) : pctCap;
             return {
