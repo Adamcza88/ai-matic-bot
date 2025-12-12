@@ -14,7 +14,7 @@ const MIN_ENTRY_SPACING_MS = 3000;
 const MAX_TEST_PENDING = 4;
 const KEEPALIVE_SIGNAL_INTERVAL_MS = 12000;
 const QTY_LIMITS = {
-    BTCUSDT: { min: 0.001, max: 0.01 },
+    BTCUSDT: { min: 0.0005, max: 0.01 },
     ETHUSDT: { min: 0.001, max: 0.2 },
     SOLUSDT: { min: 0.01, max: 5 },
     ADAUSDT: { min: 10, max: 5000 },
@@ -69,7 +69,7 @@ const AI_MATIC_X_PRESET = {
     baseRiskPerTrade: 0.04,
     maxPortfolioRiskPercent: 0.15,
     maxAllocatedCapitalPercent: 0.8,
-    maxOpenPositions: 5,
+    maxOpenPositions: 4,
     strategyProfile: "auto",
     entryStrictness: "ultra",
     enforceSessionHours: false,
@@ -949,7 +949,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const remainingAllocation = Math.max(0, maxAlloc - currentAlloc);
         if (notional > remainingAllocation && remainingAllocation > 0) {
             const scaledSize = remainingAllocation / entry;
-            size = limits ? clampQtyForSymbol(signal.symbol, scaledSize) : scaledSize;
+            const maxOnlyClamp = limits ? Math.min(limits.max, Math.max(0, scaledSize)) : Math.max(0, scaledSize);
+            size = maxOnlyClamp;
             notional = size * entry;
         }
         if (size <= 0 || notional <= 0) {
@@ -968,11 +969,18 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         }
         if (portfolioState.allocatedCapital + notional >
             portfolioState.maxAllocatedCapital) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} exceeds capital allocation limit.`,
-            });
-            return false;
+            const headroom = Math.max(0, portfolioState.maxAllocatedCapital - portfolioState.allocatedCapital);
+            const scaledSize = headroom / entry;
+            const maxOnlyClamp = limits ? Math.min(limits.max, Math.max(0, scaledSize)) : Math.max(0, scaledSize);
+            size = maxOnlyClamp;
+            notional = size * entry;
+            if (size <= 0 || notional <= 0 || portfolioState.allocatedCapital + notional > portfolioState.maxAllocatedCapital) {
+                addLog({
+                    action: "RISK_BLOCK",
+                    message: `Signal on ${signal.symbol} exceeds capital allocation limit.`,
+                });
+                return false;
+            }
         }
         // ===== DYNAMICKÝ TRAILING STOP (odvozený z 1R) =====
         const oneR = Math.abs(entry - sl); // velikost SL
