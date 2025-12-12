@@ -111,6 +111,32 @@ const AI_MATIC_X_PRESET: AISettings = {
 
 export const INITIAL_RISK_SETTINGS: AISettings = AI_MATIC_X_PRESET;
 
+const SETTINGS_STORAGE_KEY = "ai-matic-settings";
+
+function loadStoredSettings(): AISettings | null {
+    try {
+        const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed) return null;
+        return {
+            ...INITIAL_RISK_SETTINGS,
+            ...parsed,
+            tradingDays: Array.isArray(parsed.tradingDays) ? parsed.tradingDays : INITIAL_RISK_SETTINGS.tradingDays,
+        } as AISettings;
+    } catch {
+        return null;
+    }
+}
+
+function persistSettings(s: AISettings) {
+    try {
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(s));
+    } catch {
+        // ignore storage errors
+    }
+}
+
 // UTILS
 function parseKlines(list: any[]): Candle[] {
     if (!Array.isArray(list)) return [];
@@ -264,7 +290,13 @@ export const useTradingBot = (
     const [testnetTrades, setTestnetTrades] = useState<TestnetTrade[]>([]);
     const [ordersError, setOrdersError] = useState<string | null>(null);
     const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap>({});
-    const [settings, setSettings] = useState(INITIAL_RISK_SETTINGS);
+    const [settings, setSettings] = useState<AISettings>(() => {
+        if (typeof window !== "undefined") {
+            const stored = loadStoredSettings();
+            if (stored) return stored;
+        }
+        return INITIAL_RISK_SETTINGS;
+    });
 
     const [systemState, setSystemState] = useState({
         bybitStatus: "Connecting...",
@@ -1471,6 +1503,7 @@ export const useTradingBot = (
         }
         setSettings(patched);
         settingsRef.current = patched;
+        persistSettings(patched);
         setPortfolioState((p) => {
             const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
             return {

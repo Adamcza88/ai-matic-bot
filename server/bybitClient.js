@@ -57,6 +57,23 @@ export async function getServerTime(useTestnet = true) {
   return res.data;
 }
 
+function buildSignedGet(pathWithQuery, creds, useTestnet) {
+  ensureConfigured(creds);
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  const payload = timestamp + creds.apiKey + recvWindow + pathWithQuery.split("?")[1];
+  const signature = sign(payload, creds.apiSecret);
+  return axios.get(`${resolveBase(useTestnet)}${pathWithQuery}`, {
+    headers: {
+      "X-BAPI-API-KEY": creds.apiKey,
+      "X-BAPI-SIGN": signature,
+      "X-BAPI-SIGN-TYPE": "2",
+      "X-BAPI-TIMESTAMP": timestamp,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+    },
+  });
+}
+
 /**
  * Vytvoří market order na testnetu + volitelně nastaví TP/SL/TS
  *
@@ -182,23 +199,8 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
 export async function getDemoPositions(creds, useTestnet = true) {
   ensureConfigured(creds);
 
-  const timestamp = Date.now().toString();
-  const recvWindow = "5000";
-  // UTA na testnetu vyžaduje accountType=UNIFIED, a pro USDT kontrakty settleCoin=USDT
   const query = "category=linear&accountType=UNIFIED&settleCoin=USDT";
-
-  const payload = timestamp + creds.apiKey + recvWindow + query;
-  const signature = sign(payload, creds.apiSecret);
-
-  const res = await axios.get(`${resolveBase(useTestnet)}/v5/position/list?${query}`, {
-    headers: {
-      "X-BAPI-API-KEY": creds.apiKey,
-      "X-BAPI-SIGN": signature,
-      "X-BAPI-SIGN-TYPE": "2",
-      "X-BAPI-TIMESTAMP": timestamp,
-      "X-BAPI-RECV-WINDOW": recvWindow,
-    },
-  });
+  const res = await buildSignedGet(`/v5/position/list?${query}`, creds, useTestnet);
 
   return res.data;
 }
@@ -223,6 +225,36 @@ export async function listDemoOrders(creds, { limit = 50 } = {}, useTestnet = tr
     },
   });
 
+  return res.data;
+}
+
+export async function listExecutions(creds, { limit = 50, cursor } = {}, useTestnet = true) {
+  ensureConfigured(creds);
+  const q = new URLSearchParams({
+    category: "linear",
+    limit: String(limit),
+  });
+  if (cursor) q.set("cursor", cursor);
+  const res = await buildSignedGet(`/v5/execution/list?${q.toString()}`, creds, useTestnet);
+  return res.data;
+}
+
+export async function listClosedPnl(creds, { limit = 50, cursor } = {}, useTestnet = true) {
+  ensureConfigured(creds);
+  const q = new URLSearchParams({
+    category: "linear",
+    settleCoin: "USDT",
+    limit: String(limit),
+  });
+  if (cursor) q.set("cursor", cursor);
+  const res = await buildSignedGet(`/v5/position/closed-pnl?${q.toString()}`, creds, useTestnet);
+  return res.data;
+}
+
+export async function getWalletBalance(creds, useTestnet = true) {
+  ensureConfigured(creds);
+  const q = "accountType=UNIFIED&coin=USDT";
+  const res = await buildSignedGet(`/v5/account/wallet-balance?${q}`, creds, useTestnet);
   return res.data;
 }
 
