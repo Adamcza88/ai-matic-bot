@@ -209,16 +209,17 @@ function computeAtrFromHistory(candles: Candle[], period: number = 20): number {
 }
 
 const resolveRiskPct = (settings: AISettings) => {
+    const base = settings.baseRiskPerTrade;
     if (settings.strategyProfile === "scalp") {
-        return Math.min(settings.baseRiskPerTrade, 0.02);
+        return Math.max(0.01, Math.min(base, 0.02));
     }
     if (settings.strategyProfile === "trend" || settings.strategyProfile === "swing") {
-        return Math.max(settings.baseRiskPerTrade, 0.03);
+        return Math.max(base, 0.03);
     }
     if (settings.strategyProfile === "intraday") {
-        return Math.max(settings.baseRiskPerTrade, 0.025);
+        return Math.max(base, 0.025);
     }
-    return settings.baseRiskPerTrade;
+    return base;
 };
 
 const computePositionRisk = (p: ActivePosition) => {
@@ -469,6 +470,7 @@ export const useTradingBot = (
                         const dir = p.side === "buy" ? 1 : -1;
                         const pnl = (exitPrice - p.entryPrice) * dir * p.size;
                         realizedPnlRef.current += pnl;
+                        registerOutcome(pnl);
                         const limits = QTY_LIMITS[p.symbol];
                         if (settingsRef.current.strategyProfile === "coach" && limits) {
                             const nextStake = Math.max(
@@ -600,6 +602,45 @@ export const useTradingBot = (
     const lastTestSignalAtRef = useRef<number | null>(null);
     const lastKeepaliveAtRef = useRef<number | null>(null);
     const coachStakeRef = useRef<Record<string, number>>({});
+    const winStreakRef = useRef(0);
+    const lossStreakRef = useRef(0);
+    const rollingOutcomesRef = useRef<boolean[]>([]);
+
+    const registerOutcome = (pnl: number) => {
+        const win = pnl > 0;
+        if (win) {
+            winStreakRef.current += 1;
+            lossStreakRef.current = 0;
+        } else {
+            lossStreakRef.current += 1;
+            winStreakRef.current = 0;
+        }
+        rollingOutcomesRef.current = [...rollingOutcomesRef.current.slice(-9), win];
+    };
+
+    const computeScalpDynamicRisk = (settings: AISettings) => {
+        const base = resolveRiskPct(settings);
+        const rolling = rollingOutcomesRef.current;
+        const wins = rolling.filter(Boolean).length;
+        const rate = rolling.length ? wins / rolling.length : 0;
+        let risk = base;
+        const hot =
+            winStreakRef.current >= 4 ||
+            (rolling.length >= 5 && rate >= 0.65);
+        const cold = lossStreakRef.current >= 3;
+        if (hot) {
+            risk = Math.min(Math.max(base, base * 1.8), 0.02);
+        }
+        if (cold) {
+            risk = Math.max(base * 0.5, 0.005);
+        }
+        return risk;
+    };
+
+    const getEffectiveRiskPct = (settings: AISettings) =>
+        settings.strategyProfile === "scalp"
+            ? computeScalpDynamicRisk(settings)
+            : resolveRiskPct(settings);
 
     // ========== LOG ==========
     const addLog = (entry: Omit<LogEntry, "id" | "timestamp">) => {
@@ -652,7 +693,7 @@ export const useTradingBot = (
                         );
                         if (!profile) continue;
                         const resolvedRiskPct = Math.min(
-                            resolveRiskPct(settingsRef.current) *
+                            getEffectiveRiskPct(settingsRef.current) *
                                 (settingsRef.current.positionSizingMultiplier || 1),
                             0.07
                         );
@@ -963,7 +1004,7 @@ export const useTradingBot = (
         // Risk-engine: guardrails for capital allocation, portfolio risk, and halts
         const maxAlloc = portfolioState.maxAllocatedCapital;
         const currentAlloc = portfolioState.allocatedCapital;
-        const baseRiskPct = resolveRiskPct(settings);
+        const baseRiskPct = getEffectiveRiskPct(settings);
         const riskPctWithMult = Math.min(
             baseRiskPct * (settings.positionSizingMultiplier || 1),
             0.07
@@ -1282,6 +1323,7 @@ export const useTradingBot = (
             const freedNotional = target.entryPrice * target.size;
 
             realizedPnlRef.current += pnl;
+            registerOutcome(pnl);
 
             const limits = QTY_LIMITS[target.symbol];
             if (settingsRef.current.strategyProfile === "coach" && limits) {
@@ -1398,6 +1440,18 @@ export const useTradingBot = (
             if (patched.entryStrictness === "ultra") {
                 patched = { ...patched, entryStrictness: "base" };
             }
+        }
+        if (patched.strategyProfile === "scalp") {
+            patched = {
+                ...patched,
+                baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
+                maxOpenPositions: 1,
+                maxDailyLossPercent: Math.max(Math.min(patched.maxDailyLossPercent, 0.12), 0.08),
+                maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
+                maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
+                enforceSessionHours: false,
+                entryStrictness: patched.entryStrictness === "test" ? "ultra" : patched.entryStrictness,
+            };
         }
         setSettings(patched);
         settingsRef.current = patched;

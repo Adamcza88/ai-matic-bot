@@ -125,6 +125,30 @@ export interface BotConfig {
   volExpansionVolMult: number;
 }
 
+function applyProfileOverrides(cfg: BotConfig): BotConfig {
+  if (cfg.strategyProfile !== "scalp") return cfg;
+  const scalpRisk = Math.min(Math.max(cfg.riskPerTrade, 0.01), 0.02);
+  return {
+    ...cfg,
+    riskPerTrade: scalpRisk,
+    maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
+    maxPortfolioRiskPercent: Math.max(Math.min(cfg.maxPortfolioRiskPercent, 0.12), 0.08),
+    maxOpenPositions: 1,
+    maxDailyLossPercent: Math.max(Math.min(cfg.maxDailyLossPercent, 0.12), 0.08),
+    maxDrawdownPercent: Math.max(cfg.maxDrawdownPercent, 0.3),
+    enforceSessionHours: false,
+    trailingActivationR: 1,
+    minStopPercent: Math.min(cfg.minStopPercent, 0.0012),
+    partialSteps: [{ r: 1, exitFraction: 0.5 }],
+    maxExitChunks: 2,
+    pyramidAddScale: 0.5,
+    pyramidLevels: [
+      { triggerR: 1, stopToR: 0 },
+      { triggerR: 2, stopToR: 1 },
+    ],
+  };
+}
+
 /**
  * Default configuration values.
  */
@@ -299,7 +323,7 @@ export class TradingBot {
   private exchange?: any;
 
   constructor(config: Partial<BotConfig> = {}, exchange?: any) {
-    this.config = { ...defaultConfig, ...config };
+    this.config = applyProfileOverrides({ ...defaultConfig, ...config });
     this.state = State.Scan;
     this.position = null;
     this.cooldownUntil = null;
@@ -313,7 +337,7 @@ export class TradingBot {
   }
 
   updateConfig(config: Partial<BotConfig>): void {
-    this.config = { ...this.config, ...config };
+    this.config = applyProfileOverrides({ ...this.config, ...config });
     this.equityPeak = Math.max(this.equityPeak, this.config.accountBalance);
   }
 
@@ -552,6 +576,8 @@ export class TradingBot {
     if (trend === Trend.Neutral) return null;
     // Use signal timeframe for entry timing
     const lt = await this.fetchOHLCV(this.config.signalTimeframe);
+    const confBase = this.computeConfluence(ht, lt, trend);
+    if (this.config.strategyProfile === "scalp" && confBase.score < 3 && !confBase.liquiditySweep) return null;
     if (lt.length < 3) return null;
     const closes = lt.map((c) => c.close);
     const highs = lt.map((c) => c.high);
@@ -622,7 +648,7 @@ export class TradingBot {
     // Pattern 4: mean-reversion in low ADX regime with confluence
     const adxLt = computeADX(highs, lows, closes, this.config.adxPeriod);
     const latestAdx = adxLt[adxLt.length - 1];
-    const { score } = this.computeConfluence(ht, lt, trend);
+    const score = conf.score;
     if (latestAdx < this.config.adxThreshold) {
       const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
       if (zScore <= -1.2 && score >= 2) {
@@ -648,7 +674,7 @@ export class TradingBot {
       this.config.strategyProfile === "trend"
         ? 0.05
         : this.config.strategyProfile === "scalp"
-        ? 0.02
+        ? 0.015
         : this.config.strategyProfile === "intraday"
         ? 0.03
         : 0.04;
@@ -669,7 +695,7 @@ export class TradingBot {
     }
     const rrMap: Record<BotConfig["strategyProfile"], number> = {
       trend: 4,
-      scalp: 1,
+      scalp: 1.2,
       swing: 3.5,
       intraday: 2.5,
     };
@@ -1005,6 +1031,8 @@ export class TradingBot {
     const price = closes[closes.length - 1];
     const ensureStop = (side: "long" | "short", entry: number, stop: number) =>
       this.enforceMinimumStop(entry, stop, side, latestATR);
+    const conf = this.computeConfluence(ht, lt, trend);
+    if (this.config.strategyProfile === "scalp" && conf.score < 3 && !conf.liquiditySweep) return null;
     const strictness =
       this.config.entryStrictness ??
       (this.config.strategyProfile === "intraday"
