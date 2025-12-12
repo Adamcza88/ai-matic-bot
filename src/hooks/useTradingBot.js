@@ -959,6 +959,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             size = limits ? clampQtyForSymbol(signal.symbol, size) : size;
             notional = size * entry;
         }
+        // cap again by remaining capital allocation after risk scaling
+        const remainingAllocation = Math.max(0, maxAlloc - currentAlloc);
+        if (notional > remainingAllocation) {
+            const scaledSize = remainingAllocation / entry;
+            size = limits ? clampQtyForSymbol(signal.symbol, scaledSize) : scaledSize;
+            notional = size * entry;
+        }
         const newRiskAmount = riskPerUnit * size;
         if (openRiskAmount + newRiskAmount > riskBudget || size <= 0 || notional <= 0) {
             addLog({
