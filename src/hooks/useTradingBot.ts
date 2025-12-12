@@ -46,13 +46,13 @@ const AI_MATIC_PRESET: AISettings = {
     avoidLowLiquidity: false,
     useTrendFollowing: true,
     smcScalpMode: true,
-    useLiquiditySweeps: true,
+    useLiquiditySweeps: false,
     useVolatilityExpansion: true,
-    maxDailyLossPercent: 0.3,
-    maxDailyProfitPercent: 120,
-    maxDrawdownPercent: 0.35,
-    baseRiskPerTrade: 0.1,
-    maxPortfolioRiskPercent: 0.4,
+    maxDailyLossPercent: 0.07,
+    maxDailyProfitPercent: 0.5,
+    maxDrawdownPercent: 0.2,
+    baseRiskPerTrade: 0.02,
+    maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 4,
     strategyProfile: "auto",
@@ -64,8 +64,8 @@ const AI_MATIC_PRESET: AISettings = {
     lockProfitsWithTrail: true,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
-    customInstructions: "Instrukce pro customInstructions: Používej pouze long obchody na silných trzích s potvrzeným uptrendem (10 EMA > 20 EMA, obě rostou). Vstupuj pouze, pokud cena je nad 50/200 EMA širšího trhu, ATR je nad minimem a základna má alespoň 5 svíček. Riskuj 1–2 % účtu na obchod, maximálně 4 paralelní pozice a celkový risk 6–8 %. Neobchoduj, pokud base <5 svíček nebo ATR pod minimem. Trailing SL aktivuj až po +0.5R/+1R. Stav pozic a PnL ověřuj pouze z dat burzy.",
-    customStrategy: "Strategie pro customStrategy: Obchoduj patterny Base ’n Break, Wedge Pop a EMA Crossback podle popsaných podmínek a triggerů (EMA, price action, volume). Vstupuj na průraz s potvrzeným objemem, SL dávej pod low základny/klínu/konsolidace. Přidávej pozice jen při +1R. Posouvej SL na BE při +1R, dále trailuj pod 10/20 EMA nebo swing low. Částečně vystupuj při Extension, zavírej zbytek při EMA cross dolů nebo wedge drop.",
+    customInstructions: "Dynamický risk dle volatility, trend-only s ATR filtrem. Automatické ochrany pouze po fillu.",
+    customStrategy: "Base ’n Break + Wedge Pop + EMA pullback, SMC scalp povolen, ochrany nastavené z burzy.",
     min24hVolume: 50,
     minProfitFactor: 1.0,
     minWinRate: 60,
@@ -81,14 +81,14 @@ const AI_MATIC_X_PRESET: AISettings = {
     avoidLowLiquidity: false,
     useTrendFollowing: true,
     smcScalpMode: true,
-    useLiquiditySweeps: true,
+    useLiquiditySweeps: false,
     useVolatilityExpansion: true,
-    maxDailyLossPercent: 0.12,
-    maxDailyProfitPercent: 0.5,
-    maxDrawdownPercent: 0.38,
-    baseRiskPerTrade: 0.015,
-    maxPortfolioRiskPercent: 0.15,
-    maxAllocatedCapitalPercent: 0.8,
+    maxDailyLossPercent: 0.1,
+    maxDailyProfitPercent: 1.0,
+    maxDrawdownPercent: 0.2,
+    baseRiskPerTrade: 0.02,
+    maxPortfolioRiskPercent: 0.2,
+    maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 4,
     strategyProfile: "auto",
     entryStrictness: "ultra",
@@ -256,6 +256,12 @@ function computeAtrFromHistory(candles: Candle[], period: number = 20): number {
     const slice = trs.slice(-period);
     const sum = slice.reduce((a, b) => a + b, 0);
     return sum / slice.length;
+}
+
+function computeAtrPair(candles: Candle[]) {
+    const atrShort = computeAtrFromHistory(candles, 14);
+    const atrLong = computeAtrFromHistory(candles, 50) || atrShort || 1;
+    return { atrShort, atrLong };
 }
 
 const resolveRiskPct = (settings: AISettings) => {
@@ -874,6 +880,7 @@ export const useTradingBot = (
     const realizedPnlRef = useRef(0);
     const closedPnlSeenRef = useRef<Set<string>>(new Set());
     const lifecycleRef = useRef<Map<string, string>>(new Map());
+    const dailyHaltAtRef = useRef<number | null>(null);
     const lastTestSignalAtRef = useRef<number | null>(null);
     const lastKeepaliveAtRef = useRef<number | null>(null);
     const coachStakeRef = useRef<Record<string, number>>({});
@@ -920,6 +927,15 @@ export const useTradingBot = (
         settings.strategyProfile === "scalp"
             ? computeScalpDynamicRisk(settings)
             : resolveRiskPct(settings);
+
+    const getVolatilityMultiplier = (symbol: string) => {
+        const hist = priceHistoryRef.current[symbol] || [];
+        if (!hist.length) return 1;
+        const { atrShort, atrLong } = computeAtrPair(hist);
+        if (!atrShort || !atrLong) return 1;
+        const ratio = atrLong / Math.max(atrShort, 1e-8);
+        return Math.min(4, Math.max(0.5, ratio * 0.8));
+    };
 
     // ========== LOG ==========
     const addLog = (entry: Omit<LogEntry, "id" | "timestamp">) => {
@@ -1361,23 +1377,42 @@ export const useTradingBot = (
         const maxAlloc = portfolioState.maxAllocatedCapital;
         const currentAlloc = portfolioState.allocatedCapital;
         const baseRiskPct = getEffectiveRiskPct(settings);
+        const volMult = getVolatilityMultiplier(signal.symbol);
+        const recoveryMult =
+            portfolioState.currentDrawdown >= 0.15 &&
+            portfolioState.currentDrawdown < settings.maxDrawdownPercent
+                ? 0.5
+                : 1;
         const riskPctWithMult = Math.min(
-            baseRiskPct * (settings.positionSizingMultiplier || 1),
-            0.07
+            Math.max(0.005, baseRiskPct * volMult * recoveryMult * (settings.positionSizingMultiplier || 1)),
+            0.04
         );
 
         if (
             settings.haltOnDailyLoss &&
             portfolioState.dailyPnl <= -portfolioState.maxDailyLoss
         ) {
-            addLog({
-                action: "RISK_HALT",
-                message: `Trading halted: daily loss limit hit (${(
-                    portfolioState.maxDailyLoss * 100 /
-                    Math.max(1, portfolioState.totalCapital)
-                ).toFixed(2)}%).`,
-            });
-            return false;
+            const now = Date.now();
+            if (!dailyHaltAtRef.current) dailyHaltAtRef.current = now;
+            const haltUntil = dailyHaltAtRef.current + 2 * 60 * 60 * 1000;
+            if (now < haltUntil) {
+                addLog({
+                    action: "RISK_HALT",
+                    message: `Trading halted: daily loss limit hit (${(
+                        (portfolioState.maxDailyLoss * 100) /
+                        Math.max(1, portfolioState.totalCapital)
+                    ).toFixed(2)}%). Resume after cooldown.`,
+                });
+                return false;
+            } else {
+                dailyHaltAtRef.current = null;
+                realizedPnlRef.current = 0;
+                setPortfolioState((p) => ({ ...p, dailyPnl: 0 }));
+                addLog({
+                    action: "SYSTEM",
+                    message: "Daily halt cooldown elapsed, resetting PnL window.",
+                });
+            }
         }
 
         if (
