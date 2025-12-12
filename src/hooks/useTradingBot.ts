@@ -736,15 +736,33 @@ export const useTradingBot = (
                                 (currentPrice - pos.entryPrice) *
                                 dir *
                                 pos.size;
+                            const hist = newHistory[symbol] || [];
+                            const atr =
+                                computeAtrFromHistory(hist, 20) ||
+                                pos.entryPrice * 0.005;
+                            const safeSl =
+                                pos.stopLoss ||
+                                (pos.side === "long"
+                                    ? pos.entryPrice - 1.5 * atr
+                                    : pos.entryPrice + 1.5 * atr);
+                            const tpCandidate = Number.isFinite(pos.takeProfit)
+                                ? pos.takeProfit
+                                : pos.initialTakeProfit;
+                            const safeTp =
+                                tpCandidate && Number.isFinite(tpCandidate)
+                                    ? tpCandidate
+                                    : pos.side === "long"
+                                    ? pos.entryPrice +
+                                      1.2 * (pos.entryPrice - safeSl)
+                                    : pos.entryPrice -
+                                      1.2 * (safeSl - pos.entryPrice);
                             const mapped: ActivePosition = {
                                 id: `${symbol}-${pos.opened}`,
                                 symbol,
                                 side: pos.side === "long" ? "buy" : "sell",
                                 entryPrice: pos.entryPrice,
-                                sl: pos.stopLoss,
-                                tp: Number.isFinite(pos.takeProfit)
-                                    ? pos.takeProfit
-                                    : pos.initialTakeProfit,
+                                sl: safeSl,
+                                tp: safeTp,
                                 size: pos.size,
                                 openedAt: new Date(pos.opened).toISOString(),
                                 unrealizedPnl: pnl,
