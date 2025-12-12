@@ -1,8 +1,8 @@
 // src/engine/priceFeed.ts
 // Public realtime feed z Bybitu přes WebSocket s automatickým pingem
 import { evaluateStrategyForSymbol, } from "@/engine/botEngine";
-// Pro teď fixně testnet WS (můžeš přepnout na mainnet změnou URL)
-const FEED_URL = "wss://stream-testnet.bybit.com/v5/public/linear";
+// Mainnet public WS feed (switch from testnet)
+const FEED_URL = "wss://stream.bybit.com/v5/public/linear";
 // WS ping interval (Bybit vyžaduje každých ~20s)
 const PING_INTERVAL = 20000;
 // Buffer svíček pro každý symbol
