@@ -34,15 +34,25 @@ export async function getUserApiKeys(userId) {
     }
   });
 
+  const envBybitMainnetKey = process.env.BYBIT_MAINNET_API_KEY || process.env.BYBIT_API_KEY;
+  const envBybitMainnetSecret = process.env.BYBIT_MAINNET_API_SECRET || process.env.BYBIT_API_SECRET;
+  const envBybitTestnetKey = process.env.BYBIT_TESTNET_API_KEY || envBybitMainnetKey;
+  const envBybitTestnetSecret = process.env.BYBIT_TESTNET_API_SECRET || envBybitMainnetSecret;
+
   return {
     bybitKey: map.get(SERVICE_BYBIT_KEY),
     bybitSecret: map.get(SERVICE_BYBIT_SECRET),
     bybitTestnetKey:
-      map.get(SERVICE_BYBIT_TESTNET_KEY) ?? map.get(SERVICE_BYBIT_KEY),
+      map.get(SERVICE_BYBIT_TESTNET_KEY) ??
+      map.get(SERVICE_BYBIT_KEY) ??
+      envBybitTestnetKey,
     bybitTestnetSecret:
-      map.get(SERVICE_BYBIT_TESTNET_SECRET) ?? map.get(SERVICE_BYBIT_SECRET),
-    bybitMainnetKey: map.get(SERVICE_BYBIT_MAINNET_KEY),
-    bybitMainnetSecret: map.get(SERVICE_BYBIT_MAINNET_SECRET),
+      map.get(SERVICE_BYBIT_TESTNET_SECRET) ??
+      map.get(SERVICE_BYBIT_SECRET) ??
+      envBybitTestnetSecret,
+    bybitMainnetKey: map.get(SERVICE_BYBIT_MAINNET_KEY) ?? envBybitMainnetKey,
+    bybitMainnetSecret:
+      map.get(SERVICE_BYBIT_MAINNET_SECRET) ?? envBybitMainnetSecret,
     cryptopanicKey: map.get(SERVICE_CRYPTOPANIC_KEY),
   };
 }
