@@ -941,11 +941,26 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             });
             return false;
         }
-        const newRiskAmount = riskPerUnit * size;
         const openRiskAmount = activePositionsRef.current.reduce((sum, p) => sum + computePositionRisk(p), 0);
         const riskBudget = portfolioState.totalCapital *
             settings.maxPortfolioRiskPercent;
-        if (openRiskAmount + newRiskAmount > riskBudget) {
+        // scale size down to fit remaining risk budget
+        const remainingRiskBudget = Math.max(0, riskBudget - openRiskAmount);
+        const maxSizeByRisk = riskPerUnit > 0 ? remainingRiskBudget / riskPerUnit : size;
+        if (maxSizeByRisk <= 0) {
+            addLog({
+                action: "RISK_BLOCK",
+                message: `Signal on ${signal.symbol} blocked: portfolio risk cap (${(settings.maxPortfolioRiskPercent * 100).toFixed(1)}%) reached.`,
+            });
+            return false;
+        }
+        if (size > maxSizeByRisk) {
+            size = maxSizeByRisk;
+            size = limits ? clampQtyForSymbol(signal.symbol, size) : size;
+            notional = size * entry;
+        }
+        const newRiskAmount = riskPerUnit * size;
+        if (openRiskAmount + newRiskAmount > riskBudget || size <= 0 || notional <= 0) {
             addLog({
                 action: "RISK_BLOCK",
                 message: `Signal on ${signal.symbol} blocked: portfolio risk cap (${(settings.maxPortfolioRiskPercent * 100).toFixed(1)}%) would be exceeded.`,
