@@ -62,6 +62,7 @@ app.post("/api/demo/order", async (req, res) => {
       sl,
       tp,
       trailingStop, // může být undefined
+      reduceOnly,
     } = req.body || {};
 
     if (!symbol || !side || !qty) {
@@ -81,6 +82,7 @@ app.post("/api/demo/order", async (req, res) => {
       sl,
       tp,
       trailingStop,
+      reduceOnly,
     }, { apiKey, apiSecret }, useTestnet);
 
     return res.json({

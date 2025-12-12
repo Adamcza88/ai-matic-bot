@@ -457,7 +457,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             pnlValue: pnl,
                             rrr: 0,
                             peakPrice: Number(p.markPrice ?? p.lastPrice ?? avgPrice),
-                            currentTrailingStop: undefined,
+                            currentTrailingStop: p.trailingStop != null ? Number(p.trailingStop) : undefined,
                             volatilityFactor: undefined,
                             lastUpdateReason: undefined,
                             timestamp: new Date().toISOString(),
@@ -528,6 +528,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     activePositionsRef.current = mapped;
                     return mapped;
                 });
+                lastPositionsSyncAtRef.current = Date.now();
                 setPortfolioState((p) => ({
                     ...p,
                     totalCapital: equity || p.totalCapital,
@@ -613,6 +614,38 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             message: `[${tradeId}] ${status}${note ? ` | ${note}` : ""}`,
         });
     };
+    const forceClosePosition = useCallback(async (pos) => {
+        if (!authToken)
+            return;
+        const side = pos.side === "buy" ? "Sell" : "Buy";
+        try {
+            await fetch(`${apiBase}/api/demo/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({
+                    symbol: pos.symbol,
+                    side,
+                    qty: Number(pos.size.toFixed(4)),
+                    orderType: "Market",
+                    timeInForce: "IOC",
+                    reduceOnly: true,
+                }),
+            });
+            addLog({
+                action: "AUTO_CLOSE",
+                message: `Forced reduce-only close ${pos.symbol} due to missing protection`,
+            });
+        }
+        catch (err) {
+            addLog({
+                action: "ERROR",
+                message: `Force close failed: ${err?.message || "unknown"}`,
+            });
+        }
+    }, [apiBase, authToken, useTestnet]);
     const fetchPositionsOnce = useCallback(async (net) => {
         if (!authToken)
             return [];
@@ -686,8 +719,76 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             action: "ERROR",
             message: `Protection not confirmed for ${symbol} after retries.`,
         });
+        safeHaltRef.current = true;
+        setSystemState((p) => ({ ...p, bybitStatus: "SAFE_HALT", lastError: "Protection failed" }));
         return false;
     }, [apiBase, authToken, fetchPositionsOnce, setLifecycle, useTestnet]);
+    // Reconcile smyčka: hlídá stárnutí dat a ochranu
+    useEffect(() => {
+        if (!authToken)
+            return;
+        let cancel = false;
+        const reconcile = async () => {
+            const now = Date.now();
+            const stale = now - lastPositionsSyncAtRef.current > 20000;
+            if (stale) {
+                setSystemState((p) => ({
+                    ...p,
+                    bybitStatus: "Stale",
+                    lastError: "Positions sync stale >20s",
+                }));
+            }
+            const positions = activePositionsRef.current;
+            for (const p of positions) {
+                if (!p || !p.symbol)
+                    continue;
+                const missingProtection = (p.sl == null || p.sl === 0) &&
+                    (p.tp == null || p.tp === 0) &&
+                    (p.currentTrailingStop == null || p.currentTrailingStop === 0);
+                if (missingProtection && p.size > 0) {
+                    const dir = p.side === "buy" ? 1 : -1;
+                    const price = p.entryPrice || currentPricesRef.current[p.symbol] || 0;
+                    if (!price)
+                        continue;
+                    const fallbackSl = dir > 0 ? price * 0.99 : price * 1.01;
+                    const fallbackTpRaw = dir > 0 ? price * 1.01 : price * 0.99;
+                    const fallbackTp = ensureMinTpDistance(price, fallbackSl, fallbackTpRaw, p.size || 0.001);
+                    const ok = await commitProtection(`recon-${p.id}`, p.symbol, fallbackSl, fallbackTp, undefined);
+                    if (!ok) {
+                        await forceClosePosition(p);
+                    }
+                }
+                else if ((p.currentTrailingStop == null || p.currentTrailingStop === 0) && p.size > 0) {
+                    // trailing stop aktivace po profit triggeru
+                    const hist = priceHistoryRef.current[p.symbol] || [];
+                    const atr = computeAtrFromHistory(hist, 20) || (currentPricesRef.current[p.symbol] ?? p.entryPrice) * 0.005;
+                    const oneR = Math.abs((p.entryPrice || 0) - (p.sl || p.entryPrice));
+                    const trigger = Math.max(0.8 * oneR, atr);
+                    const price = currentPricesRef.current[p.symbol] || p.entryPrice;
+                    const dir = p.side === "buy" ? 1 : -1;
+                    const profit = (price - p.entryPrice) * dir;
+                    if (profit >= trigger && price > 0) {
+                        const trailDistance = Math.max(0.8 * atr, 0.6 * oneR, price * 0.003);
+                        const ok = await commitProtection(`trail-${p.id}`, p.symbol, p.sl, p.tp, trailDistance);
+                        if (ok) {
+                            addLog({
+                                action: "SYSTEM",
+                                message: `Trailing stop aktivován pro ${p.symbol} (dist ${trailDistance.toFixed(4)})`,
+                            });
+                        }
+                    }
+                }
+            }
+        };
+        const id = setInterval(() => {
+            if (!cancel)
+                void reconcile();
+        }, 12000);
+        return () => {
+            cancel = true;
+            clearInterval(id);
+        };
+    }, [authToken, commitProtection, forceClosePosition]);
     const [aiModelState, _setAiModelState] = useState({
         version: "1.0.0-real-strategy",
         lastRetrain: new Date(Date.now() - 7 * 24 * 3600 * 1000)
@@ -712,6 +813,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const winStreakRef = useRef(0);
     const lossStreakRef = useRef(0);
     const rollingOutcomesRef = useRef([]);
+    const lastPositionsSyncAtRef = useRef(0);
+    const executionCursorRef = useRef(null);
+    const processedExecIdsRef = useRef(new Set());
+    const safeHaltRef = useRef(false);
     const registerOutcome = (pnl) => {
         const win = pnl > 0;
         if (win) {
@@ -1046,6 +1151,57 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             clearInterval(id);
         };
     }, [mode, useTestnet, httpBase]);
+    // Executions polling (pro rychlejší fill detection)
+    useEffect(() => {
+        if (!authToken)
+            return;
+        let cancel = false;
+        const poll = async () => {
+            try {
+                const url = new URL(`${apiBase}/api/demo/executions`);
+                url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
+                if (executionCursorRef.current) {
+                    url.searchParams.set("cursor", executionCursorRef.current);
+                }
+                const res = await fetch(url.toString(), {
+                    headers: { Authorization: `Bearer ${authToken}` },
+                });
+                if (!res.ok)
+                    return;
+                const json = await res.json();
+                const list = json?.data?.result?.list || json?.result?.list || [];
+                const cursor = json?.data?.result?.nextPageCursor || json?.result?.nextPageCursor;
+                const seen = processedExecIdsRef.current;
+                list.forEach((e) => {
+                    const id = e.execId || e.tradeId;
+                    if (!id || seen.has(id))
+                        return;
+                    seen.add(id);
+                    addLog({
+                        action: "SYSTEM",
+                        message: `FILL ${e.symbol || ""} ${e.side || ""} @ ${e.execPrice || e.price || "?"} qty ${e.execQty || e.qty || "?"}`,
+                    });
+                });
+                if (seen.size > 2000) {
+                    processedExecIdsRef.current = new Set(Array.from(seen).slice(-1000));
+                }
+                if (cursor)
+                    executionCursorRef.current = cursor;
+            }
+            catch {
+                // ignore polling errors
+            }
+        };
+        poll();
+        const id = setInterval(() => {
+            if (!cancel)
+                void poll();
+        }, 5000);
+        return () => {
+            cancel = true;
+            clearInterval(id);
+        };
+    }, [authToken, apiBase, useTestnet]);
     // ========== EXECUTE TRADE (simulated + backend order) ==========
     const performTrade = async (signalId) => {
         const signal = pendingSignalsRef.current.find((s) => s.id === signalId);
@@ -1054,6 +1210,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const tradeId = uuidLite();
         const clientOrderId = `aim-${tradeId.slice(-8)}`;
         setLifecycle(tradeId, "SIGNAL_READY", `symbol=${signal.symbol}`);
+        if (safeHaltRef.current) {
+            addLog({
+                action: "RISK_HALT",
+                message: "SAFE_HALT aktivní – nové obchody blokovány.",
+            });
+            return false;
+        }
         // Risk-engine: guardrails for capital allocation, portfolio risk, and halts
         const openCount = authToken ? activePositionsRef.current.length : portfolioState.openPositions;
         const maxAlloc = portfolioState.maxAllocatedCapital;
@@ -1258,6 +1421,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             catch (err) {
                 setLifecycle(tradeId, "FAILED", err?.message || "fill/protection failed");
+                safeHaltRef.current = true;
+                setSystemState((p) => ({ ...p, bybitStatus: "SAFE_HALT", lastError: err?.message || "fill/protection failed" }));
                 addLog({
                     action: "ERROR",
                     message: `Fill/protection failed: ${err?.message || "unknown"}`,
