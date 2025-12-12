@@ -9,7 +9,7 @@ import { addPnlRecord, loadPnlHistory } from "../lib/pnlHistory";
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 // SIMULOVANÝ / DEFAULT KAPITÁL
 const INITIAL_CAPITAL = 101.33; // Unified Trading balance snapshot
-const MAX_SINGLE_POSITION_VALUE = 120;
+const MAX_SINGLE_POSITION_VALUE = 5; // hard cap per position notional
 const MIN_ENTRY_SPACING_MS = 3000;
 const MAX_TEST_PENDING = 4;
 const KEEPALIVE_SIGNAL_INTERVAL_MS = 12000;
@@ -32,7 +32,7 @@ const AI_MATIC_PRESET = {
     maxDailyLossPercent: 0.05,
     maxDailyProfitPercent: 0.12,
     maxDrawdownPercent: 0.18,
-    baseRiskPerTrade: 0.02,
+    baseRiskPerTrade: 0.01,
     maxPortfolioRiskPercent: 0.08,
     maxAllocatedCapitalPercent: 0.4,
     maxOpenPositions: 2,
@@ -66,7 +66,7 @@ const AI_MATIC_X_PRESET = {
     maxDailyLossPercent: 0.12,
     maxDailyProfitPercent: 0.5,
     maxDrawdownPercent: 0.38,
-    baseRiskPerTrade: 0.04,
+    baseRiskPerTrade: 0.015,
     maxPortfolioRiskPercent: 0.15,
     maxAllocatedCapitalPercent: 0.8,
     maxOpenPositions: 4,
