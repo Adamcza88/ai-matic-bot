@@ -1025,17 +1025,14 @@ export const useTradingBot = (
             return false;
         }
 
-        const plannedNotional =
-            portfolioState.totalCapital *
-            riskPctWithMult;
-
-        if (currentAlloc + plannedNotional > maxAlloc) {
+        const availableAllocation = Math.max(0, maxAlloc - currentAlloc);
+        if (availableAllocation <= 0) {
             setLogEntries((prev) => [
                 {
                     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
                     action: "RISK_BLOCK",
                     timestamp: new Date().toISOString(),
-                    message: `Signal on ${signal.symbol} blocked: too much allocated capital.`,
+                    message: `Signal on ${signal.symbol} blocked: capital fully allocated.`,
                 },
                 ...prev,
             ]);
@@ -1089,6 +1086,20 @@ export const useTradingBot = (
 
             size = limits ? clampQtyForSymbol(signal.symbol, size) : size;
             notional = size * entry;
+        }
+
+        if (notional > availableAllocation) {
+            const scaledSize = availableAllocation / entry;
+            size = limits ? clampQtyForSymbol(signal.symbol, scaledSize) : scaledSize;
+            notional = size * entry;
+        }
+
+        if (notional <= 0) {
+            addLog({
+                action: "RISK_BLOCK",
+                message: `Signal on ${signal.symbol} blocked: zero size after allocation cap.`,
+            });
+            return false;
         }
 
         const newRiskAmount = riskPerUnit * size;
