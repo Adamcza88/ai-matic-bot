@@ -32,10 +32,10 @@ const MIN_ENTRY_SPACING_MS = 3000;
 const MAX_TEST_PENDING = 4;
 const KEEPALIVE_SIGNAL_INTERVAL_MS = 12000;
 const QTY_LIMITS: Record<string, { min: number; max: number }> = {
-    BTCUSDT: { min: 0.006, max: 0.01 },
-    ETHUSDT: { min: 0.17, max: 0.3 },
-    SOLUSDT: { min: 4.1, max: 6.5 },
-    ADAUSDT: { min: 1002, max: 1710 },
+    BTCUSDT: { min: 0.0005, max: 0.01 },
+    ETHUSDT: { min: 0.001, max: 0.2 },
+    SOLUSDT: { min: 0.01, max: 5 },
+    ADAUSDT: { min: 10, max: 5000 },
 };
 
 // RISK / STRATEGY
@@ -215,6 +215,30 @@ const clampQtyForSymbol = (symbol: string, qty: number) => {
     if (!limits) return qty;
     return Math.min(limits.max, Math.max(limits.min, qty));
 };
+
+const TAKER_FEE = 0.0006; // orientační taker fee (0.06%)
+const MIN_TP_BUFFER_PCT = 0.0003; // 0.03 % buffer
+
+function feeRoundTrip(notional: number, openRate: number = TAKER_FEE, closeRate: number = TAKER_FEE) {
+    return notional * (openRate + closeRate);
+}
+
+function ensureMinTpDistance(entry: number, sl: number, tp: number, size: number) {
+    if (!Number.isFinite(entry) || !Number.isFinite(tp) || size <= 0) return tp;
+    const notional = entry * size;
+    const minDistance = feeRoundTrip(notional) / size + entry * MIN_TP_BUFFER_PCT;
+    const dir = tp >= entry ? 1 : -1;
+    const proposedDistance = Math.abs(tp - entry);
+    if (proposedDistance >= minDistance) return tp;
+    return entry + dir * minDistance;
+}
+
+function uuidLite() {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+        return (crypto as any).randomUUID();
+    }
+    return `aim-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
 
 function computeAtrFromHistory(candles: Candle[], period: number = 20): number {
     if (!candles || candles.length < 2) return 0;
@@ -448,7 +472,7 @@ export const useTradingBot = (
         }
     }, [authToken, useTestnet, apiBase]);
 
-    // Testnet pozice přímo z Bybitu – přepíší simulované activePositions
+    // Pozice/PnL přímo z Bybitu – přepíší simulované activePositions
     useEffect(() => {
         if (!authToken) return;
 
@@ -465,32 +489,91 @@ export const useTradingBot = (
                 const data = await res.json();
                 const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
                 const mapped: ActivePosition[] = Array.isArray(list)
-                    ? list.map((p: any, idx: number) => {
-                        const avgPrice = Number(p.avgPrice ?? p.entryPrice ?? p.lastPrice ?? 0);
-                        const size = Math.abs(Number(p.size ?? 0));
-                        const pnl = Number(p.unrealisedPnl ?? 0);
-                        return {
-                            id: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`,
-                            symbol: p.symbol || "UNKNOWN",
-                            side: (p.side === "Buy" ? "buy" : "sell") as "buy" | "sell",
-                            entryPrice: avgPrice,
-                            sl: p.stopLoss != null ? Number(p.stopLoss) : p.side === "Buy" ? avgPrice * 0.99 : avgPrice * 1.01,
-                            tp: p.takeProfit != null ? Number(p.takeProfit) : avgPrice,
-                            size,
-                            openedAt: new Date(Number(p.updatedTime ?? p.createdTime ?? Date.now())).toISOString(),
-                            unrealizedPnl: pnl,
-                            pnl,
-                            pnlValue: pnl,
-                            rrr: 0,
-                            peakPrice: Number(p.markPrice ?? p.lastPrice ?? avgPrice),
-                            currentTrailingStop: undefined,
-                            volatilityFactor: undefined,
-                            lastUpdateReason: undefined,
-                            timestamp: new Date().toISOString(),
-                        };
-                    })
+                    ? list
+                          .filter((p: any) => Math.abs(Number(p.size ?? 0)) > 0)
+                          .map((p: any, idx: number) => {
+                              const avgPrice = Number(p.avgPrice ?? p.entryPrice ?? p.lastPrice ?? 0);
+                              const size = Math.abs(Number(p.size ?? 0));
+                              const pnl = Number(p.unrealisedPnl ?? 0);
+                              return {
+                                  id: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`,
+                                  symbol: p.symbol || "UNKNOWN",
+                                  side: (p.side === "Buy" ? "buy" : "sell") as "buy" | "sell",
+                                  entryPrice: avgPrice,
+                                  sl: p.stopLoss != null ? Number(p.stopLoss) : p.side === "Buy" ? avgPrice * 0.99 : avgPrice * 1.01,
+                                  tp: p.takeProfit != null ? Number(p.takeProfit) : avgPrice,
+                                  size,
+                                  openedAt: new Date(Number(p.updatedTime ?? p.createdTime ?? Date.now())).toISOString(),
+                                  unrealizedPnl: pnl,
+                                  pnl,
+                                  pnlValue: pnl,
+                                  rrr: 0,
+                                  peakPrice: Number(p.markPrice ?? p.lastPrice ?? avgPrice),
+                                  currentTrailingStop: undefined,
+                                  volatilityFactor: undefined,
+                                  lastUpdateReason: undefined,
+                                  timestamp: new Date().toISOString(),
+                              };
+                          })
                     : [];
                 if (cancel) return;
+
+                // Wallet pro equity
+                let equity = portfolioState.totalCapital;
+                try {
+                    const walletRes = await fetch(`${apiBase}/api/demo/wallet?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                        headers: { Authorization: `Bearer ${authToken}` },
+                    });
+                    if (walletRes.ok) {
+                        const w = await walletRes.json();
+                        const wlist = w?.data?.result?.list || w?.result?.list || [];
+                        const usdt = Array.isArray(wlist) ? wlist.find((x: any) => x.coin === "USDT") : null;
+                        equity = Number(usdt?.equity ?? usdt?.walletBalance ?? equity ?? 0);
+                    }
+                } catch {
+                    // swallow wallet errors, keep previous equity
+                }
+
+                // Realized PnL from closed-pnl
+                try {
+                    const pnlRes = await fetch(`${apiBase}/api/demo/closed-pnl?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                        headers: { Authorization: `Bearer ${authToken}` },
+                    });
+                    if (pnlRes.ok) {
+                        const pnlJson = await pnlRes.json();
+                        const pnlList = pnlJson?.data?.result?.list || pnlJson?.result?.list || [];
+                        // deduplikace closed PnL záznamů
+                        const seen = closedPnlSeenRef.current;
+                        const records: AssetPnlRecord[] = Array.isArray(pnlList)
+                            ? pnlList.map((r: any) => ({
+                                  symbol: r.symbol || "UNKNOWN",
+                                  pnl: Number(r.closedPnl ?? r.realisedPnl ?? 0),
+                                  timestamp: r.updatedTime ? new Date(Number(r.updatedTime)).toISOString() : new Date().toISOString(),
+                                  note: "Bybit closed pnl",
+                              }))
+                            : [];
+                        const realized = records.reduce((sum, r) => sum + (r.pnl || 0), 0);
+                        realizedPnlRef.current = realized;
+                        setAssetPnlHistory((prev) => {
+                            const next: AssetPnlMap = { ...prev };
+                            records.forEach((rec) => {
+                                const key = `${rec.symbol}-${rec.timestamp}-${rec.pnl}`;
+                                if (seen.has(key)) return;
+                                seen.add(key);
+                                next[rec.symbol] = [rec, ...(next[rec.symbol] || [])].slice(0, 100);
+                                addPnlRecord(rec);
+                            });
+                            // udržet set v rozumné velikosti
+                            if (seen.size > 500) {
+                                const trimmed = Array.from(seen).slice(-400);
+                                closedPnlSeenRef.current = new Set(trimmed);
+                            }
+                            return next;
+                        });
+                    }
+                } catch {
+                    // ignore closed pnl failure
+                }
 
                 setActivePositions(() => {
                     activePositionsRef.current = mapped;
@@ -498,6 +581,8 @@ export const useTradingBot = (
                 });
                 setPortfolioState((p) => ({
                     ...p,
+                    totalCapital: equity || p.totalCapital,
+                    peakCapital: Math.max(p.peakCapital, equity || p.peakCapital),
                     openPositions: mapped.length,
                     allocatedCapital: mapped.reduce(
                         (sum, pos) => sum + pos.entryPrice * pos.size,
@@ -576,6 +661,96 @@ export const useTradingBot = (
         void fetchTestnetTrades();
     }, [fetchTestnetOrders]);
 
+    const setLifecycle = (tradeId: string, status: string, note?: string) => {
+        lifecycleRef.current.set(tradeId, status);
+        addLog({
+            action: "SYSTEM",
+            message: `[${tradeId}] ${status}${note ? ` | ${note}` : ""}`,
+        });
+    };
+
+    const fetchPositionsOnce = useCallback(
+        async (net: "testnet" | "mainnet"): Promise<any[]> => {
+            if (!authToken) return [];
+            const res = await fetch(`${apiBase}/api/demo/positions?net=${net}`, {
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            if (!res.ok) throw new Error(`Positions fetch failed (${res.status})`);
+            const data = await res.json();
+            return data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+        },
+        [apiBase, authToken]
+    );
+
+    const waitForFill = useCallback(
+        async (tradeId: string, symbol: string, attempts: number = 6, delayMs: number = 1000) => {
+            for (let i = 0; i < attempts; i++) {
+                const list = await fetchPositionsOnce(useTestnet ? "testnet" : "mainnet");
+                const found = list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
+                if (found) return found;
+                await new Promise((r) => setTimeout(r, delayMs));
+            }
+            throw new Error(`Fill not confirmed for ${symbol}`);
+        },
+        [fetchPositionsOnce, useTestnet]
+    );
+
+    const commitProtection = useCallback(
+        async (tradeId: string, symbol: string, sl?: number, tp?: number, trailingStop?: number) => {
+            if (!authToken) return false;
+            const net = useTestnet ? "testnet" : "mainnet";
+            const tolerance = Math.abs((currentPricesRef.current[symbol] ?? 0) * 0.001) || 0.5;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                setLifecycle(tradeId, "PROTECTION_PENDING", `attempt ${attempt}`);
+                const res = await fetch(`${apiBase}/api/demo/protection?net=${net}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${authToken}`,
+                    },
+                    body: JSON.stringify({
+                        symbol,
+                        sl,
+                        tp,
+                        trailingStop,
+                        positionIdx: 0,
+                    }),
+                });
+                if (!res.ok) {
+                    const txt = await res.text();
+                    addLog({
+                        action: "ERROR",
+                        message: `Protection set failed (${res.status}): ${txt}`,
+                    });
+                }
+                // verify
+                try {
+                    const list = await fetchPositionsOnce(net);
+                    const found = list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
+                    if (found) {
+                        const tpOk = tp == null || Math.abs(Number(found.takeProfit ?? 0) - tp) <= tolerance;
+                        const slOk = sl == null || Math.abs(Number(found.stopLoss ?? 0) - sl) <= tolerance;
+                        const tsOk = trailingStop == null || Math.abs(Number(found.trailingStop ?? 0) - trailingStop) <= tolerance;
+                        if (tpOk && slOk && tsOk) {
+                            setLifecycle(tradeId, "PROTECTION_SET");
+                            return true;
+                        }
+                    }
+                } catch (err: any) {
+                    addLog({ action: "ERROR", message: `Protection verify failed: ${err?.message || "unknown"}` });
+                }
+                await new Promise((r) => setTimeout(r, 800));
+            }
+            setLifecycle(tradeId, "PROTECTION_FAILED");
+            addLog({
+                action: "ERROR",
+                message: `Protection not confirmed for ${symbol} after retries.`,
+            });
+            return false;
+        },
+        [apiBase, authToken, fetchPositionsOnce, setLifecycle, useTestnet]
+    );
+
     const [aiModelState, _setAiModelState] = useState({
         version: "1.0.0-real-strategy",
         lastRetrain: new Date(Date.now() - 7 * 24 * 3600 * 1000)
@@ -593,6 +768,8 @@ export const useTradingBot = (
     const settingsRef = useRef(settings);
     settingsRef.current = settings;
     const realizedPnlRef = useRef(0);
+    const closedPnlSeenRef = useRef<Set<string>>(new Set());
+    const lifecycleRef = useRef<Map<string, string>>(new Map());
     const lastTestSignalAtRef = useRef<number | null>(null);
     const lastKeepaliveAtRef = useRef<number | null>(null);
     const coachStakeRef = useRef<Record<string, number>>({});
@@ -1013,8 +1190,12 @@ export const useTradingBot = (
     const performTrade = async (signalId: string): Promise<boolean> => {
         const signal = pendingSignalsRef.current.find((s) => s.id === signalId);
         if (!signal) return false;
+        const tradeId = uuidLite();
+        const clientOrderId = `aim-${tradeId.slice(-8)}`;
+        setLifecycle(tradeId, "SIGNAL_READY", `symbol=${signal.symbol}`);
 
         // Risk-engine: guardrails for capital allocation, portfolio risk, and halts
+        const openCount = authToken ? activePositionsRef.current.length : portfolioState.openPositions;
         const maxAlloc = portfolioState.maxAllocatedCapital;
         const currentAlloc = portfolioState.allocatedCapital;
         const baseRiskPct = getEffectiveRiskPct(settings);
@@ -1050,15 +1231,13 @@ export const useTradingBot = (
             return false;
         }
 
-        if (portfolioState.openPositions >= settings.maxOpenPositions) {
+        if (openCount >= settings.maxOpenPositions) {
             addLog({
                 action: "RISK_BLOCK",
                 message: `Signal on ${signal.symbol} blocked: max open positions (${settings.maxOpenPositions}) reached.`,
             });
             return false;
         }
-
-        const availableAllocation = Math.max(0, maxAlloc - currentAlloc);
 
         const intent: TradeIntent = signal.intent;
         const side = intent.side;
@@ -1076,83 +1255,65 @@ export const useTradingBot = (
             tp = side === "buy" ? entry + 2.5 * atr : entry - 2.5 * atr;
         }
 
-        const riskPerTrade =
-            portfolioState.totalCapital *
-            riskPctWithMult;
-
+        const riskPerTrade = portfolioState.totalCapital * riskPctWithMult;
         const riskPerUnit = Math.abs(entry - sl);
-        if (riskPerUnit <= 0) return false;
-
-        const limits = QTY_LIMITS[signal.symbol];
-
-        let size: number;
-        let notional: number;
-
-        if (settings.strategyProfile === "coach") {
-            const prevStake =
-                coachStakeRef.current[signal.symbol] ??
-                (limits ? limits.min * entry : riskPerTrade);
-            const targetQty = prevStake / entry;
-            size = limits ? clampQtyForSymbol(signal.symbol, targetQty) : targetQty;
-            notional = size * entry;
-        } else {
-            size = riskPerTrade / riskPerUnit;
-            notional = size * entry;
-
-            if (notional > MAX_SINGLE_POSITION_VALUE) {
-                const factor = MAX_SINGLE_POSITION_VALUE / notional;
-                size *= factor;
-                notional = MAX_SINGLE_POSITION_VALUE;
-            }
-
-            size = limits ? clampQtyForSymbol(signal.symbol, size) : size;
-            notional = size * entry;
-        }
-
-        const newRiskAmount = riskPerUnit * size;
-
-        if (notional <= 0) {
+        if (riskPerUnit <= 0 || entry <= 0) {
             addLog({
                 action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: zero size after allocation cap.`,
+                message: `Signal on ${signal.symbol} blocked: invalid SL/entry distance.`,
             });
             return false;
         }
 
-        const openRiskAmount = activePositionsRef.current.reduce(
-            (sum, p) => sum + computePositionRisk(p),
-            0
-        );
-        const riskBudget =
-            portfolioState.totalCapital *
-            settings.maxPortfolioRiskPercent;
+        const limits = QTY_LIMITS[signal.symbol] ?? { min: 0, max: Number.POSITIVE_INFINITY };
 
-        // scale size down to fit remaining risk budget
+        const riskBudget = portfolioState.totalCapital * settings.maxPortfolioRiskPercent;
+        const openRiskAmount = activePositionsRef.current.reduce((sum, p) => sum + computePositionRisk(p), 0);
         const remainingRiskBudget = Math.max(0, riskBudget - openRiskAmount);
-        const maxSizeByRisk = riskPerUnit > 0 ? remainingRiskBudget / riskPerUnit : size;
-        if (maxSizeByRisk <= 0) {
+        const remainingAllocation = Math.max(0, maxAlloc - currentAlloc);
+
+        const maxSizePerTrade = riskPerUnit > 0 ? riskPerTrade / riskPerUnit : 0;
+        const maxSizeBudget = riskPerUnit > 0 ? remainingRiskBudget / riskPerUnit : 0;
+        const maxSizeAllocation = entry > 0 ? remainingAllocation / entry : 0;
+        const maxSizeNotional = entry > 0 ? MAX_SINGLE_POSITION_VALUE / entry : 0;
+
+        let size = Math.min(
+            limits.max ?? Number.POSITIVE_INFINITY,
+            maxSizePerTrade,
+            maxSizeBudget,
+            maxSizeAllocation,
+            maxSizeNotional
+        );
+
+        if (size <= 0) {
             addLog({
                 action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: portfolio risk cap (${(
-                    settings.maxPortfolioRiskPercent * 100
-                ).toFixed(1)}%) reached.`,
+                message: `Signal on ${signal.symbol} blocked: žádný prostor pro velikost (risk/alokace/$5 cap).`,
             });
             return false;
         }
-        if (size > maxSizeByRisk) {
-            size = maxSizeByRisk;
-            size = limits ? clampQtyForSymbol(signal.symbol, size) : size;
-            notional = size * entry;
+
+        if (limits.min && size < limits.min) {
+            const minNotional = limits.min * entry;
+            const minRisk = riskPerUnit * limits.min;
+            const reasons: string[] = [];
+            if (minNotional > remainingAllocation) reasons.push("allocation headroom");
+            if (minNotional > MAX_SINGLE_POSITION_VALUE) reasons.push("$5 cap");
+            if (minRisk > remainingRiskBudget) reasons.push("risk budget");
+            if (reasons.length) {
+                addLog({
+                    action: "RISK_BLOCK",
+                    message: `Signal on ${signal.symbol} blocked: burzovní minimum ${limits.min} by překročilo ${reasons.join(
+                        "/"
+                    )}.`,
+                });
+                return false;
+            }
+            size = limits.min;
         }
 
-        // cap by remaining capital allocation after risk scaling
-        const remainingAllocation = Math.max(0, maxAlloc - currentAlloc);
-        if (notional > remainingAllocation && remainingAllocation > 0) {
-            const scaledSize = remainingAllocation / entry;
-            const maxOnlyClamp = limits ? Math.min(limits.max, Math.max(0, scaledSize)) : Math.max(0, scaledSize);
-            size = maxOnlyClamp;
-            notional = size * entry;
-        }
+        let notional = size * entry;
+        const newRiskAmount = riskPerUnit * size;
 
         if (size <= 0 || notional <= 0) {
             addLog({
@@ -1189,46 +1350,40 @@ export const useTradingBot = (
             }
         }
 
-        // ===== DYNAMICKÝ TRAILING STOP (odvozený z 1R) =====
-        const oneR = Math.abs(entry - sl); // velikost SL
-        const trailingDistance = oneR * 0.5; // 0.5R
-        let trailingActivationPrice: number | null = null;
+        // Fee-aware TP úprava
+        tp = ensureMinTpDistance(entry, sl, tp, size);
 
-        if (side === "buy") {
-            trailingActivationPrice = entry + oneR; // aktivace při +1R
-        } else {
-            trailingActivationPrice = entry - oneR;
-        }
+        // Trailing stop posuneme až po potvrzení filla (neposíláme v initial orderu)
+        const trailingStopPct: number | undefined = undefined;
+        const trailingStopDistance: number | undefined = undefined;
+        const trailingActivationPrice: number | null = null;
 
-        // callbackRate v %
-        const trailingStopPct = (trailingDistance / entry) * 100;
-        const trailingStopDistance = trailingDistance;
-
-        const position: ActivePosition = {
-            id: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            symbol: signal.symbol,
-            side,
-            entryPrice: entry,
-            sl,
-            tp,
-            size,
-            openedAt: new Date().toISOString(),
-            unrealizedPnl: 0,
-            currentTrailingStop: sl,
-            rrr: Math.abs(tp - entry) / Math.abs(entry - sl) || 0,
-            pnl: 0,
-            pnlValue: 0,
-            timestamp: new Date().toISOString(),
-            peakPrice: entry,
-        };
-
-        setActivePositions((prev) => [position, ...prev]);
         setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
-        setPortfolioState((prev) => ({
-            ...prev,
-            allocatedCapital: prev.allocatedCapital + notional,
-            openPositions: prev.openPositions + 1,
-        }));
+        if (!authToken) {
+            const position: ActivePosition = {
+                id: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                symbol: signal.symbol,
+                side,
+                entryPrice: entry,
+                sl,
+                tp,
+                size,
+                openedAt: new Date().toISOString(),
+                unrealizedPnl: 0,
+                currentTrailingStop: sl,
+                rrr: Math.abs(tp - entry) / Math.abs(entry - sl) || 0,
+                pnl: 0,
+                pnlValue: 0,
+                timestamp: new Date().toISOString(),
+                peakPrice: entry,
+            };
+            setActivePositions((prev) => [position, ...prev]);
+            setPortfolioState((prev) => ({
+                ...prev,
+                allocatedCapital: prev.allocatedCapital + notional,
+                openPositions: prev.openPositions + 1,
+            }));
+        }
 
         addLog({
             action: "OPEN",
@@ -1236,9 +1391,7 @@ export const useTradingBot = (
                 signal.symbol
             } at ${entry.toFixed(4)} (size ≈ ${size.toFixed(
                 4
-            )}, notional ≈ ${notional.toFixed(
-                2
-            )} USDT, TS≈${trailingStopPct.toFixed(2)}% from 1R)`,
+            )}, notional ≈ ${notional.toFixed(2)} USDT)`,
         });
 
         const settingsSnapshot = snapshotSettings(settingsRef.current);
@@ -1253,6 +1406,7 @@ export const useTradingBot = (
                 return true;
             }
 
+            setLifecycle(tradeId, "ENTRY_SUBMITTED");
             const res = await fetch(`${apiBase}/api/demo/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
                 method: "POST",
                 headers: {
@@ -1262,19 +1416,13 @@ export const useTradingBot = (
                     body: JSON.stringify({
                         symbol: signal.symbol,
                         side: side === "buy" ? "Buy" : "Sell",
-                        qty: Number(size.toFixed(3)),
-                        orderType: "Limit",
+                        qty: Number(size.toFixed(4)),
+                        orderType: "Market",
                         timeInForce: "IOC",
-                        price:
-                            side === "buy"
-                                ? entry * 1.001 // lehce nad vstupní cenu, aby se limit rychle fillnul
-                                : entry * 0.999,
+                        orderLinkId: clientOrderId,
                         sl,
                         tp,
-                    trailingStop: trailingStopDistance,
-                    trailingStopPct,
-                    trailingActivationPrice,
-                }),
+                    }),
             });
 
             if (!res.ok) {
@@ -1282,6 +1430,24 @@ export const useTradingBot = (
                 addLog({
                     action: "ERROR",
                     message: `Order API failed (${res.status}): ${errText}`,
+                });
+                setLifecycle(tradeId, "FAILED", `order status ${res.status}`);
+                return false;
+            }
+
+            // čekáme na fill a pak nastavíme ochranu
+            try {
+                const filled = await waitForFill(tradeId, signal.symbol);
+                setLifecycle(tradeId, "ENTRY_FILLED", `size=${filled?.size ?? "?"}`);
+                const protectionOk = await commitProtection(tradeId, signal.symbol, sl, tp, trailingStopDistance);
+                if (protectionOk) {
+                    setLifecycle(tradeId, "MANAGING");
+                }
+            } catch (err: any) {
+                setLifecycle(tradeId, "FAILED", err?.message || "fill/protection failed");
+                addLog({
+                    action: "ERROR",
+                    message: `Fill/protection failed: ${err?.message || "unknown"}`,
                 });
             }
         } catch (err: any) {

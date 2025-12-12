@@ -10,6 +10,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Activity, AlertTriangle, TrendingUp, Wallet, Zap } from "lucide-react";
+import SettingsPanel from "./SettingsPanel";
+import { useState } from "react";
 
 const QTY_LIMITS: Record<string, { min: number; max: number }> = {
   BTCUSDT: { min: 0.001, max: 0.01 },
@@ -33,6 +35,7 @@ export default function Dashboard({
   setUseTestnet,
   bot,
 }: DashboardProps) {
+  const [showSettings, setShowSettings] = useState(false);
   const {
     systemState,
     portfolioState,
@@ -69,6 +72,14 @@ export default function Dashboard({
         </div>
 
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-slate-200"
+            onClick={() => setShowSettings(true)}
+          >
+            Settings
+          </Button>
           <div className="flex items-center bg-slate-900 p-1 rounded-lg border border-white/10">
             <Button
               variant={useTestnet ? "secondary" : "ghost"}
@@ -107,6 +118,16 @@ export default function Dashboard({
           </div>
         </div>
       </div>
+
+      {showSettings && (
+        <SettingsPanel
+          theme="dark"
+          lang="en"
+          settings={settings}
+          onUpdateSettings={(s: AISettings) => updateSettings(s)}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {/* === SYSTEM + PORTFOLIO === */}

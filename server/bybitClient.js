@@ -106,6 +106,7 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     price: order.price ? String(order.price) : "",
     timeInForce: order.timeInForce || "IOC",
     reduceOnly: order.reduceOnly ?? false,
+    orderLinkId: order.orderLinkId || undefined,
   };
 
   const orderPayload =
@@ -194,6 +195,54 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   }
 
   return result;
+}
+
+export async function setTradingStop(protection, creds, useTestnet = true) {
+  ensureConfigured(creds);
+
+  const tsTimestamp = Date.now().toString();
+  const recvWindow = "5000";
+
+  const tsBody = {
+    category: "linear",
+    symbol: protection.symbol,
+    positionIdx: protection.positionIdx ?? 0,
+  };
+
+  if (protection.tp != null) {
+    tsBody.takeProfit = String(protection.tp);
+    tsBody.tpTriggerBy = protection.tpTriggerBy || "LastPrice";
+  }
+
+  if (protection.sl != null) {
+    tsBody.stopLoss = String(protection.sl);
+    tsBody.slTriggerBy = protection.slTriggerBy || "LastPrice";
+  }
+
+  if (protection.trailingStop != null) {
+    tsBody.trailingStop = String(protection.trailingStop);
+  }
+
+  const tsPayload =
+    tsTimestamp + creds.apiKey + recvWindow + JSON.stringify(tsBody);
+  const tsSign = sign(tsPayload, creds.apiSecret);
+
+  const tsRes = await axios.post(
+    `${resolveBase(useTestnet)}/v5/position/trading-stop`,
+    tsBody,
+    {
+      headers: {
+        "X-BAPI-API-KEY": creds.apiKey,
+        "X-BAPI-SIGN": tsSign,
+        "X-BAPI-SIGN-TYPE": "2",
+        "X-BAPI-TIMESTAMP": tsTimestamp,
+        "X-BAPI-RECV-WINDOW": recvWindow,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  return tsRes.data;
 }
 
 export async function getDemoPositions(creds, useTestnet = true) {
