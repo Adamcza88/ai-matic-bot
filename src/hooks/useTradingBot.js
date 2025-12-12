@@ -877,18 +877,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             return false;
         }
         const availableAllocation = Math.max(0, maxAlloc - currentAlloc);
-        if (availableAllocation <= 0) {
-            setLogEntries((prev) => [
-                {
-                    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-                    action: "RISK_BLOCK",
-                    timestamp: new Date().toISOString(),
-                    message: `Signal on ${signal.symbol} blocked: capital fully allocated.`,
-                },
-                ...prev,
-            ]);
-            return false;
-        }
         const intent = signal.intent;
         const side = intent.side;
         const entry = intent.entry;
@@ -929,11 +917,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             size = limits ? clampQtyForSymbol(signal.symbol, size) : size;
             notional = size * entry;
         }
-        if (notional > availableAllocation) {
-            const scaledSize = availableAllocation / entry;
-            size = limits ? clampQtyForSymbol(signal.symbol, scaledSize) : scaledSize;
-            notional = size * entry;
-        }
+        const newRiskAmount = riskPerUnit * size;
         if (notional <= 0) {
             addLog({
                 action: "RISK_BLOCK",
@@ -959,15 +943,21 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             size = limits ? clampQtyForSymbol(signal.symbol, size) : size;
             notional = size * entry;
         }
-        // cap again by remaining capital allocation after risk scaling
+        // cap by remaining capital allocation after risk scaling
         const remainingAllocation = Math.max(0, maxAlloc - currentAlloc);
-        if (notional > remainingAllocation) {
+        if (notional > remainingAllocation && remainingAllocation > 0) {
             const scaledSize = remainingAllocation / entry;
             size = limits ? clampQtyForSymbol(signal.symbol, scaledSize) : scaledSize;
             notional = size * entry;
         }
-        const newRiskAmount = riskPerUnit * size;
-        if (openRiskAmount + newRiskAmount > riskBudget || size <= 0 || notional <= 0) {
+        if (size <= 0 || notional <= 0) {
+            addLog({
+                action: "RISK_BLOCK",
+                message: `Signal on ${signal.symbol} blocked: zero size after caps.`,
+            });
+            return false;
+        }
+        if (openRiskAmount + newRiskAmount > riskBudget) {
             addLog({
                 action: "RISK_BLOCK",
                 message: `Signal on ${signal.symbol} blocked: portfolio risk cap (${(settings.maxPortfolioRiskPercent * 100).toFixed(1)}%) would be exceeded.`,
