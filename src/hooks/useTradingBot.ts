@@ -1900,10 +1900,23 @@ export const useTradingBot = (
             });
 
             if (!res.ok) {
-                const errText = await res.text();
+                let errorMsg = `Order API failed (${res.status})`;
+                try {
+                    const errJson = await res.json();
+                    if (errJson.error) {
+                        errorMsg = `Order Failed: ${errJson.error}`;
+                        if (errJson.details) {
+                            errorMsg += ` (${JSON.stringify(errJson.details)})`;
+                        }
+                    }
+                } catch {
+                    const errText = await res.text();
+                    errorMsg += `: ${errText}`;
+                }
+
                 addLog({
                     action: "ERROR",
-                    message: `Order API failed (${res.status}): ${errText}`,
+                    message: errorMsg,
                 });
                 setLifecycle(tradeId, "FAILED", `order status ${res.status}`);
                 return false;

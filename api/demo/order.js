@@ -93,10 +93,22 @@ export default async function handler(req, res) {
     };
 
     // ===== CALL BYBIT =====
+    // ===== CALL BYBIT =====
     const result = await createDemoOrder(payload, {
       apiKey: key,
       apiSecret: secret,
     }, useTestnet);
+
+    // Explicit check
+    if (result.retCode !== 0) {
+      console.error(`[DemoOrder] Bybit Error: ${result.retMsg} (Code: ${result.retCode})`);
+      return res.status(400).json({
+        ok: false,
+        error: `Bybit Rejected: ${result.retMsg}`,
+        code: result.retCode,
+        details: result
+      });
+    }
 
     return res.status(200).json({
       ok: true,

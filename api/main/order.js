@@ -98,6 +98,18 @@ export default async function handler(req, res) {
       useTestnet
     );
 
+    // Explicitly check Bybit logic error
+    // retCode 0 = OK. Anything else is an error (e.g. 10001 params error)
+    if (result.retCode !== 0) {
+      console.error(`[Order API] Bybit Error: ${result.retMsg} (Code: ${result.retCode})`);
+      return res.status(400).json({
+        ok: false,
+        error: `Bybit Rejected: ${result.retMsg}`,
+        code: result.retCode,
+        details: result
+      });
+    }
+
     return res.status(200).json({
       ok: true,
       message: "Order created",
