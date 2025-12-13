@@ -318,12 +318,21 @@ export async function listOrderHistory(creds, { limit = 50, symbol, settleCoin =
   return res.data;
 }
 
-export async function listExecutions(creds, { limit = 50, cursor } = {}, useTestnet = true) {
+export async function listExecutions(
+  creds,
+  { limit = 50, cursor, symbol, settleCoin = "USDT" } = {},
+  useTestnet = true
+) {
   ensureConfigured(creds);
   const q = new URLSearchParams({
     category: "linear",
     limit: String(limit),
   });
+  if (symbol) {
+    q.set("symbol", symbol);
+  } else if (settleCoin) {
+    q.set("settleCoin", settleCoin);
+  }
   if (cursor) q.set("cursor", cursor);
   const res = await buildSignedGet(`/v5/execution/list?${q.toString()}`, creds, useTestnet);
   return res.data;

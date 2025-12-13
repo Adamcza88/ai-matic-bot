@@ -41,9 +41,12 @@ export default async function handler(req, res) {
       });
     }
 
+    const settleCoin = req.query.settleCoin || "USDT";
+    const symbol = req.query.symbol;
+    const limit = Number(req.query.limit || 50);
     const data = await listExecutions(
       { apiKey, apiSecret },
-      { limit: Number(req.query.limit || 50), cursor: req.query.cursor },
+      { limit, cursor: req.query.cursor, symbol, settleCoin },
       useTestnet
     );
 

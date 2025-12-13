@@ -913,18 +913,26 @@ export const useTradingBot = (
     );
 
     const fetchExecutionsOnce = useCallback(
-        async (net: "testnet" | "mainnet", symbol?: string): Promise<any[]> => {
-            if (!authToken) return [];
+        async (
+            net: "testnet" | "mainnet",
+            symbol?: string
+        ): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
+            if (!authToken) return { list: [] };
             const url = new URL(`${apiBase}${apiPrefix}/executions`);
             url.searchParams.set("net", net);
             url.searchParams.set("limit", "100");
+            url.searchParams.set("settleCoin", "USDT");
+            url.searchParams.set("category", "linear");
             if (symbol) url.searchParams.set("symbol", symbol);
             const res = await fetch(url.toString(), {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
-            if (!res.ok) return [];
+            if (!res.ok) throw new Error(`Executions fetch failed (${res.status})`);
             const data = await res.json();
-            return data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+            const retCode = data?.data?.retCode ?? data?.retCode;
+            const retMsg = data?.data?.retMsg ?? data?.retMsg;
+            const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+            return { list: Array.isArray(list) ? list : [], retCode, retMsg };
         },
         [apiBase, apiPrefix, authToken]
     );
@@ -952,8 +960,14 @@ export const useTradingBot = (
                 if (execHit) return execHit;
 
                 // 2) Fresh executions snapshot
-                const executions = await fetchExecutionsOnce(net, symbol);
-                const execSnapshot = executions.find((e: any) => {
+                const executionsResp = await fetchExecutionsOnce(net, symbol);
+                if (executionsResp.retCode && executionsResp.retCode !== 0) {
+                    addLog({
+                        action: "ERROR",
+                        message: `Executions retCode=${executionsResp.retCode} ${executionsResp.retMsg || ""}`,
+                    });
+                }
+                const execSnapshot = executionsResp.list.find((e: any) => {
                     if (e.symbol !== symbol) return false;
                     if (orderId && e.orderId && e.orderId === orderId) return true;
                     if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
