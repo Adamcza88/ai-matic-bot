@@ -179,10 +179,15 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   const logContext = {
     env: useTestnet ? "testnet" : "mainnet",
     endpoint: "/v5/order/create",
-    payload: null,
+    payload: orderBody,
     response: null,
     error: null
   };
+
+  // FIX 9: Mandatory Audit Log
+  if (!useTestnet) {
+    console.error(`[BYBIT MAINNET] Request:`, JSON.stringify({ endpoint: logContext.endpoint, payload: logContext.payload }, null, 2));
+  }
 
   let result;
 
@@ -198,11 +203,14 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
       },
     });
 
-    logContext.payload = orderBody;
     logContext.response = orderRes.data;
 
-    // MANDATORY LOG: SUCCESS/FAIL RESPONSE
-    console.log(JSON.stringify(logContext, null, 2));
+    // FIX 9: Mandatory Audit Log (Response)
+    if (!useTestnet) {
+      console.error(`[BYBIT MAINNET] Response:`, JSON.stringify({ endpoint: logContext.endpoint, response: logContext.response }, null, 2));
+    } else {
+      console.log(JSON.stringify(logContext, null, 2));
+    }
 
     result = orderRes.data;
 
@@ -212,14 +220,15 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     }
 
   } catch (error) {
-    logContext.payload = orderBody;
     logContext.error = error.message || String(error);
     if (error.response) {
       logContext.response = error.response.data;
     }
 
-    // MANDATORY LOG: NETWORK ERROR
-    console.error(JSON.stringify(logContext, null, 2));
+    // FIX 9: Mandatory Audit Log (Error)
+    const logTag = useTestnet ? "[BYBIT TESTNET]" : "[BYBIT MAINNET]";
+    console.error(`${logTag} ERROR:`, JSON.stringify(logContext, null, 2));
+
     throw error;
   }
 
@@ -300,6 +309,19 @@ export async function setTradingStop(protection, creds, useTestnet = true) {
       },
     }
   );
+
+  // FIX 9: Mandatory Audit Log
+  const tsLogContext = {
+    endpoint: "/v5/position/trading-stop",
+    payload: tsBody,
+    response: tsRes.data
+  };
+
+  if (!useTestnet) {
+    console.error(`[BYBIT MAINNET] TS Update:`, JSON.stringify(tsLogContext, null, 2));
+  } else {
+    console.log(`[BYBIT TESTNET] TS Update:`, JSON.stringify(tsLogContext, null, 2));
+  }
 
   return tsRes.data;
 }
