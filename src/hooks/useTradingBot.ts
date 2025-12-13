@@ -18,7 +18,7 @@ import {
 } from "../types";
 
 import { Candle, evaluateStrategyForSymbol } from "@/engine/botEngine";
-import { useNetworkConfig } from "../engine/networkConfig";
+import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
 import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../lib/entryHistory";
 import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
 
@@ -316,14 +316,21 @@ const computePositionRisk = (p: ActivePosition) => {
 
 // ========== HLAVNÍ HOOK ==========
 
+import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
+
+// ... existing imports ...
+
+// ========== HLAVNÍ HOOK ==========
+
 export const useTradingBot = (
     mode: TradingMode,
     useTestnet: boolean,
     authToken?: string
 ) => {
-    const apiPrefix = useTestnet ? "/api/demo" : "/api/main";
+    // FIX 1: Hard Frontend Routing via centralized config
+    const apiPrefix = getApiBase(useTestnet);
+
     useEffect(() => {
-        console.log(`[useTradingBot] Initialized. useTestnet=${useTestnet}, apiPrefix=${apiPrefix}`);
     }, [useTestnet, apiPrefix]);
     const { httpBase } = useNetworkConfig(useTestnet);
     const envBase = (import.meta as any).env?.VITE_API_BASE;
