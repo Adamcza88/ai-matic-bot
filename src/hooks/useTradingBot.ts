@@ -26,7 +26,7 @@ import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 
 // SIMULOVANÝ / DEFAULT KAPITÁL
-const INITIAL_CAPITAL = 101.33; // Unified Trading balance snapshot
+const INITIAL_CAPITAL = 100; // Unified Trading balance snapshot
 const MAX_SINGLE_POSITION_VALUE = Number.POSITIVE_INFINITY; // notional cap disabled (use margin caps instead)
 const MIN_ENTRY_SPACING_MS = 3000;
 const MAX_TEST_PENDING = 4;
@@ -1358,8 +1358,7 @@ export const useTradingBot = (
                 if (
                     settingsRef.current.entryStrictness !== "test" &&
                     pendingSignalsRef.current.length === 0 &&
-                    activePositionsRef.current.length === 0 &&
-                    !(authToken && !useTestnet) // na mainnetu s přihlášeným účtem keepalive nevytvářej
+                    activePositionsRef.current.length === 0
                 ) {
                     const now = Date.now();
                     if (
