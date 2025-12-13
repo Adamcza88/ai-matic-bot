@@ -735,33 +735,45 @@ export const useTradingBot = (
         [apiBase, authToken]
     );
 
+    const fetchExecutionsOnce = useCallback(
+        async (net: "testnet" | "mainnet"): Promise<any[]> => {
+            if (!authToken) return [];
+            const url = new URL(`${apiBase}/api/demo/executions`);
+            url.searchParams.set("net", net);
+            url.searchParams.set("limit", "100");
+            const res = await fetch(url.toString(), {
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            if (!res.ok) return [];
+            const data = await res.json();
+            return data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+        },
+        [apiBase, authToken]
+    );
+
     const waitForFill = useCallback(
-        async (tradeId: string, symbol: string, attempts: number = 12, delayMs: number = 1500) => {
+        async (tradeId: string, symbol: string, orderId?: string | null, orderLinkId?: string | null, attempts: number = 30, delayMs: number = 1200) => {
             for (let i = 0; i < attempts; i++) {
+                // Executions check
+                const executions = await fetchExecutionsOnce(useTestnet ? "testnet" : "mainnet");
+                const execHit = executions.find((e: any) => {
+                    if (e.symbol !== symbol) return false;
+                    if (orderId && e.orderId && e.orderId === orderId) return true;
+                    if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
+                    return !orderId && !orderLinkId;
+                });
+                if (execHit) return execHit;
+
+                // Positions check
                 const list = await fetchPositionsOnce(useTestnet ? "testnet" : "mainnet");
                 const found = list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
                 if (found) return found;
+
                 await new Promise((r) => setTimeout(r, delayMs));
-            }
-            // one last check: open orders snapshot for context
-            try {
-                const ordersRes = await fetch(`${apiBase}/api/demo/orders?net=${useTestnet ? "testnet" : "mainnet"}`, {
-                    headers: { Authorization: `Bearer ${authToken ?? ""}` },
-                });
-                if (ordersRes.ok) {
-                    const ordersJson = await ordersRes.json();
-                    const open = ordersJson?.data?.result?.list || ordersJson?.result?.list || [];
-                    addLog({
-                        action: "ERROR",
-                        message: `Fill not confirmed for ${symbol}; open orders snapshot: ${Array.isArray(open) ? open.length : "n/a"}`,
-                    });
-                }
-            } catch {
-                // ignore snapshot errors
             }
             throw new Error(`Fill not confirmed for ${symbol} after ${attempts} attempts`);
         },
-        [apiBase, authToken, fetchPositionsOnce, useTestnet]
+        [fetchExecutionsOnce, fetchPositionsOnce, useTestnet]
     );
 
     const commitProtection = useCallback(
@@ -1712,9 +1724,17 @@ export const useTradingBot = (
                 return false;
             }
 
+            const orderJson = await res.json().catch(() => ({}));
+            const orderId =
+                orderJson?.order?.result?.orderId ||
+                orderJson?.bybitResponse?.result?.orderId ||
+                orderJson?.result?.orderId ||
+                orderJson?.data?.orderId ||
+                null;
+
             // čekáme na fill a pak nastavíme ochranu
             try {
-                const filled = await waitForFill(tradeId, signal.symbol);
+                const filled = await waitForFill(tradeId, signal.symbol, orderId, clientOrderId);
                 setLifecycle(tradeId, "ENTRY_FILLED", `size=${filled?.size ?? "?"}`);
                 const protectionOk = await commitProtection(tradeId, signal.symbol, sl, tp, trailingStopDistance);
                 if (protectionOk) {
