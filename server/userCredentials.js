@@ -23,8 +23,8 @@ const requireKeys = (keys, env) => {
   return keys;
 };
 
-export async function getUserApiKeys(userId, env) {
-  // Validate env
+export async function getUserApiKeys(userId, env = "testnet") {
+  // Normalize / validate env
   if (env !== "mainnet" && env !== "testnet") {
     throw new Error(`Invalid env for keys: ${env}`);
   }

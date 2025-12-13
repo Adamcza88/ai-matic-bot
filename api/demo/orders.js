@@ -28,7 +28,7 @@ export default async function handler(req, res) {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
+    const keys = await getUserApiKeys(user.id, "testnet");
     const key = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
     const secret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
 
