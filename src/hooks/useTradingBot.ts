@@ -1926,6 +1926,7 @@ export const useTradingBot = (
                         errorMsg += `: ${errText}`;
                     }
 
+                    console.error("[Trade Execution] " + errorMsg); // Force visible log in browser console
                     addLog({
                         action: "ERROR",
                         message: errorMsg,
