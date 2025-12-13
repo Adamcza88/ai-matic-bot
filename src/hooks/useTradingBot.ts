@@ -27,10 +27,18 @@ const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 
 // SIMULOVANÝ / DEFAULT KAPITÁL
 const INITIAL_CAPITAL = 101.33; // Unified Trading balance snapshot
-const MAX_SINGLE_POSITION_VALUE = 5; // hard cap per position notional
+const MAX_SINGLE_POSITION_VALUE = Number.POSITIVE_INFINITY; // notional cap disabled (use margin caps instead)
 const MIN_ENTRY_SPACING_MS = 3000;
 const MAX_TEST_PENDING = 4;
 const KEEPALIVE_SIGNAL_INTERVAL_MS = 12000;
+const LEVERAGE: Record<string, number> = {
+    BTCUSDT: 100,
+    ETHUSDT: 100,
+    SOLUSDT: 100,
+    ADAUSDT: 75,
+};
+const MIN_MARGIN_USD = 5;
+const MAX_MARGIN_USD = 10;
 const QTY_LIMITS: Record<string, { min: number; max: number }> = {
     BTCUSDT: { min: 0.0005, max: 0.01 },
     ETHUSDT: { min: 0.001, max: 0.2 },
@@ -215,6 +223,10 @@ const clampQtyForSymbol = (symbol: string, qty: number) => {
     if (!limits) return qty;
     return Math.min(limits.max, Math.max(limits.min, qty));
 };
+
+const leverageFor = (symbol: string) => LEVERAGE[symbol] ?? 1;
+const marginFor = (symbol: string, entry: number, size: number) =>
+    (entry * size) / Math.max(1, leverageFor(symbol));
 
 const TAKER_FEE = 0.0006; // orientační taker fee (0.06%)
 const MIN_TP_BUFFER_PCT = 0.0003; // 0.03 % buffer
@@ -487,10 +499,10 @@ export const useTradingBot = (
 
         let cancel = false;
         const fetchPositions = async () => {
-            try {
-                const res = await fetch(`${apiBase}/api/demo/positions?net=${useTestnet ? "testnet" : "mainnet"}`, {
-                    headers: { Authorization: `Bearer ${authToken}` },
-                });
+        try {
+            const res = await fetch(`${apiBase}/api/demo/positions?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
                 if (!res.ok) {
                     const txt = await res.text();
                     throw new Error(`Positions API failed (${res.status}): ${txt || "unknown"}`);
@@ -594,10 +606,7 @@ export const useTradingBot = (
                     totalCapital: equity || p.totalCapital,
                     peakCapital: Math.max(p.peakCapital, equity || p.peakCapital),
                     openPositions: mapped.length,
-                    allocatedCapital: mapped.reduce(
-                        (sum, pos) => sum + pos.entryPrice * pos.size,
-                        0
-                    ),
+                    allocatedCapital: mapped.reduce((sum, pos) => sum + marginFor(pos.symbol, pos.entryPrice, pos.size), 0),
                 }));
                 setSystemState((prev) => ({
                     ...prev,
@@ -1188,10 +1197,10 @@ export const useTradingBot = (
                                 settingsNote: `Auto-closed @ ${exitPrice.toFixed(
                                     4
                                 )} | PnL ${pnl.toFixed(2)} USDT`,
-                                settingsSnapshot: snapshotSettings(settingsRef.current),
-                            })
+                            settingsSnapshot: snapshotSettings(settingsRef.current),
+                        })
                         );
-                        freedNotional += p.entryPrice * p.size;
+                        freedNotional += marginFor(p.symbol, p.entryPrice, p.size);
                         addLog({
                             action: "AUTO_CLOSE",
                             message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
@@ -1512,8 +1521,8 @@ export const useTradingBot = (
 
         const maxSizePerTrade = riskPerUnit > 0 ? riskPerTrade / riskPerUnit : 0;
         const maxSizeBudget = riskPerUnit > 0 ? remainingRiskBudget / riskPerUnit : 0;
-        const maxSizeAllocation = entry > 0 ? remainingAllocation / entry : 0;
-        const maxSizeNotional = entry > 0 ? MAX_SINGLE_POSITION_VALUE / entry : 0;
+        const maxSizeAllocation = entry > 0 ? (remainingAllocation * leverageFor(signal.symbol)) / entry : 0;
+        const maxSizeNotional = entry > 0 ? Number.POSITIVE_INFINITY : 0;
 
         let size = Math.min(
             limits.max ?? Number.POSITIVE_INFINITY,
@@ -1533,10 +1542,11 @@ export const useTradingBot = (
 
         if (limits.min && size < limits.min) {
             const minNotional = limits.min * entry;
+            const minMargin = minNotional / Math.max(1, leverageFor(signal.symbol));
             const minRisk = riskPerUnit * limits.min;
             const reasons: string[] = [];
-            if (minNotional > remainingAllocation) reasons.push("allocation headroom");
-            if (minNotional > MAX_SINGLE_POSITION_VALUE) reasons.push("$5 cap");
+            if (minMargin > remainingAllocation) reasons.push("allocation headroom");
+            if (minMargin > MAX_MARGIN_USD) reasons.push("margin cap");
             if (minRisk > remainingRiskBudget) reasons.push("risk budget");
             if (reasons.length) {
                 addLog({
@@ -1551,6 +1561,7 @@ export const useTradingBot = (
         }
 
         let notional = size * entry;
+        let margin = marginFor(signal.symbol, entry, size);
         const newRiskAmount = riskPerUnit * size;
 
         if (size <= 0 || notional <= 0) {
@@ -1570,16 +1581,28 @@ export const useTradingBot = (
             return false;
         }
 
-        if (
-            portfolioState.allocatedCapital + notional >
-            portfolioState.maxAllocatedCapital
-        ) {
+        if (margin < MIN_MARGIN_USD) {
+            const lev = Math.max(1, leverageFor(signal.symbol));
+            size = (MIN_MARGIN_USD * lev) / entry;
+            margin = marginFor(signal.symbol, entry, size);
+            notional = size * entry;
+        }
+        if (margin > MAX_MARGIN_USD) {
+            const lev = Math.max(1, leverageFor(signal.symbol));
+            size = (MAX_MARGIN_USD * lev) / entry;
+            margin = marginFor(signal.symbol, entry, size);
+            notional = size * entry;
+        }
+
+        if (portfolioState.allocatedCapital + margin > portfolioState.maxAllocatedCapital) {
             const headroom = Math.max(0, portfolioState.maxAllocatedCapital - portfolioState.allocatedCapital);
-            const scaledSize = headroom / entry;
+            const lev = Math.max(1, leverageFor(signal.symbol));
+            const scaledSize = (headroom * lev) / entry;
             const maxOnlyClamp = limits ? Math.min(limits.max, Math.max(0, scaledSize)) : Math.max(0, scaledSize);
             size = maxOnlyClamp;
             notional = size * entry;
-            if (size <= 0 || notional <= 0 || portfolioState.allocatedCapital + notional > portfolioState.maxAllocatedCapital) {
+            margin = marginFor(signal.symbol, entry, size);
+            if (size <= 0 || notional <= 0 || portfolioState.allocatedCapital + margin > portfolioState.maxAllocatedCapital) {
                 addLog({
                     action: "RISK_BLOCK",
                     message: `Signal on ${signal.symbol} exceeds capital allocation limit.`,
@@ -1618,7 +1641,7 @@ export const useTradingBot = (
             setActivePositions((prev) => [position, ...prev]);
             setPortfolioState((prev) => ({
                 ...prev,
-                allocatedCapital: prev.allocatedCapital + notional,
+                allocatedCapital: prev.allocatedCapital + margin,
                 openPositions: prev.openPositions + 1,
             }));
         }
@@ -1774,7 +1797,7 @@ export const useTradingBot = (
             const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
             const dir = target.side === "buy" ? 1 : -1;
             const pnl = (currentPrice - target.entryPrice) * dir * target.size;
-            const freedNotional = target.entryPrice * target.size;
+            const freedNotional = marginFor(target.symbol, target.entryPrice, target.size);
 
             realizedPnlRef.current += pnl;
             registerOutcome(pnl);
@@ -1785,7 +1808,7 @@ export const useTradingBot = (
                     limits.min * target.entryPrice,
                     Math.min(
                         limits.max * target.entryPrice,
-                        freedNotional + pnl
+                        freedNotional * leverageFor(target.symbol) + pnl
                     )
                 );
                 coachStakeRef.current[target.symbol] = nextStake;
