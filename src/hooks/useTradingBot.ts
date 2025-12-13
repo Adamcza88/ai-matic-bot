@@ -1711,14 +1711,44 @@ export const useTradingBot = (
                     return false;
                 }
 
-                // SUCCESS
                 const data = await res.json().catch(() => ({}));
+                const retCode = data?.retCode ?? data?.data?.retCode;
+                if (retCode && retCode !== 0) {
+                    const retMsg = data?.retMsg ?? data?.data?.retMsg ?? "Unknown error";
+                    const msg = `Bybit Rejected: ${retMsg}`;
+                    addLog({ action: "ERROR", message: msg });
+                    setLifecycle(signalId, "FAILED", msg);
+                    return false;
+                }
 
-                // Optimistic Update: Only set MANAGING if successful
-                setLifecycle(signalId, "ENTRY_FILLED");
-                setLifecycle(signalId, "MANAGING");
+                const orderId =
+                    data?.result?.orderId ||
+                    data?.data?.result?.orderId ||
+                    data?.data?.orderId ||
+                    null;
 
-                return true;
+                try {
+                    const fill = await waitForFill(
+                        signalId,
+                        symbol,
+                        orderId,
+                        clientOrderId,
+                        useTestnet ? 45000 : 90000
+                    );
+                    if (fill) {
+                        setLifecycle(signalId, "ENTRY_FILLED");
+                        setLifecycle(signalId, "MANAGING");
+                        return true;
+                    }
+                } catch (err: any) {
+                    addLog({
+                        action: "ERROR",
+                        message: `Fill not confirmed: ${err?.message || "unknown"}`,
+                    });
+                    setLifecycle(signalId, "FAILED", err?.message || "fill failed");
+                    return false;
+                }
+                return false;
 
             } else {
                 // PAPER MODE
