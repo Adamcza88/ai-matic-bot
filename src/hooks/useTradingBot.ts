@@ -312,6 +312,7 @@ export const useTradingBot = (
     useTestnet: boolean,
     authToken?: string
 ) => {
+    const apiPrefix = useTestnet ? "/api/demo" : "/api/main";
     const { httpBase } = useNetworkConfig(useTestnet);
     const envBase = (import.meta as any).env?.VITE_API_BASE;
     const inferredBase =
@@ -463,7 +464,7 @@ export const useTradingBot = (
         }
         try {
             setOrdersError(null);
-            const res = await fetch(`${apiBase}/api/demo/orders?net=${useTestnet ? "testnet" : "mainnet"}`, {
+            const res = await fetch(`${apiBase}${apiPrefix}/orders?net=${useTestnet ? "testnet" : "mainnet"}`, {
                 headers: {
                     Authorization: `Bearer ${authToken}`,
                 },
@@ -505,10 +506,10 @@ export const useTradingBot = (
 
         let cancel = false;
         const fetchPositions = async () => {
-        try {
-            const res = await fetch(`${apiBase}/api/demo/positions?net=${useTestnet ? "testnet" : "mainnet"}`, {
-                headers: { Authorization: `Bearer ${authToken}` },
-            });
+            try {
+                const res = await fetch(`${apiBase}${apiPrefix}/positions?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                    headers: { Authorization: `Bearer ${authToken}` },
+                });
                 if (!res.ok) {
                     const txt = await res.text();
                     throw new Error(`Positions API failed (${res.status}): ${txt || "unknown"}`);
@@ -548,7 +549,7 @@ export const useTradingBot = (
                 // Wallet pro equity
                 let equity = portfolioState.totalCapital;
                 try {
-                    const walletRes = await fetch(`${apiBase}/api/demo/wallet?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                    const walletRes = await fetch(`${apiBase}${apiPrefix}/wallet?net=${useTestnet ? "testnet" : "mainnet"}`, {
                         headers: { Authorization: `Bearer ${authToken}` },
                     });
                     if (walletRes.ok) {
@@ -563,7 +564,7 @@ export const useTradingBot = (
 
                 // Realized PnL from closed-pnl
                 try {
-                    const pnlRes = await fetch(`${apiBase}/api/demo/closed-pnl?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                    const pnlRes = await fetch(`${apiBase}${apiPrefix}/closed-pnl?net=${useTestnet ? "testnet" : "mainnet"}`, {
                         headers: { Authorization: `Bearer ${authToken}` },
                     });
                     if (pnlRes.ok) {
@@ -651,7 +652,7 @@ export const useTradingBot = (
             return;
         }
         try {
-            const res = await fetch(`${apiBase}/api/demo/trades?net=${useTestnet ? "testnet" : "mainnet"}`, {
+            const res = await fetch(`${apiBase}${apiPrefix}/trades?net=${useTestnet ? "testnet" : "mainnet"}`, {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
             if (!res.ok) {
@@ -731,20 +732,20 @@ export const useTradingBot = (
     const fetchPositionsOnce = useCallback(
         async (net: "testnet" | "mainnet"): Promise<any[]> => {
             if (!authToken) return [];
-            const res = await fetch(`${apiBase}/api/demo/positions?net=${net}`, {
+            const res = await fetch(`${apiBase}${apiPrefix}/positions?net=${net}`, {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
             if (!res.ok) throw new Error(`Positions fetch failed (${res.status})`);
             const data = await res.json();
             return data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
         },
-        [apiBase, authToken]
+        [apiBase, apiPrefix, authToken]
     );
 
     const fetchExecutionsOnce = useCallback(
         async (net: "testnet" | "mainnet"): Promise<any[]> => {
             if (!authToken) return [];
-            const url = new URL(`${apiBase}/api/demo/executions`);
+            const url = new URL(`${apiBase}${apiPrefix}/executions`);
             url.searchParams.set("net", net);
             url.searchParams.set("limit", "100");
             const res = await fetch(url.toString(), {
@@ -754,7 +755,7 @@ export const useTradingBot = (
             const data = await res.json();
             return data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
         },
-        [apiBase, authToken]
+        [apiBase, apiPrefix, authToken]
     );
 
     const waitForFill = useCallback(
@@ -806,7 +807,7 @@ export const useTradingBot = (
             const tolerance = Math.abs((currentPricesRef.current[symbol] ?? 0) * 0.001) || 0.5;
             for (let attempt = 1; attempt <= 3; attempt++) {
                 setLifecycle(tradeId, "PROTECTION_PENDING", `attempt ${attempt}`);
-                const res = await fetch(`${apiBase}/api/demo/protection?net=${net}`, {
+                const res = await fetch(`${apiBase}${apiPrefix}/protection?net=${net}`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -1428,7 +1429,7 @@ export const useTradingBot = (
         let cancel = false;
         const poll = async () => {
             try {
-                const url = new URL(`${apiBase}/api/demo/executions`);
+                const url = new URL(`${apiBase}${apiPrefix}/executions`);
                 url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
                 if (executionCursorRef.current) {
                     url.searchParams.set("cursor", executionCursorRef.current);
@@ -1737,7 +1738,7 @@ export const useTradingBot = (
             }
 
             setLifecycle(tradeId, "ENTRY_SUBMITTED");
-            const res = await fetch(`${apiBase}/api/demo/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
+            const res = await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
