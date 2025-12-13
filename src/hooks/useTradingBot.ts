@@ -239,6 +239,10 @@ const asNum = (x: any) => {
     return Number.isFinite(n) ? n : 0;
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const jitter = (min: number, max: number) =>
+    Math.floor(min + Math.random() * Math.max(0, max - min));
+
 const TAKER_FEE = 0.0006; // orientační taker fee (0.06%)
 const MIN_TP_BUFFER_PCT = 0.0003; // 0.03 % buffer
 
@@ -928,11 +932,13 @@ export const useTradingBot = (
             symbol: string,
             orderId?: string | null,
             orderLinkId?: string | null,
-            attempts: number = 40,
-            delayMs: number = 1200
+            maxWaitMs: number = 90000
         ) => {
             const net = useTestnet ? "testnet" : "mainnet";
-            for (let i = 0; i < attempts; i++) {
+            const started = Date.now();
+            let attempt = 0;
+            while (Date.now() - started < maxWaitMs) {
+                attempt += 1;
                 // 1) In-memory executions seen by polling loop
                 const execHit = executionEventsRef.current.find((e) => {
                     if (e.symbol !== symbol) return false;
@@ -984,9 +990,10 @@ export const useTradingBot = (
                 const found = posResp.list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
                 if (found) return found;
 
-                await new Promise((r) => setTimeout(r, delayMs));
+                await sleep(jitter(750, 1500));
             }
-            throw new Error(`Fill not confirmed for ${symbol} after ${attempts} attempts`);
+            const waitedSec = Math.round((Date.now() - started) / 1000);
+            throw new Error(`Fill not confirmed for ${symbol} within ${waitedSec}s`);
         },
         [addLog, fetchExecutionsOnce, fetchOrderHistoryOnce, fetchPositionsOnce, useTestnet]
     );
