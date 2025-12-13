@@ -507,7 +507,12 @@ export const useTradingBot = (
                 throw new Error(`Orders API failed (${res.status}): ${txt || "unknown"}`);
             }
             const data = await res.json();
-            const list = data?.data?.list || data?.list || data?.result?.list || [];
+            // FIX A2: Robust parsing for ApiResponse wrapping Bybit response
+            const list = data?.data?.result?.list /* correct wrapper */ ||
+                data?.data?.list /* flat data */ ||
+                data?.list /* legacy root */ ||
+                data?.result?.list /* legacy root bybit */ ||
+                [];
             const mapped: TestnetOrder[] = Array.isArray(list)
                 ? list.map((o: any) => {
                     const toIso = (ts: any) => {
@@ -557,6 +562,7 @@ export const useTradingBot = (
                 const data = await res.json();
                 const retCode = data?.data?.retCode ?? data?.retCode;
                 const retMsg = data?.data?.retMsg ?? data?.retMsg;
+                // FIX A2: Robust parsing
                 const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
                 if (retCode && retCode !== 0) {
                     throw new Error(`Positions retCode=${retCode} ${retMsg || ""}`);
@@ -569,13 +575,15 @@ export const useTradingBot = (
                             const size = Math.abs(Number(p.size ?? 0));
                             const pnl = Number(p.unrealisedPnl ?? 0);
                             return {
-                                id: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`,
+                                positionId: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`, // New field
+                                id: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`,         // Compat
                                 symbol: p.symbol || "UNKNOWN",
                                 side: (p.side === "Buy" ? "buy" : "sell") as "buy" | "sell",
                                 entryPrice: avgPrice,
                                 sl: p.stopLoss != null ? Number(p.stopLoss) : p.side === "Buy" ? avgPrice * 0.99 : avgPrice * 1.01,
                                 tp: p.takeProfit != null ? Number(p.takeProfit) : avgPrice,
-                                size,
+                                qty: size, // New field
+                                size,      // Compat
                                 openedAt: new Date(Number(p.updatedTime ?? p.createdTime ?? Date.now())).toISOString(),
                                 unrealizedPnl: pnl,
                                 pnl,
@@ -586,6 +594,7 @@ export const useTradingBot = (
                                 volatilityFactor: undefined,
                                 lastUpdateReason: undefined,
                                 timestamp: new Date().toISOString(),
+                                env: useTestnet ? "testnet" : "mainnet", // New field
                             };
                         })
                     : [];
@@ -798,11 +807,12 @@ export const useTradingBot = (
                 headers: { Authorization: `Bearer ${authToken}` },
             });
             if (!res.ok) throw new Error(`Positions fetch failed (${res.status})`);
-            const data = await res.json();
-            const retCode = data?.data?.retCode ?? data?.retCode;
-            const retMsg = data?.data?.retMsg ?? data?.retMsg;
-            const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
-            return { list: Array.isArray(list) ? list : [], retCode, retMsg };
+            const json = await res.json();
+            return {
+                list: json?.data?.result?.list || json?.result?.list || json?.data?.list || [],
+                retCode: json?.data?.retCode ?? json?.retCode,
+                retMsg: json?.data?.retMsg ?? json?.retMsg,
+            };
         },
         [apiBase, apiPrefix, authToken]
     );
@@ -1934,6 +1944,7 @@ export const useTradingBot = (
 
                 const orderJson = await res.json().catch(() => ({}));
                 const orderId =
+                    orderJson?.data?.result?.orderId /* A2: Nested data */ ||
                     orderJson?.order?.result?.orderId ||
                     orderJson?.bybitResponse?.result?.orderId ||
                     orderJson?.result?.orderId ||
@@ -1954,6 +1965,12 @@ export const useTradingBot = (
                 const msg = err?.message || "order placement failed";
                 setLifecycle(tradeId, "FAILED", msg);
                 addLog({ action: "ERROR", message: `Trade execution error: ${msg}` });
+                // FIX: Update system state here where msg is available
+                setSystemState((p) => ({ ...p, bybitStatus: "Error", lastError: msg }));
+                addLog({
+                    action: "ERROR",
+                    message: `Fill/protection failed: ${msg}`,
+                });
                 return false;
             }
         } else {
@@ -1961,20 +1978,15 @@ export const useTradingBot = (
             setLifecycle(tradeId, "ENTRY_FILLED", "Simulated");
             setLifecycle(tradeId, "MANAGING", "Simulated");
         }
-        setSystemState((p) => ({ ...p, bybitStatus: "Error", lastError: msg }));
+        return true;
+    } catch (err: any) {
         addLog({
             action: "ERROR",
-            message: `Fill/protection failed: ${msg}`,
+            message: `Demo API order failed: ${err?.message || "unknown"}`,
         });
     }
-} catch (err: any) {
-    addLog({
-        action: "ERROR",
-        message: `Demo API order failed: ${err?.message || "unknown"}`,
-    });
-}
-return true;
-    };
+    return true;
+};
 
 function executeTrade(signalId: string): Promise<void> {
     entryQueueRef.current = entryQueueRef.current

@@ -115,10 +115,13 @@ const createOrderHandler = (isTestnet) => async (req, res) => {
       });
     }
 
+    // A2: Backend Structure Alignment -> ApiResponse
     return res.json({
       ok: true,
-      order: orderResult,
-      bybitResponse: orderResult
+      data: orderResult,
+      meta: { ts: new Date().toISOString() },
+      env,
+      endpoint
     });
   } catch (err) {
     console.error(`POST ${req.path} error:`, err);

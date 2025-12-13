@@ -41,6 +41,23 @@ export interface AISettings {
   tradingDays: number[];
 }
 
+// ===== API & COMMON TYPES (MIGRATION A1) =====
+
+export type ApiMeta = {
+  ts: string;
+  latencyMs?: number;
+  version?: string;
+};
+
+export type ApiResponse<T> = {
+  ok: boolean;
+  data?: T;
+  error?: string;
+  meta?: ApiMeta;
+  env?: "mainnet" | "testnet"; // Added for FIX 8 consistency
+  endpoint?: string;
+};
+
 // ===== TRADING MODES =====
 
 export enum TradingMode {
@@ -53,11 +70,14 @@ export enum TradingMode {
 
 // ===== ENGINE / SIGNÁLY =====
 
-export interface TradeIntent {
-  side: "buy" | "sell";
-  entry: number;
-  sl: number;
-  tp: number;
+export type TradeIntent = {
+  symbol: string;         // New: Explicit symbol
+  side: "Buy" | "Sell" | "buy" | "sell"; // Compat: support both cases
+  qty: number;           // New: Explicit qty
+  entry?: number;
+  sl?: number;
+  tp?: number;
+  reduceOnly?: boolean;  // New
 }
 
 export type PendingSignal = {
@@ -66,37 +86,44 @@ export type PendingSignal = {
   intent: TradeIntent;
   risk: number;
   message: string;
-  createdAt: string;   // ← přidáno
+  createdAt: string;
 };
 
-// Aktivní (otevřená) pozice – simulovaná uvnitř appky
-export interface ActivePosition {
-  id: string;
+// Aktivní (otevřená) pozice – sjednocení FE/BE
+export type ActivePosition = {
+  // Identity
+  positionId: string;    // New strict ID
+  id?: string;           // Backward compat
+
+  // Core info
   symbol: string;
-  side: "buy" | "sell";
+  side: "Buy" | "Sell" | "buy" | "sell";
+  qty: number;           // New standard
+  size?: number;         // Backward compat
+
+  // Price & PnL
   entryPrice: number;
-  sl: number;
-  tp: number;
-  size: number;
+  avgEntryPrice?: number;
+  unrealizedPnl?: number;
+  pnl?: number;          // Backward compat alias
+  pnlValue?: number;     // Backward compat alias
+  fees?: number;
 
-  // čas otevření
+  // Protection
+  sl?: number;
+  tp?: number;
+  trailingStop?: number;
+  currentTrailingStop?: number; // Legacy?
+
+  // Meta
   openedAt: string;
+  env: "testnet" | "mainnet";
 
-  // živý PnL
-  unrealizedPnl: number; // plovoucí PnL v USD
-  pnl: number; // zrcadlově = unrealizedPnl (pro konzistenci)
-  pnlValue: number; // totéž, aby šlo snadno sčítat v analytice
-
-  // risk / RRR
-  rrr: number; // risk-reward ratio (|TP-Entry| / |Entry-SL|)
-
-  // trailing stop + dynamika
-  peakPrice: number; // nejlepší dosažená cena (pro trailing)
-  currentTrailingStop?: number; // aktuální trailing SL
+  // Legacy analysis fields (keep for UI)
+  rrr?: number;
+  peakPrice?: number;
   volatilityFactor?: number;
   lastUpdateReason?: string;
-
-  // timestamp poslední aktualizace (volitelný)
   timestamp?: string;
 }
 
@@ -108,18 +135,22 @@ export interface ClosedPosition extends ActivePosition {
 
 // ===== PORTFOLIO / SYSTÉM =====
 
-export interface PortfolioState {
-  totalCapital: number;
-  allocatedCapital: number;
-  maxAllocatedCapital: number;
+export type PortfolioState = {
+  totalEquity: number;        // Was totalCapital? Unifying.
+  availableBalance: number;   // New
   dailyPnl: number;
   maxDailyLoss: number;
-  maxDailyProfit: number;
-  peakCapital: number;
-  currentDrawdown: number;
   maxDrawdown: number;
   openPositions: number;
-  maxOpenPositions: number;
+
+  // Legacy fields kept for compatibility until full migration
+  totalCapital?: number;
+  allocatedCapital?: number;
+  maxAllocatedCapital?: number;
+  maxDailyProfit?: number;
+  peakCapital?: number;
+  currentDrawdown?: number;
+  maxOpenPositions?: number;
 }
 
 export interface SystemState {
@@ -140,19 +171,19 @@ export interface LogEntry {
   id: string;
   timestamp: string;
   action:
-    | "OPEN"
-    | "CLOSE"
-    | "AUTO_CLOSE"
-    | "SIGNAL"
-    | "ERROR"
-    | "RISK_HALT"
-    | "RISK_BLOCK"
-    | "SETTINGS"
-    | "RESET"
-    | "SYSTEM"
-    | "MODEL_RETRAIN_START"
-    | "MODEL_RETRAIN_COMPLETE"
-    | "REJECT";
+  | "OPEN"
+  | "CLOSE"
+  | "AUTO_CLOSE"
+  | "SIGNAL"
+  | "ERROR"
+  | "RISK_HALT"
+  | "RISK_BLOCK"
+  | "SETTINGS"
+  | "RESET"
+  | "SYSTEM"
+  | "MODEL_RETRAIN_START"
+  | "MODEL_RETRAIN_COMPLETE"
+  | "REJECT";
   message: string;
 }
 
