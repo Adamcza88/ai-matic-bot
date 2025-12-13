@@ -885,6 +885,27 @@ export const useTradingBot = (
         [apiBase, apiPrefix, authToken]
     );
 
+    const fetchOrderHistoryOnce = useCallback(
+        async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
+            if (!authToken) return { list: [] };
+            const url = new URL(`${apiBase}${apiPrefix}/orders`);
+            url.searchParams.set("net", net);
+            url.searchParams.set("settleCoin", "USDT");
+            url.searchParams.set("category", "linear");
+            url.searchParams.set("history", "1");
+            const res = await fetch(url.toString(), {
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            if (!res.ok) throw new Error(`Order history fetch failed (${res.status})`);
+            const data = await res.json();
+            const retCode = data?.data?.retCode ?? data?.retCode;
+            const retMsg = data?.data?.retMsg ?? data?.retMsg;
+            const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+            return { list: Array.isArray(list) ? list : [], retCode, retMsg };
+        },
+        [apiBase, apiPrefix, authToken]
+    );
+
     const fetchExecutionsOnce = useCallback(
         async (net: "testnet" | "mainnet"): Promise<any[]> => {
             if (!authToken) return [];
