@@ -137,6 +137,9 @@ const handleGetRequest = async (req, res, fetcher) => {
     if (!authHeader) return sendError(res, 401, "Missing Auth", { env, endpoint });
     const userId = authHeader.replace("Bearer ", "");
 
+    // DEBUG: check env
+    if (!env) console.error(`[handleGetRequest] Env is undefined! params=${JSON.stringify(req.params)}, query=${JSON.stringify(req.query)}, path=${req.path}`);
+
     const creds = await getUserApiKeys(userId, env);
 
     // Pass req.query as filters
@@ -189,6 +192,10 @@ app.get("/api/wallet", (req, res) => handleGetRequest(req, res, getWalletBalance
 
 app.get("/api/:env/closed-pnl", (req, res) => handleGetRequest(req, res, listClosedPnl));
 app.get("/api/closed-pnl", (req, res) => handleGetRequest(req, res, listClosedPnl));
+
+// Reconcile
+app.get("/api/:env/reconcile", (req, res) => handleGetRequest(req, res, reconcileState));
+app.get("/api/reconcile", (req, res) => handleGetRequest(req, res, reconcileState));
 
 // Health
 app.get("/api/health", (req, res) => {
