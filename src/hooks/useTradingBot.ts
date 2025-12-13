@@ -240,6 +240,9 @@ function uuidLite() {
     return `aim-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
+// Coach detection (Base 'n Break / Wedge Pop approximation)
+import { coachDefaults, detectCoachBreakout } from "@/engine/coachStrategy";
+
 function computeAtrFromHistory(candles: Candle[], period: number = 20): number {
     if (!candles || candles.length < 2) return 0;
     const highs = candles.map((c) => c.high);
@@ -982,6 +985,30 @@ export const useTradingBot = (
                     newPrices[symbol] = candles[candles.length - 1].close;
 
                     if (mode !== TradingMode.BACKTEST) {
+                        // === Custom Coach strategy: Base 'n Break / Wedge Pop approximation ===
+                        if (settingsRef.current.strategyProfile === "coach") {
+                            const existingActive = activePositionsRef.current.some((p) => p.symbol === symbol);
+                            const existingPending = pendingSignalsRef.current.some((p) => p.symbol === symbol);
+                            if (!existingActive && !existingPending) {
+                                const coachSignal = detectCoachBreakout(candles, coachDefaults);
+                                if (coachSignal) {
+                                    setPendingSignals((prev) => [
+                                        {
+                                            id: `${symbol}-coach-${Date.now()}`,
+                                            symbol,
+                                            risk: 0.8,
+                                            createdAt: new Date().toISOString(),
+                                            ...coachSignal,
+                                        },
+                                        ...prev,
+                                    ]);
+                                    addLog({
+                                        action: "SIGNAL",
+                                        message: coachSignal.message,
+                                    });
+                                }
+                            }
+                        } else {
                         const profile = chooseStrategyProfile(
                             candles,
                             settingsRef.current.strategyProfile as any
@@ -1082,8 +1109,9 @@ export const useTradingBot = (
                             };
                             engineActive.push(mapped);
                         }
-                    }
-                }
+                    } // end evaluateStrategy branch
+                } // end mode !== BACKTEST
+                } // end for SYMBOLS
 
                 if (cancel) return;
 
