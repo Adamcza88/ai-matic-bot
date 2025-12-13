@@ -1,29 +1,15 @@
-import { Candle } from "./botEngine";
-
-export type CoachSignal = {
-    intent: { side: "buy"; entry: number; sl: number; tp: number };
-    message: string;
-};
-
-export type CoachParams = {
-    baseWindow: number;
-    volumeMultiplier: number;
-    breakoutBufferPct: number;
-    tpRiskMultiple: number;
-    minTpPct: number;
-};
-
-const DEFAULT_COACH_PARAMS: CoachParams = {
+// JS runtime mirror of coachStrategy.ts for node --test without ts-node
+export const coachDefaults = {
     baseWindow: 10,
     volumeMultiplier: 1.5,
-    breakoutBufferPct: 0.0015, // 0.15% above base high
+    breakoutBufferPct: 0.0015,
     tpRiskMultiple: 2.2,
-    minTpPct: 0.003, // 0.3%
+    minTpPct: 0.003,
 };
 
-function ema(values: number[], period: number): number[] {
+function ema(values, period) {
     const k = 2 / (period + 1);
-    const res: number[] = [];
+    const res = [];
     values.forEach((v, i) => {
         if (i === 0) {
             res.push(v);
@@ -34,11 +20,8 @@ function ema(values: number[], period: number): number[] {
     return res;
 }
 
-export function detectCoachBreakout(
-    candles: Candle[],
-    params: CoachParams = DEFAULT_COACH_PARAMS
-): CoachSignal | null {
-    if (candles.length < Math.max(30, params.baseWindow + 5)) return null;
+export function detectCoachBreakout(candles, params = coachDefaults) {
+    if (!Array.isArray(candles) || candles.length < Math.max(30, params.baseWindow + 5)) return null;
     const closes = candles.map((c) => c.close);
     const highs = candles.map((c) => c.high);
     const lows = candles.map((c) => c.low);
@@ -58,8 +41,7 @@ export function detectCoachBreakout(
     const priorHigh = Math.max(...highs.slice(-(params.baseWindow + 1), -1));
     const baseLow = Math.min(...lows.slice(-(params.baseWindow + 1), -1));
     const breakoutThreshold = priorHigh * (1 + params.breakoutBufferPct);
-    const breakout =
-        lastClose > breakoutThreshold && lastClose > ema10 && lastClose > ema20;
+    const breakout = lastClose > breakoutThreshold && lastClose > ema10 && lastClose > ema20;
     const emaAligned = ema10 > ema20;
 
     if (!breakout || !volStrong || !emaAligned) return null;
@@ -76,24 +58,7 @@ export function detectCoachBreakout(
     };
 }
 
-export const coachDefaults = DEFAULT_COACH_PARAMS;
-
-// ========== Situational Analysis (daily highs/lows rules) ==========
-export type SituationalSignal = {
-    intent: { side: "sell"; entry: number; sl: number; tp: number };
-    message: string;
-};
-
-type DayOHLC = {
-    time: number;
-    high: number;
-    low: number;
-};
-
-function lastMatchingDay(
-    days: DayOHLC[],
-    targetWeekday: number
-): { idx: number; day: DayOHLC } | null {
+function lastMatchingDay(days, targetWeekday) {
     for (let i = days.length - 1; i >= 0; i--) {
         const d = new Date(days[i].time).getUTCDay();
         if (d === targetWeekday) {
@@ -103,23 +68,12 @@ function lastMatchingDay(
     return null;
 }
 
-export function detectSituationalEdges(
-    daily: { openTime: number; high: number; low: number; close?: number }[],
-    currentPrice: number
-): SituationalSignal | null {
+export function detectSituationalEdges(daily, currentPrice) {
     if (!Array.isArray(daily) || daily.length < 3) return null;
-    const days: DayOHLC[] = daily.map((d) => ({
-        time: d.openTime,
-        high: d.high,
-        low: d.low,
-    }));
+    const days = daily.map((d) => ({ time: d.openTime, high: d.high, low: d.low }));
 
     const friday = lastMatchingDay(days, 5);
-    const thursday =
-        friday && friday.idx > 0
-            ? { idx: friday.idx - 1, day: days[friday.idx - 1] }
-            : null;
-
+    const thursday = friday && friday.idx > 0 ? { idx: friday.idx - 1, day: days[friday.idx - 1] } : null;
     if (friday && thursday) {
         if (friday.day.high < thursday.day.high && currentPrice > friday.day.low) {
             const sl = Math.max(friday.day.high, thursday.day.high);
@@ -131,7 +85,7 @@ export function detectSituationalEdges(
     }
 
     const wednesday = lastMatchingDay(days, 3);
-    let monday: { idx: number; day: DayOHLC } | null = null;
+    let monday = null;
     if (wednesday) {
         for (let i = wednesday.idx - 1; i >= 0; i--) {
             const dow = new Date(days[i].time).getUTCDay();
@@ -139,11 +93,9 @@ export function detectSituationalEdges(
                 monday = { idx: i, day: days[i] };
                 break;
             }
-            // stop if we passed further back than a week
             if (wednesday.idx - i > 6) break;
         }
     }
-
     if (wednesday && monday) {
         if (wednesday.day.high < monday.day.high && currentPrice > wednesday.day.low) {
             const sl = Math.max(wednesday.day.high, monday.day.high);
