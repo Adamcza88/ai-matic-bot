@@ -736,16 +736,32 @@ export const useTradingBot = (
     );
 
     const waitForFill = useCallback(
-        async (tradeId: string, symbol: string, attempts: number = 6, delayMs: number = 1000) => {
+        async (tradeId: string, symbol: string, attempts: number = 12, delayMs: number = 1500) => {
             for (let i = 0; i < attempts; i++) {
                 const list = await fetchPositionsOnce(useTestnet ? "testnet" : "mainnet");
                 const found = list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
                 if (found) return found;
                 await new Promise((r) => setTimeout(r, delayMs));
             }
-            throw new Error(`Fill not confirmed for ${symbol}`);
+            // one last check: open orders snapshot for context
+            try {
+                const ordersRes = await fetch(`${apiBase}/api/demo/orders?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                    headers: { Authorization: `Bearer ${authToken ?? ""}` },
+                });
+                if (ordersRes.ok) {
+                    const ordersJson = await ordersRes.json();
+                    const open = ordersJson?.data?.result?.list || ordersJson?.result?.list || [];
+                    addLog({
+                        action: "ERROR",
+                        message: `Fill not confirmed for ${symbol}; open orders snapshot: ${Array.isArray(open) ? open.length : "n/a"}`,
+                    });
+                }
+            } catch {
+                // ignore snapshot errors
+            }
+            throw new Error(`Fill not confirmed for ${symbol} after ${attempts} attempts`);
         },
-        [fetchPositionsOnce, useTestnet]
+        [apiBase, authToken, fetchPositionsOnce, useTestnet]
     );
 
     const commitProtection = useCallback(
