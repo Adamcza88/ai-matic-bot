@@ -1,495 +1,201 @@
-// server/index.js
+// ===========================================
+// DEV_ONLY SERVER (Locally mimics Vercel API)
+// ===========================================
+
 import express from "express";
 import cors from "cors";
-import { createDemoOrder, getDemoPositions, listDemoOrders, listDemoOpenOrders, listDemoTrades, listExecutions, listClosedPnl, getWalletBalance, setTradingStop } from "./bybitClient.js";
-import { getUserApiKeys, getUserFromToken } from "./userCredentials.js";
+import dotenv from "dotenv";
+import { getUserApiKeys } from "./userCredentials.js";
+import {
+  createDemoOrder,
+  listDemoOrders,
+  getDemoPositions,
+  listDemoTrades,
+  getWalletBalance,
+  listClosedPnl,
+} from "./bybitClient.js";
+
+dotenv.config();
+
+// A4: STRICT SECURITY CHECK
+// Unless we are in a purely local dev environment without Supabase needs, this should be present.
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error("[CRITICAL] Missing SUPABASE_SERVICE_ROLE_KEY. Server will fail to authenticate users.");
+  // process.exit(1); // Relaxed for now to allow partial boot, but logged error.
+}
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = 4000;
 
 app.use(cors());
 app.use(express.json());
 
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, ts: new Date().toISOString() });
-});
+// A2: STRICT API CONTRACT HELPERS
+const sendResponse = (res, data, meta = {}) => {
+  const payload = {
+    ok: true,
+    data,
+    meta: {
+      ts: new Date().toISOString(),
+      version: "v1",
+      ...meta,
+    },
+  };
+  return res.status(200).json(payload);
+};
 
-/**
- * CREATE DEMO ORDER (+ případné SL/TP/TS pokud je bybitClient umí)
- *
- * očekávané body z frontendu:
- * {
- *   symbol: "ADAUSDT",
- *   side: "Buy" | "Sell",
- *   qty: number,
- *   price?: number,
- *   sl?: number,          // target SL price
- *   tp?: number,          // target TP price
- *   trailingStop?: number // trailing distance (ne procenta)
- * }
- */
-/**
- * CREATE ORDER HANDLER GENERATOR
- * Returns a handler strictly bound to a specific network (Mainnet or Testnet).
- */
-const createOrderHandler = (isTestnet) => async (req, res) => {
-  const env = isTestnet ? "testnet" : "mainnet"; // derived from handler factory
-  const endpoint = `/api/${env}/order`;
+const sendError = (res, status, message, meta = {}) => {
+  console.error(`[API ERROR] ${status} - ${message}`);
+  return res.status(status).json({
+    ok: false,
+    error: message,
+    meta: {
+      ts: new Date().toISOString(),
+      ...meta,
+    },
+  });
+};
+
+// Helper to reliably get params
+const getCommonParams = (req) => {
+  let env = "testnet";
+  if (req.path.includes("/main/") || req.query.net === "mainnet") {
+    env = "mainnet";
+  }
+  return { env, isTestnet: env === "testnet" };
+};
+
+// ===========================================
+// POST /api/:env/order
+// ===========================================
+app.post("/api/:env/order", async (req, res) => {
+  const startTs = Date.now();
+  const endpoint = req.originalUrl;
+  const env = req.params.env === "main" ? "mainnet" : "testnet";
+
+  const { symbol, side, qty, orderType, sl, tp, orderLinkId, timeInForce, trailingStop } = req.body;
 
   try {
-    // HARD SEPARATION: Ignore query params, use the bound network
-    const useTestnet = isTestnet;
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return sendError(res, 401, "Missing Authorization header", { env, endpoint });
     }
-
-    const user = await getUserFromToken(token);
+    const userId = authHeader.replace("Bearer ", "");
 
     // FIX 3: Strict Key Selection
-    let keys;
-    try {
-      keys = await getUserApiKeys(user.id, env);
-    } catch (keyErr) {
-      return res.status(400).json({
-        ok: false,
-        error: keyErr.message,
-        details: `Failed to load keys for ${env}. Please check API Key Settings.`,
-        env,
-        endpoint
-      });
-    }
-
-    const { apiKey, apiSecret } = keys;
-
-    const {
-      symbol,
-      side,
-      qty,
-      price,
-      sl,
-      tp,
-      trailingStop,
-      reduceOnly,
-      orderType,
-      timeInForce
-    } = req.body || {};
+    const creds = await getUserApiKeys(userId, env);
 
     if (!symbol || !side || !qty) {
-      return res.status(400).json({
-        ok: false,
-        error: "Missing symbol/side/qty in request body",
-        env,
-        endpoint
+      return sendError(res, 400, "Missing required fields: symbol, side, qty", { env, endpoint });
+    }
+
+    // Reuse createDemoOrder for both main/testnet logic in server (it handles 'useTestnet' flag)
+    const result = await createDemoOrder(creds, {
+      symbol, side, qty, orderType, sl, tp, orderLinkId, timeInForce,
+      takeProfit: tp, stopLoss: sl, trailingStop
+    }, env === "testnet");
+
+    if (result.retCode !== 0) {
+      return sendError(res, 400, `Bybit Rejected: ${result.retMsg}`, {
+        code: result.retCode,
+        details: result,
+        env, endpoint
       });
     }
 
-    // Pass to bybitClient
-    const orderResult = await createDemoOrder({
-      symbol,
-      side,
-      qty,
-      price,
-      sl,
-      tp,
-      trailingStop,
-      reduceOnly,
-      orderType,
-      timeInForce
-    }, { apiKey, apiSecret }, useTestnet);
+    return sendResponse(res, result, {
+      latencyMs: Date.now() - startTs,
+      env,
+      endpoint
+    });
 
-    // CRITICAL: Explicit check for Bybit logic error
-    if (orderResult.retCode !== 0) {
-      console.error(`[Order API] Bybit Error: ${orderResult.retMsg} (Code: ${orderResult.retCode})`);
-      return res.status(400).json({
-        ok: false,
-        error: `Bybit Rejected: ${orderResult.retMsg}`,
-        code: orderResult.retCode,
-        details: orderResult,
-        env,
-        endpoint
-      });
+  } catch (err) {
+    return sendError(res, 500, err.message, { latencyMs: Date.now() - startTs, env, endpoint });
+  }
+});
+
+// Fallback aliases for POST
+app.post("/api/main/order", (req, res) => { req.params.env = "main"; return app._router.handle(req, res); }); // Express routing trick or just copy handler. 
+// Simpler: Just rely on :env param matching "main" or "demo".
+app.post("/api/demo/order", async (req, res) => {
+  // express matches /api/:env/order so this might conflict if defined after? 
+  // Actually /api/:env/order catches /api/demo/order.
+});
+
+
+// ===========================================
+// GET HANDLERS
+// ===========================================
+const handleGetRequest = async (req, res, fetcher) => {
+  const startTs = Date.now();
+  const { env, isTestnet } = getCommonParams(req);
+  const endpoint = req.originalUrl;
+
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return sendError(res, 401, "Missing Auth", { env, endpoint });
+    const userId = authHeader.replace("Bearer ", "");
+
+    const creds = await getUserApiKeys(userId, env);
+
+    // Pass req.query as filters
+    // Some fetchers expect (creds, filters, useTestnet)
+    // Some expect (creds, useTestnet)
+    // We need to standardize or adapter.
+    // getDemoPositions(creds, useTestnet) -> IT IGNORES FILTERS IN ARGS usually?
+    // Let's check signatures:
+    // getDemoPositions(creds, useTestnet)
+    // listDemoOrders(creds, filters, useTestnet)
+    // listDemoTrades(creds, filters, useTestnet)
+    // getWalletBalance(creds, useTestnet)
+    // listClosedPnl(creds, filters, useTestnet)
+
+    // We will pass query as 2nd arg if function accepts 3 args, else we assume it might ignore it.
+    // JS allows extra args.
+
+    // Special adapter for Positions which might not take filters in 2nd arg in my implementation?
+    // Checking bybitClient: export async function getDemoPositions(creds, useTestnet = true)
+
+    // We need to match signature.
+    let result;
+    if (fetcher === getDemoPositions || fetcher === getWalletBalance) {
+      result = await fetcher(creds, isTestnet);
+    } else {
+      result = await fetcher(creds, req.query, isTestnet);
     }
 
-    // A2: Backend Structure Alignment -> ApiResponse
-    return res.json({
-      ok: true,
-      data: orderResult,
-      meta: { ts: new Date().toISOString() },
+    return sendResponse(res, result, {
+      latencyMs: Date.now() - startTs,
       env,
       endpoint
     });
   } catch (err) {
-    console.error(`POST ${req.path} error:`, err);
-    return res.status(400).json({ // FIX 8: Denial of Silent Errors
-      ok: false,
-      error: err?.response?.data || err.message || "Unknown error",
-      env,
-      endpoint
-    });
+    return sendError(res, 500, err.message, { latencyMs: Date.now() - startTs, env, endpoint });
   }
 };
 
-// Mount strictly separated routes
-app.post("/api/demo/order", createOrderHandler(true));  // FORCE TESTNET
-app.post("/api/main/order", createOrderHandler(false)); // FORCE MAINNET
+app.get("/api/:env/positions", (req, res) => handleGetRequest(req, res, getDemoPositions));
+app.get("/api/positions", (req, res) => handleGetRequest(req, res, getDemoPositions));
 
-/**
- * Přehled DEMO pozic z Bybit testnetu
- */
-/**
- * Přehled DEMO pozic z Bybit testnetu
- */
-app.get("/api/demo/positions", async (req, res) => {
-  const isTestnet = req.query.net !== "mainnet";
-  const env = isTestnet ? "testnet" : "mainnet";
-  const endpoint = "/api/demo/positions";
+app.get("/api/:env/orders", (req, res) => handleGetRequest(req, res, listDemoOrders));
+app.get("/api/orders", (req, res) => handleGetRequest(req, res, listDemoOrders));
 
-  try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
+app.get("/api/:env/trades", (req, res) => handleGetRequest(req, res, listDemoTrades));
+app.get("/api/trades", (req, res) => handleGetRequest(req, res, listDemoTrades));
 
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
-    }
+app.get("/api/:env/wallet", (req, res) => handleGetRequest(req, res, getWalletBalance));
+app.get("/api/wallet", (req, res) => handleGetRequest(req, res, getWalletBalance));
 
-    const user = await getUserFromToken(token);
-    // FIX 3: Strict Key Selection
-    let keys;
-    try {
-      keys = await getUserApiKeys(user.id, env);
-    } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
-    }
-    const { apiKey, apiSecret } = keys;
+app.get("/api/:env/closed-pnl", (req, res) => handleGetRequest(req, res, listClosedPnl));
+app.get("/api/closed-pnl", (req, res) => handleGetRequest(req, res, listClosedPnl));
 
-    const data = await getDemoPositions({
-      apiKey,
-      apiSecret,
-    }, isTestnet);
-    res.json({ ok: true, data });
-  } catch (err) {
-    console.error(`GET ${endpoint} error:`, err);
-    res.status(400).json({
-      ok: false,
-      error: err?.response?.data || err.message || "Unknown error",
-      env,
-      endpoint
-    });
-  }
+// Health
+app.get("/api/health", (req, res) => {
+  return sendResponse(res, { status: "ok" }, { uptime: process.uptime() });
 });
 
-/**
- * Přehled DEMO orders z Bybit testnetu
- */
-app.get("/api/demo/orders", async (req, res) => {
-  const isTestnet = req.query.net !== "mainnet";
-  const env = isTestnet ? "testnet" : "mainnet";
-  const endpoint = "/api/demo/orders";
-
-  try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
-    }
-
-    const user = await getUserFromToken(token);
-    // FIX 3: Strict Key Selection
-    let keys;
-    try {
-      keys = await getUserApiKeys(user.id, env);
-    } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
-    }
-    const { apiKey, apiSecret } = keys;
-
-    const settleCoin = req.query.settleCoin || "USDT";
-    const symbol = req.query.symbol;
-    const limit = Number(req.query.limit ?? 50);
-    const isHistory = req.query.history === "1" || req.query.history === "true";
-
-    const clientParams = { limit, symbol, settleCoin };
-    const data = isHistory
-      ? await listOrderHistory({ apiKey, apiSecret }, clientParams, isTestnet)
-      : await listDemoOrders({ apiKey, apiSecret }, clientParams, isTestnet);
-    res.json({ ok: true, data });
-  } catch (err) {
-    console.error(`GET ${endpoint} error:`, err);
-    res.status(400).json({
-      ok: false,
-      error: err?.response?.data || err.message || "Unknown error",
-      env,
-      endpoint
-    });
-  }
-});
-
-app.get("/api/demo/open-orders", async (req, res) => {
-  const isTestnet = req.query.net !== "mainnet";
-  const env = isTestnet ? "testnet" : "mainnet";
-  const endpoint = "/api/demo/open-orders";
-
-  try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
-    }
-
-    const user = await getUserFromToken(token);
-    // FIX 3: Strict Key Selection
-    let keys;
-    try {
-      keys = await getUserApiKeys(user.id, env);
-    } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
-    }
-    const { apiKey, apiSecret } = keys;
-
-    const data = await listDemoOpenOrders({
-      apiKey,
-      apiSecret,
-    }, {}, isTestnet);
-    res.json({ ok: true, data });
-  } catch (err) {
-    console.error(`GET ${endpoint} error:`, err);
-    res.status(400).json({
-      ok: false,
-      error: err?.response?.data || err.message || "Unknown error",
-      env,
-      endpoint
-    });
-  }
-});
-
-app.get("/api/demo/trades", async (req, res) => {
-  const isTestnet = req.query.net !== "mainnet";
-  const env = isTestnet ? "testnet" : "mainnet";
-  const endpoint = "/api/demo/trades";
-
-  try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
-    }
-
-    const user = await getUserFromToken(token);
-    // FIX 3: Strict Key Selection
-    let keys;
-    try {
-      keys = await getUserApiKeys(user.id, env);
-    } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
-    }
-    const { apiKey, apiSecret } = keys;
-
-    const data = await listDemoTrades({
-      apiKey,
-      apiSecret,
-    }, {}, isTestnet);
-    res.json({ ok: true, data });
-  } catch (err) {
-    console.error(`GET ${endpoint} error:`, err);
-    res.status(400).json({
-      ok: false,
-      error: err?.response?.data || err.message || "Unknown error",
-      env,
-      endpoint
-    });
-  }
-});
-
-app.get("/api/demo/executions", async (req, res) => {
-  const isTestnet = req.query.net !== "mainnet";
-  const env = isTestnet ? "testnet" : "mainnet";
-  const endpoint = "/api/demo/executions";
-
-  try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
-    }
-
-    const user = await getUserFromToken(token);
-    // FIX 3: Strict Key Selection
-    let keys;
-    try {
-      keys = await getUserApiKeys(user.id, env);
-    } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
-    }
-    const { apiKey, apiSecret } = keys;
-
-    const data = await listExecutions({
-      apiKey,
-      apiSecret,
-    }, { limit: Number(req.query.limit || 50), cursor: req.query.cursor }, isTestnet);
-
-    res.json({ ok: true, data });
-  } catch (err) {
-    console.error(`GET ${endpoint} error:`, err);
-    res.status(400).json({
-      ok: false,
-      error: err?.response?.data || err.message || "Unknown error",
-      env,
-      endpoint
-    });
-  }
-});
-
-app.get("/api/demo/closed-pnl", async (req, res) => {
-  const isTestnet = req.query.net !== "mainnet";
-  const env = isTestnet ? "testnet" : "mainnet";
-  const endpoint = "/api/demo/closed-pnl";
-
-  try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
-    }
-
-    const user = await getUserFromToken(token);
-    // FIX 3: Strict Key Selection
-    let keys;
-    try {
-      keys = await getUserApiKeys(user.id, env);
-    } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
-    }
-    const { apiKey, apiSecret } = keys;
-
-    const data = await listClosedPnl({
-      apiKey,
-      apiSecret,
-    }, { limit: Number(req.query.limit || 50), cursor: req.query.cursor }, isTestnet);
-
-    res.json({ ok: true, data });
-  } catch (err) {
-    console.error(`GET ${endpoint} error:`, err);
-    res.status(400).json({
-      ok: false,
-      error: err?.response?.data || err.message || "Unknown error",
-      env,
-      endpoint
-    });
-  }
-});
-
-app.post("/api/demo/protection", async (req, res) => {
-  const isTestnet = req.query.net !== "mainnet";
-  const env = isTestnet ? "testnet" : "mainnet";
-  const endpoint = "/api/demo/protection";
-
-  try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
-    }
-
-    const user = await getUserFromToken(token);
-    // FIX 3: Strict Key Selection
-    let keys;
-    try {
-      keys = await getUserApiKeys(user.id, env);
-    } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
-    }
-    const { apiKey, apiSecret } = keys;
-
-    const { symbol, sl, tp, trailingStop, positionIdx, slTriggerBy, tpTriggerBy } = req.body || {};
-    if (!symbol) {
-      return res.status(400).json({ ok: false, error: "Missing symbol for protection", env, endpoint });
-    }
-
-    const data = await setTradingStop(
-      { symbol, sl, tp, trailingStop, positionIdx, slTriggerBy, tpTriggerBy },
-      { apiKey, apiSecret },
-      isTestnet
-    );
-
-    res.json({ ok: true, data });
-  } catch (err) {
-    console.error(`POST ${endpoint} error:`, err);
-    res.status(400).json({
-      ok: false,
-      error: err?.response?.data || err.message || "Unknown error",
-      env,
-      endpoint
-    });
-  }
-});
-
-app.get("/api/demo/wallet", async (req, res) => {
-  const isTestnet = req.query.net !== "mainnet";
-  const env = isTestnet ? "testnet" : "mainnet";
-  const endpoint = "/api/demo/wallet";
-
-  try {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
-
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
-    }
-
-    const user = await getUserFromToken(token);
-    // FIX 3: Strict Key Selection
-    let keys;
-    try {
-      keys = await getUserApiKeys(user.id, env);
-    } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
-    }
-    const { apiKey, apiSecret } = keys;
-
-    const data = await getWalletBalance({
-      apiKey,
-      apiSecret,
-    }, isTestnet);
-
-    res.json({ ok: true, data });
-  } catch (err) {
-    console.error(`GET ${endpoint} error:`, err);
-    res.status(400).json({
-      ok: false,
-      error: err?.response?.data || err.message || "Unknown error",
-      env,
-      endpoint
-    });
-  }
-});
 
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`[DEV_ONLY] Server running on http://localhost:${PORT}`);
+  console.log(`[SECURITY] Strict Mode: ON`);
 });

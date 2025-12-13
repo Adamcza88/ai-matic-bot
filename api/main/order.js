@@ -110,11 +110,16 @@ export default async function handler(req, res) {
       });
     }
 
+    // A2: Backend Structure Alignment -> ApiResponse
     return res.status(200).json({
       ok: true,
-      message: "Order created",
-      payload,
-      bybitResponse: result,
+      data: result,
+      meta: {
+        ts: new Date().toISOString(),
+        version: "v1",
+        env: useTestnet ? "testnet" : "mainnet",
+        endpoint: req.url
+      }
     });
   } catch (err) {
     console.error("MAIN ORDER ERROR:", err);
@@ -122,8 +127,13 @@ export default async function handler(req, res) {
 
     return res.status(500).json({
       ok: false,
-      error: "Server error during order",
-      details: err?.response?.data || err?.message || String(err),
+      error: err?.message || "Server error during order",
+      meta: {
+        ts: new Date().toISOString(),
+        env: req.query.net === "testnet" ? "testnet" : "mainnet",
+        endpoint: req.url
+      },
+      details: err?.response?.data || String(err),
     });
   }
 }
