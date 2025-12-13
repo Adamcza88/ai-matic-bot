@@ -17,8 +17,28 @@ const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
 
 export default function App() {
   const auth = useAuth();
-  const [mode, setMode] = useState<TradingMode>(TradingMode.OFF);
-  const [useTestnet, setUseTestnet] = useState(true);
+  const [mode, setMode] = useState<TradingMode>(() => {
+    if (typeof localStorage !== "undefined") {
+      const saved = localStorage.getItem("ai-matic-mode");
+      if (saved) return saved as TradingMode;
+    }
+    return TradingMode.OFF;
+  });
+  const [useTestnet, setUseTestnet] = useState(() => {
+    if (typeof localStorage !== "undefined") {
+      const saved = localStorage.getItem("ai-matic-useTestnet");
+      if (saved !== null) return saved === "true";
+    }
+    return true; // Default to TESTNET
+  });
+
+  useEffect(() => {
+    localStorage.setItem("ai-matic-mode", mode);
+  }, [mode]);
+
+  useEffect(() => {
+    localStorage.setItem("ai-matic-useTestnet", String(useTestnet));
+  }, [useTestnet]);
   const [showKeyPanel, setShowKeyPanel] = useState(false);
   const [missingServices, setMissingServices] = useState<string[]>([]);
   const [keysError, setKeysError] = useState<string | null>(null);

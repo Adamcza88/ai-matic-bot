@@ -14,7 +14,7 @@ import {
     TestnetOrder,
     TestnetTrade,
     AssetPnlRecord,
-    
+
 } from "../types";
 
 import { Candle, evaluateStrategyForSymbol } from "@/engine/botEngine";
@@ -322,6 +322,9 @@ export const useTradingBot = (
     authToken?: string
 ) => {
     const apiPrefix = useTestnet ? "/api/demo" : "/api/main";
+    useEffect(() => {
+        console.log(`[useTradingBot] Initialized. useTestnet=${useTestnet}, apiPrefix=${apiPrefix}`);
+    }, [useTestnet, apiPrefix]);
     const { httpBase } = useNetworkConfig(useTestnet);
     const envBase = (import.meta as any).env?.VITE_API_BASE;
     const inferredBase =
@@ -458,10 +461,11 @@ export const useTradingBot = (
         activePositionsRef.current = activePositions;
     }, [activePositions]);
 
-    const fetchTestnetOrders = useCallback(async () => {
+    // Generic fetchOrders that respects API prefix (unlike previous confusing split)
+    const fetchOrders = useCallback(async () => {
         if (!authToken) {
-            setTestnetOrders([]);
-            setOrdersError("Missing auth token");
+            setTestnetOrders([]); // using same state variable for now, effectively "orders"
+            if (useTestnet) setOrdersError("Missing auth token");
             return;
         }
         // Pokud není definován explicitní backend, nezkoušej fetchovat – předejdeme 404 na statickém hostu
@@ -476,10 +480,16 @@ export const useTradingBot = (
         }
         try {
             setOrdersError(null);
+            // Dynamic URL based on apiPrefix (main or demo)
             const url = new URL(`${apiBase}${apiPrefix}/orders`);
+
+            // Explicitly set 'net' param for logging/backend double-check
             url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
             url.searchParams.set("settleCoin", "USDT");
             url.searchParams.set("category", "linear");
+
+            // console.log(`[fetchOrders] Fetching from: ${url.toString()}`);
+
             const res = await fetch(url.toString(), {
                 headers: {
                     Authorization: `Bearer ${authToken}`,
@@ -510,18 +520,21 @@ export const useTradingBot = (
                     };
                 })
                 : [];
+
+            // For now, we store everything in "testnetOrders" state variable which is actually just "orders"
             setTestnetOrders(mapped);
         } catch (err: any) {
+            console.error(`[fetchOrders] Error:`, err);
             setOrdersError(err?.message || "Failed to load orders");
         }
-    }, [authToken, useTestnet, apiBase]);
+    }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase]);
 
     // Pozice/PnL přímo z Bybitu – přepíší simulované activePositions
     useEffect(() => {
         if (!authToken) return;
 
         let cancel = false;
-    const fetchPositions = async () => {
+        const fetchPositions = async () => {
             try {
                 const url = new URL(`${apiBase}${apiPrefix}/positions`);
                 url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
@@ -543,31 +556,31 @@ export const useTradingBot = (
                 }
                 const mapped: ActivePosition[] = Array.isArray(list)
                     ? list
-                          .filter((p: any) => Math.abs(Number(p.size ?? 0)) > 0)
-                          .map((p: any, idx: number) => {
-                              const avgPrice = Number(p.avgPrice ?? p.entryPrice ?? p.lastPrice ?? 0);
-                              const size = Math.abs(Number(p.size ?? 0));
-                              const pnl = Number(p.unrealisedPnl ?? 0);
-                              return {
-                                  id: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`,
-                                  symbol: p.symbol || "UNKNOWN",
-                                  side: (p.side === "Buy" ? "buy" : "sell") as "buy" | "sell",
-                                  entryPrice: avgPrice,
-                                  sl: p.stopLoss != null ? Number(p.stopLoss) : p.side === "Buy" ? avgPrice * 0.99 : avgPrice * 1.01,
-                                  tp: p.takeProfit != null ? Number(p.takeProfit) : avgPrice,
-                                  size,
-                                  openedAt: new Date(Number(p.updatedTime ?? p.createdTime ?? Date.now())).toISOString(),
-                                  unrealizedPnl: pnl,
-                                  pnl,
-                                  pnlValue: pnl,
-                                  rrr: 0,
-                                  peakPrice: Number(p.markPrice ?? p.lastPrice ?? avgPrice),
-                                  currentTrailingStop: p.trailingStop != null ? Number(p.trailingStop) : undefined,
-                                  volatilityFactor: undefined,
-                                  lastUpdateReason: undefined,
-                                  timestamp: new Date().toISOString(),
-                              };
-                          })
+                        .filter((p: any) => Math.abs(Number(p.size ?? 0)) > 0)
+                        .map((p: any, idx: number) => {
+                            const avgPrice = Number(p.avgPrice ?? p.entryPrice ?? p.lastPrice ?? 0);
+                            const size = Math.abs(Number(p.size ?? 0));
+                            const pnl = Number(p.unrealisedPnl ?? 0);
+                            return {
+                                id: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`,
+                                symbol: p.symbol || "UNKNOWN",
+                                side: (p.side === "Buy" ? "buy" : "sell") as "buy" | "sell",
+                                entryPrice: avgPrice,
+                                sl: p.stopLoss != null ? Number(p.stopLoss) : p.side === "Buy" ? avgPrice * 0.99 : avgPrice * 1.01,
+                                tp: p.takeProfit != null ? Number(p.takeProfit) : avgPrice,
+                                size,
+                                openedAt: new Date(Number(p.updatedTime ?? p.createdTime ?? Date.now())).toISOString(),
+                                unrealizedPnl: pnl,
+                                pnl,
+                                pnlValue: pnl,
+                                rrr: 0,
+                                peakPrice: Number(p.markPrice ?? p.lastPrice ?? avgPrice),
+                                currentTrailingStop: p.trailingStop != null ? Number(p.trailingStop) : undefined,
+                                volatilityFactor: undefined,
+                                lastUpdateReason: undefined,
+                                timestamp: new Date().toISOString(),
+                            };
+                        })
                     : [];
                 if (cancel) return;
 
@@ -599,11 +612,11 @@ export const useTradingBot = (
                         const seen = closedPnlSeenRef.current;
                         const records: AssetPnlRecord[] = Array.isArray(pnlList)
                             ? pnlList.map((r: any) => ({
-                                  symbol: r.symbol || "UNKNOWN",
-                                  pnl: Number(r.closedPnl ?? r.realisedPnl ?? 0),
-                                  timestamp: r.updatedTime ? new Date(Number(r.updatedTime)).toISOString() : new Date().toISOString(),
-                                  note: "Bybit closed pnl",
-                              }))
+                                symbol: r.symbol || "UNKNOWN",
+                                pnl: Number(r.closedPnl ?? r.realisedPnl ?? 0),
+                                timestamp: r.updatedTime ? new Date(Number(r.updatedTime)).toISOString() : new Date().toISOString(),
+                                note: "Bybit closed pnl",
+                            }))
                             : [];
                         const realized = records.reduce((sum, r) => sum + (r.pnl || 0), 0);
                         realizedPnlRef.current = realized;
@@ -671,13 +684,18 @@ export const useTradingBot = (
         };
     }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
 
-    const fetchTestnetTrades = useCallback(async () => {
+    const fetchTrades = useCallback(async () => {
         if (!authToken) {
             setTestnetTrades([]);
             return;
         }
         try {
-            const res = await fetch(`${apiBase}${apiPrefix}/trades?net=${useTestnet ? "testnet" : "mainnet"}`, {
+            const url = new URL(`${apiBase}${apiPrefix}/trades`);
+            url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
+            url.searchParams.set("settleCoin", "USDT");
+            url.searchParams.set("category", "linear");
+
+            const res = await fetch(url.toString(), {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
             if (!res.ok) {
@@ -705,109 +723,20 @@ export const useTradingBot = (
         } catch (err: any) {
             setOrdersError((prev) => prev || err?.message || "Failed to load trades");
         }
-    }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
-
-    const fetchMainnetOrders = useCallback(async () => {
-        if (!authToken) {
-            setMainnetOrders([]);
-            setMainnetError("Missing auth token");
-            return;
-        }
-        const baseProvided = Boolean(envBase);
-        const sameOrigin =
-            typeof window !== "undefined" &&
-            inferredBase === window.location.origin;
-        if (!baseProvided && sameOrigin) {
-            setMainnetOrders([]);
-            setMainnetError("Orders API unavailable: configure VITE_API_BASE to point to backend");
-            return;
-        }
-        try {
-            setMainnetError(null);
-            const url = new URL(`${apiBase}/api/main/orders`);
-            url.searchParams.set("net", "mainnet");
-            url.searchParams.set("settleCoin", "USDT");
-            url.searchParams.set("category", "linear");
-            const res = await fetch(url.toString(), {
-                headers: { Authorization: `Bearer ${authToken}` },
-            });
-            if (!res.ok) {
-                const txt = await res.text();
-                throw new Error(`Mainnet orders API failed (${res.status}): ${txt || "unknown"}`);
-            }
-            const data = await res.json();
-            const list = data?.data?.list || data?.list || data?.result?.list || [];
-            const mapped: TestnetOrder[] = Array.isArray(list)
-                ? list.map((o: any) => {
-                    const toIso = (ts: any) => {
-                        const n = Number(ts);
-                        return Number.isFinite(n) && n > 0
-                            ? new Date(n).toISOString()
-                            : new Date().toISOString();
-                    };
-                    return {
-                        orderId: o.orderId || o.orderLinkId || o.id || `${Date.now()}`,
-                        symbol: o.symbol || "",
-                        side: (o.side as "Buy" | "Sell") || "Buy",
-                        qty: Number(o.qty ?? o.cumExecQty ?? 0),
-                        price: o.price != null ? Number(o.price) : o.avgPrice != null ? Number(o.avgPrice) : null,
-                        status: o.orderStatus || o.status || "unknown",
-                        createdTime: toIso(o.createdTime ?? o.created_at ?? Date.now()),
-                    };
-                })
-                : [];
-            setMainnetOrders(mapped);
-        } catch (err: any) {
-            setMainnetError(err?.message || "Failed to load mainnet orders");
-        }
-    }, [authToken, envBase, inferredBase, apiBase]);
-
-    const fetchMainnetTrades = useCallback(async () => {
-        if (!authToken) {
-            setMainnetTrades([]);
-            return;
-        }
-        try {
-            const url = new URL(`${apiBase}/api/main/trades`);
-            url.searchParams.set("net", "mainnet");
-            url.searchParams.set("settleCoin", "USDT");
-            url.searchParams.set("category", "linear");
-            const res = await fetch(url.toString(), {
-                headers: { Authorization: `Bearer ${authToken}` },
-            });
-            if (!res.ok) {
-                const txt = await res.text();
-                throw new Error(`Mainnet trades API failed (${res.status}): ${txt || "unknown"}`);
-            }
-            const data = await res.json();
-            const list = data?.data?.list || data?.list || data?.result?.list || [];
-            const mapped: TestnetTrade[] = Array.isArray(list)
-                ? list.map((t: any) => {
-                    const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
-                    return {
-                        id: t.execId || t.tradeId || `${Date.now()}`,
-                        symbol: t.symbol || "",
-                        side: (t.side as "Buy" | "Sell") || "Buy",
-                        price: Number(t.execPrice ?? t.price ?? 0),
-                        qty: Number(t.execQty ?? t.qty ?? 0),
-                        value: Number(t.execValue ?? t.value ?? 0),
-                        fee: Number(t.execFee ?? t.fee ?? 0),
-                        time: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
-                    };
-                })
-                : [];
-            setMainnetTrades(mapped);
-        } catch (err: any) {
-            setMainnetError((prev) => prev || err?.message || "Failed to load mainnet trades");
-        }
-    }, [authToken, apiBase, envBase, inferredBase]);
+    }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase]);
 
     useEffect(() => {
-        void fetchTestnetOrders();
-        void fetchTestnetTrades();
-        void fetchMainnetOrders();
-        void fetchMainnetTrades();
-    }, [fetchTestnetOrders, fetchTestnetTrades, fetchMainnetOrders, fetchMainnetTrades]);
+        void fetchOrders();
+        void fetchTrades();
+        const id = setInterval(() => {
+            void fetchOrders();
+            void fetchTrades();
+        }, 5000);
+        return () => clearInterval(id);
+    }, [fetchOrders, fetchTrades]);
+
+    // Keep refreshTestnetOrders pointing to fetchOrders for UI compatibility
+    const refreshTestnetOrders = fetchOrders;
 
     const setLifecycle = (tradeId: string, status: string, note?: string) => {
         lifecycleRef.current.set(tradeId, status);
@@ -1308,108 +1237,108 @@ export const useTradingBot = (
                                 }
                             }
                         } else {
-                        const profile = chooseStrategyProfile(
-                            candles,
-                            settingsRef.current.strategyProfile as any
-                        );
-                        if (!profile) continue;
-                        const resolvedRiskPct = Math.min(
-                            getEffectiveRiskPct(settingsRef.current) *
+                            const profile = chooseStrategyProfile(
+                                candles,
+                                settingsRef.current.strategyProfile as any
+                            );
+                            if (!profile) continue;
+                            const resolvedRiskPct = Math.min(
+                                getEffectiveRiskPct(settingsRef.current) *
                                 (settingsRef.current.positionSizingMultiplier || 1),
-                            0.07
-                        );
-                        const decision = evaluateStrategyForSymbol(
-                            symbol,
-                            candles,
-                            {
-                                strategyProfile: profile,
-                                entryStrictness:
-                                    settingsRef.current.entryStrictness,
-                                riskPerTrade: resolvedRiskPct,
-                                accountBalance: portfolioState.totalCapital,
-                                maxDailyLossPercent: settingsRef.current.maxDailyLossPercent,
-                                maxDrawdownPercent: settingsRef.current.maxDrawdownPercent,
-                                maxDailyProfitPercent: settingsRef.current.maxDailyProfitPercent,
-                                maxOpenPositions: settingsRef.current.maxOpenPositions,
-                                maxPortfolioRiskPercent: settingsRef.current.maxPortfolioRiskPercent,
-                                enforceSessionHours: settingsRef.current.enforceSessionHours,
-                                tradingHours: {
-                                    start: settingsRef.current.tradingStartHour,
-                                    end: settingsRef.current.tradingEndHour,
-                                    days: settingsRef.current.tradingDays,
-                                },
-                            }
-                        );
-                        const signal = decision?.signal;
-                        if (signal) {
-                            setPendingSignals((prev) => [signal, ...prev]);
-                            addLog({
-                                action: "SIGNAL",
-                                message: `${signal.intent.side} ${symbol} @ ${signal.intent.entry} | TESTNET=${useTestnet}`,
-                            });
-                        }
-                        if (decision?.position) {
-                            const pos = decision.position;
-                            const dir = pos.side === "long" ? 1 : -1;
-                            const currentPrice =
-                                candles[candles.length - 1].close;
-                            const pnl =
-                                (currentPrice - pos.entryPrice) *
-                                dir *
-                                pos.size;
-                            const hist = newHistory[symbol] || [];
-                            const atr =
-                                computeAtrFromHistory(hist, 20) ||
-                                pos.entryPrice * 0.005;
-                            const safeSl =
-                                pos.stopLoss ||
-                                (pos.side === "long"
-                                    ? pos.entryPrice - 1.5 * atr
-                                    : pos.entryPrice + 1.5 * atr);
-                            const tpCandidate = Number.isFinite(pos.takeProfit)
-                                ? pos.takeProfit
-                                : pos.initialTakeProfit;
-                            const safeTp =
-                                tpCandidate && Number.isFinite(tpCandidate)
-                                    ? tpCandidate
-                                    : pos.side === "long"
-                                    ? pos.entryPrice +
-                                      1.2 * (pos.entryPrice - safeSl)
-                                    : pos.entryPrice -
-                                      1.2 * (safeSl - pos.entryPrice);
-                            const mapped: ActivePosition = {
-                                id: `${symbol}-${pos.opened}`,
+                                0.07
+                            );
+                            const decision = evaluateStrategyForSymbol(
                                 symbol,
-                                side: pos.side === "long" ? "buy" : "sell",
-                                entryPrice: pos.entryPrice,
-                                sl: safeSl,
-                                tp: safeTp,
-                                size: pos.size,
-                                openedAt: new Date(pos.opened).toISOString(),
-                                unrealizedPnl: pnl,
-                                pnl,
-                                pnlValue: pnl,
-                                rrr:
-                                    Math.abs(
-                                        (Number.isFinite(pos.takeProfit)
-                                            ? pos.takeProfit
-                                            : pos.initialTakeProfit) -
+                                candles,
+                                {
+                                    strategyProfile: profile,
+                                    entryStrictness:
+                                        settingsRef.current.entryStrictness,
+                                    riskPerTrade: resolvedRiskPct,
+                                    accountBalance: portfolioState.totalCapital,
+                                    maxDailyLossPercent: settingsRef.current.maxDailyLossPercent,
+                                    maxDrawdownPercent: settingsRef.current.maxDrawdownPercent,
+                                    maxDailyProfitPercent: settingsRef.current.maxDailyProfitPercent,
+                                    maxOpenPositions: settingsRef.current.maxOpenPositions,
+                                    maxPortfolioRiskPercent: settingsRef.current.maxPortfolioRiskPercent,
+                                    enforceSessionHours: settingsRef.current.enforceSessionHours,
+                                    tradingHours: {
+                                        start: settingsRef.current.tradingStartHour,
+                                        end: settingsRef.current.tradingEndHour,
+                                        days: settingsRef.current.tradingDays,
+                                    },
+                                }
+                            );
+                            const signal = decision?.signal;
+                            if (signal) {
+                                setPendingSignals((prev) => [signal, ...prev]);
+                                addLog({
+                                    action: "SIGNAL",
+                                    message: `${signal.intent.side} ${symbol} @ ${signal.intent.entry} | TESTNET=${useTestnet}`,
+                                });
+                            }
+                            if (decision?.position) {
+                                const pos = decision.position;
+                                const dir = pos.side === "long" ? 1 : -1;
+                                const currentPrice =
+                                    candles[candles.length - 1].close;
+                                const pnl =
+                                    (currentPrice - pos.entryPrice) *
+                                    dir *
+                                    pos.size;
+                                const hist = newHistory[symbol] || [];
+                                const atr =
+                                    computeAtrFromHistory(hist, 20) ||
+                                    pos.entryPrice * 0.005;
+                                const safeSl =
+                                    pos.stopLoss ||
+                                    (pos.side === "long"
+                                        ? pos.entryPrice - 1.5 * atr
+                                        : pos.entryPrice + 1.5 * atr);
+                                const tpCandidate = Number.isFinite(pos.takeProfit)
+                                    ? pos.takeProfit
+                                    : pos.initialTakeProfit;
+                                const safeTp =
+                                    tpCandidate && Number.isFinite(tpCandidate)
+                                        ? tpCandidate
+                                        : pos.side === "long"
+                                            ? pos.entryPrice +
+                                            1.2 * (pos.entryPrice - safeSl)
+                                            : pos.entryPrice -
+                                            1.2 * (safeSl - pos.entryPrice);
+                                const mapped: ActivePosition = {
+                                    id: `${symbol}-${pos.opened}`,
+                                    symbol,
+                                    side: pos.side === "long" ? "buy" : "sell",
+                                    entryPrice: pos.entryPrice,
+                                    sl: safeSl,
+                                    tp: safeTp,
+                                    size: pos.size,
+                                    openedAt: new Date(pos.opened).toISOString(),
+                                    unrealizedPnl: pnl,
+                                    pnl,
+                                    pnlValue: pnl,
+                                    rrr:
+                                        Math.abs(
+                                            (Number.isFinite(pos.takeProfit)
+                                                ? pos.takeProfit
+                                                : pos.initialTakeProfit) -
                                             pos.entryPrice
-                                    ) /
+                                        ) /
                                         Math.abs(
                                             pos.entryPrice - pos.stopLoss ||
-                                                1e-8
+                                            1e-8
                                         ) || 0,
-                                peakPrice: pos.highWaterMark,
-                                currentTrailingStop: pos.trailingStop,
-                                volatilityFactor: undefined,
-                                lastUpdateReason: undefined,
-                                timestamp: new Date().toISOString(),
-                            };
-                            engineActive.push(mapped);
-                        }
-                    } // end evaluateStrategy branch
-                } // end mode !== BACKTEST
+                                    peakPrice: pos.highWaterMark,
+                                    currentTrailingStop: pos.trailingStop,
+                                    volatilityFactor: undefined,
+                                    lastUpdateReason: undefined,
+                                    timestamp: new Date().toISOString(),
+                                };
+                                engineActive.push(mapped);
+                            }
+                        } // end evaluateStrategy branch
+                    } // end mode !== BACKTEST
                 } // end for SYMBOLS
 
                 if (cancel) return;
@@ -1426,56 +1355,56 @@ export const useTradingBot = (
                     );
 
                     let freedNotional = 0;
-                if (closed.length) {
-                    closed.forEach((p) => {
-                        const exitPrice =
-                            newPrices[p.symbol] ??
-                            currentPrices[p.symbol] ??
-                            p.entryPrice;
-                        const dir = p.side === "buy" ? 1 : -1;
-                        const pnl =
-                            (exitPrice - p.entryPrice) * dir * p.size;
-                        realizedPnlRef.current += pnl;
-                        const limits = QTY_LIMITS[p.symbol];
-                        if (settingsRef.current.strategyProfile === "coach" && limits) {
-                            const nextStake = Math.max(
-                                limits.min * p.entryPrice,
-                                Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl)
-                            );
-                            coachStakeRef.current[p.symbol] = nextStake;
-                        }
-                        const record: AssetPnlRecord = {
-                            symbol: p.symbol,
-                            pnl,
-                            timestamp: new Date().toISOString(),
-                            note: `Auto-close @ ${exitPrice.toFixed(
-                                4
-                            )} | size ${p.size.toFixed(4)}`,
-                        };
-                        if (authToken) {
-                            setAssetPnlHistory(() => addPnlRecord(record));
-                        }
-                        setEntryHistory(() =>
-                            addEntryToHistory({
-                                id: `${p.id}-auto-closed`,
+                    if (closed.length) {
+                        closed.forEach((p) => {
+                            const exitPrice =
+                                newPrices[p.symbol] ??
+                                currentPrices[p.symbol] ??
+                                p.entryPrice;
+                            const dir = p.side === "buy" ? 1 : -1;
+                            const pnl =
+                                (exitPrice - p.entryPrice) * dir * p.size;
+                            realizedPnlRef.current += pnl;
+                            const limits = QTY_LIMITS[p.symbol];
+                            if (settingsRef.current.strategyProfile === "coach" && limits) {
+                                const nextStake = Math.max(
+                                    limits.min * p.entryPrice,
+                                    Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl)
+                                );
+                                coachStakeRef.current[p.symbol] = nextStake;
+                            }
+                            const record: AssetPnlRecord = {
                                 symbol: p.symbol,
-                                side: p.side,
-                                entryPrice: p.entryPrice,
-                                sl: p.sl,
-                                tp: p.tp,
-                                size: p.size,
-                                createdAt: new Date().toISOString(),
-                                settingsNote: `Auto-closed @ ${exitPrice.toFixed(
+                                pnl,
+                                timestamp: new Date().toISOString(),
+                                note: `Auto-close @ ${exitPrice.toFixed(
                                     4
-                                )} | PnL ${pnl.toFixed(2)} USDT`,
-                            settingsSnapshot: snapshotSettings(settingsRef.current),
-                        })
-                        );
-                        freedNotional += marginFor(p.symbol, p.entryPrice, p.size);
-                        addLog({
-                            action: "AUTO_CLOSE",
-                            message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
-                                4
+                                )} | size ${p.size.toFixed(4)}`,
+                            };
+                            if (authToken) {
+                                setAssetPnlHistory(() => addPnlRecord(record));
+                            }
+                            setEntryHistory(() =>
+                                addEntryToHistory({
+                                    id: `${p.id}-auto-closed`,
+                                    symbol: p.symbol,
+                                    side: p.side,
+                                    entryPrice: p.entryPrice,
+                                    sl: p.sl,
+                                    tp: p.tp,
+                                    size: p.size,
+                                    createdAt: new Date().toISOString(),
+                                    settingsNote: `Auto-closed @ ${exitPrice.toFixed(
+                                        4
+                                    )} | PnL ${pnl.toFixed(2)} USDT`,
+                                    settingsSnapshot: snapshotSettings(settingsRef.current),
+                                })
+                            );
+                            freedNotional += marginFor(p.symbol, p.entryPrice, p.size);
+                            addLog({
+                                action: "AUTO_CLOSE",
+                                message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
+                                    4
                                 )} | PnL ${pnl.toFixed(2)} USDT`,
                             });
                         });
@@ -1712,7 +1641,7 @@ export const useTradingBot = (
         const volMult = getVolatilityMultiplier(signal.symbol);
         const recoveryMult =
             portfolioState.currentDrawdown >= 0.15 &&
-            portfolioState.currentDrawdown < settings.maxDrawdownPercent
+                portfolioState.currentDrawdown < settings.maxDrawdownPercent
                 ? 0.5
                 : 1;
         const riskPctWithMult = Math.min(
@@ -1933,11 +1862,10 @@ export const useTradingBot = (
 
         addLog({
             action: "OPEN",
-            message: `Opened ${side.toUpperCase()} ${
-                signal.symbol
-            } at ${entry.toFixed(4)} (size ≈ ${size.toFixed(
-                4
-            )}, notional ≈ ${notional.toFixed(2)} USDT)`,
+            message: `Opened ${side.toUpperCase()} ${signal.symbol
+                } at ${entry.toFixed(4)} (size ≈ ${size.toFixed(
+                    4
+                )}, notional ≈ ${notional.toFixed(2)} USDT)`,
         });
 
         const settingsSnapshot = snapshotSettings(settingsRef.current);
@@ -1959,16 +1887,16 @@ export const useTradingBot = (
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${authToken}`,
                 },
-                    body: JSON.stringify({
-                        symbol: signal.symbol,
-                        side: side === "buy" ? "Buy" : "Sell",
-                        qty: Number(size.toFixed(4)),
-                        orderType: "Market",
-                        timeInForce: "IOC",
-                        orderLinkId: clientOrderId,
-                        sl,
-                        tp,
-                    }),
+                body: JSON.stringify({
+                    symbol: signal.symbol,
+                    side: side === "buy" ? "Buy" : "Sell",
+                    qty: Number(size.toFixed(4)),
+                    orderType: "Market",
+                    timeInForce: "IOC",
+                    orderLinkId: clientOrderId,
+                    sl,
+                    tp,
+                }),
             });
 
             if (!res.ok) {
@@ -2291,12 +2219,12 @@ export const useTradingBot = (
         testnetOrders,
         testnetTrades,
         ordersError,
-        refreshTestnetOrders: fetchTestnetOrders,
-        mainnetOrders,
-        mainnetTrades,
-        mainnetError,
-        refreshMainnetOrders: fetchMainnetOrders,
-        refreshMainnetTrades: fetchMainnetTrades,
+        refreshTestnetOrders: fetchOrders,
+        mainnetOrders: testnetOrders, // Unify state: always return current orders
+        mainnetTrades: testnetTrades,
+        mainnetError: ordersError,
+        refreshMainnetOrders: fetchOrders,
+        refreshMainnetTrades: fetchTrades,
         assetPnlHistory,
         removeEntryHistoryItem,
     };
