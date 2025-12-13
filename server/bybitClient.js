@@ -259,7 +259,7 @@ export async function listDemoOrders(creds, { limit = 50 } = {}, useTestnet = tr
 
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
-  const query = `category=linear&limit=${limit}`;
+  const query = `category=linear&limit=${limit}&settleCoin=USDT`;
 
   const payload = timestamp + creds.apiKey + recvWindow + query;
   const signature = sign(payload, creds.apiSecret);
@@ -312,7 +312,7 @@ export async function listDemoOpenOrders(creds, { limit = 50 } = {}, useTestnet 
 
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
-  const query = `category=linear&openOnly=1&limit=${limit}`;
+  const query = `category=linear&openOnly=1&limit=${limit}&settleCoin=USDT`;
 
   const payload = timestamp + creds.apiKey + recvWindow + query;
   const signature = sign(payload, creds.apiSecret);

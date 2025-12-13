@@ -346,6 +346,9 @@ export const useTradingBot = (
     const [testnetOrders, setTestnetOrders] = useState<TestnetOrder[]>([]);
     const [testnetTrades, setTestnetTrades] = useState<TestnetTrade[]>([]);
     const [ordersError, setOrdersError] = useState<string | null>(null);
+    const [mainnetOrders, setMainnetOrders] = useState<TestnetOrder[]>([]);
+    const [mainnetTrades, setMainnetTrades] = useState<TestnetTrade[]>([]);
+    const [mainnetError, setMainnetError] = useState<string | null>(null);
     const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap>({});
     const [settings, setSettings] = useState<AISettings>(() => {
         if (typeof window !== "undefined") {
@@ -472,6 +475,7 @@ export const useTradingBot = (
             const url = new URL(`${apiBase}${apiPrefix}/orders`);
             url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
             url.searchParams.set("settleCoin", "USDT");
+            url.searchParams.set("category", "linear");
             const res = await fetch(url.toString(), {
                 headers: {
                     Authorization: `Bearer ${authToken}`,
@@ -698,9 +702,106 @@ export const useTradingBot = (
         }
     }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
 
+    const fetchMainnetOrders = useCallback(async () => {
+        if (!authToken) {
+            setMainnetOrders([]);
+            setMainnetError("Missing auth token");
+            return;
+        }
+        const baseProvided = Boolean(envBase);
+        const sameOrigin =
+            typeof window !== "undefined" &&
+            inferredBase === window.location.origin;
+        if (!baseProvided && sameOrigin) {
+            setMainnetOrders([]);
+            setMainnetError("Orders API unavailable: configure VITE_API_BASE to point to backend");
+            return;
+        }
+        try {
+            setMainnetError(null);
+            const url = new URL(`${apiBase}/api/main/orders`);
+            url.searchParams.set("net", "mainnet");
+            url.searchParams.set("settleCoin", "USDT");
+            url.searchParams.set("category", "linear");
+            const res = await fetch(url.toString(), {
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            if (!res.ok) {
+                const txt = await res.text();
+                throw new Error(`Mainnet orders API failed (${res.status}): ${txt || "unknown"}`);
+            }
+            const data = await res.json();
+            const list = data?.data?.list || data?.list || data?.result?.list || [];
+            const mapped: TestnetOrder[] = Array.isArray(list)
+                ? list.map((o: any) => {
+                    const toIso = (ts: any) => {
+                        const n = Number(ts);
+                        return Number.isFinite(n) && n > 0
+                            ? new Date(n).toISOString()
+                            : new Date().toISOString();
+                    };
+                    return {
+                        orderId: o.orderId || o.orderLinkId || o.id || `${Date.now()}`,
+                        symbol: o.symbol || "",
+                        side: (o.side as "Buy" | "Sell") || "Buy",
+                        qty: Number(o.qty ?? o.cumExecQty ?? 0),
+                        price: o.price != null ? Number(o.price) : o.avgPrice != null ? Number(o.avgPrice) : null,
+                        status: o.orderStatus || o.status || "unknown",
+                        createdTime: toIso(o.createdTime ?? o.created_at ?? Date.now()),
+                    };
+                })
+                : [];
+            setMainnetOrders(mapped);
+        } catch (err: any) {
+            setMainnetError(err?.message || "Failed to load mainnet orders");
+        }
+    }, [authToken, envBase, inferredBase, apiBase]);
+
+    const fetchMainnetTrades = useCallback(async () => {
+        if (!authToken) {
+            setMainnetTrades([]);
+            return;
+        }
+        try {
+            const url = new URL(`${apiBase}/api/main/trades`);
+            url.searchParams.set("net", "mainnet");
+            url.searchParams.set("settleCoin", "USDT");
+            url.searchParams.set("category", "linear");
+            const res = await fetch(url.toString(), {
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            if (!res.ok) {
+                const txt = await res.text();
+                throw new Error(`Mainnet trades API failed (${res.status}): ${txt || "unknown"}`);
+            }
+            const data = await res.json();
+            const list = data?.data?.list || data?.list || data?.result?.list || [];
+            const mapped: TestnetTrade[] = Array.isArray(list)
+                ? list.map((t: any) => {
+                    const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
+                    return {
+                        id: t.execId || t.tradeId || `${Date.now()}`,
+                        symbol: t.symbol || "",
+                        side: (t.side as "Buy" | "Sell") || "Buy",
+                        price: Number(t.execPrice ?? t.price ?? 0),
+                        qty: Number(t.execQty ?? t.qty ?? 0),
+                        value: Number(t.execValue ?? t.value ?? 0),
+                        fee: Number(t.execFee ?? t.fee ?? 0),
+                        time: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
+                    };
+                })
+                : [];
+            setMainnetTrades(mapped);
+        } catch (err: any) {
+            setMainnetError((prev) => prev || err?.message || "Failed to load mainnet trades");
+        }
+    }, [authToken, apiBase, envBase, inferredBase]);
+
     useEffect(() => {
         void fetchTestnetOrders();
         void fetchTestnetTrades();
+        void fetchMainnetOrders();
+        void fetchMainnetTrades();
     }, [fetchTestnetOrders]);
 
     const setLifecycle = (tradeId: string, status: string, note?: string) => {
@@ -770,6 +871,7 @@ export const useTradingBot = (
             const url = new URL(`${apiBase}${apiPrefix}/orders`);
             url.searchParams.set("net", net);
             url.searchParams.set("settleCoin", "USDT");
+            url.searchParams.set("category", "linear");
             const res = await fetch(url.toString(), {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
@@ -2145,6 +2247,11 @@ export const useTradingBot = (
         testnetTrades,
         ordersError,
         refreshTestnetOrders: fetchTestnetOrders,
+        mainnetOrders,
+        mainnetTrades,
+        mainnetError,
+        refreshMainnetOrders: fetchMainnetOrders,
+        refreshMainnetTrades: fetchMainnetTrades,
         assetPnlHistory,
         removeEntryHistoryItem,
     };
