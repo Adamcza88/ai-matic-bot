@@ -39,6 +39,23 @@ export async function getUserApiKeys(userId) {
   const envBybitTestnetKey = process.env.BYBIT_TESTNET_API_KEY || envBybitMainnetKey;
   const envBybitTestnetSecret = process.env.BYBIT_TESTNET_API_SECRET || envBybitMainnetSecret;
 
+  /* Resolved before return to allow logging */
+  const bybitMainnetKey =
+    map.get(SERVICE_BYBIT_MAINNET_KEY) ??
+    map.get(SERVICE_BYBIT_KEY) ??
+    envBybitMainnetKey;
+
+  const bybitMainnetSecret =
+    map.get(SERVICE_BYBIT_MAINNET_SECRET) ??
+    map.get(SERVICE_BYBIT_SECRET) ??
+    envBybitMainnetSecret;
+
+  console.log(
+    `[getUserApiKeys] Resolved for user ${userId}:`,
+    `MainnetKey=${bybitMainnetKey ? "***" + bybitMainnetKey.slice(-4) : "MISSING"},`,
+    `TestnetKey=${map.get(SERVICE_BYBIT_TESTNET_KEY) ? "Explicit" : "Fallback"}`
+  );
+
   return {
     bybitKey: map.get(SERVICE_BYBIT_KEY),
     bybitSecret: map.get(SERVICE_BYBIT_SECRET),
@@ -50,9 +67,8 @@ export async function getUserApiKeys(userId) {
       map.get(SERVICE_BYBIT_TESTNET_SECRET) ??
       map.get(SERVICE_BYBIT_SECRET) ??
       envBybitTestnetSecret,
-    bybitMainnetKey: map.get(SERVICE_BYBIT_MAINNET_KEY) ?? envBybitMainnetKey,
-    bybitMainnetSecret:
-      map.get(SERVICE_BYBIT_MAINNET_SECRET) ?? envBybitMainnetSecret,
+    bybitMainnetKey,
+    bybitMainnetSecret,
     cryptopanicKey: map.get(SERVICE_CRYPTOPANIC_KEY),
   };
 }

@@ -32,12 +32,16 @@ export default async function handler(req, res) {
     const key = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
     const secret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
 
+    console.log(`[Order API] ${useTestnet ? "TESTNET" : "MAINNET"} Request for user ${user.id}`);
+    console.log(`[Order API] Keys resolved: Key=${key ? "***" + key.slice(-4) : "NULL"}, Secret=${secret ? "PRESENT" : "NULL"}`);
+
     if (!key || !secret) {
       return res.status(400).json({
         ok: false,
         error: useTestnet
           ? "Bybit TESTNET API key/secret not configured for this user"
           : "Bybit MAINNET API key/secret not configured for this user",
+        details: "Check 'user_api_keys' table. Fallback to generic 'bybit api key' service is active.",
       });
     }
 
@@ -102,6 +106,7 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error("MAIN ORDER ERROR:", err);
+    console.error("Stack trace:", err?.stack);
 
     return res.status(500).json({
       ok: false,
