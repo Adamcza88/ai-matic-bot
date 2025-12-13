@@ -88,6 +88,17 @@ function buildSignedGet(pathWithQuery, creds, useTestnet) {
  *   trailingStop?: number   // v USDT, ne v %
  * }
  */
+// Pomocná funkce pro odstranění prázdných hodnot (undefined, null, "")
+// Mainnet je striktní a nesnáší prázdné stringy u numerických polí (např. price u Market orderu)
+function cleanObject(obj) {
+  return Object.entries(obj).reduce((acc, [key, val]) => {
+    if (val !== undefined && val !== null && val !== "") {
+      acc[key] = val;
+    }
+    return acc;
+  }, {});
+}
+
 export async function createDemoOrder(order, creds, useTestnet = true) {
   ensureConfigured(creds);
 
@@ -97,21 +108,26 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   const safeQty = normalizeQty(order.symbol, order.qty);
 
   // === 1) CREATE ORDER ===
-  const orderBody = {
+  const rawBody = {
     category: order.category || "linear",
     symbol: order.symbol,
     side: order.side, // "Buy" | "Sell"
-    orderType: order.orderType || "Market", 
+    orderType: order.orderType || "Market",
     qty: safeQty,
-    price: order.price ? String(order.price) : "",
+    price: order.price ? String(order.price) : undefined, // undefined will be cleaned
     timeInForce: order.timeInForce || "IOC",
     reduceOnly: order.reduceOnly ?? false,
     orderLinkId: order.orderLinkId || undefined,
   };
 
+  // CLEAN THE BODY strictly before signing
+  const orderBody = cleanObject(rawBody);
+
   const orderPayload =
     timestamp + creds.apiKey + recvWindow + JSON.stringify(orderBody);
   const orderSign = sign(orderPayload, creds.apiSecret);
+
+  console.log(`[createDemoOrder] Sending to ${useTestnet ? "Testnet" : "Mainnet"}:`, JSON.stringify(orderBody));
 
   const orderRes = await axios.post(`${resolveBase(useTestnet)}/v5/order/create`, orderBody, {
     headers: {
@@ -146,25 +162,27 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
 
     // Bybit v5 /position/trading-stop:
     // one-way režim → positionIdx MUSÍ být 0
-    const tsBody = {
+    const rawTsBody = {
       category: "linear",
       symbol: order.symbol,
       positionIdx: 0, // fix: žádné 1/2, jen 0 pro one-way
     };
 
     if (order.tp != null) {
-      tsBody.takeProfit = String(order.tp);
-      tsBody.tpTriggerBy = "LastPrice";
+      rawTsBody.takeProfit = String(order.tp);
+      rawTsBody.tpTriggerBy = "LastPrice";
     }
 
     if (order.sl != null) {
-      tsBody.stopLoss = String(order.sl);
-      tsBody.slTriggerBy = "LastPrice";
+      rawTsBody.stopLoss = String(order.sl);
+      rawTsBody.slTriggerBy = "LastPrice";
     }
 
     if (order.trailingStop != null) {
-      tsBody.trailingStop = String(order.trailingStop);
+      rawTsBody.trailingStop = String(order.trailingStop);
     }
+
+    const tsBody = cleanObject(rawTsBody);
 
     const tsPayload =
       tsTimestamp + creds.apiKey + recvWindow + JSON.stringify(tsBody);
@@ -203,25 +221,27 @@ export async function setTradingStop(protection, creds, useTestnet = true) {
   const tsTimestamp = Date.now().toString();
   const recvWindow = "5000";
 
-  const tsBody = {
+  const rawTsBody = {
     category: "linear",
     symbol: protection.symbol,
     positionIdx: protection.positionIdx ?? 0,
   };
 
   if (protection.tp != null) {
-    tsBody.takeProfit = String(protection.tp);
-    tsBody.tpTriggerBy = protection.tpTriggerBy || "LastPrice";
+    rawTsBody.takeProfit = String(protection.tp);
+    rawTsBody.tpTriggerBy = protection.tpTriggerBy || "LastPrice";
   }
 
   if (protection.sl != null) {
-    tsBody.stopLoss = String(protection.sl);
-    tsBody.slTriggerBy = protection.slTriggerBy || "LastPrice";
+    rawTsBody.stopLoss = String(protection.sl);
+    rawTsBody.slTriggerBy = protection.slTriggerBy || "LastPrice";
   }
 
   if (protection.trailingStop != null) {
-    tsBody.trailingStop = String(protection.trailingStop);
+    rawTsBody.trailingStop = String(protection.trailingStop);
   }
+
+  const tsBody = cleanObject(rawTsBody);
 
   const tsPayload =
     tsTimestamp + creds.apiKey + recvWindow + JSON.stringify(tsBody);
