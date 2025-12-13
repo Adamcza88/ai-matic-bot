@@ -11,7 +11,7 @@ const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 const INITIAL_CAPITAL = 101.33; // Unified Trading balance snapshot
 const MAX_SINGLE_POSITION_VALUE = 5; // hard cap per position notional
 const MIN_ENTRY_SPACING_MS = 3000;
-const MAX_TEST_PENDING = 4;
+const MAX_TEST_PENDING = 2;
 const KEEPALIVE_SIGNAL_INTERVAL_MS = 12000;
 const QTY_LIMITS = {
     BTCUSDT: { min: 0.0005, max: 0.01 },

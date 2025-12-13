@@ -39,6 +39,12 @@ const LEVERAGE: Record<string, number> = {
 };
 const MIN_MARGIN_USD = 5;
 const MAX_MARGIN_USD = 10;
+const TARGET_NOTIONAL: Record<string, number> = {
+    BTCUSDT: 500, // odpovídá ~5 USDT margin při 100x
+    ETHUSDT: 500,
+    SOLUSDT: 500,
+    ADAUSDT: 350, // odpovídá screenshotu při 75x
+};
 const QTY_LIMITS: Record<string, { min: number; max: number }> = {
     BTCUSDT: { min: 0.0005, max: 0.01 },
     ETHUSDT: { min: 0.001, max: 0.2 },
@@ -1551,13 +1557,16 @@ export const useTradingBot = (
         const maxSizeBudget = riskPerUnit > 0 ? remainingRiskBudget / riskPerUnit : 0;
         const maxSizeAllocation = entry > 0 ? (remainingAllocation * leverageFor(signal.symbol)) / entry : 0;
         const maxSizeNotional = entry > 0 ? Number.POSITIVE_INFINITY : 0;
+        const targetNotional = TARGET_NOTIONAL[signal.symbol];
+        const targetSize = targetNotional && entry > 0 ? targetNotional / entry : Number.POSITIVE_INFINITY;
 
         let size = Math.min(
             limits.max ?? Number.POSITIVE_INFINITY,
             maxSizePerTrade,
             maxSizeBudget,
             maxSizeAllocation,
-            maxSizeNotional
+            maxSizeNotional,
+            targetSize
         );
 
         if (size <= 0) {
