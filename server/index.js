@@ -28,7 +28,11 @@ app.get("/api/health", (req, res) => {
  *   trailingStop?: number // trailing distance (ne procenta)
  * }
  */
-app.post("/api/demo/order", async (req, res) => {
+/**
+ * CREATE ORDER (Unified Handler for Demo & Main via different routes or query param)
+ * Supports: POST /api/demo/order AND POST /api/main/order
+ */
+const handleOrder = async (req, res) => {
   try {
     const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
@@ -42,8 +46,9 @@ app.post("/api/demo/order", async (req, res) => {
 
     const user = await getUserFromToken(token);
     const keys = await getUserApiKeys(user.id);
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
+    // Explicit Fallback logic consistent with userCredentials.js usage
+    const apiKey = useTestnet ? keys.bybitTestnetKey : (keys.bybitMainnetKey || keys.bybitKey);
+    const apiSecret = useTestnet ? keys.bybitTestnetSecret : (keys.bybitMainnetSecret || keys.bybitSecret);
 
     if (!apiKey || !apiSecret) {
       return res.status(400).json({
@@ -51,6 +56,7 @@ app.post("/api/demo/order", async (req, res) => {
         error: useTestnet
           ? "Bybit TESTNET API key/secret not configured for this user"
           : "Bybit MAINNET API key/secret not configured for this user",
+        details: "Check 'user_api_keys' table. Fallback to generic 'bybit api key' service is active.",
       });
     }
 
@@ -61,8 +67,10 @@ app.post("/api/demo/order", async (req, res) => {
       price,
       sl,
       tp,
-      trailingStop, // může být undefined
+      trailingStop,
       reduceOnly,
+      orderType,
+      timeInForce
     } = req.body || {};
 
     if (!symbol || !side || !qty) {
@@ -72,8 +80,7 @@ app.post("/api/demo/order", async (req, res) => {
       });
     }
 
-    // předáme všechna pole do bybitClient.createDemoOrder,
-    // ten si s nimi naloží podle své implementace
+    // Pass to bybitClient
     const orderResult = await createDemoOrder({
       symbol,
       side,
@@ -83,20 +90,38 @@ app.post("/api/demo/order", async (req, res) => {
       tp,
       trailingStop,
       reduceOnly,
+      orderType,
+      timeInForce
     }, { apiKey, apiSecret }, useTestnet);
+
+    // CRITICAL: Explicit check for Bybit logic error (Silent Error Fix)
+    if (orderResult.retCode !== 0) {
+      console.error(`[Order API] Bybit Error: ${orderResult.retMsg} (Code: ${orderResult.retCode})`);
+      return res.status(400).json({
+        ok: false,
+        error: `Bybit Rejected: ${orderResult.retMsg}`,
+        code: orderResult.retCode,
+        details: orderResult
+      });
+    }
 
     return res.json({
       ok: true,
       order: orderResult,
+      bybitResponse: orderResult // consistent with Vercel response
     });
   } catch (err) {
-    console.error("POST /api/demo/order error:", err);
+    console.error(`POST ${req.path} error:`, err);
     return res.status(500).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
     });
   }
-});
+};
+
+// Mount both routes
+app.post("/api/demo/order", handleOrder);
+app.post("/api/main/order", handleOrder);
 
 /**
  * Přehled DEMO pozic z Bybit testnetu
