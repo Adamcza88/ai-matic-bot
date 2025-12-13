@@ -46,21 +46,24 @@ const createOrderHandler = (isTestnet) => async (req, res) => {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
+    const user = await getUserFromToken(token);
 
-    // Explicit Key Selection based on HARD separation
-    const apiKey = useTestnet ? keys.bybitTestnetKey : (keys.bybitMainnetKey || keys.bybitKey);
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : (keys.bybitMainnetSecret || keys.bybitSecret);
-
-    if (!apiKey || !apiSecret) {
+    // FIX 3: Strict Key Selection
+    // Since useTestnet is HARD bound by the handler factory, we know exactly which env to request.
+    const env = useTestnet ? "testnet" : "mainnet";
+    let keys;
+    try {
+      keys = await getUserApiKeys(user.id, env);
+    } catch (keyErr) {
       return res.status(400).json({
         ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-        details: "Check 'user_api_keys' table. Fallback to generic 'bybit api key' service is active.",
+        error: keyErr.message,
+        details: `Failed to load keys for ${env}. Please check API Key Settings.`
       });
     }
+
+    const { apiKey, apiSecret } = keys;
+    // (No further check needed as getUserApiKeys throws if missing)
 
     const {
       symbol,
@@ -141,18 +144,14 @@ app.get("/api/demo/positions", async (req, res) => {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
-
-    if (!apiKey || !apiSecret) {
-      return res.status(400).json({
-        ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-      });
+    // FIX 3: Strict Key Selection
+    let keys;
+    try {
+      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    } catch (keyErr) {
+      return res.status(400).json({ ok: false, error: keyErr.message });
     }
+    const { apiKey, apiSecret } = keys;
 
     const data = await getDemoPositions({
       apiKey,
@@ -184,18 +183,14 @@ app.get("/api/demo/orders", async (req, res) => {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
-
-    if (!apiKey || !apiSecret) {
-      return res.status(400).json({
-        ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-      });
+    // FIX 3: Strict Key Selection
+    let keys;
+    try {
+      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    } catch (keyErr) {
+      return res.status(400).json({ ok: false, error: keyErr.message });
     }
+    const { apiKey, apiSecret } = keys;
 
     const settleCoin = req.query.settleCoin || "USDT";
     const symbol = req.query.symbol;
@@ -229,18 +224,14 @@ app.get("/api/demo/open-orders", async (req, res) => {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
-
-    if (!apiKey || !apiSecret) {
-      return res.status(400).json({
-        ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-      });
+    // FIX 3: Strict Key Selection
+    let keys;
+    try {
+      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    } catch (keyErr) {
+      return res.status(400).json({ ok: false, error: keyErr.message });
     }
+    const { apiKey, apiSecret } = keys;
 
     const data = await listDemoOpenOrders({
       apiKey,
@@ -269,18 +260,14 @@ app.get("/api/demo/trades", async (req, res) => {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
-
-    if (!apiKey || !apiSecret) {
-      return res.status(400).json({
-        ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-      });
+    // FIX 3: Strict Key Selection
+    let keys;
+    try {
+      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    } catch (keyErr) {
+      return res.status(400).json({ ok: false, error: keyErr.message });
     }
+    const { apiKey, apiSecret } = keys;
 
     const data = await listDemoTrades({
       apiKey,
@@ -309,18 +296,14 @@ app.get("/api/demo/executions", async (req, res) => {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
-
-    if (!apiKey || !apiSecret) {
-      return res.status(400).json({
-        ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-      });
+    // FIX 3: Strict Key Selection
+    let keys;
+    try {
+      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    } catch (keyErr) {
+      return res.status(400).json({ ok: false, error: keyErr.message });
     }
+    const { apiKey, apiSecret } = keys;
 
     const data = await listExecutions({
       apiKey,
@@ -350,18 +333,14 @@ app.get("/api/demo/closed-pnl", async (req, res) => {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
-
-    if (!apiKey || !apiSecret) {
-      return res.status(400).json({
-        ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-      });
+    // FIX 3: Strict Key Selection
+    let keys;
+    try {
+      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    } catch (keyErr) {
+      return res.status(400).json({ ok: false, error: keyErr.message });
     }
+    const { apiKey, apiSecret } = keys;
 
     const data = await listClosedPnl({
       apiKey,
@@ -391,18 +370,14 @@ app.post("/api/demo/protection", async (req, res) => {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
-
-    if (!apiKey || !apiSecret) {
-      return res.status(400).json({
-        ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-      });
+    // FIX 3: Strict Key Selection
+    let keys;
+    try {
+      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    } catch (keyErr) {
+      return res.status(400).json({ ok: false, error: keyErr.message });
     }
+    const { apiKey, apiSecret } = keys;
 
     const { symbol, sl, tp, trailingStop, positionIdx, slTriggerBy, tpTriggerBy } = req.body || {};
     if (!symbol) {
@@ -438,18 +413,14 @@ app.get("/api/demo/wallet", async (req, res) => {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id);
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
-
-    if (!apiKey || !apiSecret) {
-      return res.status(400).json({
-        ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-      });
+    // FIX 3: Strict Key Selection
+    let keys;
+    try {
+      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    } catch (keyErr) {
+      return res.status(400).json({ ok: false, error: keyErr.message });
     }
+    const { apiKey, apiSecret } = keys;
 
     const data = await getWalletBalance({
       apiKey,

@@ -16,7 +16,19 @@ export async function getUserFromToken(token) {
   return data.user;
 }
 
-export async function getUserApiKeys(userId) {
+const requireKeys = (keys, env) => {
+  if (!keys?.apiKey || !keys?.apiSecret) {
+    throw new Error(`Missing ${env} API keys for user. Please configure them in Settings.`);
+  }
+  return keys;
+};
+
+export async function getUserApiKeys(userId, env) {
+  // Validate env
+  if (env !== "mainnet" && env !== "testnet") {
+    throw new Error(`Invalid env for keys: ${env}`);
+  }
+
   const supabase = ensureSupabase();
   const { data, error } = await supabase
     .from("user_api_keys")
@@ -39,36 +51,24 @@ export async function getUserApiKeys(userId) {
   const envBybitTestnetKey = process.env.BYBIT_TESTNET_API_KEY || envBybitMainnetKey;
   const envBybitTestnetSecret = process.env.BYBIT_TESTNET_API_SECRET || envBybitMainnetSecret;
 
-  /* Resolved before return to allow logging */
-  const bybitMainnetKey =
-    map.get(SERVICE_BYBIT_MAINNET_KEY) ??
-    map.get(SERVICE_BYBIT_KEY) ??
-    envBybitMainnetKey;
+  // STRICT SELECTION
+  if (env === "mainnet") {
+    const mainnetKeys = {
+      apiKey: map.get(SERVICE_BYBIT_MAINNET_KEY) ?? map.get(SERVICE_BYBIT_KEY) ?? envBybitMainnetKey,
+      apiSecret: map.get(SERVICE_BYBIT_MAINNET_SECRET) ?? map.get(SERVICE_BYBIT_SECRET) ?? envBybitMainnetSecret
+    };
 
-  const bybitMainnetSecret =
-    map.get(SERVICE_BYBIT_MAINNET_SECRET) ??
-    map.get(SERVICE_BYBIT_SECRET) ??
-    envBybitMainnetSecret;
+    console.log(`[getUserApiKeys] Resolved MAINNET for ${userId}: ${mainnetKeys.apiKey ? "***" : "MISSING"}`);
+    return requireKeys(mainnetKeys, "mainnet");
+  }
 
-  console.log(
-    `[getUserApiKeys] Resolved for user ${userId}:`,
-    `MainnetKey=${bybitMainnetKey ? "***" + bybitMainnetKey.slice(-4) : "MISSING"},`,
-    `TestnetKey=${map.get(SERVICE_BYBIT_TESTNET_KEY) ? "Explicit" : "Fallback"}`
-  );
+  if (env === "testnet") {
+    const testnetKeys = {
+      apiKey: map.get(SERVICE_BYBIT_TESTNET_KEY) ?? map.get(SERVICE_BYBIT_KEY) ?? envBybitTestnetKey,
+      apiSecret: map.get(SERVICE_BYBIT_TESTNET_SECRET) ?? map.get(SERVICE_BYBIT_SECRET) ?? envBybitTestnetSecret
+    };
 
-  return {
-    bybitKey: map.get(SERVICE_BYBIT_KEY),
-    bybitSecret: map.get(SERVICE_BYBIT_SECRET),
-    bybitTestnetKey:
-      map.get(SERVICE_BYBIT_TESTNET_KEY) ??
-      map.get(SERVICE_BYBIT_KEY) ??
-      envBybitTestnetKey,
-    bybitTestnetSecret:
-      map.get(SERVICE_BYBIT_TESTNET_SECRET) ??
-      map.get(SERVICE_BYBIT_SECRET) ??
-      envBybitTestnetSecret,
-    bybitMainnetKey,
-    bybitMainnetSecret,
-    cryptopanicKey: map.get(SERVICE_CRYPTOPANIC_KEY),
-  };
+    console.log(`[getUserApiKeys] Resolved TESTNET for ${userId}: ${testnetKeys.apiKey ? "Explicit/Env" : "MISSING"}`);
+    return requireKeys(testnetKeys, "testnet");
+  }
 }

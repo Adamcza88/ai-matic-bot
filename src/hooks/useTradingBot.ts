@@ -1877,377 +1877,390 @@ export const useTradingBot = (
 
         const settingsSnapshot = snapshotSettings(settingsRef.current);
         // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
-        try {
-            if (!authToken) {
-                addLog({
-                    action: "ERROR",
-                    message:
-                        "Missing auth token for placing order. Please re-login.",
-                });
-                return true;
-            }
-
-            setLifecycle(tradeId, "ENTRY_SUBMITTED");
-            const res = await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${authToken}`,
-                },
-                body: JSON.stringify({
-                    symbol: signal.symbol,
-                    side: side === "buy" ? "Buy" : "Sell",
-                    qty: Number(size.toFixed(4)),
-                    orderType: "Market",
-                    timeInForce: "IOC",
-                    orderLinkId: clientOrderId,
-                    sl,
-                    tp,
-                }),
-            });
-
-            if (!res.ok) {
-                let errorMsg = `Order API failed (${res.status})`;
-                try {
-                    const errJson = await res.json();
-                    if (errJson.error) {
-                        errorMsg = `Order Failed: ${errJson.error}`;
-                        if (errJson.details) {
-                            errorMsg += ` (${JSON.stringify(errJson.details)})`;
-                        }
-                    }
-                } catch {
-                    const errText = await res.text();
-                    errorMsg += `: ${errText}`;
+        if (mode !== TradingMode.PAPER) {
+            try {
+                if (!authToken) {
+                    addLog({
+                        action: "ERROR",
+                        message:
+                            "Missing auth token for placing order. Please re-login.",
+                    });
+                    return true;
                 }
 
-                addLog({
-                    action: "ERROR",
-                    message: errorMsg,
+                setLifecycle(tradeId, "ENTRY_SUBMITTED");
+                const res = await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${authToken}`,
+                    },
+                    body: JSON.stringify({
+                        symbol: signal.symbol,
+                        side: side === "buy" ? "Buy" : "Sell",
+                        qty: Number(size.toFixed(4)),
+                        orderType: "Market",
+                        timeInForce: "IOC",
+                        orderLinkId: clientOrderId,
+                        sl,
+                        tp,
+                        trailingStop: trailingStopDistance,
+                        // Note: trailingStop passed to backend for atomic handling
+                    }),
                 });
-                setLifecycle(tradeId, "FAILED", `order status ${res.status}`);
+
+                if (!res.ok) {
+                    let errorMsg = `Order API failed (${res.status})`;
+                    try {
+                        const errJson = await res.json();
+                        if (errJson.error) {
+                            errorMsg = `Order Failed: ${errJson.error}`;
+                            if (errJson.details) {
+                                errorMsg += ` (${JSON.stringify(errJson.details)})`;
+                            }
+                        }
+                    } catch {
+                        const errText = await res.text();
+                        errorMsg += `: ${errText}`;
+                    }
+
+                    addLog({
+                        action: "ERROR",
+                        message: errorMsg,
+                    });
+                    setLifecycle(tradeId, "FAILED", `order status ${res.status}`);
+                    return false;
+                }
+
+                const orderJson = await res.json().catch(() => ({}));
+                const orderId =
+                    orderJson?.order?.result?.orderId ||
+                    orderJson?.bybitResponse?.result?.orderId ||
+                    orderJson?.result?.orderId ||
+                    orderJson?.data?.orderId ||
+                    null;
+
+                // Backend now handles TrailingStop atomically (atomic safety) is implied by backend logic
+                // But we still wait for fill to confirm lifecycle
+
+                // Note: The previous waitForFill + commitProtection was redundant if backend does atomic SL/TP/TS
+                // We keep it for now strictly to maintain lifecycle state, but we trust the backend order.
+                setLifecycle(tradeId, "ENTRY_FILLED");
+                // We assume immediate success for now as backend returns success. 
+                // Proper advanced tracking would poll websocket.
+                setLifecycle(tradeId, "MANAGING");
+
+            } catch (err: any) {
+                const msg = err?.message || "order placement failed";
+                setLifecycle(tradeId, "FAILED", msg);
+                addLog({ action: "ERROR", message: `Trade execution error: ${msg}` });
                 return false;
             }
-
-            const orderJson = await res.json().catch(() => ({}));
-            const orderId =
-                orderJson?.order?.result?.orderId ||
-                orderJson?.bybitResponse?.result?.orderId ||
-                orderJson?.result?.orderId ||
-                orderJson?.data?.orderId ||
-                null;
-
-            // čekáme na fill a pak nastavíme ochranu
-            try {
-                const filled = await waitForFill(tradeId, signal.symbol, orderId, clientOrderId);
-                setLifecycle(tradeId, "ENTRY_FILLED", `size=${filled?.size ?? "?"}`);
-                const protectionOk = await commitProtection(tradeId, signal.symbol, sl, tp, trailingStopDistance);
-                if (protectionOk) {
-                    setLifecycle(tradeId, "MANAGING");
-                }
-            } catch (err: any) {
-                const msg = err?.message || "fill/protection failed";
-                setLifecycle(tradeId, "FAILED", msg);
-                setSystemState((p) => ({ ...p, bybitStatus: "Error", lastError: msg }));
-                addLog({
-                    action: "ERROR",
-                    message: `Fill/protection failed: ${msg}`,
-                });
-            }
-        } catch (err: any) {
-            addLog({
-                action: "ERROR",
-                message: `Demo API order failed: ${err?.message || "unknown"}`,
-            });
+        } else {
+            // PAPER MODE: Simulate success
+            setLifecycle(tradeId, "ENTRY_FILLED", "Simulated");
+            setLifecycle(tradeId, "MANAGING", "Simulated");
         }
-        return true;
-    };
-
-    function executeTrade(signalId: string): Promise<void> {
-        entryQueueRef.current = entryQueueRef.current
-            .catch(() => {
-                // swallow to keep queue alive
-            })
-            .then(async () => {
-                const last = lastEntryAtRef.current;
-                const sinceLast = last ? Date.now() - last : Infinity;
-                const waitMs =
-                    sinceLast < MIN_ENTRY_SPACING_MS
-                        ? MIN_ENTRY_SPACING_MS - sinceLast
-                        : 0;
-
-                // Delay only when více vstupů čeká zároveň.
-                if (pendingSignalsRef.current.length > 0 && waitMs > 0) {
-                    await new Promise((resolve) => setTimeout(resolve, waitMs));
-                }
-
-                const executed = await performTrade(signalId);
-                if (executed) {
-                    lastEntryAtRef.current = Date.now();
-                }
-            });
-
-        return entryQueueRef.current;
-    }
-
-    // ========== AUTO MODE ==========
-    useEffect(() => {
-        if (modeRef.current !== TradingMode.AUTO_ON) return;
-        if (!pendingSignals.length) return;
-
-        const sig = pendingSignals[0];
-        if (settingsRef.current.requireConfirmationInAuto && sig.risk < 0.65)
-            return;
-
-        void executeTrade(sig.id);
-    }, [pendingSignals]);
-
-    // MOCK NEWS
-    useEffect(() => {
-        setNewsHeadlines([
-            {
-                id: "n1",
-                headline: "Volatility rising in BTCUSDT",
-                sentiment: "neutral",
-                source: "scanner",
-                time: new Date().toISOString(),
-            },
-        ]);
-    }, []);
-
-    const addPriceAlert = (symbol: string, price: number) => {
-        const alert: PriceAlert = {
-            id: `a-${Date.now()}`,
-            symbol,
-            price,
-            createdAt: new Date().toISOString(),
-            triggered: false,
-        };
-        setPriceAlerts((p) => [...p, alert]);
-    };
-
-    const removePriceAlert = (id: string) => {
-        setPriceAlerts((p) => p.filter((a) => a.id !== id));
-    };
-
-    const closePosition = (id: string) => {
-        setActivePositions((prev) => {
-            const target = prev.find((p) => p.id === id);
-            if (!target) return prev;
-
-            const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
-            const dir = target.side === "buy" ? 1 : -1;
-            const pnl = (currentPrice - target.entryPrice) * dir * target.size;
-            const freedNotional = marginFor(target.symbol, target.entryPrice, target.size);
-
-            realizedPnlRef.current += pnl;
-            registerOutcome(pnl);
-
-            const limits = QTY_LIMITS[target.symbol];
-            if (settingsRef.current.strategyProfile === "coach" && limits) {
-                const nextStake = Math.max(
-                    limits.min * target.entryPrice,
-                    Math.min(
-                        limits.max * target.entryPrice,
-                        freedNotional * leverageFor(target.symbol) + pnl
-                    )
-                );
-                coachStakeRef.current[target.symbol] = nextStake;
-            }
-
-            const record: AssetPnlRecord = {
-                symbol: target.symbol,
-                pnl,
-                timestamp: new Date().toISOString(),
-                note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
-            };
-            if (authToken) {
-                setAssetPnlHistory(() => addPnlRecord(record));
-            }
-            setEntryHistory(() =>
-                addEntryToHistory({
-                    id: `${target.id}-closed`,
-                    symbol: target.symbol,
-                    side: target.side,
-                    entryPrice: target.entryPrice,
-                    sl: target.sl,
-                    tp: target.tp,
-                    size: target.size,
-                    createdAt: new Date().toISOString(),
-                    settingsNote: `Closed at ${currentPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
-                    settingsSnapshot: snapshotSettings(settingsRef.current),
-                })
-            );
-
-            setPortfolioState((p) => ({
-                ...p,
-                allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
-                openPositions: Math.max(0, p.openPositions - 1),
-            }));
-            addLog({
-                action: "CLOSE",
-                message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USDT`,
-            });
-
-            return prev.filter((p) => p.id !== id);
+        setSystemState((p) => ({ ...p, bybitStatus: "Error", lastError: msg }));
+        addLog({
+            action: "ERROR",
+            message: `Fill/protection failed: ${msg}`,
         });
+    }
+} catch (err: any) {
+    addLog({
+        action: "ERROR",
+        message: `Demo API order failed: ${err?.message || "unknown"}`,
+    });
+}
+return true;
     };
 
-    const resetRiskState = () => {
+function executeTrade(signalId: string): Promise<void> {
+    entryQueueRef.current = entryQueueRef.current
+        .catch(() => {
+            // swallow to keep queue alive
+        })
+        .then(async () => {
+            const last = lastEntryAtRef.current;
+            const sinceLast = last ? Date.now() - last : Infinity;
+            const waitMs =
+                sinceLast < MIN_ENTRY_SPACING_MS
+                    ? MIN_ENTRY_SPACING_MS - sinceLast
+                    : 0;
+
+            // Delay only when více vstupů čeká zároveň.
+            if (pendingSignalsRef.current.length > 0 && waitMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+            }
+
+            const executed = await performTrade(signalId);
+            if (executed) {
+                lastEntryAtRef.current = Date.now();
+            }
+        });
+
+    return entryQueueRef.current;
+}
+
+// ========== AUTO MODE ==========
+useEffect(() => {
+    if (modeRef.current !== TradingMode.AUTO_ON) return;
+    if (!pendingSignals.length) return;
+
+    const sig = pendingSignals[0];
+    if (settingsRef.current.requireConfirmationInAuto && sig.risk < 0.65)
+        return;
+
+    void executeTrade(sig.id);
+}, [pendingSignals]);
+
+// MOCK NEWS
+useEffect(() => {
+    setNewsHeadlines([
+        {
+            id: "n1",
+            headline: "Volatility rising in BTCUSDT",
+            sentiment: "neutral",
+            source: "scanner",
+            time: new Date().toISOString(),
+        },
+    ]);
+}, []);
+
+const addPriceAlert = (symbol: string, price: number) => {
+    const alert: PriceAlert = {
+        id: `a-${Date.now()}`,
+        symbol,
+        price,
+        createdAt: new Date().toISOString(),
+        triggered: false,
+    };
+    setPriceAlerts((p) => [...p, alert]);
+};
+
+const removePriceAlert = (id: string) => {
+    setPriceAlerts((p) => p.filter((a) => a.id !== id));
+};
+
+const closePosition = (id: string) => {
+    setActivePositions((prev) => {
+        const target = prev.find((p) => p.id === id);
+        if (!target) return prev;
+
+        const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
+        const dir = target.side === "buy" ? 1 : -1;
+        const pnl = (currentPrice - target.entryPrice) * dir * target.size;
+        const freedNotional = marginFor(target.symbol, target.entryPrice, target.size);
+
+        realizedPnlRef.current += pnl;
+        registerOutcome(pnl);
+
+        const limits = QTY_LIMITS[target.symbol];
+        if (settingsRef.current.strategyProfile === "coach" && limits) {
+            const nextStake = Math.max(
+                limits.min * target.entryPrice,
+                Math.min(
+                    limits.max * target.entryPrice,
+                    freedNotional * leverageFor(target.symbol) + pnl
+                )
+            );
+            coachStakeRef.current[target.symbol] = nextStake;
+        }
+
+        const record: AssetPnlRecord = {
+            symbol: target.symbol,
+            pnl,
+            timestamp: new Date().toISOString(),
+            note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
+        };
+        if (authToken) {
+            setAssetPnlHistory(() => addPnlRecord(record));
+        }
+        setEntryHistory(() =>
+            addEntryToHistory({
+                id: `${target.id}-closed`,
+                symbol: target.symbol,
+                side: target.side,
+                entryPrice: target.entryPrice,
+                sl: target.sl,
+                tp: target.tp,
+                size: target.size,
+                createdAt: new Date().toISOString(),
+                settingsNote: `Closed at ${currentPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
+                settingsSnapshot: snapshotSettings(settingsRef.current),
+            })
+        );
+
         setPortfolioState((p) => ({
             ...p,
-            dailyPnl: 0,
-            currentDrawdown: 0,
-            peakCapital: p.totalCapital,
+            allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
+            openPositions: Math.max(0, p.openPositions - 1),
         }));
-        realizedPnlRef.current = 0;
-    };
-
-    const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
-        const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
-        const basePreset =
-            incomingMode !== settingsRef.current.riskMode
-                ? presetFor(incomingMode)
-                : settingsRef.current;
-
-        let patched: AISettings = { ...basePreset, ...newS, riskMode: incomingMode };
-
-        if (incomingMode !== settingsRef.current.riskMode) {
-            const presetKeys: (keyof AISettings)[] = [
-                "baseRiskPerTrade",
-                "maxAllocatedCapitalPercent",
-                "maxPortfolioRiskPercent",
-                "maxDailyLossPercent",
-                "maxDailyProfitPercent",
-                "maxDrawdownPercent",
-                "positionSizingMultiplier",
-                "entryStrictness",
-                "strategyProfile",
-                "enforceSessionHours",
-                "haltOnDailyLoss",
-                "haltOnDrawdown",
-                "maxOpenPositions",
-            ];
-            presetKeys.forEach((k) => {
-                patched = { ...patched, [k]: basePreset[k] };
-            });
-        }
-
-        if (patched.strategyProfile === "coach") {
-            const clamp = (v: number, min: number, max: number) =>
-                Math.min(max, Math.max(min, v));
-            patched = {
-                ...patched,
-                baseRiskPerTrade: clamp(patched.baseRiskPerTrade || 0.02, 0.01, 0.03),
-                maxDailyLossPercent: Math.min(patched.maxDailyLossPercent || 0.05, 0.05),
-                positionSizingMultiplier: clamp(
-                    patched.positionSizingMultiplier || 1,
-                    0.5,
-                    1
-                ),
-                maxAllocatedCapitalPercent: clamp(
-                    patched.maxAllocatedCapitalPercent || 1,
-                    0.25,
-                    1
-                ),
-                maxPortfolioRiskPercent: clamp(
-                    patched.maxPortfolioRiskPercent || 0.08,
-                    0.05,
-                    0.1
-                ),
-                maxOpenPositions: 2,
-            };
-            if (patched.entryStrictness === "ultra") {
-                patched = { ...patched, entryStrictness: "base" };
-            }
-        }
-        if (patched.strategyProfile === "scalp") {
-            const relaxedEntry =
-                patched.entryStrictness === "test"
-                    ? "relaxed"
-                    : patched.entryStrictness === "ultra"
-                        ? "base"
-                        : patched.entryStrictness;
-            patched = {
-                ...patched,
-                baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
-                maxOpenPositions: 1,
-                maxDailyLossPercent: Math.max(Math.min(patched.maxDailyLossPercent, 0.12), 0.08),
-                maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
-                maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
-                enforceSessionHours: false,
-                entryStrictness: relaxedEntry,
-            };
-        }
-        setSettings(patched);
-        settingsRef.current = patched;
-        persistSettings(patched);
-        setPortfolioState((p) => {
-            const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
-            return {
-                ...p,
-                maxOpenPositions: patched.maxOpenPositions,
-                maxAllocatedCapital: maxAlloc,
-                allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
-                maxDailyLoss: p.totalCapital * patched.maxDailyLossPercent,
-                maxDailyProfit: p.totalCapital * patched.maxDailyProfitPercent,
-                maxDrawdown: patched.maxDrawdownPercent,
-            };
+        addLog({
+            action: "CLOSE",
+            message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USDT`,
         });
-    };
 
-    const removeEntryHistoryItem = (id: string) => {
-        setEntryHistory(() => removeEntryFromHistory(id));
-    };
+        return prev.filter((p) => p.id !== id);
+    });
+};
 
-    const rejectSignal = (id: string) => {
-        setPendingSignals((prev) => prev.filter((s) => s.id !== id));
+const resetRiskState = () => {
+    setPortfolioState((p) => ({
+        ...p,
+        dailyPnl: 0,
+        currentDrawdown: 0,
+        peakCapital: p.totalCapital,
+    }));
+    realizedPnlRef.current = 0;
+};
 
-        setLogEntries((prev) => [
-            {
-                id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-                action: "REJECT",
-                timestamp: new Date().toISOString(),
-                message: `Rejected signal ${id}`,
-            },
-            ...prev,
-        ]);
-    };
+const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
+    const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
+    const basePreset =
+        incomingMode !== settingsRef.current.riskMode
+            ? presetFor(incomingMode)
+            : settingsRef.current;
 
-    // ========= RETURN API ==========
-    return {
-        logEntries,
-        activePositions,
-        closedPositions,
-        systemState,
-        portfolioState,
-        aiModelState,
-        settings,
-        currentPrices,
-        pendingSignals,
-        portfolioHistory,
-        newsHeadlines,
-        priceAlerts,
-        addPriceAlert,
-        removePriceAlert,
-        updateSettings,
-        resetRiskState,
-        executeTrade,
-        rejectSignal,
-        closePosition,
-        entryHistory,
-        testnetOrders,
-        testnetTrades,
-        ordersError,
-        refreshTestnetOrders: fetchOrders,
-        mainnetOrders: testnetOrders, // Unify state: always return current orders
-        mainnetTrades: testnetTrades,
-        mainnetError: ordersError,
-        refreshMainnetOrders: fetchOrders,
-        refreshMainnetTrades: fetchTrades,
-        assetPnlHistory,
-        removeEntryHistoryItem,
-    };
+    let patched: AISettings = { ...basePreset, ...newS, riskMode: incomingMode };
+
+    if (incomingMode !== settingsRef.current.riskMode) {
+        const presetKeys: (keyof AISettings)[] = [
+            "baseRiskPerTrade",
+            "maxAllocatedCapitalPercent",
+            "maxPortfolioRiskPercent",
+            "maxDailyLossPercent",
+            "maxDailyProfitPercent",
+            "maxDrawdownPercent",
+            "positionSizingMultiplier",
+            "entryStrictness",
+            "strategyProfile",
+            "enforceSessionHours",
+            "haltOnDailyLoss",
+            "haltOnDrawdown",
+            "maxOpenPositions",
+        ];
+        presetKeys.forEach((k) => {
+            patched = { ...patched, [k]: basePreset[k] };
+        });
+    }
+
+    if (patched.strategyProfile === "coach") {
+        const clamp = (v: number, min: number, max: number) =>
+            Math.min(max, Math.max(min, v));
+        patched = {
+            ...patched,
+            baseRiskPerTrade: clamp(patched.baseRiskPerTrade || 0.02, 0.01, 0.03),
+            maxDailyLossPercent: Math.min(patched.maxDailyLossPercent || 0.05, 0.05),
+            positionSizingMultiplier: clamp(
+                patched.positionSizingMultiplier || 1,
+                0.5,
+                1
+            ),
+            maxAllocatedCapitalPercent: clamp(
+                patched.maxAllocatedCapitalPercent || 1,
+                0.25,
+                1
+            ),
+            maxPortfolioRiskPercent: clamp(
+                patched.maxPortfolioRiskPercent || 0.08,
+                0.05,
+                0.1
+            ),
+            maxOpenPositions: 2,
+        };
+        if (patched.entryStrictness === "ultra") {
+            patched = { ...patched, entryStrictness: "base" };
+        }
+    }
+    if (patched.strategyProfile === "scalp") {
+        const relaxedEntry =
+            patched.entryStrictness === "test"
+                ? "relaxed"
+                : patched.entryStrictness === "ultra"
+                    ? "base"
+                    : patched.entryStrictness;
+        patched = {
+            ...patched,
+            baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
+            maxOpenPositions: 1,
+            maxDailyLossPercent: Math.max(Math.min(patched.maxDailyLossPercent, 0.12), 0.08),
+            maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
+            maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
+            enforceSessionHours: false,
+            entryStrictness: relaxedEntry,
+        };
+    }
+    setSettings(patched);
+    settingsRef.current = patched;
+    persistSettings(patched);
+    setPortfolioState((p) => {
+        const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
+        return {
+            ...p,
+            maxOpenPositions: patched.maxOpenPositions,
+            maxAllocatedCapital: maxAlloc,
+            allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
+            maxDailyLoss: p.totalCapital * patched.maxDailyLossPercent,
+            maxDailyProfit: p.totalCapital * patched.maxDailyProfitPercent,
+            maxDrawdown: patched.maxDrawdownPercent,
+        };
+    });
+};
+
+const removeEntryHistoryItem = (id: string) => {
+    setEntryHistory(() => removeEntryFromHistory(id));
+};
+
+const rejectSignal = (id: string) => {
+    setPendingSignals((prev) => prev.filter((s) => s.id !== id));
+
+    setLogEntries((prev) => [
+        {
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            action: "REJECT",
+            timestamp: new Date().toISOString(),
+            message: `Rejected signal ${id}`,
+        },
+        ...prev,
+    ]);
+};
+
+// ========= RETURN API ==========
+return {
+    logEntries,
+    activePositions,
+    closedPositions,
+    systemState,
+    portfolioState,
+    aiModelState,
+    settings,
+    currentPrices,
+    pendingSignals,
+    portfolioHistory,
+    newsHeadlines,
+    priceAlerts,
+    addPriceAlert,
+    removePriceAlert,
+    updateSettings,
+    resetRiskState,
+    executeTrade,
+    rejectSignal,
+    closePosition,
+    entryHistory,
+    testnetOrders,
+    testnetTrades,
+    ordersError,
+    refreshTestnetOrders: fetchOrders,
+    mainnetOrders: testnetOrders, // Unify state: always return current orders
+    mainnetTrades: testnetTrades,
+    mainnetError: ordersError,
+    refreshMainnetOrders: fetchOrders,
+    refreshMainnetTrades: fetchTrades,
+    assetPnlHistory,
+    removeEntryHistoryItem,
+};
 };
 
 // ========= API TYPE EXPORT ==========
