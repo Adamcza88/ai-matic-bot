@@ -77,6 +77,7 @@ export type TradeIntent = {
   entry?: number;
   sl?: number;
   tp?: number;
+  trailingStopDistance?: number; // New: optional trailing stop
   reduceOnly?: boolean;  // New
 }
 

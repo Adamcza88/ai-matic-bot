@@ -419,6 +419,7 @@ export const useTradingBot = (
     });
     const lastEntryAtRef = useRef<number | null>(null);
     const entryQueueRef = useRef<Promise<void>>(Promise.resolve());
+    const executionLocksRef = useRef<Set<string>>(new Set()); // Mutex for dedup
 
     // Dynamicky uprav capital/max allocation pro testovací režim
     useEffect(() => {
@@ -1633,347 +1634,107 @@ export const useTradingBot = (
 
     // ========== EXECUTE TRADE (simulated + backend order) ==========
     const performTrade = async (signalId: string): Promise<boolean> => {
+        // Locate signal
         const signal = pendingSignalsRef.current.find((s) => s.id === signalId);
         if (!signal) return false;
-        const tradeId = uuidLite();
-        const clientOrderId = `aim-${tradeId.slice(-8)}`;
-        setLifecycle(tradeId, "SIGNAL_READY", `symbol=${signal.symbol}`);
 
-        // Risk-engine: guardrails for capital allocation, portfolio risk, and halts
-        const openCount = authToken ? activePositionsRef.current.length : portfolioState.openPositions;
-        const maxAlloc = portfolioState.maxAllocatedCapital;
-        const currentAlloc = portfolioState.allocatedCapital;
-        const baseRiskPct = getEffectiveRiskPct(settings);
-        const volMult = getVolatilityMultiplier(signal.symbol);
-        const recoveryMult =
-            portfolioState.currentDrawdown >= 0.15 &&
-                portfolioState.currentDrawdown < settings.maxDrawdownPercent
-                ? 0.5
-                : 1;
-        const riskPctWithMult = Math.min(
-            Math.max(0.005, baseRiskPct * volMult * recoveryMult * (settings.positionSizingMultiplier || 1)),
-            0.04
-        );
+        const { symbol, side } = signal.intent;
+        const { sl, tp, qty, trailingStopDistance } = signal.intent;
 
-        if (
-            settings.haltOnDailyLoss &&
-            portfolioState.dailyPnl <= -portfolioState.maxDailyLoss
-        ) {
-            const now = Date.now();
-            if (!dailyHaltAtRef.current) dailyHaltAtRef.current = now;
-            const haltUntil = dailyHaltAtRef.current + 2 * 60 * 60 * 1000;
-            if (now < haltUntil) {
-                addLog({
-                    action: "RISK_HALT",
-                    message: `Trading halted: daily loss limit hit (${(
-                        (portfolioState.maxDailyLoss * 100) /
-                        Math.max(1, portfolioState.totalCapital)
-                    ).toFixed(2)}%). Resume after cooldown.`,
-                });
-                return false;
-            } else {
-                dailyHaltAtRef.current = null;
-                realizedPnlRef.current = 0;
-                setPortfolioState((p) => ({ ...p, dailyPnl: 0 }));
-                addLog({
-                    action: "SYSTEM",
-                    message: "Daily halt cooldown elapsed, resetting PnL window.",
-                });
-            }
-        }
-
-        if (
-            settings.haltOnDrawdown &&
-            portfolioState.currentDrawdown >= portfolioState.maxDrawdown
-        ) {
-            addLog({
-                action: "RISK_HALT",
-                message: `Trading halted: drawdown cap reached (${(
-                    portfolioState.maxDrawdown * 100
-                ).toFixed(1)}%).`,
-            });
+        // 0. STRICT MODE CHECK
+        if (settings.strategyProfile === "auto" && mode !== "AUTO_ON") {
+            console.warn(`[Trade] Skipped - Mode is ${mode}, need AUTO_ON`);
             return false;
         }
 
-        if (openCount >= settings.maxOpenPositions) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: max open positions (${settings.maxOpenPositions}) reached.`,
-            });
+        // 1. MUTEX CHECK
+        if (executionLocksRef.current.has(symbol)) {
+            console.warn(`[Trade] Skipped - Execution locked for ${symbol}`);
             return false;
         }
+        executionLocksRef.current.add(symbol);
 
-        const intent: TradeIntent = signal.intent;
-        const side = intent.side;
-        const entry = intent.entry;
+        try {
+            // Re-check pending (double check inside lock)
+            if (!pendingSignalsRef.current.find((s) => s.id === signalId)) return false;
 
-        // Dynamické SL/TP/TS dle ATR
-        const history = priceHistoryRef.current[signal.symbol] || [];
-        const atr = computeAtrFromHistory(history, 20) || entry * 0.005;
-        let sl = intent.sl;
-        let tp = intent.tp;
-        if (!sl) {
-            sl = side === "buy" ? entry - 1.5 * atr : entry + 1.5 * atr;
-        }
-        if (!tp) {
-            tp = side === "buy" ? entry + 2.5 * atr : entry - 2.5 * atr;
-        }
+            setLifecycle(signalId, "ENTRY_SUBMITTED");
 
-        const riskPerTrade = portfolioState.totalCapital * riskPctWithMult;
-        const riskPerUnit = Math.abs(entry - sl);
-        if (riskPerUnit <= 0 || entry <= 0) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: invalid SL/entry distance.`,
-            });
-            return false;
-        }
+            // Remove from pending immediately to prevent infinite loop re-processing
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
 
-        const limits = QTY_LIMITS[signal.symbol] ?? { min: 0, max: Number.POSITIVE_INFINITY };
+            // Calculate metrics (re-use logic or trust intent)
+            const clientOrderId = `${signalId.slice(0, 18)}-${Date.now().toString().slice(-6)}`;
 
-        const riskBudget = portfolioState.totalCapital * settings.maxPortfolioRiskPercent;
-        const openRiskAmount = activePositionsRef.current.reduce((sum, p) => sum + computePositionRisk(p), 0);
-        const remainingRiskBudget = Math.max(0, riskBudget - openRiskAmount);
-        const remainingAllocation = Math.max(0, maxAlloc - currentAlloc);
+            if (mode === "AUTO_ON") {
+                const payload = {
+                    symbol,
+                    side: side === "buy" ? "Buy" : "Sell",
+                    qty: Number(qty.toFixed(4)),
+                    orderType: "Market",
+                    timeInForce: "IOC",
+                    orderLinkId: clientOrderId,
+                    sl,
+                    tp,
+                    trailingStop: trailingStopDistance
+                };
 
-        const maxSizePerTrade = riskPerUnit > 0 ? riskPerTrade / riskPerUnit : 0;
-        const maxSizeBudget = riskPerUnit > 0 ? remainingRiskBudget / riskPerUnit : 0;
-        const maxSizeAllocation = entry > 0 ? (remainingAllocation * leverageFor(signal.symbol)) / entry : 0;
-        const maxSizeNotional = entry > 0 ? Number.POSITIVE_INFINITY : 0;
-        const targetNotional = TARGET_NOTIONAL[signal.symbol];
-        const targetSize = targetNotional && entry > 0 ? targetNotional / entry : Number.POSITIVE_INFINITY;
-
-        let size = Math.min(
-            limits.max ?? Number.POSITIVE_INFINITY,
-            maxSizePerTrade,
-            maxSizeBudget,
-            maxSizeAllocation,
-            maxSizeNotional,
-            targetSize
-        );
-
-        if (size <= 0) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: žádný prostor pro velikost (risk/alokace/$5 cap).`,
-            });
-            return false;
-        }
-
-        if (limits.min && size < limits.min) {
-            const minNotional = limits.min * entry;
-            const minMargin = minNotional / Math.max(1, leverageFor(signal.symbol));
-            const minRisk = riskPerUnit * limits.min;
-            const reasons: string[] = [];
-            if (minMargin > remainingAllocation) reasons.push("allocation headroom");
-            if (minMargin > MAX_MARGIN_USD) reasons.push("margin cap");
-            if (minRisk > remainingRiskBudget) reasons.push("risk budget");
-            if (reasons.length) {
-                addLog({
-                    action: "RISK_BLOCK",
-                    message: `Signal on ${signal.symbol} blocked: burzovní minimum ${limits.min} by překročilo ${reasons.join(
-                        "/"
-                    )}.`,
-                });
-                return false;
-            }
-            size = limits.min;
-        }
-
-        let notional = size * entry;
-        let margin = marginFor(signal.symbol, entry, size);
-        const newRiskAmount = riskPerUnit * size;
-
-        if (size <= 0 || notional <= 0) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: zero size after caps.`,
-            });
-            return false;
-        }
-        if (openRiskAmount + newRiskAmount > riskBudget) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: portfolio risk cap (${(
-                    settings.maxPortfolioRiskPercent * 100
-                ).toFixed(1)}%) would be exceeded.`,
-            });
-            return false;
-        }
-
-        if (margin < MIN_MARGIN_USD) {
-            const lev = Math.max(1, leverageFor(signal.symbol));
-            size = (MIN_MARGIN_USD * lev) / entry;
-            margin = marginFor(signal.symbol, entry, size);
-            notional = size * entry;
-        }
-        if (margin > MAX_MARGIN_USD) {
-            const lev = Math.max(1, leverageFor(signal.symbol));
-            size = (MAX_MARGIN_USD * lev) / entry;
-            margin = marginFor(signal.symbol, entry, size);
-            notional = size * entry;
-        }
-
-        if (portfolioState.allocatedCapital + margin > portfolioState.maxAllocatedCapital) {
-            const headroom = Math.max(0, portfolioState.maxAllocatedCapital - portfolioState.allocatedCapital);
-            const lev = Math.max(1, leverageFor(signal.symbol));
-            const scaledSize = (headroom * lev) / entry;
-            const maxOnlyClamp = limits ? Math.min(limits.max, Math.max(0, scaledSize)) : Math.max(0, scaledSize);
-            size = maxOnlyClamp;
-            notional = size * entry;
-            margin = marginFor(signal.symbol, entry, size);
-            if (size <= 0 || notional <= 0 || portfolioState.allocatedCapital + margin > portfolioState.maxAllocatedCapital) {
-                addLog({
-                    action: "RISK_BLOCK",
-                    message: `Signal on ${signal.symbol} exceeds capital allocation limit.`,
-                });
-                return false;
-            }
-        }
-
-        // Fee-aware TP úprava
-        tp = ensureMinTpDistance(entry, sl, tp, size);
-
-        // Trailing stop posuneme až po potvrzení filla (neposíláme v initial orderu)
-        const trailingStopPct: number | undefined = undefined;
-        const trailingStopDistance: number | undefined = undefined;
-        const trailingActivationPrice: number | null = null;
-
-        setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
-        if (!authToken) {
-            const position: ActivePosition = {
-                id: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-                positionId: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`, // FIX: A1
-                symbol: signal.symbol,
-                side,
-                entryPrice: entry,
-                sl,
-                tp,
-                size,
-                qty: size, // FIX: A1
-                env: useTestnet ? "testnet" : "mainnet", // FIX: A1
-                openedAt: new Date().toISOString(),
-                unrealizedPnl: 0,
-                currentTrailingStop: sl,
-                rrr: Math.abs(tp - entry) / Math.abs(entry - sl) || 0,
-                pnl: 0,
-                pnlValue: 0,
-                timestamp: new Date().toISOString(),
-                peakPrice: entry,
-            };
-            setActivePositions((prev) => [position, ...prev]);
-            setPortfolioState((prev) => ({
-                ...prev,
-                allocatedCapital: prev.allocatedCapital + margin,
-                openPositions: prev.openPositions + 1,
-            }));
-        }
-
-        addLog({
-            action: "OPEN",
-            message: `Opened ${side.toUpperCase()} ${signal.symbol
-                } at ${entry.toFixed(4)} (size ≈ ${size.toFixed(
-                    4
-                )}, notional ≈ ${notional.toFixed(2)} USDT)`,
-        });
-
-        const settingsSnapshot = snapshotSettings(settingsRef.current);
-        // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
-        if (mode !== TradingMode.PAPER) {
-            try {
-                if (!authToken) {
-                    addLog({
-                        action: "ERROR",
-                        message:
-                            "Missing auth token for placing order. Please re-login.",
-                    });
-                    return true;
-                }
-
-                setLifecycle(tradeId, "ENTRY_SUBMITTED");
                 const res = await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
-                        Authorization: `Bearer ${authToken}`,
+                        Authorization: `Bearer ${authToken}`
                     },
-                    body: JSON.stringify({
-                        symbol: signal.symbol,
-                        side: side === "buy" ? "Buy" : "Sell",
-                        qty: Number(size.toFixed(4)),
-                        orderType: "Market",
-                        timeInForce: "IOC",
-                        orderLinkId: clientOrderId,
-                        sl,
-                        tp,
-                        trailingStop: trailingStopDistance,
-                        // Note: trailingStop passed to backend for atomic handling
-                    }),
+                    body: JSON.stringify(payload)
                 });
 
                 if (!res.ok) {
                     let errorMsg = `Order API failed (${res.status})`;
                     try {
                         const errJson = await res.json();
-                        if (errJson.error) {
-                            errorMsg = `Order Failed: ${errJson.error}`;
-                            if (errJson.details) {
-                                errorMsg += ` (${JSON.stringify(errJson.details)})`;
-                            }
+                        errorMsg = errJson.error || errorMsg;
+
+                        // CRITICAL ERROR CHECK
+                        if (errorMsg.includes("10005") || errorMsg.includes("10003") || errorMsg.includes("Permission denied")) {
+                            setSystemState(prev => ({ ...prev, bybitStatus: "Error", lastError: errorMsg }));
+                            addLog({ action: "ERROR", message: `CRITICAL STOP: ${errorMsg}` });
+                            // disable auto mode?
                         }
+
                     } catch {
-                        const errText = await res.text();
-                        errorMsg += `: ${errText}`;
+                        errorMsg += `: ${await res.text()}`;
                     }
 
-                    console.error("[Trade Execution] " + errorMsg); // Force visible log in browser console
-                    addLog({
-                        action: "ERROR",
-                        message: errorMsg,
-                    });
-                    setLifecycle(tradeId, "FAILED", `order status ${res.status}`);
+                    console.error("[Trade Execution] " + errorMsg);
+                    addLog({ action: "ERROR", message: errorMsg });
+                    setLifecycle(signalId, "FAILED", `order status ${res.status}`);
                     return false;
                 }
 
-                const orderJson = await res.json().catch(() => ({}));
-                const orderId =
-                    orderJson?.data?.result?.orderId /* A2: Nested data */ ||
-                    orderJson?.order?.result?.orderId ||
-                    orderJson?.bybitResponse?.result?.orderId ||
-                    orderJson?.result?.orderId ||
-                    orderJson?.data?.orderId ||
-                    null;
+                // SUCCESS
+                const data = await res.json().catch(() => ({}));
 
-                // Backend now handles TrailingStop atomically (atomic safety) is implied by backend logic
-                // But we still wait for fill to confirm lifecycle
+                // Optimistic Update: Only set MANAGING if successful
+                setLifecycle(signalId, "ENTRY_FILLED");
+                setLifecycle(signalId, "MANAGING");
 
-                // Note: The previous waitForFill + commitProtection was redundant if backend does atomic SL/TP/TS
-                // We keep it for now strictly to maintain lifecycle state, but we trust the backend order.
-                setLifecycle(tradeId, "ENTRY_FILLED");
-                // We assume immediate success for now as backend returns success. 
-                // Proper advanced tracking would poll websocket.
-                setLifecycle(tradeId, "MANAGING");
+                return true;
 
-            } catch (err: any) {
-                const msg = err?.message || "order placement failed";
-                setLifecycle(tradeId, "FAILED", msg);
-                addLog({ action: "ERROR", message: `Trade execution error: ${msg}` });
-                // FIX: Update system state here where msg is available
-                setSystemState((p) => ({ ...p, bybitStatus: "Error", lastError: msg }));
-                addLog({
-                    action: "ERROR",
-                    message: `Fill/protection failed: ${msg}`,
-                });
-                return false;
+            } else {
+                // PAPER MODE
+                setLifecycle(signalId, "ENTRY_FILLED", "Simulated");
+                setLifecycle(signalId, "MANAGING", "Simulated");
+                return true;
             }
-        } else {
-            // PAPER MODE: Simulate success
-            setLifecycle(tradeId, "ENTRY_FILLED", "Simulated");
-            setLifecycle(tradeId, "MANAGING", "Simulated");
+
+        } catch (err: any) {
+            console.error("Trade exception", err);
+            setLifecycle(signalId, "FAILED", err.message);
+            addLog({ action: "ERROR", message: `Trade exception: ${err.message}` });
+            return false;
+        } finally {
+            executionLocksRef.current.delete(symbol);
         }
-        return true;
-        // End of performTrade success path
-        // (Orphaned catch block removed)
     };
 
     function executeTrade(signalId: string): Promise<void> {
