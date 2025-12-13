@@ -20,60 +20,45 @@ function sign(payload, apiSecret) {
 }
 
 // Statická definice limitů pro hlavní páry (fallback pro Mainnet)
-const SYMBOL_CONSTRAINTS = {
-  BTCUSDT: { minQty: 0.001, stepSize: 0.001, minNotional: 5 },
-  ETHUSDT: { minQty: 0.01, stepSize: 0.01, minNotional: 5 },
-  SOLUSDT: { minQty: 0.1, stepSize: 0.1, minNotional: 5 },
-  ADAUSDT: { minQty: 10, stepSize: 1, minNotional: 5 },
-  MATICUSDT: { minQty: 10, stepSize: 1, minNotional: 5 },
-  XRPUSDT: { minQty: 10, stepSize: 1, minNotional: 5 },
-  LTCUSDT: { minQty: 0.1, stepSize: 0.1, minNotional: 5 },
-  DOGEUSDT: { minQty: 100, stepSize: 10, minNotional: 5 }, // Conservative
-};
+import { metric } from "./metrics.js";
 
-function normalizeQty(symbol, qtyInput, priceInput = 0) {
+import { getInstrumentInfo } from "./instrumentCache.js";
+import { withRetry } from "./httpRetry.js";
+
+async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true) {
   let q = Number(qtyInput);
 
   if (!Number.isFinite(q) || q <= 0) {
     throw new Error(`Invalid qty value: ${qtyInput}`);
   }
 
-  // Fallback defaults if symbol unknown (conservative 2 decimals)
-  const defaults = { minQty: 0.01, stepSize: 0.01, minNotional: 5 };
-  const limits = SYMBOL_CONSTRAINTS[symbol] || defaults;
+  // Fetch real constraints from cache/API
+  const limits = await getInstrumentInfo(symbol, useTestnet);
 
   // 1. Min Qty check
   if (q < limits.minQty) {
-    // If input is less than min, we must either clamp up or fail.
-    // Clamping up is safer for "ensure entry", but might exceed risk.
-    // Here we clamp to minQty to prevent API rejection.
     q = limits.minQty;
   }
 
-  // 2. Step Size rounding (floor to avoid exceeding risk/balance)
-  // inverse of stepSize usually 1/step. e.g. 1/0.001 = 1000
+  // 2. Step Size rounding
+  // Precision derived from stepSize (e.g. 0.001 -> 1000)
   const precision = Math.round(1 / limits.stepSize);
   q = Math.floor(q * precision) / precision;
 
   // 3. Min Notional check
-  // We only check this if we have a price > 0.
-  // If price is 0 (e.g. unknown market price), we rely on MinQty being sufficient for typical prices.
   if (priceInput > 0) {
     const notional = q * priceInput;
     if (notional < limits.minNotional) {
-      // Try to bump Qty to meet minNotional
       const reqQty = limits.minNotional / priceInput;
-      // Re-normalize this new required qty
       const bumpedQty = Math.ceil(reqQty * precision) / precision;
       q = Math.max(q, bumpedQty);
     }
   }
 
-  // Ensure strict safety cap from legacy code just in case
+  // Ensure strict safety cap from legacy code
   if (q > 100000) q = 100000;
 
-  // Formatting: remove scientific notation, use fixed precision based on step
-  // count decimals in stepSize: 0.001 -> 3
+  // Formatting
   const decimals = (limits.stepSize.toString().split(".")[1] || "").length;
   return q.toFixed(decimals);
 }
@@ -122,7 +107,7 @@ function buildSignedGet(pathWithQuery, creds, useTestnet) {
  */
 // Pomocná funkce pro odstranění prázdných hodnot (undefined, null, "")
 // Mainnet je striktní a nesnáší prázdné stringy u numerických polí (např. price u Market orderu)
-function cleanObject(obj) {
+export function cleanObject(obj) {
   return Object.entries(obj).reduce((acc, [key, val]) => {
     if (val !== undefined && val !== null && val !== "") {
       acc[key] = val;
@@ -131,15 +116,45 @@ function cleanObject(obj) {
   }, {});
 }
 
+export function validatePayload(payload) {
+  const REQUIRED = ["category", "symbol", "side", "orderType", "qty"];
+  const missing = REQUIRED.filter((k) => !payload[k]);
+  if (missing.length) {
+    throw new Error(`Missing required fields: ${missing.join(", ")}`);
+  }
+  if (payload.category !== "linear") {
+    throw new Error(`Invalid category: ${payload.category}. Must be 'linear'.`);
+  }
+}
+
+export function signOnly(payload, creds) {
+  ensureConfigured(creds);
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  const bodyStr = JSON.stringify(cleanObject(payload));
+  const signPayload = timestamp + creds.apiKey + recvWindow + bodyStr;
+  const signature = sign(signPayload, creds.apiSecret);
+
+  return {
+    headers: {
+      "X-BAPI-API-KEY": creds.apiKey,
+      "X-BAPI-SIGN": signature,
+      "X-BAPI-SIGN-TYPE": "2",
+      "X-BAPI-TIMESTAMP": timestamp,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+    },
+    body: bodyStr
+  };
+}
+
 export async function createDemoOrder(order, creds, useTestnet = true) {
   ensureConfigured(creds);
 
-  const timestamp = Date.now().toString();
-  const recvWindow = "5000";
+  // Attempt to estimate price for Min Notional check (timestamp decl removed)
 
   // Attempt to estimate price for Min Notional check
   const estimatedPrice = order.price ? Number(order.price) : 0;
-  const safeQty = normalizeQty(order.symbol, order.qty, estimatedPrice);
+  const safeQty = await normalizeQty(order.symbol, order.qty, estimatedPrice, useTestnet);
 
   // === 1) CREATE ORDER ===
   const rawBody = {
@@ -192,7 +207,7 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   let result;
 
   try {
-    const orderRes = await axios.post(`${resolveBase(useTestnet)}/v5/order/create`, orderBody, {
+    const orderRes = await withRetry(() => axios.post(`${resolveBase(useTestnet)}/v5/order/create`, orderBody, {
       headers: {
         "X-BAPI-API-KEY": creds.apiKey,
         "X-BAPI-SIGN": orderSign,
@@ -201,7 +216,7 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
         "X-BAPI-RECV-WINDOW": recvWindow,
         "Content-Type": "application/json", // FIX 4: Mandatory Header
       },
-    });
+    }));
 
     logContext.response = orderRes.data;
 
@@ -214,12 +229,10 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
 
     result = orderRes.data;
 
-    // Check logic error immediately
-    if (result.retCode !== 0) {
-      return result;
-    }
-
+    metric("order_success", { env: logContext.env, symbol: order.symbol });
+    return result;
   } catch (error) {
+    metric("order_failure", { env: logContext.env, symbol: order.symbol, error: error.message });
     logContext.error = error.message || String(error);
     if (error.response) {
       logContext.response = error.response.data;
@@ -262,9 +275,6 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
 export async function setTradingStop(protection, creds, useTestnet = true) {
   ensureConfigured(creds);
 
-  const tsTimestamp = Date.now().toString();
-  const recvWindow = "5000";
-
   const rawTsBody = {
     category: "linear",
     symbol: protection.symbol,
@@ -295,7 +305,7 @@ export async function setTradingStop(protection, creds, useTestnet = true) {
   const tsPayload = tsTimestamp + creds.apiKey + recvWindow + bodyStr;
   const tsSign = sign(tsPayload, creds.apiSecret);
 
-  const tsRes = await axios.post(
+  const tsRes = await withRetry(() => axios.post(
     `${resolveBase(useTestnet)}/v5/position/trading-stop`,
     tsBody,
     {
@@ -308,7 +318,7 @@ export async function setTradingStop(protection, creds, useTestnet = true) {
         "Content-Type": "application/json",
       },
     }
-  );
+  ));
 
   // FIX 9: Mandatory Audit Log
   const tsLogContext = {
