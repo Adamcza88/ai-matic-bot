@@ -469,7 +469,10 @@ export const useTradingBot = (
         }
         try {
             setOrdersError(null);
-            const res = await fetch(`${apiBase}${apiPrefix}/orders?net=${useTestnet ? "testnet" : "mainnet"}`, {
+            const url = new URL(`${apiBase}${apiPrefix}/orders`);
+            url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
+            url.searchParams.set("settleCoin", "USDT");
+            const res = await fetch(url.toString(), {
                 headers: {
                     Authorization: `Bearer ${authToken}`,
                 },
@@ -512,7 +515,10 @@ export const useTradingBot = (
         let cancel = false;
         const fetchPositions = async () => {
             try {
-                const res = await fetch(`${apiBase}${apiPrefix}/positions?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                const url = new URL(`${apiBase}${apiPrefix}/positions`);
+                url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
+                url.searchParams.set("settleCoin", "USDT");
+                const res = await fetch(url.toString(), {
                     headers: { Authorization: `Bearer ${authToken}` },
                 });
                 if (!res.ok) {
@@ -742,7 +748,10 @@ export const useTradingBot = (
     const fetchPositionsOnce = useCallback(
         async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
             if (!authToken) return { list: [] };
-            const res = await fetch(`${apiBase}${apiPrefix}/positions?net=${net}`, {
+            const url = new URL(`${apiBase}${apiPrefix}/positions`);
+            url.searchParams.set("net", net);
+            url.searchParams.set("settleCoin", "USDT");
+            const res = await fetch(url.toString(), {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
             if (!res.ok) throw new Error(`Positions fetch failed (${res.status})`);
@@ -758,7 +767,10 @@ export const useTradingBot = (
     const fetchOrdersOnce = useCallback(
         async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
             if (!authToken) return { list: [] };
-            const res = await fetch(`${apiBase}${apiPrefix}/orders?net=${net}`, {
+            const url = new URL(`${apiBase}${apiPrefix}/orders`);
+            url.searchParams.set("net", net);
+            url.searchParams.set("settleCoin", "USDT");
+            const res = await fetch(url.toString(), {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
             if (!res.ok) throw new Error(`Orders fetch failed (${res.status})`);
