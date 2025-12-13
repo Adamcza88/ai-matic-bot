@@ -228,8 +228,9 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   // to ensure the matching engine has indexed the new position.
   if (order.trailingStop != null) {
     try {
-      console.log(`[createDemoOrder] Setting TrailingStop ${order.trailingStop} after 500ms delay...`);
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // FIX 7: Wait for Position Confirmation (Mainnet Strictness)
+      console.log(`[createDemoOrder] Waiting for position to confirm before setting TS...`);
+      await waitForPosition({ apiKey: creds.apiKey, apiSecret: creds.apiSecret }, order.symbol, useTestnet, 3000);
 
       const tsResult = await setTradingStop({
         symbol: order.symbol,
@@ -241,6 +242,8 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
       result.trailingStop = tsResult;
     } catch (err) {
       console.error("Bybit TrailingStop error:", err.response?.data || err.message);
+      // Don't fail the whole order if TS fails, but log strictly
+      result.trailingStopError = err.message;
     }
   }
 
@@ -308,6 +311,36 @@ export async function getDemoPositions(creds, useTestnet = true) {
   const res = await buildSignedGet(`/v5/position/list?${query}`, creds, useTestnet);
 
   return res.data;
+}
+
+/**
+ * FIX 7: Wait for Position (Latency Guard)
+ * Polls for position existence before allowing Trailing Stop set.
+ */
+export async function waitForPosition(creds, symbol, useTestnet = true, timeoutMs = 3000) {
+  const start = Date.now();
+  console.log(`[waitForPosition] Polling for ${symbol} position...`);
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const data = await getDemoPositions(creds, useTestnet);
+      // Bybit returns { retCode: 0, result: { list: [...] } }
+      // We check if any position for this symbol exists and has size > 0
+      const list = data?.result?.list || [];
+      const pos = list.find(p => p.symbol === symbol && Number(p.size) > 0);
+
+      if (pos) {
+        console.log(`[waitForPosition] Position found: ${pos.symbol} size=${pos.size}`);
+        return true;
+      }
+    } catch (err) {
+      console.warn(`[waitForPosition] Poll error: ${err.message}`);
+    }
+    // Wait 500ms before next poll
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  throw new Error(`Timeout waiting for position ${symbol} after ${timeoutMs}ms`);
 }
 
 export async function listDemoOrders(creds, { limit = 50, symbol, settleCoin = "USDT" } = {}, useTestnet = true) {

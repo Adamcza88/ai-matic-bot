@@ -33,6 +33,9 @@ app.get("/api/health", (req, res) => {
  * Returns a handler strictly bound to a specific network (Mainnet or Testnet).
  */
 const createOrderHandler = (isTestnet) => async (req, res) => {
+  const env = isTestnet ? "testnet" : "mainnet"; // derived from handler factory
+  const endpoint = `/api/${env}/order`;
+
   try {
     // HARD SEPARATION: Ignore query params, use the bound network
     const useTestnet = isTestnet;
@@ -42,15 +45,12 @@ const createOrderHandler = (isTestnet) => async (req, res) => {
       : null;
 
     if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
+      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
     }
 
     const user = await getUserFromToken(token);
-    const user = await getUserFromToken(token);
 
     // FIX 3: Strict Key Selection
-    // Since useTestnet is HARD bound by the handler factory, we know exactly which env to request.
-    const env = useTestnet ? "testnet" : "mainnet";
     let keys;
     try {
       keys = await getUserApiKeys(user.id, env);
@@ -58,12 +58,13 @@ const createOrderHandler = (isTestnet) => async (req, res) => {
       return res.status(400).json({
         ok: false,
         error: keyErr.message,
-        details: `Failed to load keys for ${env}. Please check API Key Settings.`
+        details: `Failed to load keys for ${env}. Please check API Key Settings.`,
+        env,
+        endpoint
       });
     }
 
     const { apiKey, apiSecret } = keys;
-    // (No further check needed as getUserApiKeys throws if missing)
 
     const {
       symbol,
@@ -82,6 +83,8 @@ const createOrderHandler = (isTestnet) => async (req, res) => {
       return res.status(400).json({
         ok: false,
         error: "Missing symbol/side/qty in request body",
+        env,
+        endpoint
       });
     }
 
@@ -97,7 +100,7 @@ const createOrderHandler = (isTestnet) => async (req, res) => {
       reduceOnly,
       orderType,
       timeInForce
-    }, { apiKey, apiSecret }, useTestnet); // Pass the HARD constant
+    }, { apiKey, apiSecret }, useTestnet);
 
     // CRITICAL: Explicit check for Bybit logic error
     if (orderResult.retCode !== 0) {
@@ -106,7 +109,9 @@ const createOrderHandler = (isTestnet) => async (req, res) => {
         ok: false,
         error: `Bybit Rejected: ${orderResult.retMsg}`,
         code: orderResult.retCode,
-        details: orderResult
+        details: orderResult,
+        env,
+        endpoint
       });
     }
 
@@ -117,9 +122,11 @@ const createOrderHandler = (isTestnet) => async (req, res) => {
     });
   } catch (err) {
     console.error(`POST ${req.path} error:`, err);
-    return res.status(500).json({
+    return res.status(400).json({ // FIX 8: Denial of Silent Errors
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
+      env,
+      endpoint
     });
   }
 };
@@ -131,38 +138,46 @@ app.post("/api/main/order", createOrderHandler(false)); // FORCE MAINNET
 /**
  * Přehled DEMO pozic z Bybit testnetu
  */
+/**
+ * Přehled DEMO pozic z Bybit testnetu
+ */
 app.get("/api/demo/positions", async (req, res) => {
+  const isTestnet = req.query.net !== "mainnet";
+  const env = isTestnet ? "testnet" : "mainnet";
+  const endpoint = "/api/demo/positions";
+
   try {
-    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
       : null;
 
     if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
+      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
     }
 
     const user = await getUserFromToken(token);
     // FIX 3: Strict Key Selection
     let keys;
     try {
-      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+      keys = await getUserApiKeys(user.id, env);
     } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message });
+      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
     }
     const { apiKey, apiSecret } = keys;
 
     const data = await getDemoPositions({
       apiKey,
       apiSecret,
-    }, useTestnet);
+    }, isTestnet);
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("GET /api/demo/positions error:", err);
-    res.status(500).json({
+    console.error(`GET ${endpoint} error:`, err);
+    res.status(400).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
+      env,
+      endpoint
     });
   }
 });
@@ -171,24 +186,27 @@ app.get("/api/demo/positions", async (req, res) => {
  * Přehled DEMO orders z Bybit testnetu
  */
 app.get("/api/demo/orders", async (req, res) => {
+  const isTestnet = req.query.net !== "mainnet";
+  const env = isTestnet ? "testnet" : "mainnet";
+  const endpoint = "/api/demo/orders";
+
   try {
-    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
       : null;
 
     if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
+      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
     }
 
     const user = await getUserFromToken(token);
     // FIX 3: Strict Key Selection
     let keys;
     try {
-      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+      keys = await getUserApiKeys(user.id, env);
     } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message });
+      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
     }
     const { apiKey, apiSecret } = keys;
 
@@ -199,240 +217,272 @@ app.get("/api/demo/orders", async (req, res) => {
 
     const clientParams = { limit, symbol, settleCoin };
     const data = isHistory
-      ? await listOrderHistory({ apiKey, apiSecret }, clientParams, useTestnet)
-      : await listDemoOrders({ apiKey, apiSecret }, clientParams, useTestnet);
+      ? await listOrderHistory({ apiKey, apiSecret }, clientParams, isTestnet)
+      : await listDemoOrders({ apiKey, apiSecret }, clientParams, isTestnet);
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("GET /api/demo/orders error:", err);
-    res.status(500).json({
+    console.error(`GET ${endpoint} error:`, err);
+    res.status(400).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
+      env,
+      endpoint
     });
   }
 });
 
 app.get("/api/demo/open-orders", async (req, res) => {
+  const isTestnet = req.query.net !== "mainnet";
+  const env = isTestnet ? "testnet" : "mainnet";
+  const endpoint = "/api/demo/open-orders";
+
   try {
-    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
       : null;
 
     if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
+      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
     }
 
     const user = await getUserFromToken(token);
     // FIX 3: Strict Key Selection
     let keys;
     try {
-      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+      keys = await getUserApiKeys(user.id, env);
     } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message });
+      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
     }
     const { apiKey, apiSecret } = keys;
 
     const data = await listDemoOpenOrders({
       apiKey,
       apiSecret,
-    }, {}, useTestnet);
+    }, {}, isTestnet);
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("GET /api/demo/open-orders error:", err);
-    res.status(500).json({
+    console.error(`GET ${endpoint} error:`, err);
+    res.status(400).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
+      env,
+      endpoint
     });
   }
 });
 
 app.get("/api/demo/trades", async (req, res) => {
+  const isTestnet = req.query.net !== "mainnet";
+  const env = isTestnet ? "testnet" : "mainnet";
+  const endpoint = "/api/demo/trades";
+
   try {
-    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
       : null;
 
     if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
+      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
     }
 
     const user = await getUserFromToken(token);
     // FIX 3: Strict Key Selection
     let keys;
     try {
-      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+      keys = await getUserApiKeys(user.id, env);
     } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message });
+      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
     }
     const { apiKey, apiSecret } = keys;
 
     const data = await listDemoTrades({
       apiKey,
       apiSecret,
-    }, {}, useTestnet);
+    }, {}, isTestnet);
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("GET /api/demo/trades error:", err);
-    res.status(500).json({
+    console.error(`GET ${endpoint} error:`, err);
+    res.status(400).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
+      env,
+      endpoint
     });
   }
 });
 
 app.get("/api/demo/executions", async (req, res) => {
+  const isTestnet = req.query.net !== "mainnet";
+  const env = isTestnet ? "testnet" : "mainnet";
+  const endpoint = "/api/demo/executions";
+
   try {
-    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
       : null;
 
     if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
+      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
     }
 
     const user = await getUserFromToken(token);
     // FIX 3: Strict Key Selection
     let keys;
     try {
-      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+      keys = await getUserApiKeys(user.id, env);
     } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message });
+      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
     }
     const { apiKey, apiSecret } = keys;
 
     const data = await listExecutions({
       apiKey,
       apiSecret,
-    }, { limit: Number(req.query.limit || 50), cursor: req.query.cursor }, useTestnet);
+    }, { limit: Number(req.query.limit || 50), cursor: req.query.cursor }, isTestnet);
 
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("GET /api/demo/executions error:", err);
-    res.status(500).json({
+    console.error(`GET ${endpoint} error:`, err);
+    res.status(400).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
+      env,
+      endpoint
     });
   }
 });
 
 app.get("/api/demo/closed-pnl", async (req, res) => {
+  const isTestnet = req.query.net !== "mainnet";
+  const env = isTestnet ? "testnet" : "mainnet";
+  const endpoint = "/api/demo/closed-pnl";
+
   try {
-    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
       : null;
 
     if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
+      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
     }
 
     const user = await getUserFromToken(token);
     // FIX 3: Strict Key Selection
     let keys;
     try {
-      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+      keys = await getUserApiKeys(user.id, env);
     } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message });
+      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
     }
     const { apiKey, apiSecret } = keys;
 
     const data = await listClosedPnl({
       apiKey,
       apiSecret,
-    }, { limit: Number(req.query.limit || 50), cursor: req.query.cursor }, useTestnet);
+    }, { limit: Number(req.query.limit || 50), cursor: req.query.cursor }, isTestnet);
 
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("GET /api/demo/closed-pnl error:", err);
-    res.status(500).json({
+    console.error(`GET ${endpoint} error:`, err);
+    res.status(400).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
+      env,
+      endpoint
     });
   }
 });
 
 app.post("/api/demo/protection", async (req, res) => {
+  const isTestnet = req.query.net !== "mainnet";
+  const env = isTestnet ? "testnet" : "mainnet";
+  const endpoint = "/api/demo/protection";
+
   try {
-    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
       : null;
 
     if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
+      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
     }
 
     const user = await getUserFromToken(token);
     // FIX 3: Strict Key Selection
     let keys;
     try {
-      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+      keys = await getUserApiKeys(user.id, env);
     } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message });
+      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
     }
     const { apiKey, apiSecret } = keys;
 
     const { symbol, sl, tp, trailingStop, positionIdx, slTriggerBy, tpTriggerBy } = req.body || {};
     if (!symbol) {
-      return res.status(400).json({ ok: false, error: "Missing symbol for protection" });
+      return res.status(400).json({ ok: false, error: "Missing symbol for protection", env, endpoint });
     }
 
     const data = await setTradingStop(
       { symbol, sl, tp, trailingStop, positionIdx, slTriggerBy, tpTriggerBy },
       { apiKey, apiSecret },
-      useTestnet
+      isTestnet
     );
 
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("POST /api/demo/protection error:", err);
-    res.status(500).json({
+    console.error(`POST ${endpoint} error:`, err);
+    res.status(400).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
+      env,
+      endpoint
     });
   }
 });
 
 app.get("/api/demo/wallet", async (req, res) => {
+  const isTestnet = req.query.net !== "mainnet";
+  const env = isTestnet ? "testnet" : "mainnet";
+  const endpoint = "/api/demo/wallet";
+
   try {
-    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
       : null;
 
     if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
+      return res.status(401).json({ ok: false, error: "Missing auth token", env, endpoint });
     }
 
     const user = await getUserFromToken(token);
     // FIX 3: Strict Key Selection
     let keys;
     try {
-      keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+      keys = await getUserApiKeys(user.id, env);
     } catch (keyErr) {
-      return res.status(400).json({ ok: false, error: keyErr.message });
+      return res.status(400).json({ ok: false, error: keyErr.message, env, endpoint });
     }
     const { apiKey, apiSecret } = keys;
 
     const data = await getWalletBalance({
       apiKey,
       apiSecret,
-    }, useTestnet);
+    }, isTestnet);
 
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("GET /api/demo/wallet error:", err);
-    res.status(500).json({
+    console.error(`GET ${endpoint} error:`, err);
+    res.status(400).json({
       ok: false,
       error: err?.response?.data || err.message || "Unknown error",
+      env,
+      endpoint
     });
   }
 });
