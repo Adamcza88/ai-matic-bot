@@ -790,8 +790,6 @@ export const useTradingBot = (
                 action: "ERROR",
                 message: `Protection not confirmed for ${symbol} after retries.`,
             });
-            safeHaltRef.current = true;
-            setSystemState((p) => ({ ...p, bybitStatus: "SAFE_HALT", lastError: "Protection failed" }));
             return false;
         },
         [apiBase, authToken, fetchPositionsOnce, setLifecycle, useTestnet]
@@ -893,10 +891,6 @@ export const useTradingBot = (
     const lastPositionsSyncAtRef = useRef<number>(0);
     const executionCursorRef = useRef<string | null>(null);
     const processedExecIdsRef = useRef<Set<string>>(new Set());
-    const safeHaltRef = useRef<boolean>(false);
-    const safeHaltUntilRef = useRef<number | null>(null);
-    const protectionFailureCountRef = useRef(0);
-    const fillFailureCountRef = useRef(0);
 
     const registerOutcome = (pnl: number) => {
         const win = pnl > 0;
@@ -1419,27 +1413,6 @@ export const useTradingBot = (
         const clientOrderId = `aim-${tradeId.slice(-8)}`;
         setLifecycle(tradeId, "SIGNAL_READY", `symbol=${signal.symbol}`);
 
-        if (safeHaltRef.current) {
-            const now = Date.now();
-            if (safeHaltUntilRef.current && now > safeHaltUntilRef.current) {
-                safeHaltRef.current = false;
-                protectionFailureCountRef.current = 0;
-                fillFailureCountRef.current = 0;
-                safeHaltUntilRef.current = null;
-                addLog({
-                    action: "SYSTEM",
-                    message: "SAFE_HALT cooldown elapsed, resuming signal processing.",
-                });
-            }
-        }
-        if (safeHaltRef.current) {
-            addLog({
-                action: "RISK_HALT",
-                message: "SAFE_HALT aktivní – nové obchody blokovány.",
-            });
-            return false;
-        }
-
         // Risk-engine: guardrails for capital allocation, portfolio risk, and halts
         const openCount = authToken ? activePositionsRef.current.length : portfolioState.openPositions;
         const maxAlloc = portfolioState.maxAllocatedCapital;
@@ -1704,33 +1677,18 @@ export const useTradingBot = (
             try {
                 const filled = await waitForFill(tradeId, signal.symbol);
                 setLifecycle(tradeId, "ENTRY_FILLED", `size=${filled?.size ?? "?"}`);
-                fillFailureCountRef.current = 0;
                 const protectionOk = await commitProtection(tradeId, signal.symbol, sl, tp, trailingStopDistance);
                 if (protectionOk) {
-                    protectionFailureCountRef.current = 0;
                     setLifecycle(tradeId, "MANAGING");
                 }
             } catch (err: any) {
-                setLifecycle(tradeId, "FAILED", err?.message || "fill/protection failed");
-                fillFailureCountRef.current += 1;
-                protectionFailureCountRef.current += 1;
                 const msg = err?.message || "fill/protection failed";
-                const threshold = 3;
-                if (protectionFailureCountRef.current >= threshold || fillFailureCountRef.current >= threshold) {
-                    safeHaltRef.current = true;
-                    safeHaltUntilRef.current = Date.now() + 5 * 60 * 1000; // 5 min cooldown
-                    setSystemState((p) => ({ ...p, bybitStatus: "SAFE_HALT", lastError: msg }));
-                    addLog({
-                        action: "RISK_HALT",
-                        message: `SAFE_HALT triggered after repeated fill/protection failures (${msg}). Cooldown 5m.`,
-                    });
-                } else {
-                    setSystemState((p) => ({ ...p, bybitStatus: "Error", lastError: msg }));
-                    addLog({
-                        action: "ERROR",
-                        message: `Fill/protection failed (${fillFailureCountRef.current}/${threshold}): ${msg}`,
-                    });
-                }
+                setLifecycle(tradeId, "FAILED", msg);
+                setSystemState((p) => ({ ...p, bybitStatus: "Error", lastError: msg }));
+                addLog({
+                    action: "ERROR",
+                    message: `Fill/protection failed: ${msg}`,
+                });
             }
         } catch (err: any) {
             addLog({
