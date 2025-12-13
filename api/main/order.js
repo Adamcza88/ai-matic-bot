@@ -1,4 +1,4 @@
-import { createDemoOrder } from "../../server/bybitClient.js";
+import { createDemoOrder, getWalletBalance } from "../../server/bybitClient.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 
 function setCors(res) {
@@ -32,8 +32,10 @@ export default async function handler(req, res) {
     const key = keys.apiKey;
     const secret = keys.apiSecret;
 
-    console.log(`[Order API] ${useTestnet ? "TESTNET" : "MAINNET"} Request for user ${user.id}`);
-    console.log(`[Order API] Keys resolved: Key=${key ? "***" + key.slice(-4) : "NULL"}, Secret=${secret ? "PRESENT" : "NULL"}`);
+    const envLabel = useTestnet ? "TESTNET" : "MAINNET";
+    const keyFingerprint = key ? `***${key.slice(-4)}` : "NULL";
+    console.log(`[Order API] ${envLabel} Request for user ${user.id}`);
+    console.log(`[Order API] Env=${envLabel} Key=${keyFingerprint} category=linear`);
 
     if (!key || !secret) {
       return res.status(400).json({
@@ -43,6 +45,22 @@ export default async function handler(req, res) {
           : "Bybit MAINNET API key/secret not configured for this user",
         details: "Check 'user_api_keys' table. Fallback to generic 'bybit api key' service is active.",
       });
+    }
+
+    // Fail-fast permission check (wallet balance) to surface retCode 10005/10003 early
+    try {
+      const wb = await getWalletBalance({ apiKey: key, apiSecret: secret }, useTestnet);
+      const rc = wb?.retCode ?? wb?.data?.retCode;
+      if (rc && rc !== 0) {
+        const rm = wb?.retMsg ?? wb?.data?.retMsg ?? "Unknown";
+        return res.status(400).json({
+          ok: false,
+          error: `Bybit permission check failed: retCode=${rc} ${rm}`,
+        });
+      }
+    } catch (e) {
+      console.error(`[Order API] Wallet check failed (${envLabel}):`, e?.message || e);
+      // continue to order attempt; Bybit will respond with retCode
     }
 
     const {
@@ -87,6 +105,7 @@ export default async function handler(req, res) {
       orderType,
       timeInForce,
       reduceOnly,
+      category: "linear",
     };
 
     const result = await createDemoOrder(

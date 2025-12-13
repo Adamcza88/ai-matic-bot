@@ -1,6 +1,6 @@
 // /api/demo/order.ts
 
-import { createDemoOrder } from "../../server/bybitClient.js";
+import { createDemoOrder, getWalletBalance } from "../../server/bybitClient.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 
 function setCors(res) {
@@ -58,6 +58,21 @@ export default async function handler(req, res) {
       reduceOnly,
     } = req.body || {};
 
+    // ===== QUICK PERMISSION CHECK =====
+    try {
+      const wb = await getWalletBalance({ apiKey: key, apiSecret: secret }, useTestnet);
+      const rc = wb?.retCode ?? wb?.data?.retCode;
+      if (rc && rc !== 0) {
+        const rm = wb?.retMsg ?? wb?.data?.retMsg ?? "Unknown";
+        return res.status(400).json({
+          ok: false,
+          error: `Bybit permission check failed: retCode=${rc} ${rm}`,
+        });
+      }
+    } catch {
+      // ignore
+    }
+
     // ===== VALIDACE =====
     const normalizedSide =
       typeof side === "string" ? side.trim().toLowerCase() : "";
@@ -90,6 +105,7 @@ export default async function handler(req, res) {
       orderType,
       timeInForce,
       reduceOnly,
+      category: "linear",
     };
 
     // ===== CALL BYBIT =====
