@@ -316,7 +316,27 @@ const computePositionRisk = (p: ActivePosition) => {
 
 // ========== HLAVNÍ HOOK ==========
 
-import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
+// Unified API Base URL helper
+// Note: getApiBase and useNetworkConfig are already imported at top-level
+// const { getApiBase } = useNetworkConfig(); // This hook usage was likely incorrect or redundant if getApiBase is a standalone utility or if we use the hook at component level.
+
+// Actually, looking at imports:
+// import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
+
+// We can just use getApiBase directly if it's a function, OR use the hook.
+// Let's assume getApiBase is a helper function.
+
+// FIX: Remove duplicate import if it exists as 'import ...' inside function? No, TS usually errors on top level duplicates. 
+// The error says "Duplicate identifier", implying it's declared twice in the same scope or file module scope.
+// Line 21 and 319. line 319 seems to contain `import ...`?
+
+// Let's just remove the lines around 319 if they are imports.
+// If they are destructurings: `const { ... } = ...`, and we already have them imported?
+
+// Wait, `getApiBase` is imported at top level. If we declare `const getApiBase = ...` inside a function, it shadows. 
+// But the error says "Duplicate identifier" at line 319. If it's a top-level import there, it's invalid JS/TS inside a function? Or is it another top-level import?
+// Let's look at the file content from view_file.
+
 
 // ... existing imports ...
 
@@ -1226,6 +1246,7 @@ export const useTradingBot = (
                                             risk: 0.8,
                                             createdAt: new Date().toISOString(),
                                             ...coachSignal,
+                                            intent: { ...coachSignal.intent, symbol, qty: 0 }, // FIX: Enrich intent
                                         },
                                         ...prev,
                                     ]);
@@ -1244,6 +1265,7 @@ export const useTradingBot = (
                                             risk: 0.5,
                                             createdAt: new Date().toISOString(),
                                             ...situational,
+                                            intent: { ...situational.intent, symbol, qty: 0 }, // FIX: Enrich intent
                                         },
                                         ...prev,
                                     ]);
@@ -1288,7 +1310,10 @@ export const useTradingBot = (
                             );
                             const signal = decision?.signal;
                             if (signal) {
-                                setPendingSignals((prev) => [signal, ...prev]);
+                                setPendingSignals((prev) => [
+                                    { ...signal, symbol, intent: { ...signal.intent, symbol, qty: 0 } }, // FIX: Enrich intent
+                                    ...prev
+                                ]);
                                 addLog({
                                     action: "SIGNAL",
                                     message: `${signal.intent.side} ${symbol} @ ${signal.intent.entry} | TESTNET=${useTestnet}`,
@@ -1324,13 +1349,16 @@ export const useTradingBot = (
                                             : pos.entryPrice -
                                             1.2 * (safeSl - pos.entryPrice);
                                 const mapped: ActivePosition = {
+                                    positionId: `${symbol}-${pos.opened}`, // FIX: Synthesized ID from engine state
                                     id: `${symbol}-${pos.opened}`,
                                     symbol,
                                     side: pos.side === "long" ? "buy" : "sell",
+                                    qty: pos.size, // FIX
                                     entryPrice: pos.entryPrice,
                                     sl: safeSl,
                                     tp: safeTp,
                                     size: pos.size,
+                                    env: useTestnet ? "testnet" : "mainnet", // FIX
                                     openedAt: new Date(pos.opened).toISOString(),
                                     unrealizedPnl: pnl,
                                     pnl,
@@ -1405,7 +1433,7 @@ export const useTradingBot = (
                                 addEntryToHistory({
                                     id: `${p.id}-auto-closed`,
                                     symbol: p.symbol,
-                                    side: p.side,
+                                    side: p.side.toLowerCase() as "buy" | "sell",
                                     entryPrice: p.entryPrice,
                                     sl: p.sl,
                                     tp: p.tp,
@@ -1493,7 +1521,7 @@ export const useTradingBot = (
                                     .toString(16)
                                     .slice(2)}`,
                                 symbol,
-                                intent: { side, entry: price, sl, tp },
+                                intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
                                 risk: 0.7,
                                 message: `TEST signal ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
                                     4
@@ -1547,7 +1575,7 @@ export const useTradingBot = (
                                     .toString(16)
                                     .slice(2)}`,
                                 symbol,
-                                intent: { side, entry: price, sl, tp },
+                                intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
                                 risk: 0.6,
                                 message: `Keepalive ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
                                     4
@@ -1854,12 +1882,15 @@ export const useTradingBot = (
         if (!authToken) {
             const position: ActivePosition = {
                 id: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                positionId: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`, // FIX: A1
                 symbol: signal.symbol,
                 side,
                 entryPrice: entry,
                 sl,
                 tp,
                 size,
+                qty: size, // FIX: A1
+                env: useTestnet ? "testnet" : "mainnet", // FIX: A1
                 openedAt: new Date().toISOString(),
                 unrealizedPnl: 0,
                 currentTrailingStop: sl,
@@ -1979,300 +2010,295 @@ export const useTradingBot = (
             setLifecycle(tradeId, "MANAGING", "Simulated");
         }
         return true;
-    } catch (err: any) {
-        addLog({
-            action: "ERROR",
-            message: `Demo API order failed: ${err?.message || "unknown"}`,
-        });
-    }
-    return true;
-};
-
-function executeTrade(signalId: string): Promise<void> {
-    entryQueueRef.current = entryQueueRef.current
-        .catch(() => {
-            // swallow to keep queue alive
-        })
-        .then(async () => {
-            const last = lastEntryAtRef.current;
-            const sinceLast = last ? Date.now() - last : Infinity;
-            const waitMs =
-                sinceLast < MIN_ENTRY_SPACING_MS
-                    ? MIN_ENTRY_SPACING_MS - sinceLast
-                    : 0;
-
-            // Delay only when více vstupů čeká zároveň.
-            if (pendingSignalsRef.current.length > 0 && waitMs > 0) {
-                await new Promise((resolve) => setTimeout(resolve, waitMs));
-            }
-
-            const executed = await performTrade(signalId);
-            if (executed) {
-                lastEntryAtRef.current = Date.now();
-            }
-        });
-
-    return entryQueueRef.current;
-}
-
-// ========== AUTO MODE ==========
-useEffect(() => {
-    if (modeRef.current !== TradingMode.AUTO_ON) return;
-    if (!pendingSignals.length) return;
-
-    const sig = pendingSignals[0];
-    if (settingsRef.current.requireConfirmationInAuto && sig.risk < 0.65)
-        return;
-
-    void executeTrade(sig.id);
-}, [pendingSignals]);
-
-// MOCK NEWS
-useEffect(() => {
-    setNewsHeadlines([
-        {
-            id: "n1",
-            headline: "Volatility rising in BTCUSDT",
-            sentiment: "neutral",
-            source: "scanner",
-            time: new Date().toISOString(),
-        },
-    ]);
-}, []);
-
-const addPriceAlert = (symbol: string, price: number) => {
-    const alert: PriceAlert = {
-        id: `a-${Date.now()}`,
-        symbol,
-        price,
-        createdAt: new Date().toISOString(),
-        triggered: false,
+        // End of performTrade success path
+        // (Orphaned catch block removed)
     };
-    setPriceAlerts((p) => [...p, alert]);
-};
 
-const removePriceAlert = (id: string) => {
-    setPriceAlerts((p) => p.filter((a) => a.id !== id));
-};
-
-const closePosition = (id: string) => {
-    setActivePositions((prev) => {
-        const target = prev.find((p) => p.id === id);
-        if (!target) return prev;
-
-        const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
-        const dir = target.side === "buy" ? 1 : -1;
-        const pnl = (currentPrice - target.entryPrice) * dir * target.size;
-        const freedNotional = marginFor(target.symbol, target.entryPrice, target.size);
-
-        realizedPnlRef.current += pnl;
-        registerOutcome(pnl);
-
-        const limits = QTY_LIMITS[target.symbol];
-        if (settingsRef.current.strategyProfile === "coach" && limits) {
-            const nextStake = Math.max(
-                limits.min * target.entryPrice,
-                Math.min(
-                    limits.max * target.entryPrice,
-                    freedNotional * leverageFor(target.symbol) + pnl
-                )
-            );
-            coachStakeRef.current[target.symbol] = nextStake;
-        }
-
-        const record: AssetPnlRecord = {
-            symbol: target.symbol,
-            pnl,
-            timestamp: new Date().toISOString(),
-            note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
-        };
-        if (authToken) {
-            setAssetPnlHistory(() => addPnlRecord(record));
-        }
-        setEntryHistory(() =>
-            addEntryToHistory({
-                id: `${target.id}-closed`,
-                symbol: target.symbol,
-                side: target.side,
-                entryPrice: target.entryPrice,
-                sl: target.sl,
-                tp: target.tp,
-                size: target.size,
-                createdAt: new Date().toISOString(),
-                settingsNote: `Closed at ${currentPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
-                settingsSnapshot: snapshotSettings(settingsRef.current),
+    function executeTrade(signalId: string): Promise<void> {
+        entryQueueRef.current = entryQueueRef.current
+            .catch(() => {
+                // swallow to keep queue alive
             })
-        );
+            .then(async () => {
+                const last = lastEntryAtRef.current;
+                const sinceLast = last ? Date.now() - last : Infinity;
+                const waitMs =
+                    sinceLast < MIN_ENTRY_SPACING_MS
+                        ? MIN_ENTRY_SPACING_MS - sinceLast
+                        : 0;
 
+                // Delay only when více vstupů čeká zároveň.
+                if (pendingSignalsRef.current.length > 0 && waitMs > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, waitMs));
+                }
+
+                const executed = await performTrade(signalId);
+                if (executed) {
+                    lastEntryAtRef.current = Date.now();
+                }
+            });
+
+        return entryQueueRef.current;
+    }
+
+    // ========== AUTO MODE ==========
+    useEffect(() => {
+        if (modeRef.current !== TradingMode.AUTO_ON) return;
+        if (!pendingSignals.length) return;
+
+        const sig = pendingSignals[0];
+        if (settingsRef.current.requireConfirmationInAuto && sig.risk < 0.65)
+            return;
+
+        void executeTrade(sig.id);
+    }, [pendingSignals]);
+
+    // MOCK NEWS
+    useEffect(() => {
+        setNewsHeadlines([
+            {
+                id: "n1",
+                headline: "Volatility rising in BTCUSDT",
+                sentiment: "neutral",
+                source: "scanner",
+                time: new Date().toISOString(),
+            },
+        ]);
+    }, []);
+
+    const addPriceAlert = (symbol: string, price: number) => {
+        const alert: PriceAlert = {
+            id: `a-${Date.now()}`,
+            symbol,
+            price,
+            createdAt: new Date().toISOString(),
+            triggered: false,
+        };
+        setPriceAlerts((p) => [...p, alert]);
+    };
+
+    const removePriceAlert = (id: string) => {
+        setPriceAlerts((p) => p.filter((a) => a.id !== id));
+    };
+
+    const closePosition = (id: string) => {
+        setActivePositions((prev) => {
+            const target = prev.find((p) => p.id === id);
+            if (!target) return prev;
+
+            const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
+            const dir = target.side === "buy" ? 1 : -1;
+            const pnl = (currentPrice - target.entryPrice) * dir * target.size;
+            const freedNotional = marginFor(target.symbol, target.entryPrice, target.size);
+
+            realizedPnlRef.current += pnl;
+            registerOutcome(pnl);
+
+            const limits = QTY_LIMITS[target.symbol];
+            if (settingsRef.current.strategyProfile === "coach" && limits) {
+                const nextStake = Math.max(
+                    limits.min * target.entryPrice,
+                    Math.min(
+                        limits.max * target.entryPrice,
+                        freedNotional * leverageFor(target.symbol) + pnl
+                    )
+                );
+                coachStakeRef.current[target.symbol] = nextStake;
+            }
+
+            const record: AssetPnlRecord = {
+                symbol: target.symbol,
+                pnl,
+                timestamp: new Date().toISOString(),
+                note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
+            };
+            if (authToken) {
+                setAssetPnlHistory(() => addPnlRecord(record));
+            }
+            setEntryHistory(() =>
+                addEntryToHistory({
+                    id: `${target.id}-closed`,
+                    symbol: target.symbol,
+                    side: target.side.toLowerCase() as "buy" | "sell", // FIX: strict lower case
+                    entryPrice: target.entryPrice,
+                    sl: target.sl,
+                    tp: target.tp,
+                    size: target.size,
+                    createdAt: new Date().toISOString(),
+                    settingsNote: `Closed at ${currentPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
+                    settingsSnapshot: snapshotSettings(settingsRef.current),
+                })
+            );
+
+            setPortfolioState((p) => ({
+                ...p,
+                allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
+                openPositions: Math.max(0, p.openPositions - 1),
+            }));
+            addLog({
+                action: "CLOSE",
+                message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USDT`,
+            });
+
+            return prev.filter((p) => p.id !== id);
+        });
+    };
+
+    const resetRiskState = () => {
         setPortfolioState((p) => ({
             ...p,
-            allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
-            openPositions: Math.max(0, p.openPositions - 1),
+            dailyPnl: 0,
+            currentDrawdown: 0,
+            peakCapital: p.totalCapital,
         }));
-        addLog({
-            action: "CLOSE",
-            message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USDT`,
-        });
+        realizedPnlRef.current = 0;
+    };
 
-        return prev.filter((p) => p.id !== id);
-    });
-};
+    const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
+        const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
+        const basePreset =
+            incomingMode !== settingsRef.current.riskMode
+                ? presetFor(incomingMode)
+                : settingsRef.current;
 
-const resetRiskState = () => {
-    setPortfolioState((p) => ({
-        ...p,
-        dailyPnl: 0,
-        currentDrawdown: 0,
-        peakCapital: p.totalCapital,
-    }));
-    realizedPnlRef.current = 0;
-};
+        let patched: AISettings = { ...basePreset, ...newS, riskMode: incomingMode };
 
-const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
-    const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
-    const basePreset =
-        incomingMode !== settingsRef.current.riskMode
-            ? presetFor(incomingMode)
-            : settingsRef.current;
-
-    let patched: AISettings = { ...basePreset, ...newS, riskMode: incomingMode };
-
-    if (incomingMode !== settingsRef.current.riskMode) {
-        const presetKeys: (keyof AISettings)[] = [
-            "baseRiskPerTrade",
-            "maxAllocatedCapitalPercent",
-            "maxPortfolioRiskPercent",
-            "maxDailyLossPercent",
-            "maxDailyProfitPercent",
-            "maxDrawdownPercent",
-            "positionSizingMultiplier",
-            "entryStrictness",
-            "strategyProfile",
-            "enforceSessionHours",
-            "haltOnDailyLoss",
-            "haltOnDrawdown",
-            "maxOpenPositions",
-        ];
-        presetKeys.forEach((k) => {
-            patched = { ...patched, [k]: basePreset[k] };
-        });
-    }
-
-    if (patched.strategyProfile === "coach") {
-        const clamp = (v: number, min: number, max: number) =>
-            Math.min(max, Math.max(min, v));
-        patched = {
-            ...patched,
-            baseRiskPerTrade: clamp(patched.baseRiskPerTrade || 0.02, 0.01, 0.03),
-            maxDailyLossPercent: Math.min(patched.maxDailyLossPercent || 0.05, 0.05),
-            positionSizingMultiplier: clamp(
-                patched.positionSizingMultiplier || 1,
-                0.5,
-                1
-            ),
-            maxAllocatedCapitalPercent: clamp(
-                patched.maxAllocatedCapitalPercent || 1,
-                0.25,
-                1
-            ),
-            maxPortfolioRiskPercent: clamp(
-                patched.maxPortfolioRiskPercent || 0.08,
-                0.05,
-                0.1
-            ),
-            maxOpenPositions: 2,
-        };
-        if (patched.entryStrictness === "ultra") {
-            patched = { ...patched, entryStrictness: "base" };
+        if (incomingMode !== settingsRef.current.riskMode) {
+            const presetKeys: (keyof AISettings)[] = [
+                "baseRiskPerTrade",
+                "maxAllocatedCapitalPercent",
+                "maxPortfolioRiskPercent",
+                "maxDailyLossPercent",
+                "maxDailyProfitPercent",
+                "maxDrawdownPercent",
+                "positionSizingMultiplier",
+                "entryStrictness",
+                "strategyProfile",
+                "enforceSessionHours",
+                "haltOnDailyLoss",
+                "haltOnDrawdown",
+                "maxOpenPositions",
+            ];
+            presetKeys.forEach((k) => {
+                patched = { ...patched, [k]: basePreset[k] };
+            });
         }
-    }
-    if (patched.strategyProfile === "scalp") {
-        const relaxedEntry =
-            patched.entryStrictness === "test"
-                ? "relaxed"
-                : patched.entryStrictness === "ultra"
-                    ? "base"
-                    : patched.entryStrictness;
-        patched = {
-            ...patched,
-            baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
-            maxOpenPositions: 1,
-            maxDailyLossPercent: Math.max(Math.min(patched.maxDailyLossPercent, 0.12), 0.08),
-            maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
-            maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
-            enforceSessionHours: false,
-            entryStrictness: relaxedEntry,
-        };
-    }
-    setSettings(patched);
-    settingsRef.current = patched;
-    persistSettings(patched);
-    setPortfolioState((p) => {
-        const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
-        return {
-            ...p,
-            maxOpenPositions: patched.maxOpenPositions,
-            maxAllocatedCapital: maxAlloc,
-            allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
-            maxDailyLoss: p.totalCapital * patched.maxDailyLossPercent,
-            maxDailyProfit: p.totalCapital * patched.maxDailyProfitPercent,
-            maxDrawdown: patched.maxDrawdownPercent,
-        };
-    });
-};
 
-const removeEntryHistoryItem = (id: string) => {
-    setEntryHistory(() => removeEntryFromHistory(id));
-};
+        if (patched.strategyProfile === "coach") {
+            const clamp = (v: number, min: number, max: number) =>
+                Math.min(max, Math.max(min, v));
+            patched = {
+                ...patched,
+                baseRiskPerTrade: clamp(patched.baseRiskPerTrade || 0.02, 0.01, 0.03),
+                maxDailyLossPercent: Math.min(patched.maxDailyLossPercent || 0.05, 0.05),
+                positionSizingMultiplier: clamp(
+                    patched.positionSizingMultiplier || 1,
+                    0.5,
+                    1
+                ),
+                maxAllocatedCapitalPercent: clamp(
+                    patched.maxAllocatedCapitalPercent || 1,
+                    0.25,
+                    1
+                ),
+                maxPortfolioRiskPercent: clamp(
+                    patched.maxPortfolioRiskPercent || 0.08,
+                    0.05,
+                    0.1
+                ),
+                maxOpenPositions: 2,
+            };
+            if (patched.entryStrictness === "ultra") {
+                patched = { ...patched, entryStrictness: "base" };
+            }
+        }
+        if (patched.strategyProfile === "scalp") {
+            const relaxedEntry =
+                patched.entryStrictness === "test"
+                    ? "relaxed"
+                    : patched.entryStrictness === "ultra"
+                        ? "base"
+                        : patched.entryStrictness;
+            patched = {
+                ...patched,
+                baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
+                maxOpenPositions: 1,
+                maxDailyLossPercent: Math.max(Math.min(patched.maxDailyLossPercent, 0.12), 0.08),
+                maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
+                maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
+                enforceSessionHours: false,
+                entryStrictness: relaxedEntry,
+            };
+        }
+        setSettings(patched);
+        settingsRef.current = patched;
+        persistSettings(patched);
+        setPortfolioState((p) => {
+            const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
+            return {
+                ...p,
+                maxOpenPositions: patched.maxOpenPositions,
+                maxAllocatedCapital: maxAlloc,
+                allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
+                maxDailyLoss: p.totalCapital * patched.maxDailyLossPercent,
+                maxDailyProfit: p.totalCapital * patched.maxDailyProfitPercent,
+                maxDrawdown: patched.maxDrawdownPercent,
+            };
+        });
+    };
 
-const rejectSignal = (id: string) => {
-    setPendingSignals((prev) => prev.filter((s) => s.id !== id));
+    const removeEntryHistoryItem = (id: string) => {
+        setEntryHistory(() => removeEntryFromHistory(id));
+    };
 
-    setLogEntries((prev) => [
-        {
-            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            action: "REJECT",
-            timestamp: new Date().toISOString(),
-            message: `Rejected signal ${id}`,
-        },
-        ...prev,
-    ]);
-};
+    const rejectSignal = (id: string) => {
+        setPendingSignals((prev) => prev.filter((s) => s.id !== id));
 
-// ========= RETURN API ==========
-return {
-    logEntries,
-    activePositions,
-    closedPositions,
-    systemState,
-    portfolioState,
-    aiModelState,
-    settings,
-    currentPrices,
-    pendingSignals,
-    portfolioHistory,
-    newsHeadlines,
-    priceAlerts,
-    addPriceAlert,
-    removePriceAlert,
-    updateSettings,
-    resetRiskState,
-    executeTrade,
-    rejectSignal,
-    closePosition,
-    entryHistory,
-    testnetOrders,
-    testnetTrades,
-    ordersError,
-    refreshTestnetOrders: fetchOrders,
-    mainnetOrders: testnetOrders, // Unify state: always return current orders
-    mainnetTrades: testnetTrades,
-    mainnetError: ordersError,
-    refreshMainnetOrders: fetchOrders,
-    refreshMainnetTrades: fetchTrades,
-    assetPnlHistory,
-    removeEntryHistoryItem,
-};
+        setLogEntries((prev) => [
+            {
+                id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                action: "REJECT",
+                timestamp: new Date().toISOString(),
+                message: `Rejected signal ${id}`,
+            },
+            ...prev,
+        ]);
+    };
+
+    // ========= RETURN API ==========
+    return {
+        logEntries,
+        activePositions,
+        closedPositions,
+        systemState,
+        portfolioState,
+        aiModelState,
+        settings,
+        currentPrices,
+        pendingSignals,
+        portfolioHistory,
+        newsHeadlines,
+        priceAlerts,
+        addPriceAlert,
+        removePriceAlert,
+        updateSettings,
+        resetRiskState,
+        executeTrade,
+        rejectSignal,
+        closePosition,
+        entryHistory,
+        testnetOrders,
+        testnetTrades,
+        ordersError,
+        refreshTestnetOrders: fetchOrders,
+        mainnetOrders: testnetOrders, // Unify state: always return current orders
+        mainnetTrades: testnetTrades,
+        mainnetError: ordersError,
+        refreshMainnetOrders: fetchOrders,
+        refreshMainnetTrades: fetchTrades,
+        assetPnlHistory,
+        removeEntryHistoryItem,
+    };
 };
 
 // ========= API TYPE EXPORT ==========
