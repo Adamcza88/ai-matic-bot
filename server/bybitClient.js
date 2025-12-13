@@ -19,36 +19,63 @@ function sign(payload, apiSecret) {
   return crypto.createHmac("sha256", apiSecret).update(payload).digest("hex");
 }
 
-// Ořezání qty na rozumné limity pro testnet
-function normalizeQty(symbol, qtyInput) {
+// Statická definice limitů pro hlavní páry (fallback pro Mainnet)
+const SYMBOL_CONSTRAINTS = {
+  BTCUSDT: { minQty: 0.001, stepSize: 0.001, minNotional: 5 },
+  ETHUSDT: { minQty: 0.01, stepSize: 0.01, minNotional: 5 },
+  SOLUSDT: { minQty: 0.1, stepSize: 0.1, minNotional: 5 },
+  ADAUSDT: { minQty: 10, stepSize: 1, minNotional: 5 },
+  MATICUSDT: { minQty: 10, stepSize: 1, minNotional: 5 },
+  XRPUSDT: { minQty: 10, stepSize: 1, minNotional: 5 },
+  LTCUSDT: { minQty: 0.1, stepSize: 0.1, minNotional: 5 },
+  DOGEUSDT: { minQty: 100, stepSize: 10, minNotional: 5 }, // Conservative
+};
+
+function normalizeQty(symbol, qtyInput, priceInput = 0) {
   let q = Number(qtyInput);
 
   if (!Number.isFinite(q) || q <= 0) {
     throw new Error(`Invalid qty value: ${qtyInput}`);
   }
 
-  let min = 0.001;
-  let max = 1000;
+  // Fallback defaults if symbol unknown (conservative 2 decimals)
+  const defaults = { minQty: 0.01, stepSize: 0.01, minNotional: 5 };
+  const limits = SYMBOL_CONSTRAINTS[symbol] || defaults;
 
-  if (symbol === "BTCUSDT") {
-    min = 0.001;
-    max = 0.1;
-  } else if (symbol === "ETHUSDT") {
-    min = 0.01;
-    max = 5;
-  } else if (symbol === "ADAUSDT") {
-    min = 1;
-    max = 900;
-  } else if (symbol === "SOLUSDT") {
-    min = 0.1;
-    max = 500;
+  // 1. Min Qty check
+  if (q < limits.minQty) {
+    // If input is less than min, we must either clamp up or fail.
+    // Clamping up is safer for "ensure entry", but might exceed risk.
+    // Here we clamp to minQty to prevent API rejection.
+    q = limits.minQty;
   }
 
-  if (q < min) q = min;
-  if (q > max) q = max;
+  // 2. Step Size rounding (floor to avoid exceeding risk/balance)
+  // inverse of stepSize usually 1/step. e.g. 1/0.001 = 1000
+  const precision = Math.round(1 / limits.stepSize);
+  q = Math.floor(q * precision) / precision;
 
-  q = Number(q.toFixed(3));
-  return q.toString();
+  // 3. Min Notional check
+  // We only check this if we have a price > 0.
+  // If price is 0 (e.g. unknown market price), we rely on MinQty being sufficient for typical prices.
+  if (priceInput > 0) {
+    const notional = q * priceInput;
+    if (notional < limits.minNotional) {
+      // Try to bump Qty to meet minNotional
+      const reqQty = limits.minNotional / priceInput;
+      // Re-normalize this new required qty
+      const bumpedQty = Math.ceil(reqQty * precision) / precision;
+      q = Math.max(q, bumpedQty);
+    }
+  }
+
+  // Ensure strict safety cap from legacy code just in case
+  if (q > 100000) q = 100000;
+
+  // Formatting: remove scientific notation, use fixed precision based on step
+  // count decimals in stepSize: 0.001 -> 3
+  const decimals = (limits.stepSize.toString().split(".")[1] || "").length;
+  return q.toFixed(decimals);
 }
 
 export async function getServerTime(useTestnet = true) {
@@ -105,7 +132,9 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
 
-  const safeQty = normalizeQty(order.symbol, order.qty);
+  // Attempt to estimate price for Min Notional check
+  const estimatedPrice = order.price ? Number(order.price) : 0;
+  const safeQty = normalizeQty(order.symbol, order.qty, estimatedPrice);
 
   // === 1) CREATE ORDER ===
   const rawBody = {
