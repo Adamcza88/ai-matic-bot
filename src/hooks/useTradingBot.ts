@@ -78,8 +78,8 @@ const AI_MATIC_PRESET: AISettings = {
     lockProfitsWithTrail: true,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
-    customInstructions: "Dynamický risk dle volatility, trend-only s ATR filtrem. Automatické ochrany pouze po fillu.",
-    customStrategy: "Base ’n Break + Wedge Pop + EMA pullback, SMC scalp povolen, ochrany nastavené z burzy.",
+    customInstructions: "",
+    customStrategy: "",
     min24hVolume: 50,
     minProfitFactor: 1.0,
     minWinRate: 60,
@@ -758,11 +758,18 @@ export const useTradingBot = (
     );
 
     const waitForFill = useCallback(
-        async (tradeId: string, symbol: string, orderId?: string | null, orderLinkId?: string | null, attempts: number = 30, delayMs: number = 1200) => {
+        async (
+            tradeId: string,
+            symbol: string,
+            orderId?: string | null,
+            orderLinkId?: string | null,
+            attempts: number = 40,
+            delayMs: number = 1200
+        ) => {
+            const net = useTestnet ? "testnet" : "mainnet";
             for (let i = 0; i < attempts; i++) {
-                // Executions check
-                const executions = await fetchExecutionsOnce(useTestnet ? "testnet" : "mainnet");
-                const execHit = executions.find((e: any) => {
+                // 1) In-memory executions seen by polling loop
+                const execHit = executionEventsRef.current.find((e) => {
                     if (e.symbol !== symbol) return false;
                     if (orderId && e.orderId && e.orderId === orderId) return true;
                     if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
@@ -770,8 +777,18 @@ export const useTradingBot = (
                 });
                 if (execHit) return execHit;
 
-                // Positions check
-                const list = await fetchPositionsOnce(useTestnet ? "testnet" : "mainnet");
+                // 2) Fresh executions snapshot
+                const executions = await fetchExecutionsOnce(net);
+                const execSnapshot = executions.find((e: any) => {
+                    if (e.symbol !== symbol) return false;
+                    if (orderId && e.orderId && e.orderId === orderId) return true;
+                    if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
+                    return !orderId && !orderLinkId;
+                });
+                if (execSnapshot) return execSnapshot;
+
+                // 3) Positions snapshot
+                const list = await fetchPositionsOnce(net);
                 const found = list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
                 if (found) return found;
 
@@ -934,6 +951,9 @@ export const useTradingBot = (
     const lastPositionsSyncAtRef = useRef<number>(0);
     const executionCursorRef = useRef<string | null>(null);
     const processedExecIdsRef = useRef<Set<string>>(new Set());
+    const executionEventsRef = useRef<
+        { id: string; symbol: string; orderId?: string; orderLinkId?: string; price?: number; qty?: number; time?: string }[]
+    >([]);
 
     const registerOutcome = (pnl: number) => {
         const win = pnl > 0;
@@ -1425,6 +1445,18 @@ export const useTradingBot = (
                     const id = e.execId || e.tradeId;
                     if (!id || seen.has(id)) return;
                     seen.add(id);
+                    executionEventsRef.current = [
+                        {
+                            id,
+                            symbol: e.symbol || "",
+                            orderId: e.orderId || e.orderID || e.clOrdId,
+                            orderLinkId: e.orderLinkId || e.orderLinkID || e.clientOrderId,
+                            price: Number(e.execPrice ?? e.price ?? 0),
+                            qty: Number(e.execQty ?? e.qty ?? 0),
+                            time: e.execTime ? new Date(Number(e.execTime)).toISOString() : new Date().toISOString(),
+                        },
+                        ...executionEventsRef.current,
+                    ].slice(0, 200);
                     addLog({
                         action: "SYSTEM",
                         message: `FILL ${e.symbol || ""} ${e.side || ""} @ ${e.execPrice || e.price || "?"} qty ${e.execQty || e.qty || "?"}`,
