@@ -1,4 +1,4 @@
-import { listDemoOrders } from "../../server/bybitClient.js";
+import { listDemoOrders, listOrderHistory } from "../../server/bybitClient.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 
 function setCors(res) {
@@ -41,11 +41,15 @@ export default async function handler(req, res) {
       });
     }
 
-    const data = await listDemoOrders(
-      { apiKey: key, apiSecret: secret },
-      { limit: 50 },
-      useTestnet
-    );
+    const settleCoin = req.query.settleCoin || "USDT";
+    const symbol = req.query.symbol;
+    const limit = Number(req.query.limit ?? 50);
+    const isHistory = req.query.history === "1" || req.query.history === "true";
+
+    const clientParams = { limit, symbol, settleCoin };
+    const data = isHistory
+      ? await listOrderHistory({ apiKey: key, apiSecret: secret }, clientParams, useTestnet)
+      : await listDemoOrders({ apiKey: key, apiSecret: secret }, clientParams, useTestnet);
 
     return res.status(200).json({ ok: true, data });
   } catch (err) {

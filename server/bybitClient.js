@@ -254,17 +254,58 @@ export async function getDemoPositions(creds, useTestnet = true) {
   return res.data;
 }
 
-export async function listDemoOrders(creds, { limit = 50 } = {}, useTestnet = true) {
+export async function listDemoOrders(creds, { limit = 50, symbol, settleCoin = "USDT" } = {}, useTestnet = true) {
   ensureConfigured(creds);
 
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
-  const query = `category=linear&limit=${limit}&settleCoin=USDT`;
+  const params = new URLSearchParams({
+    category: "linear",
+    limit: String(limit),
+  });
+  if (symbol) {
+    params.set("symbol", symbol);
+  } else if (settleCoin) {
+    params.set("settleCoin", settleCoin);
+  }
+  const query = params.toString();
 
   const payload = timestamp + creds.apiKey + recvWindow + query;
   const signature = sign(payload, creds.apiSecret);
 
   const res = await axios.get(`${resolveBase(useTestnet)}/v5/order/realtime?${query}`, {
+    headers: {
+      "X-BAPI-API-KEY": creds.apiKey,
+      "X-BAPI-SIGN": signature,
+      "X-BAPI-SIGN-TYPE": "2",
+      "X-BAPI-TIMESTAMP": timestamp,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+    },
+  });
+
+  return res.data;
+}
+
+export async function listOrderHistory(creds, { limit = 50, symbol, settleCoin = "USDT" } = {}, useTestnet = true) {
+  ensureConfigured(creds);
+
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  const params = new URLSearchParams({
+    category: "linear",
+    limit: String(limit),
+  });
+  if (symbol) {
+    params.set("symbol", symbol);
+  } else if (settleCoin) {
+    params.set("settleCoin", settleCoin);
+  }
+  const query = params.toString();
+
+  const payload = timestamp + creds.apiKey + recvWindow + query;
+  const signature = sign(payload, creds.apiSecret);
+
+  const res = await axios.get(`${resolveBase(useTestnet)}/v5/order/history?${query}`, {
     headers: {
       "X-BAPI-API-KEY": creds.apiKey,
       "X-BAPI-SIGN": signature,

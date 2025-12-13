@@ -521,11 +521,12 @@ export const useTradingBot = (
         if (!authToken) return;
 
         let cancel = false;
-        const fetchPositions = async () => {
+    const fetchPositions = async () => {
             try {
                 const url = new URL(`${apiBase}${apiPrefix}/positions`);
                 url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
                 url.searchParams.set("settleCoin", "USDT");
+                url.searchParams.set("category", "linear");
                 const res = await fetch(url.toString(), {
                     headers: { Authorization: `Bearer ${authToken}` },
                 });
@@ -856,6 +857,7 @@ export const useTradingBot = (
             const url = new URL(`${apiBase}${apiPrefix}/positions`);
             url.searchParams.set("net", net);
             url.searchParams.set("settleCoin", "USDT");
+            url.searchParams.set("category", "linear");
             const res = await fetch(url.toString(), {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
@@ -911,11 +913,12 @@ export const useTradingBot = (
     );
 
     const fetchExecutionsOnce = useCallback(
-        async (net: "testnet" | "mainnet"): Promise<any[]> => {
+        async (net: "testnet" | "mainnet", symbol?: string): Promise<any[]> => {
             if (!authToken) return [];
             const url = new URL(`${apiBase}${apiPrefix}/executions`);
             url.searchParams.set("net", net);
             url.searchParams.set("limit", "100");
+            if (symbol) url.searchParams.set("symbol", symbol);
             const res = await fetch(url.toString(), {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
@@ -949,7 +952,7 @@ export const useTradingBot = (
                 if (execHit) return execHit;
 
                 // 2) Fresh executions snapshot
-                const executions = await fetchExecutionsOnce(net);
+                const executions = await fetchExecutionsOnce(net, symbol);
                 const execSnapshot = executions.find((e: any) => {
                     if (e.symbol !== symbol) return false;
                     if (orderId && e.orderId && e.orderId === orderId) return true;

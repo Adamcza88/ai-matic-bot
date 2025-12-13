@@ -170,10 +170,15 @@ app.get("/api/demo/orders", async (req, res) => {
       });
     }
 
-    const data = await listDemoOrders({
-      apiKey,
-      apiSecret,
-    }, {}, useTestnet);
+    const settleCoin = req.query.settleCoin || "USDT";
+    const symbol = req.query.symbol;
+    const limit = Number(req.query.limit ?? 50);
+    const isHistory = req.query.history === "1" || req.query.history === "true";
+
+    const clientParams = { limit, symbol, settleCoin };
+    const data = isHistory
+      ? await listOrderHistory({ apiKey, apiSecret }, clientParams, useTestnet)
+      : await listDemoOrders({ apiKey, apiSecret }, clientParams, useTestnet);
     res.json({ ok: true, data });
   } catch (err) {
     console.error("GET /api/demo/orders error:", err);
