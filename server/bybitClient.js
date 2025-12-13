@@ -109,7 +109,7 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
 
   // === 1) CREATE ORDER ===
   const rawBody = {
-    category: order.category || "linear",
+    category: "linear",
     symbol: order.symbol,
     side: order.side, // "Buy" | "Sell"
     orderType: order.orderType || "Market",
