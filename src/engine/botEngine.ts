@@ -37,6 +37,16 @@ export function computePositionSize(balance: number, riskPct: number, entry: num
   return riskAmount / slDistance;
 }
 
+/**
+ * FIX 6: Quantity Normalization for Mainnet
+ * Rounds down to nearest step size to avoid "Invalid Qty" errors.
+ */
+export function normalizeQty(qty: number, step = 0.001): number {
+  if (qty <= 0) return 0;
+  const precision = Math.round(1 / step);
+  return Math.floor(qty * precision) / precision;
+}
+
 export enum State {
   Scan = "SCAN",
   Manage = "MANAGE",
@@ -674,16 +684,22 @@ export class TradingBot {
       this.config.strategyProfile === "trend"
         ? 0.05
         : this.config.strategyProfile === "scalp"
-        ? 0.015
-        : this.config.strategyProfile === "intraday"
-        ? 0.03
-        : 0.04;
+          ? 0.015
+          : this.config.strategyProfile === "intraday"
+            ? 0.03
+            : 0.04;
     const riskPct = Math.min(
       this.config.maxRiskPerTradeCap,
       Math.max(profileRisk, this.config.riskPerTrade),
     );
     const slDistance = side === "long" ? entry - stopLoss : stopLoss - entry;
-    const size = computePositionSize(this.config.accountBalance, riskPct, entry, stopLoss);
+    // Calculate raw size
+    const rawSize = computePositionSize(this.config.accountBalance, riskPct, entry, stopLoss);
+
+    // FIX 6: Normalize size logic (default step 0.001 for most pairs, can be parameterized)
+    // In a real scenario, this would read from symbol details.
+    const size = normalizeQty(rawSize, 0.001);
+
     const riskAmount = Math.abs(slDistance * size);
     const openRisk = this.aggregateOpenRisk();
     const openCount = this.openPositionsCount();
@@ -1038,8 +1054,8 @@ export class TradingBot {
       (this.config.strategyProfile === "intraday"
         ? "ultra"
         : this.config.strategyProfile === "scalp"
-        ? "relaxed"
-        : "base");
+          ? "relaxed"
+          : "base");
     const isTest = strictness === "test";
     if (trend === Trend.Neutral && isTest) {
       // fallback trend by short-term momentum
@@ -1111,8 +1127,8 @@ export class TradingBot {
       strictness === "ultra"
         ? this.config.adxThreshold * 1.3
         : strictness === "test"
-        ? this.config.adxThreshold * 2
-        : this.config.adxThreshold;
+          ? this.config.adxThreshold * 2
+          : this.config.adxThreshold;
     if (isTest || latestAdx < adxLimit) {
       const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
       if (zScore <= -zCut) {

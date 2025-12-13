@@ -88,8 +88,12 @@ function buildSignedGet(pathWithQuery, creds, useTestnet) {
   ensureConfigured(creds);
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
-  const payload = timestamp + creds.apiKey + recvWindow + pathWithQuery.split("?")[1];
+  // GET requests payload is query string (without '?')
+  const query = pathWithQuery.split("?")[1] || "";
+  const payload = timestamp + creds.apiKey + recvWindow + query;
+
   const signature = sign(payload, creds.apiSecret);
+
   return axios.get(`${resolveBase(useTestnet)}${pathWithQuery}`, {
     headers: {
       "X-BAPI-API-KEY": creds.apiKey,
@@ -97,6 +101,7 @@ function buildSignedGet(pathWithQuery, creds, useTestnet) {
       "X-BAPI-SIGN-TYPE": "2",
       "X-BAPI-TIMESTAMP": timestamp,
       "X-BAPI-RECV-WINDOW": recvWindow,
+      "Content-Type": "application/json"
     },
   });
 }
@@ -162,8 +167,12 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   // CLEAN THE BODY strictly before signing
   const orderBody = cleanObject(rawBody);
 
-  const orderPayload =
-    timestamp + creds.apiKey + recvWindow + JSON.stringify(orderBody);
+  // FIX 4: Bybit v5 Signature Strictness
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  const bodyStr = JSON.stringify(orderBody);
+
+  const orderPayload = timestamp + creds.apiKey + recvWindow + bodyStr;
   const orderSign = sign(orderPayload, creds.apiSecret);
 
   // === MANDATORY LOG: PRE-FLIGHT ===
@@ -185,7 +194,7 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
         "X-BAPI-SIGN-TYPE": "2",
         "X-BAPI-TIMESTAMP": timestamp,
         "X-BAPI-RECV-WINDOW": recvWindow,
-        "Content-Type": "application/json",
+        "Content-Type": "application/json", // FIX 4: Mandatory Header
       },
     });
 
@@ -266,8 +275,12 @@ export async function setTradingStop(protection, creds, useTestnet = true) {
 
   const tsBody = cleanObject(rawTsBody);
 
-  const tsPayload =
-    tsTimestamp + creds.apiKey + recvWindow + JSON.stringify(tsBody);
+  // FIX 4: Bybit v5 Signature Strictness
+  const tsTimestamp = Date.now().toString(); // must be fresh
+  const recvWindow = "5000";
+  const bodyStr = JSON.stringify(tsBody);
+
+  const tsPayload = tsTimestamp + creds.apiKey + recvWindow + bodyStr;
   const tsSign = sign(tsPayload, creds.apiSecret);
 
   const tsRes = await axios.post(
