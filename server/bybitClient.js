@@ -149,6 +149,16 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     orderLinkId: order.orderLinkId || undefined,
   };
 
+  // Add Atomic Protection (SL/TP) directly to order
+  if (order.tp != null) {
+    rawBody.takeProfit = String(order.tp);
+    rawBody.tpTriggerBy = "LastPrice";
+  }
+  if (order.sl != null) {
+    rawBody.stopLoss = String(order.sl);
+    rawBody.slTriggerBy = "LastPrice";
+  }
+
   // CLEAN THE BODY strictly before signing
   const orderBody = cleanObject(rawBody);
 
@@ -173,72 +183,30 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
 
   const result = orderRes.data;
 
-  // Pokud order selhal, nepokračujeme do trading-stop
+  // Pokud order selhal, končíme
   if (result.retCode !== 0) {
     return result;
   }
 
-  // Pokud TP/SL/TS nejsou zadány → končíme
-  const hasStops =
-    order.sl != null || order.tp != null || order.trailingStop != null;
-  if (!hasStops) {
-    return result;
-  }
+  // === 2) SET TRAILING STOP ONLY (Post-Order) ===
+  // Trailing stop is generally a position property, so we set it after a short delay
+  // to ensure the matching engine has indexed the new position.
+  if (order.trailingStop != null) {
+    try {
+      console.log(`[createDemoOrder] Setting TrailingStop ${order.trailingStop} after 500ms delay...`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
-  // === 2) SET TRADING STOP (TP/SL/TS) ===
-  try {
-    const tsTimestamp = Date.now().toString();
+      const tsResult = await setTradingStop({
+        symbol: order.symbol,
+        trailingStop: order.trailingStop,
+        positionIdx: 0,
+      }, creds, useTestnet);
 
-    // Bybit v5 /position/trading-stop:
-    // one-way režim → positionIdx MUSÍ být 0
-    const rawTsBody = {
-      category: "linear",
-      symbol: order.symbol,
-      positionIdx: 0, // fix: žádné 1/2, jen 0 pro one-way
-    };
-
-    if (order.tp != null) {
-      rawTsBody.takeProfit = String(order.tp);
-      rawTsBody.tpTriggerBy = "LastPrice";
+      console.log("Bybit TS response:", tsResult);
+      result.trailingStop = tsResult;
+    } catch (err) {
+      console.error("Bybit TrailingStop error:", err.response?.data || err.message);
     }
-
-    if (order.sl != null) {
-      rawTsBody.stopLoss = String(order.sl);
-      rawTsBody.slTriggerBy = "LastPrice";
-    }
-
-    if (order.trailingStop != null) {
-      rawTsBody.trailingStop = String(order.trailingStop);
-    }
-
-    const tsBody = cleanObject(rawTsBody);
-
-    const tsPayload =
-      tsTimestamp + creds.apiKey + recvWindow + JSON.stringify(tsBody);
-    const tsSign = sign(tsPayload, creds.apiSecret);
-
-    const tsRes = await axios.post(
-      `${resolveBase(useTestnet)}/v5/position/trading-stop`,
-      tsBody,
-      {
-        headers: {
-          "X-BAPI-API-KEY": creds.apiKey,
-          "X-BAPI-SIGN": tsSign,
-          "X-BAPI-SIGN-TYPE": "2",
-          "X-BAPI-TIMESTAMP": tsTimestamp,
-          "X-BAPI-RECV-WINDOW": recvWindow,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    console.log("Bybit SL/TP/TS response:", tsRes.data);
-    result.tradingStop = tsRes.data;
-  } catch (err) {
-    console.error(
-      "Bybit SL/TP/TS error:",
-      err.response?.data || err.message || err
-    );
   }
 
   return result;
