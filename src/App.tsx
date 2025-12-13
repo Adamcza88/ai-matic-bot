@@ -91,6 +91,16 @@ export default function App() {
     }
   }, [auth.status, auth.user, refreshKeyStatus]);
 
+  // Pokud chybí mainnetové klíče, automaticky přepnout na testnet, aby se API volání nesypala.
+  useEffect(() => {
+    const missingMainnet = missingServices.some((s) =>
+      s.toLowerCase().includes("mainnet")
+    );
+    if (!useTestnet && missingMainnet) {
+      setUseTestnet(true);
+    }
+  }, [missingServices, useTestnet]);
+
   if (auth.status === "checking") {
     return (
       <div
