@@ -32,6 +32,13 @@ export default function App() {
 
   const refreshKeyStatus = useCallback(async () => {
     if (!auth.user) return;
+    if (!supabase) {
+      const missing = SERVICE_OPTIONS.map((s) => s.label);
+      setKeysError("Supabase není nakonfigurované (VITE_SUPABASE_URL/KEY). Nelze načíst API klíče.");
+      setMissingServices(missing);
+      setShowKeyPanel(true);
+      return;
+    }
     setKeysError(null);
     const { data, error } = await supabase
       .from("user_api_keys")

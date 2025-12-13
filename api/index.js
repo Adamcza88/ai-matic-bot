@@ -16,11 +16,41 @@ export default async function handler(req, res) {
             return orderHandler(req, res);
         }
 
+        if (path === "/api/demo/orders") {
+            const { default: ordersHandler } = await import("./demo/orders.js");
+            return ordersHandler(req, res);
+        }
+
         if (path === "/api/demo/positions") {
             const { default: positionsHandler } = await import(
                 "./demo/positions.js"
             );
             return positionsHandler(req, res);
+        }
+
+        if (path === "/api/demo/trades") {
+            const { default: tradesHandler } = await import("./demo/trades.js");
+            return tradesHandler(req, res);
+        }
+
+        if (path === "/api/demo/protection") {
+            const { default: protectionHandler } = await import("./demo/protection.js");
+            return protectionHandler(req, res);
+        }
+
+        if (path === "/api/demo/wallet") {
+            const { default: walletHandler } = await import("./demo/wallet.js");
+            return walletHandler(req, res);
+        }
+
+        if (path === "/api/demo/closed-pnl") {
+            const { default: closedPnlHandler } = await import("./demo/closed-pnl.js");
+            return closedPnlHandler(req, res);
+        }
+
+        if (path === "/api/demo/executions") {
+            const { default: executionsHandler } = await import("./demo/executions.js");
+            return executionsHandler(req, res);
         }
 
         res.status(404).json({ ok: false, error: "Not found" });

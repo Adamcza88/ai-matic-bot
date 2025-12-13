@@ -78,6 +78,12 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
         return;
       }
 
+      if (!supabase) {
+        setStatus("Supabase není nakonfigurované. Nastav VITE_SUPABASE_URL a VITE_SUPABASE_ANON_KEY.");
+        setIsLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase
         .from("user_api_keys")
         .select("id, service, api_key, updated_at")
@@ -132,6 +138,12 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
       setRecords(currentKeys);
       setIsSaving(false);
       onKeysUpdated?.();
+      return;
+    }
+
+    if (!supabase) {
+      setStatus("Supabase není nakonfigurované. Nelze uložit klíče.");
+      setIsSaving(false);
       return;
     }
 
