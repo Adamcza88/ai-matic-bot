@@ -28,9 +28,9 @@ export default async function handler(req, res) {
     }
 
     const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id, "mainnet");
-    const apiKey = useTestnet ? keys.bybitTestnetKey : keys.bybitMainnetKey;
-    const apiSecret = useTestnet ? keys.bybitTestnetSecret : keys.bybitMainnetSecret;
+    const keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    const apiKey = keys.apiKey;
+    const apiSecret = keys.apiSecret;
 
     if (!apiKey || !apiSecret) {
       return res.status(400).json({
