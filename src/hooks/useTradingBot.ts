@@ -234,6 +234,11 @@ const leverageFor = (symbol: string) => LEVERAGE[symbol] ?? 1;
 const marginFor = (symbol: string, entry: number, size: number) =>
     (entry * size) / Math.max(1, leverageFor(symbol));
 
+const asNum = (x: any) => {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : 0;
+};
+
 const TAKER_FEE = 0.0006; // orientační taker fee (0.06%)
 const MIN_TP_BUFFER_PCT = 0.0003; // 0.03 % buffer
 
@@ -515,7 +520,12 @@ export const useTradingBot = (
                     throw new Error(`Positions API failed (${res.status}): ${txt || "unknown"}`);
                 }
                 const data = await res.json();
+                const retCode = data?.data?.retCode ?? data?.retCode;
+                const retMsg = data?.data?.retMsg ?? data?.retMsg;
                 const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+                if (retCode && retCode !== 0) {
+                    throw new Error(`Positions retCode=${retCode} ${retMsg || ""}`);
+                }
                 const mapped: ActivePosition[] = Array.isArray(list)
                     ? list
                           .filter((p: any) => Math.abs(Number(p.size ?? 0)) > 0)
@@ -730,14 +740,33 @@ export const useTradingBot = (
     );
 
     const fetchPositionsOnce = useCallback(
-        async (net: "testnet" | "mainnet"): Promise<any[]> => {
-            if (!authToken) return [];
+        async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
+            if (!authToken) return { list: [] };
             const res = await fetch(`${apiBase}${apiPrefix}/positions?net=${net}`, {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
             if (!res.ok) throw new Error(`Positions fetch failed (${res.status})`);
             const data = await res.json();
-            return data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+            const retCode = data?.data?.retCode ?? data?.retCode;
+            const retMsg = data?.data?.retMsg ?? data?.retMsg;
+            const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+            return { list: Array.isArray(list) ? list : [], retCode, retMsg };
+        },
+        [apiBase, apiPrefix, authToken]
+    );
+
+    const fetchOrdersOnce = useCallback(
+        async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
+            if (!authToken) return { list: [] };
+            const res = await fetch(`${apiBase}${apiPrefix}/orders?net=${net}`, {
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            if (!res.ok) throw new Error(`Orders fetch failed (${res.status})`);
+            const data = await res.json();
+            const retCode = data?.data?.retCode ?? data?.retCode;
+            const retMsg = data?.data?.retMsg ?? data?.retMsg;
+            const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+            return { list: Array.isArray(list) ? list : [], retCode, retMsg };
         },
         [apiBase, apiPrefix, authToken]
     );
@@ -788,16 +817,43 @@ export const useTradingBot = (
                 });
                 if (execSnapshot) return execSnapshot;
 
-                // 3) Positions snapshot
-                const list = await fetchPositionsOnce(net);
-                const found = list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
+                // 3) Orders status snapshot
+                const ordersResp = await fetchOrdersOnce(net);
+                if (ordersResp.retCode && ordersResp.retCode !== 0) {
+                    addLog({
+                        action: "ERROR",
+                        message: `Orders retCode=${ordersResp.retCode} ${ordersResp.retMsg || ""}`,
+                    });
+                }
+                const orderMatch = ordersResp.list.find((o: any) => {
+                    if (o.symbol !== symbol) return false;
+                    if (orderId && o.orderId && o.orderId === orderId) return true;
+                    if (orderLinkId && o.orderLinkId && o.orderLinkId === orderLinkId) return true;
+                    return !orderId && !orderLinkId;
+                });
+                if (orderMatch) {
+                    const st = String(orderMatch.orderStatus || orderMatch.status || "");
+                    if (st === "Filled" || st === "PartiallyFilled") return orderMatch;
+                    if (st === "Rejected") throw new Error("Order Rejected");
+                    if (st === "Cancelled") throw new Error("Order Cancelled");
+                }
+
+                // 4) Positions snapshot (with retCode log)
+                const posResp = await fetchPositionsOnce(net);
+                if (posResp.retCode && posResp.retCode !== 0) {
+                    addLog({
+                        action: "ERROR",
+                        message: `Positions retCode=${posResp.retCode} ${posResp.retMsg || ""}`,
+                    });
+                }
+                const found = posResp.list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
                 if (found) return found;
 
                 await new Promise((r) => setTimeout(r, delayMs));
             }
             throw new Error(`Fill not confirmed for ${symbol} after ${attempts} attempts`);
         },
-        [fetchExecutionsOnce, fetchPositionsOnce, useTestnet]
+        [addLog, fetchExecutionsOnce, fetchOrdersOnce, fetchPositionsOnce, useTestnet]
     );
 
     const commitProtection = useCallback(
@@ -830,8 +886,8 @@ export const useTradingBot = (
                 }
                 // verify
                 try {
-                    const list = await fetchPositionsOnce(net);
-                    const found = list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
+                    const posResp = await fetchPositionsOnce(net);
+                    const found = posResp.list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
                     if (found) {
                         const tpOk = tp == null || Math.abs(Number(found.takeProfit ?? 0) - tp) <= tolerance;
                         const slOk = sl == null || Math.abs(Number(found.stopLoss ?? 0) - sl) <= tolerance;
@@ -956,6 +1012,15 @@ export const useTradingBot = (
         { id: string; symbol: string; orderId?: string; orderLinkId?: string; price?: number; qty?: number; time?: string }[]
     >([]);
 
+    function addLog(entry: Omit<LogEntry, "id" | "timestamp">) {
+        const log: LogEntry = {
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            timestamp: new Date().toISOString(),
+            ...entry,
+        };
+        setLogEntries((prev) => [log, ...prev].slice(0, 200));
+    }
+
     const registerOutcome = (pnl: number) => {
         const win = pnl > 0;
         if (win) {
@@ -999,16 +1064,6 @@ export const useTradingBot = (
         if (!atrShort || !atrLong) return 1;
         const ratio = atrLong / Math.max(atrShort, 1e-8);
         return Math.min(4, Math.max(0.5, ratio * 0.8));
-    };
-
-    // ========== LOG ==========
-    const addLog = (entry: Omit<LogEntry, "id" | "timestamp">) => {
-        const log: LogEntry = {
-            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            timestamp: new Date().toISOString(),
-            ...entry,
-        };
-        setLogEntries((prev) => [log, ...prev].slice(0, 200));
     };
 
     // ========== FETCH CEN Z BYBIT (mainnet / testnet) ==========
@@ -1238,7 +1293,9 @@ export const useTradingBot = (
                                 4
                             )} | size ${p.size.toFixed(4)}`,
                         };
-                        setAssetPnlHistory(() => addPnlRecord(record));
+                        if (authToken) {
+                            setAssetPnlHistory(() => addPnlRecord(record));
+                        }
                         setEntryHistory(() =>
                             addEntryToHistory({
                                 id: `${p.id}-auto-closed`,
@@ -1897,7 +1954,9 @@ export const useTradingBot = (
                 timestamp: new Date().toISOString(),
                 note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
             };
-            setAssetPnlHistory(() => addPnlRecord(record));
+            if (authToken) {
+                setAssetPnlHistory(() => addPnlRecord(record));
+            }
             setEntryHistory(() =>
                 addEntryToHistory({
                     id: `${target.id}-closed`,
@@ -1996,6 +2055,12 @@ export const useTradingBot = (
             }
         }
         if (patched.strategyProfile === "scalp") {
+            const relaxedEntry =
+                patched.entryStrictness === "test"
+                    ? "relaxed"
+                    : patched.entryStrictness === "ultra"
+                        ? "base"
+                        : patched.entryStrictness;
             patched = {
                 ...patched,
                 baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
@@ -2004,7 +2069,7 @@ export const useTradingBot = (
                 maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
                 maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
                 enforceSessionHours: false,
-                entryStrictness: patched.entryStrictness === "test" ? "ultra" : patched.entryStrictness,
+                entryStrictness: relaxedEntry,
             };
         }
         setSettings(patched);
