@@ -14,6 +14,7 @@ import {
   getWalletBalance,
   listClosedPnl,
 } from "./bybitClient.js";
+import { reconcileState } from "./reconcile.js";
 
 dotenv.config();
 

@@ -562,1743 +562,1702 @@ export const useTradingBot = (
     }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase]);
 
     // Pozice/PnL přímo z Bybitu – přepíší simulované activePositions
+    // RECONCILE LOOP: Jednotný zdroj pravdy z backendu
     useEffect(() => {
         if (!authToken) return;
 
         let cancel = false;
-        const fetchPositions = async () => {
+        const fetchReconcile = async () => {
             try {
-                const url = new URL(`${apiBase}${apiPrefix}/positions`);
+                // Use /reconcile endpoint which does server-side aggregation & checking
+                const url = new URL(`${apiBase}${apiPrefix}/reconcile`);
                 url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
-                url.searchParams.set("settleCoin", "USDT");
-                url.searchParams.set("category", "linear");
+
                 const res = await fetch(url.toString(), {
                     headers: { Authorization: `Bearer ${authToken}` },
                 });
                 if (!res.ok) {
-                    const txt = await res.text();
-                    throw new Error(`Positions API failed (${res.status}): ${txt || "unknown"}`);
-                }
-                const data = await res.json();
-                const retCode = data?.data?.retCode ?? data?.retCode;
-                const retMsg = data?.data?.retMsg ?? data?.retMsg;
-                // FIX A2: Robust parsing
-                const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
-                if (retCode && retCode !== 0) {
-                    throw new Error(`Positions retCode=${retCode} ${retMsg || ""}`);
-                }
-                const mapped: ActivePosition[] = Array.isArray(list)
-                    ? list
-                        .filter((p: any) => Math.abs(Number(p.size ?? 0)) > 0)
-                        .map((p: any, idx: number) => {
-                            const avgPrice = Number(p.avgPrice ?? p.entryPrice ?? p.lastPrice ?? 0);
-                            const size = Math.abs(Number(p.size ?? 0));
-                            const pnl = Number(p.unrealisedPnl ?? 0);
-                            return {
-                                positionId: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`, // New field
-                                id: p.symbol ? `${p.symbol}-${p.positionIdx ?? idx}` : `pos-${idx}`,         // Compat
-                                symbol: p.symbol || "UNKNOWN",
-                                side: (p.side === "Buy" ? "buy" : "sell") as "buy" | "sell",
-                                entryPrice: avgPrice,
-                                sl: p.stopLoss != null ? Number(p.stopLoss) : p.side === "Buy" ? avgPrice * 0.99 : avgPrice * 1.01,
-                                tp: p.takeProfit != null ? Number(p.takeProfit) : avgPrice,
-                                qty: size, // New field
-                                size,      // Compat
-                                openedAt: new Date(Number(p.updatedTime ?? p.createdTime ?? Date.now())).toISOString(),
-                                unrealizedPnl: pnl,
-                                pnl,
-                                pnlValue: pnl,
-                                rrr: 0,
-                                peakPrice: Number(p.markPrice ?? p.lastPrice ?? avgPrice),
-                                currentTrailingStop: p.trailingStop != null ? Number(p.trailingStop) : undefined,
-                                volatilityFactor: undefined,
-                                lastUpdateReason: undefined,
-                                timestamp: new Date().toISOString(),
-                                env: useTestnet ? "testnet" : "mainnet", // New field
-                            };
-                        })
-                    : [];
-                if (cancel) return;
-
-                // Wallet pro equity
-                let equity = portfolioState.totalCapital;
-                try {
-                    const walletRes = await fetch(`${apiBase}${apiPrefix}/wallet?net=${useTestnet ? "testnet" : "mainnet"}`, {
-                        headers: { Authorization: `Bearer ${authToken}` },
-                    });
-                    if (walletRes.ok) {
-                        const w = await walletRes.json();
-                        const wlist = w?.data?.result?.list || w?.result?.list || [];
-                        const usdt = Array.isArray(wlist) ? wlist.find((x: any) => x.coin === "USDT") : null;
-                        equity = Number(usdt?.equity ?? usdt?.walletBalance ?? equity ?? 0);
-                    }
-                } catch {
-                    // swallow wallet errors, keep previous equity
-                }
-
-                // Realized PnL from closed-pnl
-                try {
-                    const pnlRes = await fetch(`${apiBase}${apiPrefix}/closed-pnl?net=${useTestnet ? "testnet" : "mainnet"}`, {
-                        headers: { Authorization: `Bearer ${authToken}` },
-                    });
-                    if (pnlRes.ok) {
-                        const pnlJson = await pnlRes.json();
-                        const pnlList = pnlJson?.data?.result?.list || pnlJson?.result?.list || [];
-                        // deduplikace closed PnL záznamů
-                        const seen = closedPnlSeenRef.current;
-                        const records: AssetPnlRecord[] = Array.isArray(pnlList)
-                            ? pnlList.map((r: any) => ({
-                                symbol: r.symbol || "UNKNOWN",
-                                pnl: Number(r.closedPnl ?? r.realisedPnl ?? 0),
-                                timestamp: r.updatedTime ? new Date(Number(r.updatedTime)).toISOString() : new Date().toISOString(),
-                                note: "Bybit closed pnl",
-                            }))
-                            : [];
-                        const realized = records.reduce((sum, r) => sum + (r.pnl || 0), 0);
-                        realizedPnlRef.current = realized;
-                        setAssetPnlHistory((prev) => {
-                            const next: AssetPnlMap = { ...prev };
-                            records.forEach((rec) => {
-                                const key = `${rec.symbol}-${rec.timestamp}-${rec.pnl}`;
-                                if (seen.has(key)) return;
-                                seen.add(key);
-                                next[rec.symbol] = [rec, ...(next[rec.symbol] || [])].slice(0, 100);
-                                addPnlRecord(rec);
-                            });
-                            // udržet set v rozumné velikosti
-                            if (seen.size > 500) {
-                                const trimmed = Array.from(seen).slice(-400);
-                                closedPnlSeenRef.current = new Set(trimmed);
+                    if (diffs && diffs.length > 0) {
+                        // Log diffs to UI log if critical
+                        diffs.forEach((d: any) => {
+                            if (d.severity === "HIGH") {
+                                addLog({ action: "ERROR", message: `[Reconcile] ${d.message} (${d.symbol})` });
                             }
-                            return next;
                         });
                     }
-                } catch {
-                    // ignore closed pnl failure
+
+                    setBybitStatus("Connected");
+                    setLastLatency(meta?.latencyMs || json.meta?.latencyMs || 0);
+
+                } catch (err: any) {
+                    if (cancel) return;
+                    console.error("Reconcile error:", err);
+                    setBybitStatus("Error");
+                    setLastLatency(0);
                 }
+            };
 
-                setActivePositions(() => {
-                    activePositionsRef.current = mapped;
-                    return mapped;
-                });
-                lastPositionsSyncAtRef.current = Date.now();
-                setPortfolioState((p) => ({
-                    ...p,
-                    totalCapital: equity || p.totalCapital,
-                    peakCapital: Math.max(p.peakCapital, equity || p.peakCapital),
-                    openPositions: mapped.length,
-                    allocatedCapital: mapped.reduce((sum, pos) => sum + marginFor(pos.symbol, pos.entryPrice, pos.size), 0),
-                }));
-                setSystemState((prev) => ({
-                    ...prev,
-                    bybitStatus: "Connected",
-                    lastError: null,
-                }));
-                addLog({
-                    action: "SYSTEM",
-                    message: `Synced ${mapped.length} ${useTestnet ? "testnet" : "mainnet"} positions`,
-                });
+            const intervalId = setInterval(fetchReconcile, useTestnet ? 5000 : 3000); // 3s Mainnet / 5s Testnet
+            fetchReconcile(); // Immediate start
+
+            return () => {
+                cancel = true;
+                clearInterval(intervalId);
+            };
+        }, [authToken, useTestnet, apiBase, apiPrefix]);
+    const records: AssetPnlRecord[] = Array.isArray(pnlList)
+        ? pnlList.map((r: any) => ({
+            symbol: r.symbol || "UNKNOWN",
+            pnl: Number(r.closedPnl ?? r.realisedPnl ?? 0),
+            timestamp: r.updatedTime ? new Date(Number(r.updatedTime)).toISOString() : new Date().toISOString(),
+            note: "Bybit closed pnl",
+        }))
+        : [];
+    const realized = records.reduce((sum, r) => sum + (r.pnl || 0), 0);
+    realizedPnlRef.current = realized;
+    setAssetPnlHistory((prev) => {
+        const next: AssetPnlMap = { ...prev };
+        records.forEach((rec) => {
+            const key = `${rec.symbol}-${rec.timestamp}-${rec.pnl}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            next[rec.symbol] = [rec, ...(next[rec.symbol] || [])].slice(0, 100);
+            addPnlRecord(rec);
+        });
+        // udržet set v rozumné velikosti
+        if (seen.size > 500) {
+            const trimmed = Array.from(seen).slice(-400);
+            closedPnlSeenRef.current = new Set(trimmed);
+        }
+        return next;
+    });
+}
+                } catch {
+    // ignore closed pnl failure
+}
+
+setActivePositions(() => {
+    activePositionsRef.current = mapped;
+    return mapped;
+});
+lastPositionsSyncAtRef.current = Date.now();
+setPortfolioState((p) => ({
+    ...p,
+    totalCapital: equity || p.totalCapital,
+    peakCapital: Math.max(p.peakCapital, equity || p.peakCapital),
+    openPositions: mapped.length,
+    allocatedCapital: mapped.reduce((sum, pos) => sum + marginFor(pos.symbol, pos.entryPrice, pos.size), 0),
+}));
+setSystemState((prev) => ({
+    ...prev,
+    bybitStatus: "Connected",
+    lastError: null,
+}));
+addLog({
+    action: "SYSTEM",
+    message: `Synced ${mapped.length} ${useTestnet ? "testnet" : "mainnet"} positions`,
+});
             } catch (err: any) {
-                if (cancel) return;
-                addLog({
-                    action: "ERROR",
-                    message: `Positions sync failed: ${err?.message || "unknown"}`,
-                });
-                setSystemState((p) => ({
-                    ...p,
-                    bybitStatus: "Error",
-                    lastError: err?.message || "Failed to load positions",
-                }));
-            }
+    if (cancel) return;
+    addLog({
+        action: "ERROR",
+        message: `Positions sync failed: ${err?.message || "unknown"}`,
+    });
+    setSystemState((p) => ({
+        ...p,
+        bybitStatus: "Error",
+        lastError: err?.message || "Failed to load positions",
+    }));
+}
         };
 
-        void fetchPositions();
-        const id = setInterval(fetchPositions, 10000);
-        return () => {
-            cancel = true;
-            clearInterval(id);
-        };
+void fetchPositions();
+const id = setInterval(fetchPositions, 10000);
+return () => {
+    cancel = true;
+    clearInterval(id);
+};
     }, [authToken, useTestnet, apiBase, envBase, inferredBase]);
 
-    const fetchTrades = useCallback(async () => {
-        if (!authToken) {
-            setTestnetTrades([]);
-            return;
-        }
-        try {
-            const url = new URL(`${apiBase}${apiPrefix}/trades`);
-            url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
-            url.searchParams.set("settleCoin", "USDT");
-            url.searchParams.set("category", "linear");
+const fetchTrades = useCallback(async () => {
+    if (!authToken) {
+        setTestnetTrades([]);
+        return;
+    }
+    try {
+        const url = new URL(`${apiBase}${apiPrefix}/trades`);
+        url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
+        url.searchParams.set("settleCoin", "USDT");
+        url.searchParams.set("category", "linear");
 
-            const res = await fetch(url.toString(), {
-                headers: { Authorization: `Bearer ${authToken}` },
+        const res = await fetch(url.toString(), {
+            headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(`Trades API failed (${res.status}): ${txt || "unknown"}`);
+        }
+        const data = await res.json();
+        const list = data?.data?.list || data?.list || data?.result?.list || [];
+        const mapped: TestnetTrade[] = Array.isArray(list)
+            ? list.map((t: any) => {
+                const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
+                return {
+                    id: t.execId || t.tradeId || `${Date.now()}`,
+                    symbol: t.symbol || "",
+                    side: (t.side as "Buy" | "Sell") || "Buy",
+                    price: Number(t.execPrice ?? t.price ?? 0),
+                    qty: Number(t.execQty ?? t.qty ?? 0),
+                    value: Number(t.execValue ?? t.value ?? 0),
+                    fee: Number(t.execFee ?? t.fee ?? 0),
+                    time: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
+                };
+            })
+            : [];
+        setTestnetTrades(mapped);
+    } catch (err: any) {
+        setOrdersError((prev) => prev || err?.message || "Failed to load trades");
+    }
+}, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase]);
+
+// Orders are now synced via reconcile loop above (server-side strict sync)
+// We keep fetchTrades separate for now as it polls detailed history
+useEffect(() => {
+    void fetchTrades();
+    const id = setInterval(() => {
+        void fetchTrades();
+    }, 5000);
+    return () => clearInterval(id);
+}, [fetchTrades]);
+
+// Keep refreshTestnetOrders pointing to fetchOrders for UI compatibility
+const refreshTestnetOrders = fetchOrders;
+
+const setLifecycle = (tradeId: string, status: string, note?: string) => {
+    lifecycleRef.current.set(tradeId, status);
+    addLog({
+        action: "SYSTEM",
+        message: `[${tradeId}] ${status}${note ? ` | ${note}` : ""}`,
+    });
+};
+
+const forceClosePosition = useCallback(
+    async (pos: ActivePosition) => {
+        if (!authToken) return;
+        const side = pos.side === "buy" ? "Sell" : "Buy";
+        try {
+            await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({
+                    symbol: pos.symbol,
+                    side,
+                    qty: Number(pos.size.toFixed(4)),
+                    orderType: "Market",
+                    timeInForce: "IOC",
+                    reduceOnly: true,
+                }),
+            });
+            addLog({
+                action: "AUTO_CLOSE",
+                message: `Forced reduce-only close ${pos.symbol} due to missing protection`,
+            });
+        } catch (err: any) {
+            addLog({
+                action: "ERROR",
+                message: `Force close failed: ${err?.message || "unknown"}`,
+            });
+        }
+    },
+    [apiBase, authToken, useTestnet]
+);
+
+const fetchPositionsOnce = useCallback(
+    async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
+        if (!authToken) return { list: [] };
+        const url = new URL(`${apiBase}${apiPrefix}/positions`);
+        url.searchParams.set("net", net);
+        url.searchParams.set("settleCoin", "USDT");
+        url.searchParams.set("category", "linear");
+        const res = await fetch(url.toString(), {
+            headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!res.ok) throw new Error(`Positions fetch failed (${res.status})`);
+        const json = await res.json();
+        return {
+            list: json?.data?.result?.list || json?.result?.list || json?.data?.list || [],
+            retCode: json?.data?.retCode ?? json?.retCode,
+            retMsg: json?.data?.retMsg ?? json?.retMsg,
+        };
+    },
+    [apiBase, apiPrefix, authToken]
+);
+
+const fetchOrdersOnce = useCallback(
+    async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
+        if (!authToken) return { list: [] };
+        const url = new URL(`${apiBase}${apiPrefix}/orders`);
+        url.searchParams.set("net", net);
+        url.searchParams.set("settleCoin", "USDT");
+        url.searchParams.set("category", "linear");
+        const res = await fetch(url.toString(), {
+            headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!res.ok) throw new Error(`Orders fetch failed (${res.status})`);
+        const data = await res.json();
+        const retCode = data?.data?.retCode ?? data?.retCode;
+        const retMsg = data?.data?.retMsg ?? data?.retMsg;
+        const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+        return { list: Array.isArray(list) ? list : [], retCode, retMsg };
+    },
+    [apiBase, apiPrefix, authToken]
+);
+
+const fetchOrderHistoryOnce = useCallback(
+    async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
+        if (!authToken) return { list: [] };
+        const url = new URL(`${apiBase}${apiPrefix}/orders`);
+        url.searchParams.set("net", net);
+        url.searchParams.set("settleCoin", "USDT");
+        url.searchParams.set("category", "linear");
+        url.searchParams.set("history", "1");
+        const res = await fetch(url.toString(), {
+            headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!res.ok) throw new Error(`Order history fetch failed (${res.status})`);
+        const data = await res.json();
+        const retCode = data?.data?.retCode ?? data?.retCode;
+        const retMsg = data?.data?.retMsg ?? data?.retMsg;
+        const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+        return { list: Array.isArray(list) ? list : [], retCode, retMsg };
+    },
+    [apiBase, apiPrefix, authToken]
+);
+
+const fetchExecutionsOnce = useCallback(
+    async (
+        net: "testnet" | "mainnet",
+        symbol?: string
+    ): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
+        if (!authToken) return { list: [] };
+        const url = new URL(`${apiBase}${apiPrefix}/executions`);
+        url.searchParams.set("net", net);
+        url.searchParams.set("limit", "100");
+        url.searchParams.set("settleCoin", "USDT");
+        url.searchParams.set("category", "linear");
+        if (symbol) url.searchParams.set("symbol", symbol);
+        const res = await fetch(url.toString(), {
+            headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!res.ok) throw new Error(`Executions fetch failed (${res.status})`);
+        const data = await res.json();
+        const retCode = data?.data?.retCode ?? data?.retCode;
+        const retMsg = data?.data?.retMsg ?? data?.retMsg;
+        const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
+        return { list: Array.isArray(list) ? list : [], retCode, retMsg };
+    },
+    [apiBase, apiPrefix, authToken]
+);
+
+const waitForFill = useCallback(
+    async (
+        tradeId: string,
+        symbol: string,
+        orderId?: string | null,
+        orderLinkId?: string | null,
+        maxWaitMs: number = 90000
+    ) => {
+        const net = useTestnet ? "testnet" : "mainnet";
+        const started = Date.now();
+        let attempt = 0;
+        while (Date.now() - started < maxWaitMs) {
+            attempt += 1;
+            // 1) In-memory executions seen by polling loop
+            const execHit = executionEventsRef.current.find((e) => {
+                if (e.symbol !== symbol) return false;
+                if (orderId && e.orderId && e.orderId === orderId) return true;
+                if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
+                return !orderId && !orderLinkId;
+            });
+            if (execHit) return execHit;
+
+            // 2) Fresh executions snapshot
+            const executionsResp = await fetchExecutionsOnce(net, symbol);
+            if (executionsResp.retCode && executionsResp.retCode !== 0) {
+                addLog({
+                    action: "ERROR",
+                    message: `Executions retCode=${executionsResp.retCode} ${executionsResp.retMsg || ""}`,
+                });
+            }
+            const execSnapshot = executionsResp.list.find((e: any) => {
+                if (e.symbol !== symbol) return false;
+                if (orderId && e.orderId && e.orderId === orderId) return true;
+                if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
+                return !orderId && !orderLinkId;
+            });
+            if (execSnapshot) return execSnapshot;
+
+            // 3) Order history snapshot
+            const historyResp = await fetchOrderHistoryOnce(net);
+            if (historyResp.retCode && historyResp.retCode !== 0) {
+                addLog({
+                    action: "ERROR",
+                    message: `Order history retCode=${historyResp.retCode} ${historyResp.retMsg || ""}`,
+                });
+            }
+            const histMatch = historyResp.list.find((o: any) => {
+                if (o.symbol !== symbol) return false;
+                if (orderId && o.orderId && o.orderId === orderId) return true;
+                if (orderLinkId && o.orderLinkId && o.orderLinkId === orderLinkId) return true;
+                return !orderId && !orderLinkId;
+            });
+            if (histMatch) {
+                const st = String(histMatch.orderStatus || histMatch.status || "");
+                if (st === "Filled" || st === "PartiallyFilled") return histMatch;
+                if (st === "Rejected") throw new Error("Order Rejected");
+                if (st === "Cancelled") throw new Error("Order Cancelled");
+            }
+
+            // 4) Positions snapshot (with retCode log)
+            const posResp = await fetchPositionsOnce(net);
+            if (posResp.retCode && posResp.retCode !== 0) {
+                addLog({
+                    action: "ERROR",
+                    message: `Positions retCode=${posResp.retCode} ${posResp.retMsg || ""}`,
+                });
+            }
+            const found = posResp.list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
+            if (found) return found;
+
+            await sleep(jitter(750, 1500));
+        }
+        const waitedSec = Math.round((Date.now() - started) / 1000);
+        throw new Error(`Fill not confirmed for ${symbol} within ${waitedSec}s`);
+    },
+    [addLog, fetchExecutionsOnce, fetchOrderHistoryOnce, fetchPositionsOnce, useTestnet]
+);
+
+const commitProtection = useCallback(
+    async (tradeId: string, symbol: string, sl?: number, tp?: number, trailingStop?: number) => {
+        if (!authToken) return false;
+        const net = useTestnet ? "testnet" : "mainnet";
+        const tolerance = Math.abs((currentPricesRef.current[symbol] ?? 0) * 0.001) || 0.5;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            setLifecycle(tradeId, "PROTECTION_PENDING", `attempt ${attempt}`);
+            const res = await fetch(`${apiBase}${apiPrefix}/protection?net=${net}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({
+                    symbol,
+                    sl,
+                    tp,
+                    trailingStop,
+                    positionIdx: 0,
+                }),
             });
             if (!res.ok) {
                 const txt = await res.text();
-                throw new Error(`Trades API failed (${res.status}): ${txt || "unknown"}`);
-            }
-            const data = await res.json();
-            const list = data?.data?.list || data?.list || data?.result?.list || [];
-            const mapped: TestnetTrade[] = Array.isArray(list)
-                ? list.map((t: any) => {
-                    const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
-                    return {
-                        id: t.execId || t.tradeId || `${Date.now()}`,
-                        symbol: t.symbol || "",
-                        side: (t.side as "Buy" | "Sell") || "Buy",
-                        price: Number(t.execPrice ?? t.price ?? 0),
-                        qty: Number(t.execQty ?? t.qty ?? 0),
-                        value: Number(t.execValue ?? t.value ?? 0),
-                        fee: Number(t.execFee ?? t.fee ?? 0),
-                        time: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
-                    };
-                })
-                : [];
-            setTestnetTrades(mapped);
-        } catch (err: any) {
-            setOrdersError((prev) => prev || err?.message || "Failed to load trades");
-        }
-    }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase]);
-
-    useEffect(() => {
-        void fetchOrders();
-        void fetchTrades();
-        const id = setInterval(() => {
-            void fetchOrders();
-            void fetchTrades();
-        }, 5000);
-        return () => clearInterval(id);
-    }, [fetchOrders, fetchTrades]);
-
-    // Keep refreshTestnetOrders pointing to fetchOrders for UI compatibility
-    const refreshTestnetOrders = fetchOrders;
-
-    const setLifecycle = (tradeId: string, status: string, note?: string) => {
-        lifecycleRef.current.set(tradeId, status);
-        addLog({
-            action: "SYSTEM",
-            message: `[${tradeId}] ${status}${note ? ` | ${note}` : ""}`,
-        });
-    };
-
-    const forceClosePosition = useCallback(
-        async (pos: ActivePosition) => {
-            if (!authToken) return;
-            const side = pos.side === "buy" ? "Sell" : "Buy";
-            try {
-                await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${authToken}`,
-                    },
-                    body: JSON.stringify({
-                        symbol: pos.symbol,
-                        side,
-                        qty: Number(pos.size.toFixed(4)),
-                        orderType: "Market",
-                        timeInForce: "IOC",
-                        reduceOnly: true,
-                    }),
-                });
-                addLog({
-                    action: "AUTO_CLOSE",
-                    message: `Forced reduce-only close ${pos.symbol} due to missing protection`,
-                });
-            } catch (err: any) {
                 addLog({
                     action: "ERROR",
-                    message: `Force close failed: ${err?.message || "unknown"}`,
+                    message: `Protection set failed (${res.status}): ${txt}`,
                 });
             }
-        },
-        [apiBase, authToken, useTestnet]
-    );
-
-    const fetchPositionsOnce = useCallback(
-        async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
-            if (!authToken) return { list: [] };
-            const url = new URL(`${apiBase}${apiPrefix}/positions`);
-            url.searchParams.set("net", net);
-            url.searchParams.set("settleCoin", "USDT");
-            url.searchParams.set("category", "linear");
-            const res = await fetch(url.toString(), {
-                headers: { Authorization: `Bearer ${authToken}` },
-            });
-            if (!res.ok) throw new Error(`Positions fetch failed (${res.status})`);
-            const json = await res.json();
-            return {
-                list: json?.data?.result?.list || json?.result?.list || json?.data?.list || [],
-                retCode: json?.data?.retCode ?? json?.retCode,
-                retMsg: json?.data?.retMsg ?? json?.retMsg,
-            };
-        },
-        [apiBase, apiPrefix, authToken]
-    );
-
-    const fetchOrdersOnce = useCallback(
-        async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
-            if (!authToken) return { list: [] };
-            const url = new URL(`${apiBase}${apiPrefix}/orders`);
-            url.searchParams.set("net", net);
-            url.searchParams.set("settleCoin", "USDT");
-            url.searchParams.set("category", "linear");
-            const res = await fetch(url.toString(), {
-                headers: { Authorization: `Bearer ${authToken}` },
-            });
-            if (!res.ok) throw new Error(`Orders fetch failed (${res.status})`);
-            const data = await res.json();
-            const retCode = data?.data?.retCode ?? data?.retCode;
-            const retMsg = data?.data?.retMsg ?? data?.retMsg;
-            const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
-            return { list: Array.isArray(list) ? list : [], retCode, retMsg };
-        },
-        [apiBase, apiPrefix, authToken]
-    );
-
-    const fetchOrderHistoryOnce = useCallback(
-        async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
-            if (!authToken) return { list: [] };
-            const url = new URL(`${apiBase}${apiPrefix}/orders`);
-            url.searchParams.set("net", net);
-            url.searchParams.set("settleCoin", "USDT");
-            url.searchParams.set("category", "linear");
-            url.searchParams.set("history", "1");
-            const res = await fetch(url.toString(), {
-                headers: { Authorization: `Bearer ${authToken}` },
-            });
-            if (!res.ok) throw new Error(`Order history fetch failed (${res.status})`);
-            const data = await res.json();
-            const retCode = data?.data?.retCode ?? data?.retCode;
-            const retMsg = data?.data?.retMsg ?? data?.retMsg;
-            const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
-            return { list: Array.isArray(list) ? list : [], retCode, retMsg };
-        },
-        [apiBase, apiPrefix, authToken]
-    );
-
-    const fetchExecutionsOnce = useCallback(
-        async (
-            net: "testnet" | "mainnet",
-            symbol?: string
-        ): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
-            if (!authToken) return { list: [] };
-            const url = new URL(`${apiBase}${apiPrefix}/executions`);
-            url.searchParams.set("net", net);
-            url.searchParams.set("limit", "100");
-            url.searchParams.set("settleCoin", "USDT");
-            url.searchParams.set("category", "linear");
-            if (symbol) url.searchParams.set("symbol", symbol);
-            const res = await fetch(url.toString(), {
-                headers: { Authorization: `Bearer ${authToken}` },
-            });
-            if (!res.ok) throw new Error(`Executions fetch failed (${res.status})`);
-            const data = await res.json();
-            const retCode = data?.data?.retCode ?? data?.retCode;
-            const retMsg = data?.data?.retMsg ?? data?.retMsg;
-            const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
-            return { list: Array.isArray(list) ? list : [], retCode, retMsg };
-        },
-        [apiBase, apiPrefix, authToken]
-    );
-
-    const waitForFill = useCallback(
-        async (
-            tradeId: string,
-            symbol: string,
-            orderId?: string | null,
-            orderLinkId?: string | null,
-            maxWaitMs: number = 90000
-        ) => {
-            const net = useTestnet ? "testnet" : "mainnet";
-            const started = Date.now();
-            let attempt = 0;
-            while (Date.now() - started < maxWaitMs) {
-                attempt += 1;
-                // 1) In-memory executions seen by polling loop
-                const execHit = executionEventsRef.current.find((e) => {
-                    if (e.symbol !== symbol) return false;
-                    if (orderId && e.orderId && e.orderId === orderId) return true;
-                    if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
-                    return !orderId && !orderLinkId;
-                });
-                if (execHit) return execHit;
-
-                // 2) Fresh executions snapshot
-                const executionsResp = await fetchExecutionsOnce(net, symbol);
-                if (executionsResp.retCode && executionsResp.retCode !== 0) {
-                    addLog({
-                        action: "ERROR",
-                        message: `Executions retCode=${executionsResp.retCode} ${executionsResp.retMsg || ""}`,
-                    });
-                }
-                const execSnapshot = executionsResp.list.find((e: any) => {
-                    if (e.symbol !== symbol) return false;
-                    if (orderId && e.orderId && e.orderId === orderId) return true;
-                    if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
-                    return !orderId && !orderLinkId;
-                });
-                if (execSnapshot) return execSnapshot;
-
-                // 3) Order history snapshot
-                const historyResp = await fetchOrderHistoryOnce(net);
-                if (historyResp.retCode && historyResp.retCode !== 0) {
-                    addLog({
-                        action: "ERROR",
-                        message: `Order history retCode=${historyResp.retCode} ${historyResp.retMsg || ""}`,
-                    });
-                }
-                const histMatch = historyResp.list.find((o: any) => {
-                    if (o.symbol !== symbol) return false;
-                    if (orderId && o.orderId && o.orderId === orderId) return true;
-                    if (orderLinkId && o.orderLinkId && o.orderLinkId === orderLinkId) return true;
-                    return !orderId && !orderLinkId;
-                });
-                if (histMatch) {
-                    const st = String(histMatch.orderStatus || histMatch.status || "");
-                    if (st === "Filled" || st === "PartiallyFilled") return histMatch;
-                    if (st === "Rejected") throw new Error("Order Rejected");
-                    if (st === "Cancelled") throw new Error("Order Cancelled");
-                }
-
-                // 4) Positions snapshot (with retCode log)
+            // verify
+            try {
                 const posResp = await fetchPositionsOnce(net);
-                if (posResp.retCode && posResp.retCode !== 0) {
-                    addLog({
-                        action: "ERROR",
-                        message: `Positions retCode=${posResp.retCode} ${posResp.retMsg || ""}`,
-                    });
-                }
                 const found = posResp.list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
-                if (found) return found;
-
-                await sleep(jitter(750, 1500));
-            }
-            const waitedSec = Math.round((Date.now() - started) / 1000);
-            throw new Error(`Fill not confirmed for ${symbol} within ${waitedSec}s`);
-        },
-        [addLog, fetchExecutionsOnce, fetchOrderHistoryOnce, fetchPositionsOnce, useTestnet]
-    );
-
-    const commitProtection = useCallback(
-        async (tradeId: string, symbol: string, sl?: number, tp?: number, trailingStop?: number) => {
-            if (!authToken) return false;
-            const net = useTestnet ? "testnet" : "mainnet";
-            const tolerance = Math.abs((currentPricesRef.current[symbol] ?? 0) * 0.001) || 0.5;
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                setLifecycle(tradeId, "PROTECTION_PENDING", `attempt ${attempt}`);
-                const res = await fetch(`${apiBase}${apiPrefix}/protection?net=${net}`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${authToken}`,
-                    },
-                    body: JSON.stringify({
-                        symbol,
-                        sl,
-                        tp,
-                        trailingStop,
-                        positionIdx: 0,
-                    }),
-                });
-                if (!res.ok) {
-                    const txt = await res.text();
-                    addLog({
-                        action: "ERROR",
-                        message: `Protection set failed (${res.status}): ${txt}`,
-                    });
-                }
-                // verify
-                try {
-                    const posResp = await fetchPositionsOnce(net);
-                    const found = posResp.list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
-                    if (found) {
-                        const tpOk = tp == null || Math.abs(Number(found.takeProfit ?? 0) - tp) <= tolerance;
-                        const slOk = sl == null || Math.abs(Number(found.stopLoss ?? 0) - sl) <= tolerance;
-                        const tsOk = trailingStop == null || Math.abs(Number(found.trailingStop ?? 0) - trailingStop) <= tolerance;
-                        if (tpOk && slOk && tsOk) {
-                            setLifecycle(tradeId, "PROTECTION_SET");
-                            return true;
-                        }
+                if (found) {
+                    const tpOk = tp == null || Math.abs(Number(found.takeProfit ?? 0) - tp) <= tolerance;
+                    const slOk = sl == null || Math.abs(Number(found.stopLoss ?? 0) - sl) <= tolerance;
+                    const tsOk = trailingStop == null || Math.abs(Number(found.trailingStop ?? 0) - trailingStop) <= tolerance;
+                    if (tpOk && slOk && tsOk) {
+                        setLifecycle(tradeId, "PROTECTION_SET");
+                        return true;
                     }
-                } catch (err: any) {
-                    addLog({ action: "ERROR", message: `Protection verify failed: ${err?.message || "unknown"}` });
                 }
-                await new Promise((r) => setTimeout(r, 800));
+            } catch (err: any) {
+                addLog({ action: "ERROR", message: `Protection verify failed: ${err?.message || "unknown"}` });
             }
-            setLifecycle(tradeId, "PROTECTION_FAILED");
-            addLog({
-                action: "ERROR",
-                message: `Protection not confirmed for ${symbol} after retries.`,
-            });
-            return false;
-        },
-        [apiBase, authToken, fetchPositionsOnce, setLifecycle, useTestnet]
-    );
+            await new Promise((r) => setTimeout(r, 800));
+        }
+        setLifecycle(tradeId, "PROTECTION_FAILED");
+        addLog({
+            action: "ERROR",
+            message: `Protection not confirmed for ${symbol} after retries.`,
+        });
+        return false;
+    },
+    [apiBase, authToken, fetchPositionsOnce, setLifecycle, useTestnet]
+);
 
-    // Reconcile smyčka: hlídá stárnutí dat a ochranu
-    useEffect(() => {
-        if (!authToken) return;
-        let cancel = false;
+// Reconcile smyčka: hlídá stárnutí dat a ochranu
+useEffect(() => {
+    if (!authToken) return;
+    let cancel = false;
 
-        const reconcile = async () => {
-            const now = Date.now();
-            const stale = now - lastPositionsSyncAtRef.current > 20000;
-            if (stale) {
-                setSystemState((p) => ({
-                    ...p,
-                    bybitStatus: "Stale",
-                    lastError: "Positions sync stale >20s",
-                }));
-            }
+    const reconcile = async () => {
+        const now = Date.now();
+        const stale = now - lastPositionsSyncAtRef.current > 20000;
+        if (stale) {
+            setSystemState((p) => ({
+                ...p,
+                bybitStatus: "Stale",
+                lastError: "Positions sync stale >20s",
+            }));
+        }
 
-            const positions = activePositionsRef.current;
-            for (const p of positions) {
-                if (!p || !p.symbol) continue;
-                const missingProtection =
-                    (p.sl == null || p.sl === 0) &&
-                    (p.tp == null || p.tp === 0) &&
-                    (p.currentTrailingStop == null || p.currentTrailingStop === 0);
-                if (missingProtection && p.size > 0) {
-                    const dir = p.side === "buy" ? 1 : -1;
-                    const price = p.entryPrice || currentPricesRef.current[p.symbol] || 0;
-                    if (!price) continue;
-                    const fallbackSl = dir > 0 ? price * 0.99 : price * 1.01;
-                    const fallbackTpRaw = dir > 0 ? price * 1.01 : price * 0.99;
-                    const fallbackTp = ensureMinTpDistance(price, fallbackSl, fallbackTpRaw, p.size || 0.001);
-                    const ok = await commitProtection(`recon-${p.id}`, p.symbol, fallbackSl, fallbackTp, undefined);
-                    if (!ok) {
-                        await forceClosePosition(p);
-                    }
-                } else if ((p.currentTrailingStop == null || p.currentTrailingStop === 0) && p.size > 0) {
-                    // trailing stop aktivace po profit triggeru
-                    const hist = priceHistoryRef.current[p.symbol] || [];
-                    const atr = computeAtrFromHistory(hist, 20) || (currentPricesRef.current[p.symbol] ?? p.entryPrice) * 0.005;
-                    const oneR = Math.abs((p.entryPrice || 0) - (p.sl || p.entryPrice));
-                    const trigger = Math.max(0.8 * oneR, atr);
-                    const price = currentPricesRef.current[p.symbol] || p.entryPrice;
-                    const dir = p.side === "buy" ? 1 : -1;
-                    const profit = (price - p.entryPrice) * dir;
-                    if (profit >= trigger && price > 0) {
-                        const trailDistance = Math.max(0.8 * atr, 0.6 * oneR, price * 0.003);
-                        const ok = await commitProtection(`trail-${p.id}`, p.symbol, p.sl, p.tp, trailDistance);
-                        if (ok) {
-                            addLog({
-                                action: "SYSTEM",
-                                message: `Trailing stop aktivován pro ${p.symbol} (dist ${trailDistance.toFixed(4)})`,
-                            });
-                        }
+        const positions = activePositionsRef.current;
+        for (const p of positions) {
+            if (!p || !p.symbol) continue;
+            const missingProtection =
+                (p.sl == null || p.sl === 0) &&
+                (p.tp == null || p.tp === 0) &&
+                (p.currentTrailingStop == null || p.currentTrailingStop === 0);
+            if (missingProtection && p.size > 0) {
+                const dir = p.side === "buy" ? 1 : -1;
+                const price = p.entryPrice || currentPricesRef.current[p.symbol] || 0;
+                if (!price) continue;
+                const fallbackSl = dir > 0 ? price * 0.99 : price * 1.01;
+                const fallbackTpRaw = dir > 0 ? price * 1.01 : price * 0.99;
+                const fallbackTp = ensureMinTpDistance(price, fallbackSl, fallbackTpRaw, p.size || 0.001);
+                const ok = await commitProtection(`recon-${p.id}`, p.symbol, fallbackSl, fallbackTp, undefined);
+                if (!ok) {
+                    await forceClosePosition(p);
+                }
+            } else if ((p.currentTrailingStop == null || p.currentTrailingStop === 0) && p.size > 0) {
+                // trailing stop aktivace po profit triggeru
+                const hist = priceHistoryRef.current[p.symbol] || [];
+                const atr = computeAtrFromHistory(hist, 20) || (currentPricesRef.current[p.symbol] ?? p.entryPrice) * 0.005;
+                const oneR = Math.abs((p.entryPrice || 0) - (p.sl || p.entryPrice));
+                const trigger = Math.max(0.8 * oneR, atr);
+                const price = currentPricesRef.current[p.symbol] || p.entryPrice;
+                const dir = p.side === "buy" ? 1 : -1;
+                const profit = (price - p.entryPrice) * dir;
+                if (profit >= trigger && price > 0) {
+                    const trailDistance = Math.max(0.8 * atr, 0.6 * oneR, price * 0.003);
+                    const ok = await commitProtection(`trail-${p.id}`, p.symbol, p.sl, p.tp, trailDistance);
+                    if (ok) {
+                        addLog({
+                            action: "SYSTEM",
+                            message: `Trailing stop aktivován pro ${p.symbol} (dist ${trailDistance.toFixed(4)})`,
+                        });
                     }
                 }
             }
-        };
+        }
+    };
 
-        const id = setInterval(() => {
-            if (!cancel) void reconcile();
-        }, 12000);
+    const id = setInterval(() => {
+        if (!cancel) void reconcile();
+    }, 12000);
 
-        return () => {
-            cancel = true;
-            clearInterval(id);
-        };
-    }, [authToken, commitProtection, forceClosePosition]);
+    return () => {
+        cancel = true;
+        clearInterval(id);
+    };
+}, [authToken, commitProtection, forceClosePosition]);
 
-    const [aiModelState, _setAiModelState] = useState({
-        version: "1.0.0-real-strategy",
-        lastRetrain: new Date(Date.now() - 7 * 24 * 3600 * 1000)
-            .toISOString()
-            .split("T")[0],
-        nextRetrain: new Date(Date.now() + 7 * 24 * 3600 * 1000)
-            .toISOString()
-            .split("T")[0],
-        status: "Idle" as "Idle" | "Training",
-    });
+const [aiModelState, _setAiModelState] = useState({
+    version: "1.0.0-real-strategy",
+    lastRetrain: new Date(Date.now() - 7 * 24 * 3600 * 1000)
+        .toISOString()
+        .split("T")[0],
+    nextRetrain: new Date(Date.now() + 7 * 24 * 3600 * 1000)
+        .toISOString()
+        .split("T")[0],
+    status: "Idle" as "Idle" | "Training",
+});
 
-    const priceHistoryRef = useRef<Record<string, Candle[]>>({});
-    const modeRef = useRef(mode);
-    modeRef.current = mode;
-    const settingsRef = useRef(settings);
-    settingsRef.current = settings;
-    const realizedPnlRef = useRef(0);
-    const closedPnlSeenRef = useRef<Set<string>>(new Set());
-    const lifecycleRef = useRef<Map<string, string>>(new Map());
-    const dailyHaltAtRef = useRef<number | null>(null);
-    const lastTestSignalAtRef = useRef<number | null>(null);
-    const lastKeepaliveAtRef = useRef<number | null>(null);
-    const coachStakeRef = useRef<Record<string, number>>({});
-    const winStreakRef = useRef(0);
-    const lossStreakRef = useRef(0);
-    const rollingOutcomesRef = useRef<boolean[]>([]);
-    const lastPositionsSyncAtRef = useRef<number>(0);
-    const executionCursorRef = useRef<string | null>(null);
-    const processedExecIdsRef = useRef<Set<string>>(new Set());
-    const executionEventsRef = useRef<
-        { id: string; symbol: string; orderId?: string; orderLinkId?: string; price?: number; qty?: number; time?: string }[]
-    >([]);
+const priceHistoryRef = useRef<Record<string, Candle[]>>({});
+const modeRef = useRef(mode);
+modeRef.current = mode;
+const settingsRef = useRef(settings);
+settingsRef.current = settings;
+const realizedPnlRef = useRef(0);
+const closedPnlSeenRef = useRef<Set<string>>(new Set());
+const lifecycleRef = useRef<Map<string, string>>(new Map());
+const dailyHaltAtRef = useRef<number | null>(null);
+const lastTestSignalAtRef = useRef<number | null>(null);
+const lastKeepaliveAtRef = useRef<number | null>(null);
+const coachStakeRef = useRef<Record<string, number>>({});
+const winStreakRef = useRef(0);
+const lossStreakRef = useRef(0);
+const rollingOutcomesRef = useRef<boolean[]>([]);
+const lastPositionsSyncAtRef = useRef<number>(0);
+const executionCursorRef = useRef<string | null>(null);
+const processedExecIdsRef = useRef<Set<string>>(new Set());
+const executionEventsRef = useRef<
+    { id: string; symbol: string; orderId?: string; orderLinkId?: string; price?: number; qty?: number; time?: string }[]
+>([]);
 
-    function addLog(entry: Omit<LogEntry, "id" | "timestamp">) {
-        const log: LogEntry = {
-            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            timestamp: new Date().toISOString(),
-            ...entry,
-        };
-        setLogEntries((prev) => [log, ...prev].slice(0, 200));
+function addLog(entry: Omit<LogEntry, "id" | "timestamp">) {
+    const log: LogEntry = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        timestamp: new Date().toISOString(),
+        ...entry,
+    };
+    setLogEntries((prev) => [log, ...prev].slice(0, 200));
+}
+
+const registerOutcome = (pnl: number) => {
+    const win = pnl > 0;
+    if (win) {
+        winStreakRef.current += 1;
+        lossStreakRef.current = 0;
+    } else {
+        lossStreakRef.current += 1;
+        winStreakRef.current = 0;
+    }
+    rollingOutcomesRef.current = [...rollingOutcomesRef.current.slice(-9), win];
+};
+
+const computeScalpDynamicRisk = (settings: AISettings) => {
+    const base = resolveRiskPct(settings);
+    const rolling = rollingOutcomesRef.current;
+    const wins = rolling.filter(Boolean).length;
+    const rate = rolling.length ? wins / rolling.length : 0;
+    let risk = base;
+    const hot =
+        winStreakRef.current >= 4 ||
+        (rolling.length >= 5 && rate >= 0.65);
+    const cold = lossStreakRef.current >= 3;
+    if (hot) {
+        risk = Math.min(Math.max(base, base * 1.8), 0.02);
+    }
+    if (cold) {
+        risk = Math.max(base * 0.5, 0.005);
+    }
+    return risk;
+};
+
+const getEffectiveRiskPct = (settings: AISettings) =>
+    settings.strategyProfile === "scalp"
+        ? computeScalpDynamicRisk(settings)
+        : resolveRiskPct(settings);
+
+const getVolatilityMultiplier = (symbol: string) => {
+    const hist = priceHistoryRef.current[symbol] || [];
+    if (!hist.length) return 1;
+    const { atrShort, atrLong } = computeAtrPair(hist);
+    if (!atrShort || !atrLong) return 1;
+    const ratio = atrLong / Math.max(atrShort, 1e-8);
+    return Math.min(4, Math.max(0.5, ratio * 0.8));
+};
+
+// ========== FETCH CEN Z BYBIT (mainnet / testnet) ==========
+useEffect(() => {
+    if (mode === TradingMode.OFF) {
+        setSystemState((p) => ({ ...p, bybitStatus: "Disconnected" }));
+        return;
     }
 
-    const registerOutcome = (pnl: number) => {
-        const win = pnl > 0;
-        if (win) {
-            winStreakRef.current += 1;
-            lossStreakRef.current = 0;
-        } else {
-            lossStreakRef.current += 1;
-            winStreakRef.current = 0;
-        }
-        rollingOutcomesRef.current = [...rollingOutcomesRef.current.slice(-9), win];
-    };
+    let cancel = false;
 
-    const computeScalpDynamicRisk = (settings: AISettings) => {
-        const base = resolveRiskPct(settings);
-        const rolling = rollingOutcomesRef.current;
-        const wins = rolling.filter(Boolean).length;
-        const rate = rolling.length ? wins / rolling.length : 0;
-        let risk = base;
-        const hot =
-            winStreakRef.current >= 4 ||
-            (rolling.length >= 5 && rate >= 0.65);
-        const cold = lossStreakRef.current >= 3;
-        if (hot) {
-            risk = Math.min(Math.max(base, base * 1.8), 0.02);
-        }
-        if (cold) {
-            risk = Math.max(base * 0.5, 0.005);
-        }
-        return risk;
-    };
+    const fetchAll = async () => {
+        const started = performance.now();
+        const now = new Date();
 
-    const getEffectiveRiskPct = (settings: AISettings) =>
-        settings.strategyProfile === "scalp"
-            ? computeScalpDynamicRisk(settings)
-            : resolveRiskPct(settings);
+        if (!withinSession(settingsRef.current, now)) return;
 
-    const getVolatilityMultiplier = (symbol: string) => {
-        const hist = priceHistoryRef.current[symbol] || [];
-        if (!hist.length) return 1;
-        const { atrShort, atrLong } = computeAtrPair(hist);
-        if (!atrShort || !atrLong) return 1;
-        const ratio = atrLong / Math.max(atrShort, 1e-8);
-        return Math.min(4, Math.max(0.5, ratio * 0.8));
-    };
+        try {
+            const URL_KLINE = `${httpBase}/v5/market/kline?category=linear`;
 
-    // ========== FETCH CEN Z BYBIT (mainnet / testnet) ==========
-    useEffect(() => {
-        if (mode === TradingMode.OFF) {
-            setSystemState((p) => ({ ...p, bybitStatus: "Disconnected" }));
-            return;
-        }
+            const newPrices: Record<string, number> = {};
+            const newHistory: any = { ...priceHistoryRef.current };
+            const engineActive: ActivePosition[] = [];
 
-        let cancel = false;
+            for (const symbol of SYMBOLS) {
+                const url = `${URL_KLINE}&symbol=${symbol}&interval=1&limit=200`;
+                const r = await fetch(url);
+                const j = await r.json();
+                if (j.retCode !== 0) throw new Error(j.retMsg);
 
-        const fetchAll = async () => {
-            const started = performance.now();
-            const now = new Date();
+                const candles = parseKlines(j.result?.list ?? []);
+                // daily data for situational analysis
+                const dailyRes = await fetch(`${URL_KLINE}&symbol=${symbol}&interval=D&limit=10`);
+                const dailyJson = await dailyRes.json();
+                if (dailyJson.retCode !== 0) throw new Error(dailyJson.retMsg);
+                const dailyCandles = parseKlines(dailyJson.result?.list ?? []);
+                if (!candles.length) continue;
 
-            if (!withinSession(settingsRef.current, now)) return;
+                newHistory[symbol] = candles;
+                newPrices[symbol] = candles[candles.length - 1].close;
 
-            try {
-                const URL_KLINE = `${httpBase}/v5/market/kline?category=linear`;
-
-                const newPrices: Record<string, number> = {};
-                const newHistory: any = { ...priceHistoryRef.current };
-                const engineActive: ActivePosition[] = [];
-
-                for (const symbol of SYMBOLS) {
-                    const url = `${URL_KLINE}&symbol=${symbol}&interval=1&limit=200`;
-                    const r = await fetch(url);
-                    const j = await r.json();
-                    if (j.retCode !== 0) throw new Error(j.retMsg);
-
-                    const candles = parseKlines(j.result?.list ?? []);
-                    // daily data for situational analysis
-                    const dailyRes = await fetch(`${URL_KLINE}&symbol=${symbol}&interval=D&limit=10`);
-                    const dailyJson = await dailyRes.json();
-                    if (dailyJson.retCode !== 0) throw new Error(dailyJson.retMsg);
-                    const dailyCandles = parseKlines(dailyJson.result?.list ?? []);
-                    if (!candles.length) continue;
-
-                    newHistory[symbol] = candles;
-                    newPrices[symbol] = candles[candles.length - 1].close;
-
-                    if (mode !== TradingMode.BACKTEST) {
-                        // === Custom Coach strategy: Base 'n Break / Wedge Pop approximation ===
-                        if (settingsRef.current.strategyProfile === "coach") {
-                            const existingActive = activePositionsRef.current.some((p) => p.symbol === symbol);
-                            const existingPending = pendingSignalsRef.current.some((p) => p.symbol === symbol);
-                            if (!existingActive && !existingPending) {
-                                // Intraday breakout (Base 'n Break / Wedge Pop)
-                                const coachSignal = detectCoachBreakout(candles, coachDefaults);
-                                if (coachSignal) {
-                                    setPendingSignals((prev) => [
-                                        {
-                                            id: `${symbol}-coach-${Date.now()}`,
-                                            symbol,
-                                            risk: 0.8,
-                                            createdAt: new Date().toISOString(),
-                                            ...coachSignal,
-                                            intent: { ...coachSignal.intent, symbol, qty: 0 }, // FIX: Enrich intent
-                                        },
-                                        ...prev,
-                                    ]);
-                                    addLog({
-                                        action: "SIGNAL",
-                                        message: coachSignal.message,
-                                    });
-                                }
-                                // Situational Analysis (daily highs/lows rules)
-                                const situational = detectSituationalEdges(dailyCandles, newPrices[symbol]);
-                                if (situational) {
-                                    setPendingSignals((prev) => [
-                                        {
-                                            id: `${symbol}-situational-${Date.now()}`,
-                                            symbol,
-                                            risk: 0.5,
-                                            createdAt: new Date().toISOString(),
-                                            ...situational,
-                                            intent: { ...situational.intent, symbol, qty: 0 }, // FIX: Enrich intent
-                                        },
-                                        ...prev,
-                                    ]);
-                                    addLog({
-                                        action: "SIGNAL",
-                                        message: situational.message,
-                                    });
-                                }
-                            }
-                        } else {
-                            const profile = chooseStrategyProfile(
-                                candles,
-                                settingsRef.current.strategyProfile as any
-                            );
-                            if (!profile) continue;
-                            const resolvedRiskPct = Math.min(
-                                getEffectiveRiskPct(settingsRef.current) *
-                                (settingsRef.current.positionSizingMultiplier || 1),
-                                0.07
-                            );
-                            const decision = evaluateStrategyForSymbol(
-                                symbol,
-                                candles,
-                                {
-                                    strategyProfile: profile,
-                                    entryStrictness:
-                                        settingsRef.current.entryStrictness,
-                                    riskPerTrade: resolvedRiskPct,
-                                    accountBalance: portfolioState.totalCapital,
-                                    maxDailyLossPercent: settingsRef.current.maxDailyLossPercent,
-                                    maxDrawdownPercent: settingsRef.current.maxDrawdownPercent,
-                                    maxDailyProfitPercent: settingsRef.current.maxDailyProfitPercent,
-                                    maxOpenPositions: settingsRef.current.maxOpenPositions,
-                                    maxPortfolioRiskPercent: settingsRef.current.maxPortfolioRiskPercent,
-                                    enforceSessionHours: settingsRef.current.enforceSessionHours,
-                                    tradingHours: {
-                                        start: settingsRef.current.tradingStartHour,
-                                        end: settingsRef.current.tradingEndHour,
-                                        days: settingsRef.current.tradingDays,
-                                    },
-                                }
-                            );
-                            const signal = decision?.signal;
-                            if (signal) {
+                if (mode !== TradingMode.BACKTEST) {
+                    // === Custom Coach strategy: Base 'n Break / Wedge Pop approximation ===
+                    if (settingsRef.current.strategyProfile === "coach") {
+                        const existingActive = activePositionsRef.current.some((p) => p.symbol === symbol);
+                        const existingPending = pendingSignalsRef.current.some((p) => p.symbol === symbol);
+                        if (!existingActive && !existingPending) {
+                            // Intraday breakout (Base 'n Break / Wedge Pop)
+                            const coachSignal = detectCoachBreakout(candles, coachDefaults);
+                            if (coachSignal) {
                                 setPendingSignals((prev) => [
-                                    { ...signal, symbol, intent: { ...signal.intent, symbol, qty: 0 } }, // FIX: Enrich intent
-                                    ...prev
+                                    {
+                                        id: `${symbol}-coach-${Date.now()}`,
+                                        symbol,
+                                        risk: 0.8,
+                                        createdAt: new Date().toISOString(),
+                                        ...coachSignal,
+                                        intent: { ...coachSignal.intent, symbol, qty: 0 }, // FIX: Enrich intent
+                                    },
+                                    ...prev,
                                 ]);
                                 addLog({
                                     action: "SIGNAL",
-                                    message: `${signal.intent.side} ${symbol} @ ${signal.intent.entry} | TESTNET=${useTestnet}`,
+                                    message: coachSignal.message,
                                 });
                             }
-                            if (decision?.position) {
-                                const pos = decision.position;
-                                const dir = pos.side === "long" ? 1 : -1;
-                                const currentPrice =
-                                    candles[candles.length - 1].close;
-                                const pnl =
-                                    (currentPrice - pos.entryPrice) *
-                                    dir *
-                                    pos.size;
-                                const hist = newHistory[symbol] || [];
-                                const atr =
-                                    computeAtrFromHistory(hist, 20) ||
-                                    pos.entryPrice * 0.005;
-                                const safeSl =
-                                    pos.stopLoss ||
-                                    (pos.side === "long"
-                                        ? pos.entryPrice - 1.5 * atr
-                                        : pos.entryPrice + 1.5 * atr);
-                                const tpCandidate = Number.isFinite(pos.takeProfit)
-                                    ? pos.takeProfit
-                                    : pos.initialTakeProfit;
-                                const safeTp =
-                                    tpCandidate && Number.isFinite(tpCandidate)
-                                        ? tpCandidate
-                                        : pos.side === "long"
-                                            ? pos.entryPrice +
-                                            1.2 * (pos.entryPrice - safeSl)
-                                            : pos.entryPrice -
-                                            1.2 * (safeSl - pos.entryPrice);
-                                const mapped: ActivePosition = {
-                                    positionId: `${symbol}-${pos.opened}`, // FIX: Synthesized ID from engine state
-                                    id: `${symbol}-${pos.opened}`,
-                                    symbol,
-                                    side: pos.side === "long" ? "buy" : "sell",
-                                    qty: pos.size, // FIX
-                                    entryPrice: pos.entryPrice,
-                                    sl: safeSl,
-                                    tp: safeTp,
-                                    size: pos.size,
-                                    env: useTestnet ? "testnet" : "mainnet", // FIX
-                                    openedAt: new Date(pos.opened).toISOString(),
-                                    unrealizedPnl: pnl,
-                                    pnl,
-                                    pnlValue: pnl,
-                                    rrr:
-                                        Math.abs(
-                                            (Number.isFinite(pos.takeProfit)
-                                                ? pos.takeProfit
-                                                : pos.initialTakeProfit) -
-                                            pos.entryPrice
-                                        ) /
-                                        Math.abs(
-                                            pos.entryPrice - pos.stopLoss ||
-                                            1e-8
-                                        ) || 0,
-                                    peakPrice: pos.highWaterMark,
-                                    currentTrailingStop: pos.trailingStop,
-                                    volatilityFactor: undefined,
-                                    lastUpdateReason: undefined,
-                                    timestamp: new Date().toISOString(),
-                                };
-                                engineActive.push(mapped);
-                            }
-                        } // end evaluateStrategy branch
-                    } // end mode !== BACKTEST
-                } // end for SYMBOLS
-
-                if (cancel) return;
-
-                priceHistoryRef.current = newHistory;
-                setCurrentPrices(newPrices);
-                currentPricesRef.current = newPrices;
-
-                // Simulované pozice aktualizujeme jen pokud NEMÁME auth token (tj. není přímá vazba na burzu).
-                if (!authToken) {
-                    const prevActive = activePositionsRef.current;
-                    const closed = prevActive.filter(
-                        (p) => !engineActive.some((e) => e.id === p.id)
-                    );
-
-                    let freedNotional = 0;
-                    if (closed.length) {
-                        closed.forEach((p) => {
-                            const exitPrice =
-                                newPrices[p.symbol] ??
-                                currentPrices[p.symbol] ??
-                                p.entryPrice;
-                            const dir = p.side === "buy" ? 1 : -1;
-                            const pnl =
-                                (exitPrice - p.entryPrice) * dir * p.size;
-                            realizedPnlRef.current += pnl;
-                            const limits = QTY_LIMITS[p.symbol];
-                            if (settingsRef.current.strategyProfile === "coach" && limits) {
-                                const nextStake = Math.max(
-                                    limits.min * p.entryPrice,
-                                    Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl)
-                                );
-                                coachStakeRef.current[p.symbol] = nextStake;
-                            }
-                            const record: AssetPnlRecord = {
-                                symbol: p.symbol,
-                                pnl,
-                                timestamp: new Date().toISOString(),
-                                note: `Auto-close @ ${exitPrice.toFixed(
-                                    4
-                                )} | size ${p.size.toFixed(4)}`,
-                            };
-                            if (authToken) {
-                                setAssetPnlHistory(() => addPnlRecord(record));
-                            }
-                            setEntryHistory(() =>
-                                addEntryToHistory({
-                                    id: `${p.id}-auto-closed`,
-                                    symbol: p.symbol,
-                                    side: p.side.toLowerCase() as "buy" | "sell",
-                                    entryPrice: p.entryPrice,
-                                    sl: p.sl,
-                                    tp: p.tp,
-                                    size: p.size,
-                                    createdAt: new Date().toISOString(),
-                                    settingsNote: `Auto-closed @ ${exitPrice.toFixed(
-                                        4
-                                    )} | PnL ${pnl.toFixed(2)} USDT`,
-                                    settingsSnapshot: snapshotSettings(settingsRef.current),
-                                })
-                            );
-                            freedNotional += marginFor(p.symbol, p.entryPrice, p.size);
-                            addLog({
-                                action: "AUTO_CLOSE",
-                                message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
-                                    4
-                                )} | PnL ${pnl.toFixed(2)} USDT`,
-                            });
-                        });
-                    }
-
-                    setActivePositions(() => {
-                        activePositionsRef.current = engineActive;
-                        return engineActive;
-                    });
-                    setPortfolioState((p) => ({
-                        ...p,
-                        openPositions: engineActive.length,
-                        allocatedCapital: Math.max(
-                            0,
-                            p.allocatedCapital - freedNotional
-                        ),
-                    }));
-                }
-
-                const latency = Math.round(performance.now() - started);
-                setSystemState((p) => ({
-                    ...p,
-                    bybitStatus: "Connected",
-                    latency,
-                    lastError: null,
-                }));
-
-                // === TEST MODE: GENERUJ RYCHLÉ SIGNÁLY PRO VŠECHNY ASSETY, KTERÉ NEJSOU OTEVŘENÉ ===
-                if (settingsRef.current.entryStrictness === "test") {
-                    const now = Date.now();
-                    if (
-                        lastTestSignalAtRef.current &&
-                        now - lastTestSignalAtRef.current < 4000
-                    ) {
-                        // Throttle generování test signálů
-                    } else {
-                        lastTestSignalAtRef.current = now;
-                        const activeSymbols = new Set(
-                            activePositionsRef.current.map((p) => p.symbol)
-                        );
-                        const pendingSymbols = new Set(
-                            pendingSignalsRef.current.map((p) => p.symbol)
-                        );
-                        const nowIso = new Date().toISOString();
-                        const newTestSignals: PendingSignal[] = [];
-                        for (const symbol of SYMBOLS) {
-                            if (activeSymbols.has(symbol)) continue;
-                            if (pendingSymbols.has(symbol)) continue;
-                            if (
-                                pendingSignalsRef.current.length + newTestSignals.length >=
-                                MAX_TEST_PENDING
-                            )
-                                break;
-                            const price = newPrices[symbol];
-                            if (!price) continue;
-                            const side: "buy" | "sell" =
-                                Math.random() > 0.5 ? "buy" : "sell";
-                            const offsetPct = 0.003 + Math.random() * 0.01; // 0.3% – 1.3%
-                            const sl =
-                                side === "buy"
-                                    ? price * (1 - offsetPct)
-                                    : price * (1 + offsetPct);
-                            const tp =
-                                side === "buy"
-                                    ? price * (1 + offsetPct)
-                                    : price * (1 - offsetPct);
-                            newTestSignals.push({
-                                id: `${symbol}-${Date.now()}-${Math.random()
-                                    .toString(16)
-                                    .slice(2)}`,
-                                symbol,
-                                intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
-                                risk: 0.7,
-                                message: `TEST signal ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
-                                    4
-                                )}`,
-                                createdAt: nowIso,
-                            });
-                        }
-                        if (newTestSignals.length) {
-                            setPendingSignals((prev) => [
-                                ...newTestSignals,
-                                ...prev,
-                            ]);
-                            newTestSignals.forEach((s) =>
+                            // Situational Analysis (daily highs/lows rules)
+                            const situational = detectSituationalEdges(dailyCandles, newPrices[symbol]);
+                            if (situational) {
+                                setPendingSignals((prev) => [
+                                    {
+                                        id: `${symbol}-situational-${Date.now()}`,
+                                        symbol,
+                                        risk: 0.5,
+                                        createdAt: new Date().toISOString(),
+                                        ...situational,
+                                        intent: { ...situational.intent, symbol, qty: 0 }, // FIX: Enrich intent
+                                    },
+                                    ...prev,
+                                ]);
                                 addLog({
                                     action: "SIGNAL",
-                                    message: s.message,
-                                })
-                            );
-                        }
-                    }
-                }
-
-                // Keepalive signály pro ostatní profily: pokud není žádný pending/aktivní delší dobu, vytvoř fallback
-                if (
-                    settingsRef.current.entryStrictness !== "test" &&
-                    pendingSignalsRef.current.length === 0 &&
-                    activePositionsRef.current.length === 0
-                ) {
-                    const now = Date.now();
-                    if (
-                        !lastKeepaliveAtRef.current ||
-                        now - lastKeepaliveAtRef.current > KEEPALIVE_SIGNAL_INTERVAL_MS
-                    ) {
-                        lastKeepaliveAtRef.current = now;
-                        const keepSignals: PendingSignal[] = [];
-                        const nowIso = new Date().toISOString();
-                        for (const symbol of SYMBOLS) {
-                            if (keepSignals.length >= MAX_TEST_PENDING) break;
-                            const price = newPrices[symbol];
-                            if (!price) continue;
-                            const hist = priceHistoryRef.current[symbol] || [];
-                            const atr = computeAtrFromHistory(hist, 20) || price * 0.005;
-                            const side: "buy" | "sell" =
-                                Math.random() > 0.5 ? "buy" : "sell";
-                            const sl =
-                                side === "buy" ? price - 1.5 * atr : price + 1.5 * atr;
-                            const tp =
-                                side === "buy" ? price + 2.5 * atr : price - 2.5 * atr;
-                            keepSignals.push({
-                                id: `${symbol}-keep-${Date.now()}-${Math.random()
-                                    .toString(16)
-                                    .slice(2)}`,
-                                symbol,
-                                intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
-                                risk: 0.6,
-                                message: `Keepalive ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
-                                    4
-                                )}`,
-                                createdAt: nowIso,
-                            });
-                        }
-                        if (keepSignals.length) {
-                            setPendingSignals((prev) => [...keepSignals, ...prev]);
-                            keepSignals.forEach((s) =>
-                                addLog({ action: "SIGNAL", message: s.message })
-                            );
-                        }
-                    }
-                }
-            } catch (err: any) {
-                if (cancel) return;
-                const msg = err.message ?? "unknown";
-                setSystemState((p) => ({
-                    ...p,
-                    bybitStatus: "Error",
-                    lastError: msg,
-                    recentErrors: [msg, ...p.recentErrors].slice(0, 10),
-                }));
-                addLog({ action: "ERROR", message: msg });
-            }
-        };
-
-        fetchAll();
-        const id = setInterval(fetchAll, 12000);
-        return () => {
-            cancel = true;
-            clearInterval(id);
-        };
-    }, [mode, useTestnet, httpBase]);
-
-    // Executions polling (pro rychlejší fill detection)
-    useEffect(() => {
-        if (!authToken) return;
-        let cancel = false;
-        const poll = async () => {
-            try {
-                const url = new URL(`${apiBase}${apiPrefix}/executions`);
-                url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
-                if (executionCursorRef.current) {
-                    url.searchParams.set("cursor", executionCursorRef.current);
-                }
-                const res = await fetch(url.toString(), {
-                    headers: { Authorization: `Bearer ${authToken}` },
-                });
-                if (!res.ok) return;
-                const json = await res.json();
-                const list = json?.data?.result?.list || json?.result?.list || [];
-                const cursor = json?.data?.result?.nextPageCursor || json?.result?.nextPageCursor;
-                const seen = processedExecIdsRef.current;
-                list.forEach((e: any) => {
-                    const id = e.execId || e.tradeId;
-                    if (!id || seen.has(id)) return;
-                    seen.add(id);
-                    executionEventsRef.current = [
-                        {
-                            id,
-                            symbol: e.symbol || "",
-                            orderId: e.orderId || e.orderID || e.clOrdId,
-                            orderLinkId: e.orderLinkId || e.orderLinkID || e.clientOrderId,
-                            price: Number(e.execPrice ?? e.price ?? 0),
-                            qty: Number(e.execQty ?? e.qty ?? 0),
-                            time: e.execTime ? new Date(Number(e.execTime)).toISOString() : new Date().toISOString(),
-                        },
-                        ...executionEventsRef.current,
-                    ].slice(0, 200);
-                    addLog({
-                        action: "SYSTEM",
-                        message: `FILL ${e.symbol || ""} ${e.side || ""} @ ${e.execPrice || e.price || "?"} qty ${e.execQty || e.qty || "?"}`,
-                    });
-                });
-                if (seen.size > 2000) {
-                    processedExecIdsRef.current = new Set(Array.from(seen).slice(-1000));
-                }
-                if (cursor) executionCursorRef.current = cursor;
-            } catch {
-                // ignore polling errors
-            }
-        };
-        poll();
-        const id = setInterval(() => {
-            if (!cancel) void poll();
-        }, 5000);
-        return () => {
-            cancel = true;
-            clearInterval(id);
-        };
-    }, [authToken, apiBase, useTestnet]);
-
-    // ========== EXECUTE TRADE (simulated + backend order) ==========
-    const performTrade = async (signalId: string): Promise<boolean> => {
-        const signal = pendingSignalsRef.current.find((s) => s.id === signalId);
-        if (!signal) return false;
-        const tradeId = uuidLite();
-        const clientOrderId = `aim-${tradeId.slice(-8)}`;
-        setLifecycle(tradeId, "SIGNAL_READY", `symbol=${signal.symbol}`);
-
-        // Risk-engine: guardrails for capital allocation, portfolio risk, and halts
-        const openCount = authToken ? activePositionsRef.current.length : portfolioState.openPositions;
-        const maxAlloc = portfolioState.maxAllocatedCapital;
-        const currentAlloc = portfolioState.allocatedCapital;
-        const baseRiskPct = getEffectiveRiskPct(settings);
-        const volMult = getVolatilityMultiplier(signal.symbol);
-        const recoveryMult =
-            portfolioState.currentDrawdown >= 0.15 &&
-                portfolioState.currentDrawdown < settings.maxDrawdownPercent
-                ? 0.5
-                : 1;
-        const riskPctWithMult = Math.min(
-            Math.max(0.005, baseRiskPct * volMult * recoveryMult * (settings.positionSizingMultiplier || 1)),
-            0.04
-        );
-
-        if (
-            settings.haltOnDailyLoss &&
-            portfolioState.dailyPnl <= -portfolioState.maxDailyLoss
-        ) {
-            const now = Date.now();
-            if (!dailyHaltAtRef.current) dailyHaltAtRef.current = now;
-            const haltUntil = dailyHaltAtRef.current + 2 * 60 * 60 * 1000;
-            if (now < haltUntil) {
-                addLog({
-                    action: "RISK_HALT",
-                    message: `Trading halted: daily loss limit hit (${(
-                        (portfolioState.maxDailyLoss * 100) /
-                        Math.max(1, portfolioState.totalCapital)
-                    ).toFixed(2)}%). Resume after cooldown.`,
-                });
-                return false;
-            } else {
-                dailyHaltAtRef.current = null;
-                realizedPnlRef.current = 0;
-                setPortfolioState((p) => ({ ...p, dailyPnl: 0 }));
-                addLog({
-                    action: "SYSTEM",
-                    message: "Daily halt cooldown elapsed, resetting PnL window.",
-                });
-            }
-        }
-
-        if (
-            settings.haltOnDrawdown &&
-            portfolioState.currentDrawdown >= portfolioState.maxDrawdown
-        ) {
-            addLog({
-                action: "RISK_HALT",
-                message: `Trading halted: drawdown cap reached (${(
-                    portfolioState.maxDrawdown * 100
-                ).toFixed(1)}%).`,
-            });
-            return false;
-        }
-
-        if (openCount >= settings.maxOpenPositions) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: max open positions (${settings.maxOpenPositions}) reached.`,
-            });
-            return false;
-        }
-
-        const intent: TradeIntent = signal.intent;
-        const side = intent.side;
-        const entry = intent.entry;
-
-        // Dynamické SL/TP/TS dle ATR
-        const history = priceHistoryRef.current[signal.symbol] || [];
-        const atr = computeAtrFromHistory(history, 20) || entry * 0.005;
-        let sl = intent.sl;
-        let tp = intent.tp;
-        if (!sl) {
-            sl = side === "buy" ? entry - 1.5 * atr : entry + 1.5 * atr;
-        }
-        if (!tp) {
-            tp = side === "buy" ? entry + 2.5 * atr : entry - 2.5 * atr;
-        }
-
-        const riskPerTrade = portfolioState.totalCapital * riskPctWithMult;
-        const riskPerUnit = Math.abs(entry - sl);
-        if (riskPerUnit <= 0 || entry <= 0) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: invalid SL/entry distance.`,
-            });
-            return false;
-        }
-
-        const limits = QTY_LIMITS[signal.symbol] ?? { min: 0, max: Number.POSITIVE_INFINITY };
-
-        const riskBudget = portfolioState.totalCapital * settings.maxPortfolioRiskPercent;
-        const openRiskAmount = activePositionsRef.current.reduce((sum, p) => sum + computePositionRisk(p), 0);
-        const remainingRiskBudget = Math.max(0, riskBudget - openRiskAmount);
-        const remainingAllocation = Math.max(0, maxAlloc - currentAlloc);
-
-        const maxSizePerTrade = riskPerUnit > 0 ? riskPerTrade / riskPerUnit : 0;
-        const maxSizeBudget = riskPerUnit > 0 ? remainingRiskBudget / riskPerUnit : 0;
-        const maxSizeAllocation = entry > 0 ? (remainingAllocation * leverageFor(signal.symbol)) / entry : 0;
-        const maxSizeNotional = entry > 0 ? Number.POSITIVE_INFINITY : 0;
-        const targetNotional = TARGET_NOTIONAL[signal.symbol];
-        const targetSize = targetNotional && entry > 0 ? targetNotional / entry : Number.POSITIVE_INFINITY;
-
-        let size = Math.min(
-            limits.max ?? Number.POSITIVE_INFINITY,
-            maxSizePerTrade,
-            maxSizeBudget,
-            maxSizeAllocation,
-            maxSizeNotional,
-            targetSize
-        );
-
-        if (size <= 0) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: žádný prostor pro velikost (risk/alokace/$5 cap).`,
-            });
-            return false;
-        }
-
-        if (limits.min && size < limits.min) {
-            const minNotional = limits.min * entry;
-            const minMargin = minNotional / Math.max(1, leverageFor(signal.symbol));
-            const minRisk = riskPerUnit * limits.min;
-            const reasons: string[] = [];
-            if (minMargin > remainingAllocation) reasons.push("allocation headroom");
-            if (minMargin > MAX_MARGIN_USD) reasons.push("margin cap");
-            if (minRisk > remainingRiskBudget) reasons.push("risk budget");
-            if (reasons.length) {
-                addLog({
-                    action: "RISK_BLOCK",
-                    message: `Signal on ${signal.symbol} blocked: burzovní minimum ${limits.min} by překročilo ${reasons.join(
-                        "/"
-                    )}.`,
-                });
-                return false;
-            }
-            size = limits.min;
-        }
-
-        let notional = size * entry;
-        let margin = marginFor(signal.symbol, entry, size);
-        const newRiskAmount = riskPerUnit * size;
-
-        if (size <= 0 || notional <= 0) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: zero size after caps.`,
-            });
-            return false;
-        }
-        if (openRiskAmount + newRiskAmount > riskBudget) {
-            addLog({
-                action: "RISK_BLOCK",
-                message: `Signal on ${signal.symbol} blocked: portfolio risk cap (${(
-                    settings.maxPortfolioRiskPercent * 100
-                ).toFixed(1)}%) would be exceeded.`,
-            });
-            return false;
-        }
-
-        if (margin < MIN_MARGIN_USD) {
-            const lev = Math.max(1, leverageFor(signal.symbol));
-            size = (MIN_MARGIN_USD * lev) / entry;
-            margin = marginFor(signal.symbol, entry, size);
-            notional = size * entry;
-        }
-        if (margin > MAX_MARGIN_USD) {
-            const lev = Math.max(1, leverageFor(signal.symbol));
-            size = (MAX_MARGIN_USD * lev) / entry;
-            margin = marginFor(signal.symbol, entry, size);
-            notional = size * entry;
-        }
-
-        if (portfolioState.allocatedCapital + margin > portfolioState.maxAllocatedCapital) {
-            const headroom = Math.max(0, portfolioState.maxAllocatedCapital - portfolioState.allocatedCapital);
-            const lev = Math.max(1, leverageFor(signal.symbol));
-            const scaledSize = (headroom * lev) / entry;
-            const maxOnlyClamp = limits ? Math.min(limits.max, Math.max(0, scaledSize)) : Math.max(0, scaledSize);
-            size = maxOnlyClamp;
-            notional = size * entry;
-            margin = marginFor(signal.symbol, entry, size);
-            if (size <= 0 || notional <= 0 || portfolioState.allocatedCapital + margin > portfolioState.maxAllocatedCapital) {
-                addLog({
-                    action: "RISK_BLOCK",
-                    message: `Signal on ${signal.symbol} exceeds capital allocation limit.`,
-                });
-                return false;
-            }
-        }
-
-        // Fee-aware TP úprava
-        tp = ensureMinTpDistance(entry, sl, tp, size);
-
-        // Trailing stop posuneme až po potvrzení filla (neposíláme v initial orderu)
-        const trailingStopPct: number | undefined = undefined;
-        const trailingStopDistance: number | undefined = undefined;
-        const trailingActivationPrice: number | null = null;
-
-        setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
-        if (!authToken) {
-            const position: ActivePosition = {
-                id: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-                positionId: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`, // FIX: A1
-                symbol: signal.symbol,
-                side,
-                entryPrice: entry,
-                sl,
-                tp,
-                size,
-                qty: size, // FIX: A1
-                env: useTestnet ? "testnet" : "mainnet", // FIX: A1
-                openedAt: new Date().toISOString(),
-                unrealizedPnl: 0,
-                currentTrailingStop: sl,
-                rrr: Math.abs(tp - entry) / Math.abs(entry - sl) || 0,
-                pnl: 0,
-                pnlValue: 0,
-                timestamp: new Date().toISOString(),
-                peakPrice: entry,
-            };
-            setActivePositions((prev) => [position, ...prev]);
-            setPortfolioState((prev) => ({
-                ...prev,
-                allocatedCapital: prev.allocatedCapital + margin,
-                openPositions: prev.openPositions + 1,
-            }));
-        }
-
-        addLog({
-            action: "OPEN",
-            message: `Opened ${side.toUpperCase()} ${signal.symbol
-                } at ${entry.toFixed(4)} (size ≈ ${size.toFixed(
-                    4
-                )}, notional ≈ ${notional.toFixed(2)} USDT)`,
-        });
-
-        const settingsSnapshot = snapshotSettings(settingsRef.current);
-        // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
-        if (mode !== TradingMode.PAPER) {
-            try {
-                if (!authToken) {
-                    addLog({
-                        action: "ERROR",
-                        message:
-                            "Missing auth token for placing order. Please re-login.",
-                    });
-                    return true;
-                }
-
-                setLifecycle(tradeId, "ENTRY_SUBMITTED");
-                const res = await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${authToken}`,
-                    },
-                    body: JSON.stringify({
-                        symbol: signal.symbol,
-                        side: side === "buy" ? "Buy" : "Sell",
-                        qty: Number(size.toFixed(4)),
-                        orderType: "Market",
-                        timeInForce: "IOC",
-                        orderLinkId: clientOrderId,
-                        sl,
-                        tp,
-                        trailingStop: trailingStopDistance,
-                        // Note: trailingStop passed to backend for atomic handling
-                    }),
-                });
-
-                if (!res.ok) {
-                    let errorMsg = `Order API failed (${res.status})`;
-                    try {
-                        const errJson = await res.json();
-                        if (errJson.error) {
-                            errorMsg = `Order Failed: ${errJson.error}`;
-                            if (errJson.details) {
-                                errorMsg += ` (${JSON.stringify(errJson.details)})`;
+                                    message: situational.message,
+                                });
                             }
                         }
-                    } catch {
-                        const errText = await res.text();
-                        errorMsg += `: ${errText}`;
-                    }
+                    } else {
+                        const profile = chooseStrategyProfile(
+                            candles,
+                            settingsRef.current.strategyProfile as any
+                        );
+                        if (!profile) continue;
+                        const resolvedRiskPct = Math.min(
+                            getEffectiveRiskPct(settingsRef.current) *
+                            (settingsRef.current.positionSizingMultiplier || 1),
+                            0.07
+                        );
+                        const decision = evaluateStrategyForSymbol(
+                            symbol,
+                            candles,
+                            {
+                                strategyProfile: profile,
+                                entryStrictness:
+                                    settingsRef.current.entryStrictness,
+                                riskPerTrade: resolvedRiskPct,
+                                accountBalance: portfolioState.totalCapital,
+                                maxDailyLossPercent: settingsRef.current.maxDailyLossPercent,
+                                maxDrawdownPercent: settingsRef.current.maxDrawdownPercent,
+                                maxDailyProfitPercent: settingsRef.current.maxDailyProfitPercent,
+                                maxOpenPositions: settingsRef.current.maxOpenPositions,
+                                maxPortfolioRiskPercent: settingsRef.current.maxPortfolioRiskPercent,
+                                enforceSessionHours: settingsRef.current.enforceSessionHours,
+                                tradingHours: {
+                                    start: settingsRef.current.tradingStartHour,
+                                    end: settingsRef.current.tradingEndHour,
+                                    days: settingsRef.current.tradingDays,
+                                },
+                            }
+                        );
+                        const signal = decision?.signal;
+                        if (signal) {
+                            setPendingSignals((prev) => [
+                                { ...signal, symbol, intent: { ...signal.intent, symbol, qty: 0 } }, // FIX: Enrich intent
+                                ...prev
+                            ]);
+                            addLog({
+                                action: "SIGNAL",
+                                message: `${signal.intent.side} ${symbol} @ ${signal.intent.entry} | TESTNET=${useTestnet}`,
+                            });
+                        }
+                        if (decision?.position) {
+                            const pos = decision.position;
+                            const dir = pos.side === "long" ? 1 : -1;
+                            const currentPrice =
+                                candles[candles.length - 1].close;
+                            const pnl =
+                                (currentPrice - pos.entryPrice) *
+                                dir *
+                                pos.size;
+                            const hist = newHistory[symbol] || [];
+                            const atr =
+                                computeAtrFromHistory(hist, 20) ||
+                                pos.entryPrice * 0.005;
+                            const safeSl =
+                                pos.stopLoss ||
+                                (pos.side === "long"
+                                    ? pos.entryPrice - 1.5 * atr
+                                    : pos.entryPrice + 1.5 * atr);
+                            const tpCandidate = Number.isFinite(pos.takeProfit)
+                                ? pos.takeProfit
+                                : pos.initialTakeProfit;
+                            const safeTp =
+                                tpCandidate && Number.isFinite(tpCandidate)
+                                    ? tpCandidate
+                                    : pos.side === "long"
+                                        ? pos.entryPrice +
+                                        1.2 * (pos.entryPrice - safeSl)
+                                        : pos.entryPrice -
+                                        1.2 * (safeSl - pos.entryPrice);
+                            const mapped: ActivePosition = {
+                                positionId: `${symbol}-${pos.opened}`, // FIX: Synthesized ID from engine state
+                                id: `${symbol}-${pos.opened}`,
+                                symbol,
+                                side: pos.side === "long" ? "buy" : "sell",
+                                qty: pos.size, // FIX
+                                entryPrice: pos.entryPrice,
+                                sl: safeSl,
+                                tp: safeTp,
+                                size: pos.size,
+                                env: useTestnet ? "testnet" : "mainnet", // FIX
+                                openedAt: new Date(pos.opened).toISOString(),
+                                unrealizedPnl: pnl,
+                                pnl,
+                                pnlValue: pnl,
+                                rrr:
+                                    Math.abs(
+                                        (Number.isFinite(pos.takeProfit)
+                                            ? pos.takeProfit
+                                            : pos.initialTakeProfit) -
+                                        pos.entryPrice
+                                    ) /
+                                    Math.abs(
+                                        pos.entryPrice - pos.stopLoss ||
+                                        1e-8
+                                    ) || 0,
+                                peakPrice: pos.highWaterMark,
+                                currentTrailingStop: pos.trailingStop,
+                                volatilityFactor: undefined,
+                                lastUpdateReason: undefined,
+                                timestamp: new Date().toISOString(),
+                            };
+                            engineActive.push(mapped);
+                        }
+                    } // end evaluateStrategy branch
+                } // end mode !== BACKTEST
+            } // end for SYMBOLS
 
-                    addLog({
-                        action: "ERROR",
-                        message: errorMsg,
+            if (cancel) return;
+
+            priceHistoryRef.current = newHistory;
+            setCurrentPrices(newPrices);
+            currentPricesRef.current = newPrices;
+
+            // Simulované pozice aktualizujeme jen pokud NEMÁME auth token (tj. není přímá vazba na burzu).
+            if (!authToken) {
+                const prevActive = activePositionsRef.current;
+                const closed = prevActive.filter(
+                    (p) => !engineActive.some((e) => e.id === p.id)
+                );
+
+                let freedNotional = 0;
+                if (closed.length) {
+                    closed.forEach((p) => {
+                        const exitPrice =
+                            newPrices[p.symbol] ??
+                            currentPrices[p.symbol] ??
+                            p.entryPrice;
+                        const dir = p.side === "buy" ? 1 : -1;
+                        const pnl =
+                            (exitPrice - p.entryPrice) * dir * p.size;
+                        realizedPnlRef.current += pnl;
+                        const limits = QTY_LIMITS[p.symbol];
+                        if (settingsRef.current.strategyProfile === "coach" && limits) {
+                            const nextStake = Math.max(
+                                limits.min * p.entryPrice,
+                                Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl)
+                            );
+                            coachStakeRef.current[p.symbol] = nextStake;
+                        }
+                        const record: AssetPnlRecord = {
+                            symbol: p.symbol,
+                            pnl,
+                            timestamp: new Date().toISOString(),
+                            note: `Auto-close @ ${exitPrice.toFixed(
+                                4
+                            )} | size ${p.size.toFixed(4)}`,
+                        };
+                        if (authToken) {
+                            setAssetPnlHistory(() => addPnlRecord(record));
+                        }
+                        setEntryHistory(() =>
+                            addEntryToHistory({
+                                id: `${p.id}-auto-closed`,
+                                symbol: p.symbol,
+                                side: p.side.toLowerCase() as "buy" | "sell",
+                                entryPrice: p.entryPrice,
+                                sl: p.sl,
+                                tp: p.tp,
+                                size: p.size,
+                                createdAt: new Date().toISOString(),
+                                settingsNote: `Auto-closed @ ${exitPrice.toFixed(
+                                    4
+                                )} | PnL ${pnl.toFixed(2)} USDT`,
+                                settingsSnapshot: snapshotSettings(settingsRef.current),
+                            })
+                        );
+                        freedNotional += marginFor(p.symbol, p.entryPrice, p.size);
+                        addLog({
+                            action: "AUTO_CLOSE",
+                            message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
+                                4
+                            )} | PnL ${pnl.toFixed(2)} USDT`,
+                        });
                     });
-                    setLifecycle(tradeId, "FAILED", `order status ${res.status}`);
-                    return false;
                 }
 
-                const orderJson = await res.json().catch(() => ({}));
-                const orderId =
-                    orderJson?.data?.result?.orderId /* A2: Nested data */ ||
-                    orderJson?.order?.result?.orderId ||
-                    orderJson?.bybitResponse?.result?.orderId ||
-                    orderJson?.result?.orderId ||
-                    orderJson?.data?.orderId ||
-                    null;
-
-                // Backend now handles TrailingStop atomically (atomic safety) is implied by backend logic
-                // But we still wait for fill to confirm lifecycle
-
-                // Note: The previous waitForFill + commitProtection was redundant if backend does atomic SL/TP/TS
-                // We keep it for now strictly to maintain lifecycle state, but we trust the backend order.
-                setLifecycle(tradeId, "ENTRY_FILLED");
-                // We assume immediate success for now as backend returns success. 
-                // Proper advanced tracking would poll websocket.
-                setLifecycle(tradeId, "MANAGING");
-
-            } catch (err: any) {
-                const msg = err?.message || "order placement failed";
-                setLifecycle(tradeId, "FAILED", msg);
-                addLog({ action: "ERROR", message: `Trade execution error: ${msg}` });
-                // FIX: Update system state here where msg is available
-                setSystemState((p) => ({ ...p, bybitStatus: "Error", lastError: msg }));
-                addLog({
-                    action: "ERROR",
-                    message: `Fill/protection failed: ${msg}`,
+                setActivePositions(() => {
+                    activePositionsRef.current = engineActive;
+                    return engineActive;
                 });
-                return false;
+                setPortfolioState((p) => ({
+                    ...p,
+                    openPositions: engineActive.length,
+                    allocatedCapital: Math.max(
+                        0,
+                        p.allocatedCapital - freedNotional
+                    ),
+                }));
             }
-        } else {
-            // PAPER MODE: Simulate success
-            setLifecycle(tradeId, "ENTRY_FILLED", "Simulated");
-            setLifecycle(tradeId, "MANAGING", "Simulated");
+
+            const latency = Math.round(performance.now() - started);
+            setSystemState((p) => ({
+                ...p,
+                bybitStatus: "Connected",
+                latency,
+                lastError: null,
+            }));
+
+            // === TEST MODE: GENERUJ RYCHLÉ SIGNÁLY PRO VŠECHNY ASSETY, KTERÉ NEJSOU OTEVŘENÉ ===
+            if (settingsRef.current.entryStrictness === "test") {
+                const now = Date.now();
+                if (
+                    lastTestSignalAtRef.current &&
+                    now - lastTestSignalAtRef.current < 4000
+                ) {
+                    // Throttle generování test signálů
+                } else {
+                    lastTestSignalAtRef.current = now;
+                    const activeSymbols = new Set(
+                        activePositionsRef.current.map((p) => p.symbol)
+                    );
+                    const pendingSymbols = new Set(
+                        pendingSignalsRef.current.map((p) => p.symbol)
+                    );
+                    const nowIso = new Date().toISOString();
+                    const newTestSignals: PendingSignal[] = [];
+                    for (const symbol of SYMBOLS) {
+                        if (activeSymbols.has(symbol)) continue;
+                        if (pendingSymbols.has(symbol)) continue;
+                        if (
+                            pendingSignalsRef.current.length + newTestSignals.length >=
+                            MAX_TEST_PENDING
+                        )
+                            break;
+                        const price = newPrices[symbol];
+                        if (!price) continue;
+                        const side: "buy" | "sell" =
+                            Math.random() > 0.5 ? "buy" : "sell";
+                        const offsetPct = 0.003 + Math.random() * 0.01; // 0.3% – 1.3%
+                        const sl =
+                            side === "buy"
+                                ? price * (1 - offsetPct)
+                                : price * (1 + offsetPct);
+                        const tp =
+                            side === "buy"
+                                ? price * (1 + offsetPct)
+                                : price * (1 - offsetPct);
+                        newTestSignals.push({
+                            id: `${symbol}-${Date.now()}-${Math.random()
+                                .toString(16)
+                                .slice(2)}`,
+                            symbol,
+                            intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
+                            risk: 0.7,
+                            message: `TEST signal ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
+                                4
+                            )}`,
+                            createdAt: nowIso,
+                        });
+                    }
+                    if (newTestSignals.length) {
+                        setPendingSignals((prev) => [
+                            ...newTestSignals,
+                            ...prev,
+                        ]);
+                        newTestSignals.forEach((s) =>
+                            addLog({
+                                action: "SIGNAL",
+                                message: s.message,
+                            })
+                        );
+                    }
+                }
+            }
+
+            // Keepalive signály pro ostatní profily: pokud není žádný pending/aktivní delší dobu, vytvoř fallback
+            if (
+                settingsRef.current.entryStrictness !== "test" &&
+                pendingSignalsRef.current.length === 0 &&
+                activePositionsRef.current.length === 0
+            ) {
+                const now = Date.now();
+                if (
+                    !lastKeepaliveAtRef.current ||
+                    now - lastKeepaliveAtRef.current > KEEPALIVE_SIGNAL_INTERVAL_MS
+                ) {
+                    lastKeepaliveAtRef.current = now;
+                    const keepSignals: PendingSignal[] = [];
+                    const nowIso = new Date().toISOString();
+                    for (const symbol of SYMBOLS) {
+                        if (keepSignals.length >= MAX_TEST_PENDING) break;
+                        const price = newPrices[symbol];
+                        if (!price) continue;
+                        const hist = priceHistoryRef.current[symbol] || [];
+                        const atr = computeAtrFromHistory(hist, 20) || price * 0.005;
+                        const side: "buy" | "sell" =
+                            Math.random() > 0.5 ? "buy" : "sell";
+                        const sl =
+                            side === "buy" ? price - 1.5 * atr : price + 1.5 * atr;
+                        const tp =
+                            side === "buy" ? price + 2.5 * atr : price - 2.5 * atr;
+                        keepSignals.push({
+                            id: `${symbol}-keep-${Date.now()}-${Math.random()
+                                .toString(16)
+                                .slice(2)}`,
+                            symbol,
+                            intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
+                            risk: 0.6,
+                            message: `Keepalive ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
+                                4
+                            )}`,
+                            createdAt: nowIso,
+                        });
+                    }
+                    if (keepSignals.length) {
+                        setPendingSignals((prev) => [...keepSignals, ...prev]);
+                        keepSignals.forEach((s) =>
+                            addLog({ action: "SIGNAL", message: s.message })
+                        );
+                    }
+                }
+            }
+        } catch (err: any) {
+            if (cancel) return;
+            const msg = err.message ?? "unknown";
+            setSystemState((p) => ({
+                ...p,
+                bybitStatus: "Error",
+                lastError: msg,
+                recentErrors: [msg, ...p.recentErrors].slice(0, 10),
+            }));
+            addLog({ action: "ERROR", message: msg });
         }
-        return true;
-        // End of performTrade success path
-        // (Orphaned catch block removed)
     };
 
-    function executeTrade(signalId: string): Promise<void> {
-        entryQueueRef.current = entryQueueRef.current
-            .catch(() => {
-                // swallow to keep queue alive
-            })
-            .then(async () => {
-                const last = lastEntryAtRef.current;
-                const sinceLast = last ? Date.now() - last : Infinity;
-                const waitMs =
-                    sinceLast < MIN_ENTRY_SPACING_MS
-                        ? MIN_ENTRY_SPACING_MS - sinceLast
-                        : 0;
+    fetchAll();
+    const id = setInterval(fetchAll, 12000);
+    return () => {
+        cancel = true;
+        clearInterval(id);
+    };
+}, [mode, useTestnet, httpBase]);
 
-                // Delay only when více vstupů čeká zároveň.
-                if (pendingSignalsRef.current.length > 0 && waitMs > 0) {
-                    await new Promise((resolve) => setTimeout(resolve, waitMs));
-                }
-
-                const executed = await performTrade(signalId);
-                if (executed) {
-                    lastEntryAtRef.current = Date.now();
-                }
+// Executions polling (pro rychlejší fill detection)
+useEffect(() => {
+    if (!authToken) return;
+    let cancel = false;
+    const poll = async () => {
+        try {
+            const url = new URL(`${apiBase}${apiPrefix}/executions`);
+            url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
+            if (executionCursorRef.current) {
+                url.searchParams.set("cursor", executionCursorRef.current);
+            }
+            const res = await fetch(url.toString(), {
+                headers: { Authorization: `Bearer ${authToken}` },
             });
+            if (!res.ok) return;
+            const json = await res.json();
+            const list = json?.data?.result?.list || json?.result?.list || [];
+            const cursor = json?.data?.result?.nextPageCursor || json?.result?.nextPageCursor;
+            const seen = processedExecIdsRef.current;
+            list.forEach((e: any) => {
+                const id = e.execId || e.tradeId;
+                if (!id || seen.has(id)) return;
+                seen.add(id);
+                executionEventsRef.current = [
+                    {
+                        id,
+                        symbol: e.symbol || "",
+                        orderId: e.orderId || e.orderID || e.clOrdId,
+                        orderLinkId: e.orderLinkId || e.orderLinkID || e.clientOrderId,
+                        price: Number(e.execPrice ?? e.price ?? 0),
+                        qty: Number(e.execQty ?? e.qty ?? 0),
+                        time: e.execTime ? new Date(Number(e.execTime)).toISOString() : new Date().toISOString(),
+                    },
+                    ...executionEventsRef.current,
+                ].slice(0, 200);
+                addLog({
+                    action: "SYSTEM",
+                    message: `FILL ${e.symbol || ""} ${e.side || ""} @ ${e.execPrice || e.price || "?"} qty ${e.execQty || e.qty || "?"}`,
+                });
+            });
+            if (seen.size > 2000) {
+                processedExecIdsRef.current = new Set(Array.from(seen).slice(-1000));
+            }
+            if (cursor) executionCursorRef.current = cursor;
+        } catch {
+            // ignore polling errors
+        }
+    };
+    poll();
+    const id = setInterval(() => {
+        if (!cancel) void poll();
+    }, 5000);
+    return () => {
+        cancel = true;
+        clearInterval(id);
+    };
+}, [authToken, apiBase, useTestnet]);
 
-        return entryQueueRef.current;
+// ========== EXECUTE TRADE (simulated + backend order) ==========
+const performTrade = async (signalId: string): Promise<boolean> => {
+    const signal = pendingSignalsRef.current.find((s) => s.id === signalId);
+    if (!signal) return false;
+    const tradeId = uuidLite();
+    const clientOrderId = `aim-${tradeId.slice(-8)}`;
+    setLifecycle(tradeId, "SIGNAL_READY", `symbol=${signal.symbol}`);
+
+    // Risk-engine: guardrails for capital allocation, portfolio risk, and halts
+    const openCount = authToken ? activePositionsRef.current.length : portfolioState.openPositions;
+    const maxAlloc = portfolioState.maxAllocatedCapital;
+    const currentAlloc = portfolioState.allocatedCapital;
+    const baseRiskPct = getEffectiveRiskPct(settings);
+    const volMult = getVolatilityMultiplier(signal.symbol);
+    const recoveryMult =
+        portfolioState.currentDrawdown >= 0.15 &&
+            portfolioState.currentDrawdown < settings.maxDrawdownPercent
+            ? 0.5
+            : 1;
+    const riskPctWithMult = Math.min(
+        Math.max(0.005, baseRiskPct * volMult * recoveryMult * (settings.positionSizingMultiplier || 1)),
+        0.04
+    );
+
+    if (
+        settings.haltOnDailyLoss &&
+        portfolioState.dailyPnl <= -portfolioState.maxDailyLoss
+    ) {
+        const now = Date.now();
+        if (!dailyHaltAtRef.current) dailyHaltAtRef.current = now;
+        const haltUntil = dailyHaltAtRef.current + 2 * 60 * 60 * 1000;
+        if (now < haltUntil) {
+            addLog({
+                action: "RISK_HALT",
+                message: `Trading halted: daily loss limit hit (${(
+                    (portfolioState.maxDailyLoss * 100) /
+                    Math.max(1, portfolioState.totalCapital)
+                ).toFixed(2)}%). Resume after cooldown.`,
+            });
+            return false;
+        } else {
+            dailyHaltAtRef.current = null;
+            realizedPnlRef.current = 0;
+            setPortfolioState((p) => ({ ...p, dailyPnl: 0 }));
+            addLog({
+                action: "SYSTEM",
+                message: "Daily halt cooldown elapsed, resetting PnL window.",
+            });
+        }
     }
 
-    // ========== AUTO MODE ==========
-    useEffect(() => {
-        if (modeRef.current !== TradingMode.AUTO_ON) return;
-        if (!pendingSignals.length) return;
+    if (
+        settings.haltOnDrawdown &&
+        portfolioState.currentDrawdown >= portfolioState.maxDrawdown
+    ) {
+        addLog({
+            action: "RISK_HALT",
+            message: `Trading halted: drawdown cap reached (${(
+                portfolioState.maxDrawdown * 100
+            ).toFixed(1)}%).`,
+        });
+        return false;
+    }
 
-        const sig = pendingSignals[0];
-        if (settingsRef.current.requireConfirmationInAuto && sig.risk < 0.65)
-            return;
+    if (openCount >= settings.maxOpenPositions) {
+        addLog({
+            action: "RISK_BLOCK",
+            message: `Signal on ${signal.symbol} blocked: max open positions (${settings.maxOpenPositions}) reached.`,
+        });
+        return false;
+    }
 
-        void executeTrade(sig.id);
-    }, [pendingSignals]);
+    const intent: TradeIntent = signal.intent;
+    const side = intent.side;
+    const entry = intent.entry;
 
-    // MOCK NEWS
-    useEffect(() => {
-        setNewsHeadlines([
-            {
-                id: "n1",
-                headline: "Volatility rising in BTCUSDT",
-                sentiment: "neutral",
-                source: "scanner",
-                time: new Date().toISOString(),
-            },
-        ]);
-    }, []);
+    // Dynamické SL/TP/TS dle ATR
+    const history = priceHistoryRef.current[signal.symbol] || [];
+    const atr = computeAtrFromHistory(history, 20) || entry * 0.005;
+    let sl = intent.sl;
+    let tp = intent.tp;
+    if (!sl) {
+        sl = side === "buy" ? entry - 1.5 * atr : entry + 1.5 * atr;
+    }
+    if (!tp) {
+        tp = side === "buy" ? entry + 2.5 * atr : entry - 2.5 * atr;
+    }
 
-    const addPriceAlert = (symbol: string, price: number) => {
-        const alert: PriceAlert = {
-            id: `a-${Date.now()}`,
-            symbol,
-            price,
-            createdAt: new Date().toISOString(),
-            triggered: false,
-        };
-        setPriceAlerts((p) => [...p, alert]);
-    };
+    const riskPerTrade = portfolioState.totalCapital * riskPctWithMult;
+    const riskPerUnit = Math.abs(entry - sl);
+    if (riskPerUnit <= 0 || entry <= 0) {
+        addLog({
+            action: "RISK_BLOCK",
+            message: `Signal on ${signal.symbol} blocked: invalid SL/entry distance.`,
+        });
+        return false;
+    }
 
-    const removePriceAlert = (id: string) => {
-        setPriceAlerts((p) => p.filter((a) => a.id !== id));
-    };
+    const limits = QTY_LIMITS[signal.symbol] ?? { min: 0, max: Number.POSITIVE_INFINITY };
 
-    const closePosition = (id: string) => {
-        setActivePositions((prev) => {
-            const target = prev.find((p) => p.id === id);
-            if (!target) return prev;
+    const riskBudget = portfolioState.totalCapital * settings.maxPortfolioRiskPercent;
+    const openRiskAmount = activePositionsRef.current.reduce((sum, p) => sum + computePositionRisk(p), 0);
+    const remainingRiskBudget = Math.max(0, riskBudget - openRiskAmount);
+    const remainingAllocation = Math.max(0, maxAlloc - currentAlloc);
 
-            const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
-            const dir = target.side === "buy" ? 1 : -1;
-            const pnl = (currentPrice - target.entryPrice) * dir * target.size;
-            const freedNotional = marginFor(target.symbol, target.entryPrice, target.size);
+    const maxSizePerTrade = riskPerUnit > 0 ? riskPerTrade / riskPerUnit : 0;
+    const maxSizeBudget = riskPerUnit > 0 ? remainingRiskBudget / riskPerUnit : 0;
+    const maxSizeAllocation = entry > 0 ? (remainingAllocation * leverageFor(signal.symbol)) / entry : 0;
+    const maxSizeNotional = entry > 0 ? Number.POSITIVE_INFINITY : 0;
+    const targetNotional = TARGET_NOTIONAL[signal.symbol];
+    const targetSize = targetNotional && entry > 0 ? targetNotional / entry : Number.POSITIVE_INFINITY;
 
-            realizedPnlRef.current += pnl;
-            registerOutcome(pnl);
+    let size = Math.min(
+        limits.max ?? Number.POSITIVE_INFINITY,
+        maxSizePerTrade,
+        maxSizeBudget,
+        maxSizeAllocation,
+        maxSizeNotional,
+        targetSize
+    );
 
-            const limits = QTY_LIMITS[target.symbol];
-            if (settingsRef.current.strategyProfile === "coach" && limits) {
-                const nextStake = Math.max(
-                    limits.min * target.entryPrice,
-                    Math.min(
-                        limits.max * target.entryPrice,
-                        freedNotional * leverageFor(target.symbol) + pnl
-                    )
-                );
-                coachStakeRef.current[target.symbol] = nextStake;
-            }
+    if (size <= 0) {
+        addLog({
+            action: "RISK_BLOCK",
+            message: `Signal on ${signal.symbol} blocked: žádný prostor pro velikost (risk/alokace/$5 cap).`,
+        });
+        return false;
+    }
 
-            const record: AssetPnlRecord = {
-                symbol: target.symbol,
-                pnl,
-                timestamp: new Date().toISOString(),
-                note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
-            };
-            if (authToken) {
-                setAssetPnlHistory(() => addPnlRecord(record));
-            }
-            setEntryHistory(() =>
-                addEntryToHistory({
-                    id: `${target.id}-closed`,
-                    symbol: target.symbol,
-                    side: target.side.toLowerCase() as "buy" | "sell", // FIX: strict lower case
-                    entryPrice: target.entryPrice,
-                    sl: target.sl,
-                    tp: target.tp,
-                    size: target.size,
-                    createdAt: new Date().toISOString(),
-                    settingsNote: `Closed at ${currentPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
-                    settingsSnapshot: snapshotSettings(settingsRef.current),
-                })
-            );
-
-            setPortfolioState((p) => ({
-                ...p,
-                allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
-                openPositions: Math.max(0, p.openPositions - 1),
-            }));
+    if (limits.min && size < limits.min) {
+        const minNotional = limits.min * entry;
+        const minMargin = minNotional / Math.max(1, leverageFor(signal.symbol));
+        const minRisk = riskPerUnit * limits.min;
+        const reasons: string[] = [];
+        if (minMargin > remainingAllocation) reasons.push("allocation headroom");
+        if (minMargin > MAX_MARGIN_USD) reasons.push("margin cap");
+        if (minRisk > remainingRiskBudget) reasons.push("risk budget");
+        if (reasons.length) {
             addLog({
-                action: "CLOSE",
-                message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USDT`,
+                action: "RISK_BLOCK",
+                message: `Signal on ${signal.symbol} blocked: burzovní minimum ${limits.min} by překročilo ${reasons.join(
+                    "/"
+                )}.`,
+            });
+            return false;
+        }
+        size = limits.min;
+    }
+
+    let notional = size * entry;
+    let margin = marginFor(signal.symbol, entry, size);
+    const newRiskAmount = riskPerUnit * size;
+
+    if (size <= 0 || notional <= 0) {
+        addLog({
+            action: "RISK_BLOCK",
+            message: `Signal on ${signal.symbol} blocked: zero size after caps.`,
+        });
+        return false;
+    }
+    if (openRiskAmount + newRiskAmount > riskBudget) {
+        addLog({
+            action: "RISK_BLOCK",
+            message: `Signal on ${signal.symbol} blocked: portfolio risk cap (${(
+                settings.maxPortfolioRiskPercent * 100
+            ).toFixed(1)}%) would be exceeded.`,
+        });
+        return false;
+    }
+
+    if (margin < MIN_MARGIN_USD) {
+        const lev = Math.max(1, leverageFor(signal.symbol));
+        size = (MIN_MARGIN_USD * lev) / entry;
+        margin = marginFor(signal.symbol, entry, size);
+        notional = size * entry;
+    }
+    if (margin > MAX_MARGIN_USD) {
+        const lev = Math.max(1, leverageFor(signal.symbol));
+        size = (MAX_MARGIN_USD * lev) / entry;
+        margin = marginFor(signal.symbol, entry, size);
+        notional = size * entry;
+    }
+
+    if (portfolioState.allocatedCapital + margin > portfolioState.maxAllocatedCapital) {
+        const headroom = Math.max(0, portfolioState.maxAllocatedCapital - portfolioState.allocatedCapital);
+        const lev = Math.max(1, leverageFor(signal.symbol));
+        const scaledSize = (headroom * lev) / entry;
+        const maxOnlyClamp = limits ? Math.min(limits.max, Math.max(0, scaledSize)) : Math.max(0, scaledSize);
+        size = maxOnlyClamp;
+        notional = size * entry;
+        margin = marginFor(signal.symbol, entry, size);
+        if (size <= 0 || notional <= 0 || portfolioState.allocatedCapital + margin > portfolioState.maxAllocatedCapital) {
+            addLog({
+                action: "RISK_BLOCK",
+                message: `Signal on ${signal.symbol} exceeds capital allocation limit.`,
+            });
+            return false;
+        }
+    }
+
+    // Fee-aware TP úprava
+    tp = ensureMinTpDistance(entry, sl, tp, size);
+
+    // Trailing stop posuneme až po potvrzení filla (neposíláme v initial orderu)
+    const trailingStopPct: number | undefined = undefined;
+    const trailingStopDistance: number | undefined = undefined;
+    const trailingActivationPrice: number | null = null;
+
+    setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+    if (!authToken) {
+        const position: ActivePosition = {
+            id: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            positionId: `pos-${Date.now()}-${Math.random().toString(16).slice(2)}`, // FIX: A1
+            symbol: signal.symbol,
+            side,
+            entryPrice: entry,
+            sl,
+            tp,
+            size,
+            qty: size, // FIX: A1
+            env: useTestnet ? "testnet" : "mainnet", // FIX: A1
+            openedAt: new Date().toISOString(),
+            unrealizedPnl: 0,
+            currentTrailingStop: sl,
+            rrr: Math.abs(tp - entry) / Math.abs(entry - sl) || 0,
+            pnl: 0,
+            pnlValue: 0,
+            timestamp: new Date().toISOString(),
+            peakPrice: entry,
+        };
+        setActivePositions((prev) => [position, ...prev]);
+        setPortfolioState((prev) => ({
+            ...prev,
+            allocatedCapital: prev.allocatedCapital + margin,
+            openPositions: prev.openPositions + 1,
+        }));
+    }
+
+    addLog({
+        action: "OPEN",
+        message: `Opened ${side.toUpperCase()} ${signal.symbol
+            } at ${entry.toFixed(4)} (size ≈ ${size.toFixed(
+                4
+            )}, notional ≈ ${notional.toFixed(2)} USDT)`,
+    });
+
+    const settingsSnapshot = snapshotSettings(settingsRef.current);
+    // === VOLÁNÍ BACKENDU – POSÍLÁME SL/TP + DYNAMICKÝ TRAILING ===
+    if (mode !== TradingMode.PAPER) {
+        try {
+            if (!authToken) {
+                addLog({
+                    action: "ERROR",
+                    message:
+                        "Missing auth token for placing order. Please re-login.",
+                });
+                return true;
+            }
+
+            setLifecycle(tradeId, "ENTRY_SUBMITTED");
+            const res = await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({
+                    symbol: signal.symbol,
+                    side: side === "buy" ? "Buy" : "Sell",
+                    qty: Number(size.toFixed(4)),
+                    orderType: "Market",
+                    timeInForce: "IOC",
+                    orderLinkId: clientOrderId,
+                    sl,
+                    tp,
+                    trailingStop: trailingStopDistance,
+                    // Note: trailingStop passed to backend for atomic handling
+                }),
             });
 
-            return prev.filter((p) => p.id !== id);
-        });
-    };
+            if (!res.ok) {
+                let errorMsg = `Order API failed (${res.status})`;
+                try {
+                    const errJson = await res.json();
+                    if (errJson.error) {
+                        errorMsg = `Order Failed: ${errJson.error}`;
+                        if (errJson.details) {
+                            errorMsg += ` (${JSON.stringify(errJson.details)})`;
+                        }
+                    }
+                } catch {
+                    const errText = await res.text();
+                    errorMsg += `: ${errText}`;
+                }
 
-    const resetRiskState = () => {
+                addLog({
+                    action: "ERROR",
+                    message: errorMsg,
+                });
+                setLifecycle(tradeId, "FAILED", `order status ${res.status}`);
+                return false;
+            }
+
+            const orderJson = await res.json().catch(() => ({}));
+            const orderId =
+                orderJson?.data?.result?.orderId /* A2: Nested data */ ||
+                orderJson?.order?.result?.orderId ||
+                orderJson?.bybitResponse?.result?.orderId ||
+                orderJson?.result?.orderId ||
+                orderJson?.data?.orderId ||
+                null;
+
+            // Backend now handles TrailingStop atomically (atomic safety) is implied by backend logic
+            // But we still wait for fill to confirm lifecycle
+
+            // Note: The previous waitForFill + commitProtection was redundant if backend does atomic SL/TP/TS
+            // We keep it for now strictly to maintain lifecycle state, but we trust the backend order.
+            setLifecycle(tradeId, "ENTRY_FILLED");
+            // We assume immediate success for now as backend returns success. 
+            // Proper advanced tracking would poll websocket.
+            setLifecycle(tradeId, "MANAGING");
+
+        } catch (err: any) {
+            const msg = err?.message || "order placement failed";
+            setLifecycle(tradeId, "FAILED", msg);
+            addLog({ action: "ERROR", message: `Trade execution error: ${msg}` });
+            // FIX: Update system state here where msg is available
+            setSystemState((p) => ({ ...p, bybitStatus: "Error", lastError: msg }));
+            addLog({
+                action: "ERROR",
+                message: `Fill/protection failed: ${msg}`,
+            });
+            return false;
+        }
+    } else {
+        // PAPER MODE: Simulate success
+        setLifecycle(tradeId, "ENTRY_FILLED", "Simulated");
+        setLifecycle(tradeId, "MANAGING", "Simulated");
+    }
+    return true;
+    // End of performTrade success path
+    // (Orphaned catch block removed)
+};
+
+function executeTrade(signalId: string): Promise<void> {
+    entryQueueRef.current = entryQueueRef.current
+        .catch(() => {
+            // swallow to keep queue alive
+        })
+        .then(async () => {
+            const last = lastEntryAtRef.current;
+            const sinceLast = last ? Date.now() - last : Infinity;
+            const waitMs =
+                sinceLast < MIN_ENTRY_SPACING_MS
+                    ? MIN_ENTRY_SPACING_MS - sinceLast
+                    : 0;
+
+            // Delay only when více vstupů čeká zároveň.
+            if (pendingSignalsRef.current.length > 0 && waitMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+            }
+
+            const executed = await performTrade(signalId);
+            if (executed) {
+                lastEntryAtRef.current = Date.now();
+            }
+        });
+
+    return entryQueueRef.current;
+}
+
+// ========== AUTO MODE ==========
+useEffect(() => {
+    if (modeRef.current !== TradingMode.AUTO_ON) return;
+    if (!pendingSignals.length) return;
+
+    const sig = pendingSignals[0];
+    if (settingsRef.current.requireConfirmationInAuto && sig.risk < 0.65)
+        return;
+
+    void executeTrade(sig.id);
+}, [pendingSignals]);
+
+// MOCK NEWS
+useEffect(() => {
+    setNewsHeadlines([
+        {
+            id: "n1",
+            headline: "Volatility rising in BTCUSDT",
+            sentiment: "neutral",
+            source: "scanner",
+            time: new Date().toISOString(),
+        },
+    ]);
+}, []);
+
+const addPriceAlert = (symbol: string, price: number) => {
+    const alert: PriceAlert = {
+        id: `a-${Date.now()}`,
+        symbol,
+        price,
+        createdAt: new Date().toISOString(),
+        triggered: false,
+    };
+    setPriceAlerts((p) => [...p, alert]);
+};
+
+const removePriceAlert = (id: string) => {
+    setPriceAlerts((p) => p.filter((a) => a.id !== id));
+};
+
+const closePosition = (id: string) => {
+    setActivePositions((prev) => {
+        const target = prev.find((p) => p.id === id);
+        if (!target) return prev;
+
+        const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
+        const dir = target.side === "buy" ? 1 : -1;
+        const pnl = (currentPrice - target.entryPrice) * dir * target.size;
+        const freedNotional = marginFor(target.symbol, target.entryPrice, target.size);
+
+        realizedPnlRef.current += pnl;
+        registerOutcome(pnl);
+
+        const limits = QTY_LIMITS[target.symbol];
+        if (settingsRef.current.strategyProfile === "coach" && limits) {
+            const nextStake = Math.max(
+                limits.min * target.entryPrice,
+                Math.min(
+                    limits.max * target.entryPrice,
+                    freedNotional * leverageFor(target.symbol) + pnl
+                )
+            );
+            coachStakeRef.current[target.symbol] = nextStake;
+        }
+
+        const record: AssetPnlRecord = {
+            symbol: target.symbol,
+            pnl,
+            timestamp: new Date().toISOString(),
+            note: `Closed at ${currentPrice.toFixed(4)} | size ${target.size.toFixed(4)}`,
+        };
+        if (authToken) {
+            setAssetPnlHistory(() => addPnlRecord(record));
+        }
+        setEntryHistory(() =>
+            addEntryToHistory({
+                id: `${target.id}-closed`,
+                symbol: target.symbol,
+                side: target.side.toLowerCase() as "buy" | "sell", // FIX: strict lower case
+                entryPrice: target.entryPrice,
+                sl: target.sl,
+                tp: target.tp,
+                size: target.size,
+                createdAt: new Date().toISOString(),
+                settingsNote: `Closed at ${currentPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
+                settingsSnapshot: snapshotSettings(settingsRef.current),
+            })
+        );
+
         setPortfolioState((p) => ({
             ...p,
-            dailyPnl: 0,
-            currentDrawdown: 0,
-            peakCapital: p.totalCapital,
+            allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
+            openPositions: Math.max(0, p.openPositions - 1),
         }));
-        realizedPnlRef.current = 0;
-    };
-
-    const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
-        const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
-        const basePreset =
-            incomingMode !== settingsRef.current.riskMode
-                ? presetFor(incomingMode)
-                : settingsRef.current;
-
-        let patched: AISettings = { ...basePreset, ...newS, riskMode: incomingMode };
-
-        if (incomingMode !== settingsRef.current.riskMode) {
-            const presetKeys: (keyof AISettings)[] = [
-                "baseRiskPerTrade",
-                "maxAllocatedCapitalPercent",
-                "maxPortfolioRiskPercent",
-                "maxDailyLossPercent",
-                "maxDailyProfitPercent",
-                "maxDrawdownPercent",
-                "positionSizingMultiplier",
-                "entryStrictness",
-                "strategyProfile",
-                "enforceSessionHours",
-                "haltOnDailyLoss",
-                "haltOnDrawdown",
-                "maxOpenPositions",
-            ];
-            presetKeys.forEach((k) => {
-                patched = { ...patched, [k]: basePreset[k] };
-            });
-        }
-
-        if (patched.strategyProfile === "coach") {
-            const clamp = (v: number, min: number, max: number) =>
-                Math.min(max, Math.max(min, v));
-            patched = {
-                ...patched,
-                baseRiskPerTrade: clamp(patched.baseRiskPerTrade || 0.02, 0.01, 0.03),
-                maxDailyLossPercent: Math.min(patched.maxDailyLossPercent || 0.05, 0.05),
-                positionSizingMultiplier: clamp(
-                    patched.positionSizingMultiplier || 1,
-                    0.5,
-                    1
-                ),
-                maxAllocatedCapitalPercent: clamp(
-                    patched.maxAllocatedCapitalPercent || 1,
-                    0.25,
-                    1
-                ),
-                maxPortfolioRiskPercent: clamp(
-                    patched.maxPortfolioRiskPercent || 0.08,
-                    0.05,
-                    0.1
-                ),
-                maxOpenPositions: 2,
-            };
-            if (patched.entryStrictness === "ultra") {
-                patched = { ...patched, entryStrictness: "base" };
-            }
-        }
-        if (patched.strategyProfile === "scalp") {
-            const relaxedEntry =
-                patched.entryStrictness === "test"
-                    ? "relaxed"
-                    : patched.entryStrictness === "ultra"
-                        ? "base"
-                        : patched.entryStrictness;
-            patched = {
-                ...patched,
-                baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
-                maxOpenPositions: 1,
-                maxDailyLossPercent: Math.max(Math.min(patched.maxDailyLossPercent, 0.12), 0.08),
-                maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
-                maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
-                enforceSessionHours: false,
-                entryStrictness: relaxedEntry,
-            };
-        }
-        setSettings(patched);
-        settingsRef.current = patched;
-        persistSettings(patched);
-        setPortfolioState((p) => {
-            const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
-            return {
-                ...p,
-                maxOpenPositions: patched.maxOpenPositions,
-                maxAllocatedCapital: maxAlloc,
-                allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
-                maxDailyLoss: p.totalCapital * patched.maxDailyLossPercent,
-                maxDailyProfit: p.totalCapital * patched.maxDailyProfitPercent,
-                maxDrawdown: patched.maxDrawdownPercent,
-            };
+        addLog({
+            action: "CLOSE",
+            message: `Position ${id} closed manually | PnL ${pnl.toFixed(2)} USDT`,
         });
-    };
 
-    const removeEntryHistoryItem = (id: string) => {
-        setEntryHistory(() => removeEntryFromHistory(id));
-    };
+        return prev.filter((p) => p.id !== id);
+    });
+};
 
-    const rejectSignal = (id: string) => {
-        setPendingSignals((prev) => prev.filter((s) => s.id !== id));
+const resetRiskState = () => {
+    setPortfolioState((p) => ({
+        ...p,
+        dailyPnl: 0,
+        currentDrawdown: 0,
+        peakCapital: p.totalCapital,
+    }));
+    realizedPnlRef.current = 0;
+};
 
-        setLogEntries((prev) => [
-            {
-                id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-                action: "REJECT",
-                timestamp: new Date().toISOString(),
-                message: `Rejected signal ${id}`,
-            },
-            ...prev,
-        ]);
-    };
+const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
+    const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
+    const basePreset =
+        incomingMode !== settingsRef.current.riskMode
+            ? presetFor(incomingMode)
+            : settingsRef.current;
 
-    // ========= RETURN API ==========
-    return {
-        logEntries,
-        activePositions,
-        closedPositions,
-        systemState,
-        portfolioState,
-        aiModelState,
-        settings,
-        currentPrices,
-        pendingSignals,
-        portfolioHistory,
-        newsHeadlines,
-        priceAlerts,
-        addPriceAlert,
-        removePriceAlert,
-        updateSettings,
-        resetRiskState,
-        executeTrade,
-        rejectSignal,
-        closePosition,
-        entryHistory,
-        testnetOrders,
-        testnetTrades,
-        ordersError,
-        refreshTestnetOrders: fetchOrders,
-        mainnetOrders: testnetOrders, // Unify state: always return current orders
-        mainnetTrades: testnetTrades,
-        mainnetError: ordersError,
-        refreshMainnetOrders: fetchOrders,
-        refreshMainnetTrades: fetchTrades,
-        assetPnlHistory,
-        removeEntryHistoryItem,
-    };
+    let patched: AISettings = { ...basePreset, ...newS, riskMode: incomingMode };
+
+    if (incomingMode !== settingsRef.current.riskMode) {
+        const presetKeys: (keyof AISettings)[] = [
+            "baseRiskPerTrade",
+            "maxAllocatedCapitalPercent",
+            "maxPortfolioRiskPercent",
+            "maxDailyLossPercent",
+            "maxDailyProfitPercent",
+            "maxDrawdownPercent",
+            "positionSizingMultiplier",
+            "entryStrictness",
+            "strategyProfile",
+            "enforceSessionHours",
+            "haltOnDailyLoss",
+            "haltOnDrawdown",
+            "maxOpenPositions",
+        ];
+        presetKeys.forEach((k) => {
+            patched = { ...patched, [k]: basePreset[k] };
+        });
+    }
+
+    if (patched.strategyProfile === "coach") {
+        const clamp = (v: number, min: number, max: number) =>
+            Math.min(max, Math.max(min, v));
+        patched = {
+            ...patched,
+            baseRiskPerTrade: clamp(patched.baseRiskPerTrade || 0.02, 0.01, 0.03),
+            maxDailyLossPercent: Math.min(patched.maxDailyLossPercent || 0.05, 0.05),
+            positionSizingMultiplier: clamp(
+                patched.positionSizingMultiplier || 1,
+                0.5,
+                1
+            ),
+            maxAllocatedCapitalPercent: clamp(
+                patched.maxAllocatedCapitalPercent || 1,
+                0.25,
+                1
+            ),
+            maxPortfolioRiskPercent: clamp(
+                patched.maxPortfolioRiskPercent || 0.08,
+                0.05,
+                0.1
+            ),
+            maxOpenPositions: 2,
+        };
+        if (patched.entryStrictness === "ultra") {
+            patched = { ...patched, entryStrictness: "base" };
+        }
+    }
+    if (patched.strategyProfile === "scalp") {
+        const relaxedEntry =
+            patched.entryStrictness === "test"
+                ? "relaxed"
+                : patched.entryStrictness === "ultra"
+                    ? "base"
+                    : patched.entryStrictness;
+        patched = {
+            ...patched,
+            baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
+            maxOpenPositions: 1,
+            maxDailyLossPercent: Math.max(Math.min(patched.maxDailyLossPercent, 0.12), 0.08),
+            maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
+            maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
+            enforceSessionHours: false,
+            entryStrictness: relaxedEntry,
+        };
+    }
+    setSettings(patched);
+    settingsRef.current = patched;
+    persistSettings(patched);
+    setPortfolioState((p) => {
+        const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
+        return {
+            ...p,
+            maxOpenPositions: patched.maxOpenPositions,
+            maxAllocatedCapital: maxAlloc,
+            allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
+            maxDailyLoss: p.totalCapital * patched.maxDailyLossPercent,
+            maxDailyProfit: p.totalCapital * patched.maxDailyProfitPercent,
+            maxDrawdown: patched.maxDrawdownPercent,
+        };
+    });
+};
+
+const removeEntryHistoryItem = (id: string) => {
+    setEntryHistory(() => removeEntryFromHistory(id));
+};
+
+const rejectSignal = (id: string) => {
+    setPendingSignals((prev) => prev.filter((s) => s.id !== id));
+
+    setLogEntries((prev) => [
+        {
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            action: "REJECT",
+            timestamp: new Date().toISOString(),
+            message: `Rejected signal ${id}`,
+        },
+        ...prev,
+    ]);
+};
+
+// ========= RETURN API ==========
+return {
+    logEntries,
+    activePositions,
+    closedPositions,
+    systemState,
+    portfolioState,
+    aiModelState,
+    settings,
+    currentPrices,
+    pendingSignals,
+    portfolioHistory,
+    newsHeadlines,
+    priceAlerts,
+    addPriceAlert,
+    removePriceAlert,
+    updateSettings,
+    resetRiskState,
+    executeTrade,
+    rejectSignal,
+    closePosition,
+    entryHistory,
+    testnetOrders,
+    testnetTrades,
+    ordersError,
+    refreshTestnetOrders: fetchOrders,
+    mainnetOrders: testnetOrders, // Unify state: always return current orders
+    mainnetTrades: testnetTrades,
+    mainnetError: ordersError,
+    refreshMainnetOrders: fetchOrders,
+    refreshMainnetTrades: fetchTrades,
+    assetPnlHistory,
+    removeEntryHistoryItem,
+};
 };
 
 // ========= API TYPE EXPORT ==========
