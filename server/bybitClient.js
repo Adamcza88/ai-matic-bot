@@ -166,26 +166,52 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     timestamp + creds.apiKey + recvWindow + JSON.stringify(orderBody);
   const orderSign = sign(orderPayload, creds.apiSecret);
 
-  console.log(`[createDemoOrder] Sending to ${useTestnet ? "Testnet" : "Mainnet"}:`, JSON.stringify(orderBody));
+  // === MANDATORY LOG: PRE-FLIGHT ===
+  const logContext = {
+    env: useTestnet ? "testnet" : "mainnet",
+    endpoint: "/v5/order/create",
+    payload: null,
+    response: null,
+    error: null
+  };
 
-  const orderRes = await axios.post(`${resolveBase(useTestnet)}/v5/order/create`, orderBody, {
-    headers: {
-      "X-BAPI-API-KEY": creds.apiKey,
-      "X-BAPI-SIGN": orderSign,
-      "X-BAPI-SIGN-TYPE": "2",
-      "X-BAPI-TIMESTAMP": timestamp,
-      "X-BAPI-RECV-WINDOW": recvWindow,
-      "Content-Type": "application/json",
-    },
-  });
+  let result;
 
-  console.log("Bybit create order response:", orderRes.data);
+  try {
+    const orderRes = await axios.post(`${resolveBase(useTestnet)}/v5/order/create`, orderBody, {
+      headers: {
+        "X-BAPI-API-KEY": creds.apiKey,
+        "X-BAPI-SIGN": orderSign,
+        "X-BAPI-SIGN-TYPE": "2",
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recvWindow,
+        "Content-Type": "application/json",
+      },
+    });
 
-  const result = orderRes.data;
+    logContext.payload = orderBody;
+    logContext.response = orderRes.data;
 
-  // Pokud order selhal, končíme
-  if (result.retCode !== 0) {
-    return result;
+    // MANDATORY LOG: SUCCESS/FAIL RESPONSE
+    console.log(JSON.stringify(logContext, null, 2));
+
+    result = orderRes.data;
+
+    // Check logic error immediately
+    if (result.retCode !== 0) {
+      return result;
+    }
+
+  } catch (error) {
+    logContext.payload = orderBody;
+    logContext.error = error.message || String(error);
+    if (error.response) {
+      logContext.response = error.response.data;
+    }
+
+    // MANDATORY LOG: NETWORK ERROR
+    console.error(JSON.stringify(logContext, null, 2));
+    throw error;
   }
 
   // === 2) SET TRAILING STOP ONLY (Post-Order) ===

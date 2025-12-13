@@ -29,12 +29,13 @@ app.get("/api/health", (req, res) => {
  * }
  */
 /**
- * CREATE ORDER (Unified Handler for Demo & Main via different routes or query param)
- * Supports: POST /api/demo/order AND POST /api/main/order
+ * CREATE ORDER HANDLER GENERATOR
+ * Returns a handler strictly bound to a specific network (Mainnet or Testnet).
  */
-const handleOrder = async (req, res) => {
+const createOrderHandler = (isTestnet) => async (req, res) => {
   try {
-    const useTestnet = req.query.net !== "mainnet";
+    // HARD SEPARATION: Ignore query params, use the bound network
+    const useTestnet = isTestnet;
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
@@ -46,7 +47,8 @@ const handleOrder = async (req, res) => {
 
     const user = await getUserFromToken(token);
     const keys = await getUserApiKeys(user.id);
-    // Explicit Fallback logic consistent with userCredentials.js usage
+
+    // Explicit Key Selection based on HARD separation
     const apiKey = useTestnet ? keys.bybitTestnetKey : (keys.bybitMainnetKey || keys.bybitKey);
     const apiSecret = useTestnet ? keys.bybitTestnetSecret : (keys.bybitMainnetSecret || keys.bybitSecret);
 
@@ -92,9 +94,9 @@ const handleOrder = async (req, res) => {
       reduceOnly,
       orderType,
       timeInForce
-    }, { apiKey, apiSecret }, useTestnet);
+    }, { apiKey, apiSecret }, useTestnet); // Pass the HARD constant
 
-    // CRITICAL: Explicit check for Bybit logic error (Silent Error Fix)
+    // CRITICAL: Explicit check for Bybit logic error
     if (orderResult.retCode !== 0) {
       console.error(`[Order API] Bybit Error: ${orderResult.retMsg} (Code: ${orderResult.retCode})`);
       return res.status(400).json({
@@ -108,7 +110,7 @@ const handleOrder = async (req, res) => {
     return res.json({
       ok: true,
       order: orderResult,
-      bybitResponse: orderResult // consistent with Vercel response
+      bybitResponse: orderResult
     });
   } catch (err) {
     console.error(`POST ${req.path} error:`, err);
@@ -119,9 +121,9 @@ const handleOrder = async (req, res) => {
   }
 };
 
-// Mount both routes
-app.post("/api/demo/order", handleOrder);
-app.post("/api/main/order", handleOrder);
+// Mount strictly separated routes
+app.post("/api/demo/order", createOrderHandler(true));  // FORCE TESTNET
+app.post("/api/main/order", createOrderHandler(false)); // FORCE MAINNET
 
 /**
  * Přehled DEMO pozic z Bybit testnetu
