@@ -802,7 +802,7 @@ export const useTradingBot = (
         void fetchTestnetTrades();
         void fetchMainnetOrders();
         void fetchMainnetTrades();
-    }, [fetchTestnetOrders]);
+    }, [fetchTestnetOrders, fetchTestnetTrades, fetchMainnetOrders, fetchMainnetTrades]);
 
     const setLifecycle = (tradeId: string, status: string, note?: string) => {
         lifecycleRef.current.set(tradeId, status);
@@ -817,7 +817,7 @@ export const useTradingBot = (
             if (!authToken) return;
             const side = pos.side === "buy" ? "Sell" : "Buy";
             try {
-                await fetch(`${apiBase}/api/demo/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -952,23 +952,23 @@ export const useTradingBot = (
                 });
                 if (execSnapshot) return execSnapshot;
 
-                // 3) Orders status snapshot
-                const ordersResp = await fetchOrdersOnce(net);
-                if (ordersResp.retCode && ordersResp.retCode !== 0) {
+                // 3) Order history snapshot
+                const historyResp = await fetchOrderHistoryOnce(net);
+                if (historyResp.retCode && historyResp.retCode !== 0) {
                     addLog({
                         action: "ERROR",
-                        message: `Orders retCode=${ordersResp.retCode} ${ordersResp.retMsg || ""}`,
+                        message: `Order history retCode=${historyResp.retCode} ${historyResp.retMsg || ""}`,
                     });
                 }
-                const orderMatch = ordersResp.list.find((o: any) => {
+                const histMatch = historyResp.list.find((o: any) => {
                     if (o.symbol !== symbol) return false;
                     if (orderId && o.orderId && o.orderId === orderId) return true;
                     if (orderLinkId && o.orderLinkId && o.orderLinkId === orderLinkId) return true;
                     return !orderId && !orderLinkId;
                 });
-                if (orderMatch) {
-                    const st = String(orderMatch.orderStatus || orderMatch.status || "");
-                    if (st === "Filled" || st === "PartiallyFilled") return orderMatch;
+                if (histMatch) {
+                    const st = String(histMatch.orderStatus || histMatch.status || "");
+                    if (st === "Filled" || st === "PartiallyFilled") return histMatch;
                     if (st === "Rejected") throw new Error("Order Rejected");
                     if (st === "Cancelled") throw new Error("Order Cancelled");
                 }
@@ -988,7 +988,7 @@ export const useTradingBot = (
             }
             throw new Error(`Fill not confirmed for ${symbol} after ${attempts} attempts`);
         },
-        [addLog, fetchExecutionsOnce, fetchOrdersOnce, fetchPositionsOnce, useTestnet]
+        [addLog, fetchExecutionsOnce, fetchOrderHistoryOnce, fetchPositionsOnce, useTestnet]
     );
 
     const commitProtection = useCallback(
