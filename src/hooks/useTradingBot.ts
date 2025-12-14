@@ -1868,25 +1868,39 @@ export const useTradingBot = (
         // 0.1 PORTFOLIO RISK GATE (New)
         const currentPositions = activePositionsRef.current;
         const totalCapital = portfolioState.totalCapital || 1000;
+        const maxAlloc = portfolioState.maxAllocatedCapital || (totalCapital * (settingsRef.current.maxAllocatedCapitalPercent || 1));
 
-        // 1. Max Notional Exposure Check (e.g. max 3x leverage globally)
-        const currentNotional = currentPositions.reduce((sum, p) => sum + (p.entryPrice * p.size), 0);
-        const newTradeNotional = safeEntry * orderQty;
-        const maxNotional = totalCapital * 3.0; // Hardcoded safety limit for now, or add to settings
-        if (currentNotional + newTradeNotional > maxNotional) {
-            addLog({ action: "REJECT", message: `Risk Gate: Max Notional Exceeded (${(currentNotional + newTradeNotional).toFixed(0)} > ${maxNotional.toFixed(0)})` });
+        // 1. Max Exposure Check (margin-based so high leverage is allowed)
+        const currentMargin = currentPositions.reduce(
+            (sum, p) => sum + marginFor(p.symbol, p.entryPrice, p.size ?? p.qty ?? 0),
+            0
+        );
+        const newTradeMargin = marginFor(symbol, safeEntry, orderQty);
+        if (currentMargin + newTradeMargin > maxAlloc) {
+            addLog({
+                action: "REJECT",
+                message: `Risk Gate: Max Margin Exceeded ${symbol} (${(currentMargin + newTradeMargin).toFixed(2)} > ${maxAlloc.toFixed(2)})`,
+            });
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }
 
-        // 1.1 Net Delta Gate (Directional Exposure Limit)
-        const netDelta = currentPositions.reduce((sum, p) => sum + (p.side === "buy" ? 1 : -1) * (p.entryPrice * p.size), 0);
-        const newDelta = (isBuy ? 1 : -1) * newTradeNotional;
+        // 1.1 Net Delta Gate (Directional Exposure Limit) - also margin-based
+        const netDelta = currentPositions.reduce(
+            (sum, p) =>
+                sum +
+                (p.side === "buy" ? 1 : -1) *
+                marginFor(p.symbol, p.entryPrice, p.size ?? p.qty ?? 0),
+            0
+        );
+        const newDelta = (isBuy ? 1 : -1) * newTradeMargin;
         const projectedDelta = netDelta + newDelta;
-        // Limit Net Delta to say 2x Capital (allows some hedging/neutrality)
-        const maxDelta = totalCapital * 2.0;
+        const maxDelta = maxAlloc;
         if (Math.abs(projectedDelta) > maxDelta) {
-            addLog({ action: "REJECT", message: `Risk Gate: Max Net Delta Exceeded (${Math.abs(projectedDelta).toFixed(0)} > ${maxDelta.toFixed(0)})` });
+            addLog({
+                action: "REJECT",
+                message: `Risk Gate: Max Net Delta Exceeded ${symbol} (${Math.abs(projectedDelta).toFixed(2)} > ${maxDelta.toFixed(2)})`,
+            });
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }
@@ -1894,11 +1908,13 @@ export const useTradingBot = (
         // 2. Correlation / Concentration Limit (Max positions per "bucket" - simplistic symbol check)
         // If we have ETHUSDT, maybe don't open ETH-PERP? (Not applicable here as we assume linear perps)
         // Check simply max risk budget per symbol.
-        const existingSymbolRisk = currentPositions.filter(p => p.symbol === symbol).reduce((sum, p) => sum + (Math.abs(p.entryPrice - p.sl) * p.size), 0);
+        const existingSymbolRisk = currentPositions
+            .filter(p => p.symbol === symbol)
+            .reduce((sum, p) => sum + (Math.abs(p.entryPrice - p.sl) * p.size), 0);
         const newTradeRisk = Math.abs(safeEntry - (Number(finalSl) || safeEntry)) * orderQty;
-        const maxRiskPerSymbol = totalCapital * 0.02; // 2% risk per symbol max
+        const maxRiskPerSymbol = totalCapital * Math.min(settingsRef.current.maxPortfolioRiskPercent || 0.2, 0.2); // cap at 20 % of balance
         if (existingSymbolRisk + newTradeRisk > maxRiskPerSymbol) {
-            addLog({ action: "REJECT", message: `Risk Gate: Max Symbol Risk Exceeded` });
+            addLog({ action: "REJECT", message: `Risk Gate: Max Symbol Risk Exceeded ${symbol} (${(existingSymbolRisk + newTradeRisk).toFixed(2)} > ${maxRiskPerSymbol.toFixed(2)})` });
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }
