@@ -714,20 +714,23 @@ export const useTradingBot = (
             }
             const data = await res.json();
             const list = data?.data?.list || data?.list || data?.result?.list || [];
+            const allowed = new Set(SYMBOLS);
             const mapped: TestnetTrade[] = Array.isArray(list)
-                ? list.map((t: any) => {
-                    const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
-                    return {
-                        id: t.execId || t.tradeId || `${Date.now()}`,
-                        symbol: t.symbol || "",
-                        side: (t.side as "Buy" | "Sell") || "Buy",
-                        price: Number(t.execPrice ?? t.price ?? 0),
-                        qty: Number(t.execQty ?? t.qty ?? 0),
-                        value: Number(t.execValue ?? t.value ?? 0),
-                        fee: Number(t.execFee ?? t.fee ?? 0),
-                        time: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
-                    };
-                })
+                ? list
+                    .filter((t: any) => allowed.has(t.symbol))
+                    .map((t: any) => {
+                        const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
+                        return {
+                            id: t.execId || t.tradeId || `${Date.now()}`,
+                            symbol: t.symbol || "",
+                            side: (t.side as "Buy" | "Sell") || "Buy",
+                            price: Number(t.execPrice ?? t.price ?? 0),
+                            qty: Number(t.execQty ?? t.qty ?? 0),
+                            value: Number(t.execValue ?? t.value ?? 0),
+                            fee: Number(t.execFee ?? t.fee ?? 0),
+                            time: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
+                        };
+                    })
                 : [];
             setTestnetTrades(mapped);
         } catch (err: any) {
