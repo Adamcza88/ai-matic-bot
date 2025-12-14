@@ -1616,9 +1616,11 @@ export const useTradingBot = (
                 const list = json?.data?.result?.list || json?.result?.list || [];
                 const cursor = json?.data?.result?.nextPageCursor || json?.result?.nextPageCursor;
                 const seen = processedExecIdsRef.current;
+                const allowedSymbols = new Set(SYMBOLS);
                 list.forEach((e: any) => {
                     const id = e.execId || e.tradeId;
                     if (!id || seen.has(id)) return;
+                    if (e.symbol && !allowedSymbols.has(e.symbol)) return;
                     seen.add(id);
                     executionEventsRef.current = [
                         {
@@ -1743,23 +1745,14 @@ export const useTradingBot = (
         const stopLossValue = Number.isFinite(plan.stopLoss) ? plan.stopLoss : finalSl;
         const takeProfitValue = Number.isFinite(plan.takeProfit) ? plan.takeProfit : finalTp;
 
-        // Trailing plan derived from profile ArmR/LockR
-        const rDist = Number.isFinite(stopLossValue) ? Math.abs(safeEntry - (stopLossValue as number)) : 0;
-        const armLockMap: Record<ExecStrategyProfile, { arm: number; lock: number }> = {
-            scalp: { arm: 1.2, lock: 0.4 },
-            intraday: { arm: 1.4, lock: 0.6 },
-            swing: { arm: 1.6, lock: 0.8 },
-            trend: { arm: 2.0, lock: 1.1 },
-            coach: { arm: 1.4, lock: 0.6 },
-        };
-        const armLock = armLockMap[profile] || armLockMap.intraday;
-        const gapR = armLock.arm - armLock.lock;
-        const trailingDistance =
-            rDist > 0 && gapR > 0 ? gapR * rDist : undefined;
-        const trailingActivePrice =
-            rDist > 0
-                ? safeEntry + (isBuy ? 1 : -1) * armLock.arm * rDist
-                : undefined;
+        // Trailing plan: activate at 90% ROI move, distance = 50% z tohoto pohybu
+        const roiArmPct = 90; // percent ROI
+        const movePct = (roiArmPct / 100) / Math.max(1, lev);
+        const roiMove = safeEntry * movePct;
+        const trailingActivePrice = Number.isFinite(safeEntry)
+            ? safeEntry + (isBuy ? 1 : -1) * roiMove
+            : undefined;
+        const trailingDistance = Number.isFinite(roiMove) ? Math.abs(roiMove) * 0.5 : undefined;
 
         const orderType =
             plan.mode === "MARKET"
