@@ -32,6 +32,19 @@ test("detectCoachBreakout flags breakout above base high with strong volume", ()
     assert.ok(res.intent.tp > res.intent.entry, "TP should exceed entry");
 });
 
+test("detectCoachBreakout flags breakdown below base low with strong volume", () => {
+    const basePrices = Array.from({ length: 30 }, (_, i) => 100 - i * 0.05);
+    const baseVolumes = Array(30).fill(100);
+    const breakdownPrices = [...basePrices, ...[98.5, 98.1, 97.6, 97.1, 96.7]];
+    const breakdownVolumes = [...baseVolumes, 150, 160, 190, 200, 220];
+    const candles = buildSeries(breakdownPrices, breakdownVolumes);
+    const res = detectCoachBreakout(candles, coachDefaults);
+    assert.ok(res, "Expected breakdown signal");
+    assert.equal(res.intent.side, "sell");
+    assert.ok(res.intent.sl > res.intent.entry, "SL above entry for short");
+    assert.ok(res.intent.tp < res.intent.entry, "TP below entry for short");
+});
+
 test("detectSituationalEdges triggers Friday<Thursday edge", () => {
     const baseTs = Date.UTC(2024, 0, 1); // Monday
     const day = 24 * 60 * 60 * 1000;
@@ -59,4 +72,18 @@ test("detectSituationalEdges triggers Wednesday<Monday edge", () => {
     const res = detectSituationalEdges(daily, 103);
     assert.ok(res, "Expected situational edge for Wednesday lower high vs Monday");
     assert.equal(res.intent.tp, 101);
+});
+
+test("detectSituationalEdges triggers inverse Friday low edge for long", () => {
+    const baseTs = Date.UTC(2024, 0, 1); // Monday
+    const day = 24 * 60 * 60 * 1000;
+    const daily = [
+        { openTime: baseTs, high: 104, low: 99 }, // Mon reference
+        { openTime: baseTs + 3 * day, high: 105, low: 100 }, // Thu
+        { openTime: baseTs + 4 * day, high: 106, low: 101.5 }, // Fri higher low + higher high (avoid short trigger)
+    ];
+    const res = detectSituationalEdges(daily, 102);
+    assert.ok(res, "Expected long situational edge for higher Friday low");
+    assert.equal(res.intent.side, "buy");
+    assert.ok(res.intent.tp > res.intent.entry);
 });

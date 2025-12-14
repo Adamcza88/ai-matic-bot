@@ -1,7 +1,7 @@
 import { Candle } from "./botEngine";
 
 export type CoachSignal = {
-    intent: { side: "buy"; entry: number; sl: number; tp: number };
+    intent: { side: "buy" | "sell"; entry: number; sl: number; tp: number };
     message: string;
 };
 
@@ -60,27 +60,43 @@ export function detectCoachBreakout(
     const breakoutThreshold = priorHigh * (1 + params.breakoutBufferPct);
     const breakout =
         lastClose > breakoutThreshold && lastClose > ema10 && lastClose > ema20;
-    const emaAligned = ema10 > ema20;
+    const breakdownThreshold = baseLow * (1 - params.breakoutBufferPct);
+    const breakdown = lastClose < breakdownThreshold && lastClose < ema10 && lastClose < ema20;
+    const emaAlignedUp = ema10 > ema20;
+    const emaAlignedDown = ema10 < ema20;
 
-    if (!breakout || !volStrong || !emaAligned) return null;
-    if (!Number.isFinite(baseLow) || baseLow <= 0 || lastClose <= baseLow) return null;
+    if (breakout && volStrong && emaAlignedUp) {
+        if (!Number.isFinite(baseLow) || baseLow <= 0 || lastClose <= baseLow) return null;
+        const entry = lastClose;
+        const sl = baseLow;
+        const riskPerUnit = entry - sl;
+        const tp = entry + Math.max(riskPerUnit * params.tpRiskMultiple, entry * params.minTpPct);
+        return {
+            intent: { side: "buy", entry, sl, tp },
+            message: `Coach breakout @ ${entry.toFixed(4)} | vol x${(lastVolume / Math.max(avgVol, 1e-8)).toFixed(2)}`,
+        };
+    }
 
-    const entry = lastClose;
-    const sl = baseLow;
-    const riskPerUnit = entry - sl;
-    const tp = entry + Math.max(riskPerUnit * params.tpRiskMultiple, entry * params.minTpPct);
+    if (breakdown && volStrong && emaAlignedDown) {
+        if (!Number.isFinite(priorHigh) || priorHigh <= 0 || lastClose >= priorHigh) return null;
+        const entry = lastClose;
+        const sl = priorHigh;
+        const riskPerUnit = sl - entry;
+        const tp = entry - Math.max(riskPerUnit * params.tpRiskMultiple, entry * params.minTpPct);
+        return {
+            intent: { side: "sell", entry, sl, tp },
+            message: `Coach breakdown @ ${entry.toFixed(4)} | vol x${(lastVolume / Math.max(avgVol, 1e-8)).toFixed(2)}`,
+        };
+    }
 
-    return {
-        intent: { side: "buy", entry, sl, tp },
-        message: `Coach breakout @ ${entry.toFixed(4)} | vol x${(lastVolume / Math.max(avgVol, 1e-8)).toFixed(2)}`,
-    };
+    return null;
 }
 
 export const coachDefaults = DEFAULT_COACH_PARAMS;
 
 // ========== Situational Analysis (daily highs/lows rules) ==========
 export type SituationalSignal = {
-    intent: { side: "sell"; entry: number; sl: number; tp: number };
+    intent: { side: "sell" | "buy"; entry: number; sl: number; tp: number };
     message: string;
 };
 
@@ -128,6 +144,14 @@ export function detectSituationalEdges(
                 message: "Situational edge: Friday High < Thursday High → target Friday Low on Monday",
             };
         }
+
+        if (friday.day.low > thursday.day.low && currentPrice < friday.day.high) {
+            const sl = Math.min(friday.day.low, thursday.day.low);
+            return {
+                intent: { side: "buy", entry: currentPrice, sl, tp: friday.day.high },
+                message: "Situational edge: Friday Low > Thursday Low → target Friday High on Monday",
+            };
+        }
     }
 
     const wednesday = lastMatchingDay(days, 3);
@@ -150,6 +174,14 @@ export function detectSituationalEdges(
             return {
                 intent: { side: "sell", entry: currentPrice, sl, tp: wednesday.day.low },
                 message: "Situational edge: Wednesday High < Monday High → target Wednesday Low on Thursday",
+            };
+        }
+
+        if (wednesday.day.low > monday.day.low && currentPrice < wednesday.day.high) {
+            const sl = Math.min(wednesday.day.low, monday.day.low);
+            return {
+                intent: { side: "buy", entry: currentPrice, sl, tp: wednesday.day.high },
+                message: "Situational edge: Wednesday Low > Monday Low → target Wednesday High on Thursday",
             };
         }
     }
