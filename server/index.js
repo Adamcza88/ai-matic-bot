@@ -76,6 +76,22 @@ app.post("/api/:env/order", async (req, res) => {
 
   const { symbol, side, qty, orderType, sl, tp, orderLinkId, timeInForce, trailingStop, price, triggerPrice } = req.body;
 
+  const roiSymbols = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"]);
+  const leverageMap = { BTCUSDT: 100, ETHUSDT: 100, SOLUSDT: 100, ADAUSDT: 75 };
+  const roiTargets = { tp: 1.10, sl: -0.40 }; // percent ROI targets
+
+  const applyRoiStops = (sym, entry, dir, curTp, curSl) => {
+    if (!roiSymbols.has(sym) || !Number.isFinite(entry)) return { tp: curTp, sl: curSl };
+    const lev = leverageMap[sym] || 1;
+    const isBuy = dir?.toLowerCase() === "buy";
+    const tpPrice = entry * (1 + (roiTargets.tp / 100) / Math.max(1, lev) * (isBuy ? 1 : -1));
+    const slPrice = entry * (1 - (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev) * (isBuy ? 1 : -1));
+    return {
+      tp: Number.isFinite(tpPrice) ? tpPrice : curTp,
+      sl: Number.isFinite(slPrice) ? slPrice : curSl,
+    };
+  };
+
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader) {
@@ -91,6 +107,9 @@ app.post("/api/:env/order", async (req, res) => {
     }
 
     // Reuse createDemoOrder for both main/testnet logic in server (it handles 'useTestnet' flag)
+    const entryPrice = Number(price ?? triggerPrice);
+    const { tp: roiTp, sl: roiSl } = applyRoiStops(symbol, entryPrice, side, tp, sl);
+
     const result = await createDemoOrder({
       symbol,
       side,
@@ -98,12 +117,12 @@ app.post("/api/:env/order", async (req, res) => {
       orderType,
       price,
       triggerPrice,
-      sl,
-      tp,
+      sl: roiSl,
+      tp: roiTp,
       orderLinkId,
       timeInForce,
-      takeProfit: tp,
-      stopLoss: sl,
+      takeProfit: roiTp,
+      stopLoss: roiSl,
       trailingStop
     }, creds, env === "testnet");
 
