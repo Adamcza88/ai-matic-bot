@@ -144,6 +144,7 @@ function loadStoredSettings(): AISettings | null {
             ...INITIAL_RISK_SETTINGS,
             ...parsed,
             tradingDays: Array.isArray(parsed.tradingDays) ? parsed.tradingDays : INITIAL_RISK_SETTINGS.tradingDays,
+            maxOpenPositions: Math.min(2, parsed.maxOpenPositions ?? INITIAL_RISK_SETTINGS.maxOpenPositions),
         } as AISettings;
     } catch {
         return null;
@@ -493,6 +494,19 @@ export const useTradingBot = (
         setEntryHistory(trimmed);
         setAssetPnlHistory(loadPnlHistory());
     }, []);
+
+    // Keep only top-2 highest-risk pending signals to focus on nejpravděpodobnější obchody
+    useEffect(() => {
+        setPendingSignals((prev) => {
+            if (prev.length <= 2) return prev;
+            const sorted = [...prev].sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0));
+            const trimmed = sorted.slice(0, 2);
+            const same =
+                trimmed.length === prev.length &&
+                trimmed.every((s, i) => s.id === prev[i].id);
+            return same ? prev : trimmed;
+        });
+    }, [pendingSignals]);
 
     useEffect(() => {
         pendingSignalsRef.current = pendingSignals;
@@ -2116,6 +2130,9 @@ export const useTradingBot = (
                 entryStrictness: relaxedEntry,
             };
         }
+        // Hard clamp max open positions
+        patched = { ...patched, maxOpenPositions: Math.min(2, patched.maxOpenPositions ?? 2) };
+
         setSettings(patched);
         settingsRef.current = patched;
         persistSettings(patched);
