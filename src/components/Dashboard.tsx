@@ -494,7 +494,14 @@ export default function Dashboard({
                   No activity yet.
                 </div>
               ) : (
-                logEntries.slice(0, 10).map((l) => (
+                logEntries
+                  .filter((l) => {
+                    const msg = l.message || "";
+                    const allowed = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
+                    return allowed.some((s) => msg.includes(s));
+                  })
+                  .slice(0, 10)
+                  .map((l) => (
                   <div
                     key={l.id}
                     className="text-sm flex gap-3 py-2 border-b border-white/5 last:border-0"

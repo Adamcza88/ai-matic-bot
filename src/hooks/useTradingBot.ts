@@ -1745,14 +1745,15 @@ export const useTradingBot = (
         const stopLossValue = Number.isFinite(plan.stopLoss) ? plan.stopLoss : finalSl;
         const takeProfitValue = Number.isFinite(plan.takeProfit) ? plan.takeProfit : finalTp;
 
-        // Trailing plan: activate at 90% ROI move, distance = 50% z tohoto pohybu
-        const roiArmPct = 90; // percent ROI
-        const movePct = (roiArmPct / 100) / Math.max(1, lev);
-        const roiMove = safeEntry * movePct;
-        const trailingActivePrice = Number.isFinite(safeEntry)
-            ? safeEntry + (isBuy ? 1 : -1) * roiMove
+        // Trailing plán: aktivace při 90 % ROI (price move), vzdálenost = 50 % tohoto pohybu
+        const roiArmPct = 90;
+        const roiMove = Number.isFinite(safeEntry) && isRoiSymbol
+            ? safeEntry * ((roiArmPct / 100) / Math.max(1, lev))
             : undefined;
-        const trailingDistance = Number.isFinite(roiMove) ? Math.abs(roiMove) * 0.5 : undefined;
+        const trailingActivePrice = Number.isFinite(roiMove)
+            ? safeEntry + (isBuy ? 1 : -1) * (roiMove as number)
+            : undefined;
+        const trailingDistance = Number.isFinite(roiMove) ? Math.abs(roiMove as number) * 0.5 : undefined;
 
         const orderType =
             plan.mode === "MARKET"
