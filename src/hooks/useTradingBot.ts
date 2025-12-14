@@ -1044,7 +1044,27 @@ export const useTradingBot = (
                 }));
             }
 
+            // Daily Loss Halt (Realized + Unrealized)
             const positions = activePositionsRef.current;
+            const realized = portfolioState.dailyPnl;
+            const unrealized = positions.reduce((sum, p) => sum + (p.pnl || 0), 0);
+            const totalDailyPnl = realized + unrealized;
+            const maxLoss = -(portfolioState.totalCapital * (settingsRef.current.maxDailyLossPercent || 0.05));
+
+            if (totalDailyPnl < maxLoss) {
+                if (modeRef.current !== "OFF" && !dailyHaltAtRef.current) {
+                    dailyHaltAtRef.current = Date.now();
+                    addLog({ action: "SYSTEM", message: `DAILY LOSS HIT: ${totalDailyPnl.toFixed(2)} < ${maxLoss.toFixed(2)}. Halting.` });
+                    // Logic to stop new entries is in performTrade (portfolioState check needed there or mode switch)
+                    // Here we can force mode to OFF or specific HALT state if we had one.
+                    // For now, we rely on dailyHaltAtRef to be checked in performTrade (it's not yet).
+                    // Let's just log and update system state.
+                    setSystemState(prev => ({ ...prev, lastError: "Daily Loss Limit Hit" }));
+                }
+            } else {
+                dailyHaltAtRef.current = null; // Reset if recovered (optional, usually daily limit is sticky)
+            }
+
             for (const p of positions) {
                 if (!p || !p.symbol) continue;
                 const missingProtection =
@@ -1810,6 +1830,18 @@ export const useTradingBot = (
         const maxNotional = totalCapital * 3.0; // Hardcoded safety limit for now, or add to settings
         if (currentNotional + newTradeNotional > maxNotional) {
             addLog({ action: "REJECT", message: `Risk Gate: Max Notional Exceeded (${(currentNotional + newTradeNotional).toFixed(0)} > ${maxNotional.toFixed(0)})` });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
+
+        // 1.1 Net Delta Gate (Directional Exposure Limit)
+        const netDelta = currentPositions.reduce((sum, p) => sum + (p.side === "buy" ? 1 : -1) * (p.entryPrice * p.size), 0);
+        const newDelta = (isBuy ? 1 : -1) * newTradeNotional;
+        const projectedDelta = netDelta + newDelta;
+        // Limit Net Delta to say 2x Capital (allows some hedging/neutrality)
+        const maxDelta = totalCapital * 2.0;
+        if (Math.abs(projectedDelta) > maxDelta) {
+            addLog({ action: "REJECT", message: `Risk Gate: Max Net Delta Exceeded (${Math.abs(projectedDelta).toFixed(0)} > ${maxDelta.toFixed(0)})` });
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }

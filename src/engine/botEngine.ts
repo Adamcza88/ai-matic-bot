@@ -1072,6 +1072,12 @@ export class TradingBot {
     lt: DataFrame,
   ): { side: "long" | "short"; entry: number; stopLoss: number } | null {
     if (this.cooldownUntil && new Date() < this.cooldownUntil) return null;
+
+    // 0. ABSOLUTE CHAOS GATE
+    if (this.isVolatileChaos(ht)) {
+      return null; // Too volatile, skip
+    }
+
     let trend = this.determineTrend(ht);
     if (lt.length < 3) return null;
     const closes = lt.map((c) => c.close);
@@ -1229,6 +1235,29 @@ export class TradingBot {
   private managePositionWithFrames(ht: DataFrame, lt: DataFrame): void {
     if (!this.position) return;
     this.handleManage(ht, lt);
+
+    // TIME STOP + STAGNATION CHECK
+    const pos = this.position;
+    const now = lt[lt.length - 1]?.openTime || Date.now();
+    const durationMs = now - pos.opened;
+
+    // Estimate bars passed (assuming base timeframe approx)
+    // Roughly check if duration > X minutes
+    // Let's rely on candle counts if we had them linked, but time diff is robust.
+    const TIME_STOP_MS = 60 * 60 * 1000; // 1 hour example (should be config driven)
+    const MIN_PROFIT_R = 0.5;
+
+    // If held for 12 bars (approx 1h on 5m chart) and profit < 0.5R => Exit
+    // We'll calculate current PnL R
+    const currentPrice = lt[lt.length - 1].close;
+    const dist = currentPrice - pos.entryPrice;
+    const pnlR = (pos.side === "long" ? dist : -dist) / (Math.abs(pos.entryPrice - pos.stopLoss) || 1);
+
+    // Hardcoded 2 hours for now as "Time Stop"
+    if (durationMs > 2 * 3600 * 1000 && pnlR < 0.5) {
+      // Stagnant trade
+      this.exitPosition(currentPrice);
+    }
   }
 
   getState(): State {
