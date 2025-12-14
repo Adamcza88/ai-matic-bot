@@ -377,6 +377,41 @@ export class TradingBot {
             this.position.takeProfit = this.position.side === "long" ? Infinity : -Infinity;
         }
     }
+    /**
+     * Strategy-specific R-based trailing stop staging.
+     */
+    applyStrategyTrailing(rMultiple) {
+        if (!this.position)
+            return;
+        const tpMap = {
+            trend: 2.2,
+            swing: 1.8,
+            intraday: 1.6,
+            scalp: 1.4,
+        };
+        const widthMap = {
+            trend: 1.1,
+            swing: 0.8,
+            intraday: 0.6,
+            scalp: 0.4,
+        };
+        const profile = this.config.strategyProfile;
+        const tpR = tpMap[profile] ?? 1.4;
+        const widthR = widthMap[profile] ?? 0.4;
+        const triggerR = tpR - widthR / 2;
+        if (rMultiple < triggerR || this.position.slDistance <= 0)
+            return;
+        const widthAbs = widthR * this.position.slDistance;
+        const target = this.position.side === "long"
+            ? this.position.entryPrice + widthAbs
+            : this.position.entryPrice - widthAbs;
+        if (this.position.side === "long") {
+            this.position.trailingStop = Math.max(this.position.trailingStop, target);
+        }
+        else {
+            this.position.trailingStop = Math.min(this.position.trailingStop, target);
+        }
+    }
     handleManage(ht, lt) {
         if (!this.position)
             return;
@@ -392,6 +427,7 @@ export class TradingBot {
                 ? (currentPrice - this.position.entryPrice) / this.position.slDistance
                 : (this.position.entryPrice - currentPrice) / this.position.slDistance)
             : 0;
+        this.applyStrategyTrailing(rMultiple);
         if (rMultiple >= this.config.trailingActivationR) {
             this.updateTrailingStop(lt);
         }

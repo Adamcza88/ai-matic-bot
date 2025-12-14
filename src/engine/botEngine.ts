@@ -539,6 +539,41 @@ export class TradingBot {
     }
   }
 
+  /**
+   * Strategy-specific R-based trailing stop staging.
+   * Kicks in at a profile-dependent R multiple and locks a retracement band around entry.
+   */
+  private applyStrategyTrailing(rMultiple: number): void {
+    if (!this.position) return;
+    const tpMap: Record<BotConfig["strategyProfile"], number> = {
+      trend: 2.2,
+      swing: 1.8,
+      intraday: 1.6,
+      scalp: 1.4,
+    };
+    const widthMap: Record<BotConfig["strategyProfile"], number> = {
+      trend: 1.1,
+      swing: 0.8,
+      intraday: 0.6,
+      scalp: 0.4,
+    };
+    const profile = this.config.strategyProfile;
+    const tpR = tpMap[profile] ?? 1.4;
+    const widthR = widthMap[profile] ?? 0.4;
+    // Trigger a bit před TP: tpR - (widthR / 2) replikace zadání (např. scalp 1.4R TP, width 0.4R => trigger 1.2R)
+    const triggerR = tpR - widthR / 2;
+    if (rMultiple < triggerR || this.position.slDistance <= 0) return;
+    const widthAbs = widthR * this.position.slDistance;
+    const target = this.position.side === "long"
+      ? this.position.entryPrice + widthAbs
+      : this.position.entryPrice - widthAbs;
+    if (this.position.side === "long") {
+      this.position.trailingStop = Math.max(this.position.trailingStop, target);
+    } else {
+      this.position.trailingStop = Math.min(this.position.trailingStop, target);
+    }
+  }
+
   private handleManage(ht: DataFrame, lt: DataFrame): void {
     if (!this.position) return;
     const currentPrice = lt[lt.length - 1].close;
@@ -554,6 +589,7 @@ export class TradingBot {
         : (this.position.entryPrice - currentPrice) / this.position.slDistance)
       : 0;
 
+    this.applyStrategyTrailing(rMultiple);
     if (rMultiple >= this.config.trailingActivationR) {
       this.updateTrailingStop(lt);
     }
@@ -751,10 +787,10 @@ export class TradingBot {
       return;
     }
     const rrMap: Record<BotConfig["strategyProfile"], number> = {
-      trend: 4,
-      scalp: 1.2,
-      swing: 3.5,
-      intraday: 2.5,
+      trend: 2.2,
+      scalp: 1.4,
+      swing: 1.8,
+      intraday: 1.6,
     };
     const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
     this.position = {
