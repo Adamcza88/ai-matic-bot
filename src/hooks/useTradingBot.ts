@@ -487,7 +487,7 @@ export const useTradingBot = (
 
     useEffect(() => {
         const hist = loadEntryHistory();
-        const trimmed = hist.slice(0, 10);
+        const trimmed = hist.slice(0, 8);
         if (hist.length !== trimmed.length) {
             persistEntryHistory(trimmed);
         }

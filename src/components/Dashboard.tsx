@@ -540,7 +540,7 @@ export default function Dashboard({
               </div>
             ) : (
               <div className="space-y-3">
-                {entryHistory.slice(0, 10).map((h) => (
+                {entryHistory.slice(0, 8).map((h) => (
                   <div
                     key={h.id}
                     className="p-3 rounded-lg border border-white/5 bg-white/5"
