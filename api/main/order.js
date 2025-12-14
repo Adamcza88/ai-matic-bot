@@ -1,6 +1,19 @@
 import { createDemoOrder, getWalletBalance } from "../../server/bybitClient.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 
+const MAX_QTY = {
+  SOLUSDT: 3.5,
+  BTCUSDT: 0.005,
+  ETHUSDT: 0.15,
+  ADAUSDT: 858,
+};
+
+function clampQty(symbol, qty) {
+  const limit = MAX_QTY[symbol];
+  const safe = Math.max(0, Number(qty) || 0);
+  return limit ? Math.min(limit, safe) : safe;
+}
+
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
@@ -93,11 +106,12 @@ export default async function handler(req, res) {
     }
 
     const safeQty = qty && Number(qty) > 0 ? Number(qty) : 1;
+    const cappedQty = clampQty(symbol, safeQty);
 
     const payload = {
       symbol,
       side: sideFormatted,
-      qty: safeQty,
+      qty: cappedQty,
       price: price != null ? Number(price) : undefined,
       sl: sl != null ? Number(sl) : undefined,
       tp: tp != null ? Number(tp) : undefined,

@@ -46,10 +46,10 @@ const TARGET_NOTIONAL: Record<string, number> = {
     ADAUSDT: 350, // odpovídá screenshotu při 75x
 };
 const QTY_LIMITS: Record<string, { min: number; max: number }> = {
-    BTCUSDT: { min: 0.0005, max: 0.01 },
-    ETHUSDT: { min: 0.001, max: 0.2 },
-    SOLUSDT: { min: 0.01, max: 5 },
-    ADAUSDT: { min: 10, max: 5000 },
+    BTCUSDT: { min: 0.0005, max: 0.005 },
+    ETHUSDT: { min: 0.001, max: 0.15 },
+    SOLUSDT: { min: 0.01, max: 3.5 },
+    ADAUSDT: { min: 10, max: 858 },
 };
 
 // RISK / STRATEGY
@@ -1640,6 +1640,12 @@ export const useTradingBot = (
 
         const { symbol, side } = signal.intent;
         const { sl, tp, qty, trailingStopDistance } = signal.intent;
+        const defaultQty = QTY_LIMITS[symbol]?.min ?? 1;
+        const requestedQty = Number(qty);
+        const orderQty = clampQtyForSymbol(
+            symbol,
+            Number.isFinite(requestedQty) && requestedQty > 0 ? requestedQty : defaultQty
+        );
 
         // 0. STRICT MODE CHECK
         if (settings.strategyProfile === "auto" && mode !== "AUTO_ON") {
@@ -1670,7 +1676,7 @@ export const useTradingBot = (
                 const payload = {
                     symbol,
                     side: side === "buy" ? "Buy" : "Sell",
-                    qty: Number(qty.toFixed(4)),
+                    qty: Number(orderQty.toFixed(4)),
                     orderType: "Market",
                     timeInForce: "IOC",
                     orderLinkId: clientOrderId,
