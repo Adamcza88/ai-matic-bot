@@ -1677,15 +1677,17 @@ export const useTradingBot = (
         const safeEntry = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(lastPrice) ? (lastPrice as number) : 0;
 
         // ROI-based TP/SL override for key symbols
-        const roiTargets = { tp: 1.10, sl: -0.40 }; // ROI %
+        const roiTargets = { tp: 110, sl: -40 }; // ROI % (Bybit-style)
         const isRoiSymbol = symbol === "BTCUSDT" || symbol === "ETHUSDT" || symbol === "SOLUSDT" || symbol === "ADAUSDT";
         const lev = leverageFor(symbol);
         const baseEntryForRoi = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(intentTrigger) ? Number(intentTrigger) : safeEntry;
+        const tpMove = (roiTargets.tp / 100) / Math.max(1, lev); // price move pct
+        const slMove = (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev);
         const roiTpPrice = Number.isFinite(baseEntryForRoi) && isRoiSymbol
-            ? (baseEntryForRoi as number) * (1 + (roiTargets.tp / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
+            ? (baseEntryForRoi as number) * (1 + tpMove * (isBuy ? 1 : -1))
             : undefined;
         const roiSlPrice = Number.isFinite(baseEntryForRoi) && isRoiSymbol
-            ? (baseEntryForRoi as number) * (1 - (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
+            ? (baseEntryForRoi as number) * (1 - slMove * (isBuy ? 1 : -1))
             : undefined;
         const baseSl = Number.isFinite(sl) ? sl : Number.isFinite(safeEntry) ? (isBuy ? safeEntry * 0.99 : safeEntry * 1.01) : undefined;
         const finalTp = Number.isFinite(roiTpPrice) ? roiTpPrice : tp;
