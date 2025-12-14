@@ -568,10 +568,12 @@ export default function Dashboard({
           </CardContent>
         </Card>
 
-        {/* === TESTNET ORDERS === */}
+        {/* === EXCHANGE ORDERS (TESTNET/MAINNET) === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-slate-400">Testnet Orders</CardTitle>
+            <CardTitle className="text-sm font-medium text-slate-400">
+              {useTestnet ? "Testnet Orders" : "Bybit Orders"}
+            </CardTitle>
             <div className="flex items-center gap-2">
               {ordersError && (
                 <span className="text-xs text-red-400 truncate max-w-[160px]" title={ordersError}>
