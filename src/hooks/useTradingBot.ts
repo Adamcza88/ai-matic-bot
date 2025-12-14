@@ -367,6 +367,15 @@ export const useTradingBot = (
     const apiBase = (envBase || inferredBase || "").replace(/\/$/, "");
 
     const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+
+    // Clear state on environment/auth change to prevent ghost positions
+    useEffect(() => {
+        setActivePositions([]);
+        setPendingSignals([]);
+        activePositionsRef.current = [];
+        pendingSignalsRef.current = [];
+    }, [authToken, useTestnet]);
+
     const [activePositions, setActivePositions] = useState<ActivePosition[]>(
         []
     );
