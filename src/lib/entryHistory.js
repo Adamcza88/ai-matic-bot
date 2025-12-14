@@ -1,5 +1,5 @@
 const STORAGE_KEY = "ai-matic:entry-history";
-const MAX_RECORDS = 10;
+const MAX_RECORDS = 8;
 function getStorage() {
     try {
         if (typeof localStorage === "undefined")

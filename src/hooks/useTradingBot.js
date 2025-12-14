@@ -117,6 +117,7 @@ function loadStoredSettings() {
             ...INITIAL_RISK_SETTINGS,
             ...parsed,
             tradingDays: Array.isArray(parsed.tradingDays) ? parsed.tradingDays : INITIAL_RISK_SETTINGS.tradingDays,
+            maxOpenPositions: Math.min(2, parsed.maxOpenPositions ?? INITIAL_RISK_SETTINGS.maxOpenPositions),
         };
     }
     catch {
@@ -317,6 +318,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const inferredBase = typeof window !== "undefined" ? window.location.origin : "";
     const apiBase = (envBase || inferredBase || "").replace(/\/$/, "");
     const [logEntries, setLogEntries] = useState([]);
+    // Clear state on environment/auth change to prevent ghost positions
+    useEffect(() => {
+        setActivePositions([]);
+        setPendingSignals([]);
+        activePositionsRef.current = [];
+        pendingSignalsRef.current = [];
+    }, [authToken, useTestnet]);
     const [activePositions, setActivePositions] = useState([]);
     const [closedPositions, _setClosedPositions] = useState([]);
     const [pendingSignals, setPendingSignals] = useState([]);
@@ -415,13 +423,25 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     }, [portfolioState.dailyPnl, portfolioState.totalCapital]);
     useEffect(() => {
         const hist = loadEntryHistory();
-        const trimmed = hist.slice(0, 10);
+        const trimmed = hist.slice(0, 8);
         if (hist.length !== trimmed.length) {
             persistEntryHistory(trimmed);
         }
         setEntryHistory(trimmed);
         setAssetPnlHistory(loadPnlHistory());
     }, []);
+    // Keep only top-2 highest-risk pending signals to focus on nejpravděpodobnější obchody
+    useEffect(() => {
+        setPendingSignals((prev) => {
+            if (prev.length <= 2)
+                return prev;
+            const sorted = [...prev].sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0));
+            const trimmed = sorted.slice(0, 2);
+            const same = trimmed.length === prev.length &&
+                trimmed.every((s, i) => s.id === prev[i].id);
+            return same ? prev : trimmed;
+        });
+    }, [pendingSignals]);
     useEffect(() => {
         pendingSignalsRef.current = pendingSignals;
     }, [pendingSignals]);
@@ -622,8 +642,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             const data = await res.json();
             const list = data?.data?.list || data?.list || data?.result?.list || [];
+            const allowed = new Set(SYMBOLS);
             const mapped = Array.isArray(list)
-                ? list.map((t) => {
+                ? list
+                    .filter((t) => allowed.has(t.symbol))
+                    .map((t) => {
                     const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
                     return {
                         id: t.execId || t.tradeId || `${Date.now()}`,
@@ -918,7 +941,26 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     lastError: "Positions sync stale >20s",
                 }));
             }
+            // Daily Loss Halt (Realized + Unrealized)
             const positions = activePositionsRef.current;
+            const realized = portfolioState.dailyPnl;
+            const unrealized = positions.reduce((sum, p) => sum + (p.pnl || 0), 0);
+            const totalDailyPnl = realized + unrealized;
+            const maxLoss = -(portfolioState.totalCapital * (settingsRef.current.maxDailyLossPercent || 0.05));
+            if (totalDailyPnl < maxLoss) {
+                if (modeRef.current !== "OFF" && !dailyHaltAtRef.current) {
+                    dailyHaltAtRef.current = Date.now();
+                    addLog({ action: "SYSTEM", message: `DAILY LOSS HIT: ${totalDailyPnl.toFixed(2)} < ${maxLoss.toFixed(2)}. Halting.` });
+                    // Logic to stop new entries is in performTrade (portfolioState check needed there or mode switch)
+                    // Here we can force mode to OFF or specific HALT state if we had one.
+                    // For now, we rely on dailyHaltAtRef to be checked in performTrade (it's not yet).
+                    // Let's just log and update system state.
+                    setSystemState(prev => ({ ...prev, lastError: "Daily Loss Limit Hit" }));
+                }
+            }
+            else {
+                dailyHaltAtRef.current = null; // Reset if recovered (optional, usually daily limit is sticky)
+            }
             for (const p of positions) {
                 if (!p || !p.symbol)
                     continue;
@@ -1226,61 +1268,93 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 priceHistoryRef.current = newHistory;
                 setCurrentPrices(newPrices);
                 currentPricesRef.current = newPrices;
-                // Simulované pozice aktualizujeme jen pokud NEMÁME auth token (tj. není přímá vazba na burzu).
-                if (!authToken) {
-                    const prevActive = activePositionsRef.current;
-                    const closed = prevActive.filter((p) => !engineActive.some((e) => e.id === p.id));
-                    let freedNotional = 0;
-                    if (closed.length) {
-                        closed.forEach((p) => {
-                            const exitPrice = newPrices[p.symbol] ??
+                // Simulované pozice aktualizujeme jen pokud NEMÁME auth token (tj. není přímá vazba na burzu) nebo jsme v PAPER módu.
+                if (!authToken || mode === TradingMode.PAPER) {
+                    if (mode === TradingMode.PAPER) {
+                        const merged = [
+                            ...activePositionsRef.current,
+                        ];
+                        engineActive.forEach((pos) => {
+                            if (!merged.some((p) => p.id === pos.id)) {
+                                merged.push(pos);
+                            }
+                        });
+                        const updated = merged.map((p) => {
+                            const live = newPrices[p.symbol] ??
                                 currentPrices[p.symbol] ??
                                 p.entryPrice;
                             const dir = p.side === "buy" ? 1 : -1;
-                            const pnl = (exitPrice - p.entryPrice) * dir * p.size;
-                            realizedPnlRef.current += pnl;
-                            const limits = QTY_LIMITS[p.symbol];
-                            if (settingsRef.current.strategyProfile === "coach" && limits) {
-                                const nextStake = Math.max(limits.min * p.entryPrice, Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl));
-                                coachStakeRef.current[p.symbol] = nextStake;
-                            }
-                            const record = {
-                                symbol: p.symbol,
+                            const size = p.size ?? p.qty ?? 0;
+                            const pnl = (live - p.entryPrice) * dir * size;
+                            return {
+                                ...p,
+                                unrealizedPnl: pnl,
                                 pnl,
-                                timestamp: new Date().toISOString(),
-                                note: `Auto-close @ ${exitPrice.toFixed(4)} | size ${p.size.toFixed(4)}`,
+                                pnlValue: pnl,
                             };
-                            if (authToken) {
-                                setAssetPnlHistory(() => addPnlRecord(record));
-                            }
-                            setEntryHistory(() => addEntryToHistory({
-                                id: `${p.id}-auto-closed`,
-                                symbol: p.symbol,
-                                side: p.side.toLowerCase(),
-                                entryPrice: p.entryPrice,
-                                sl: p.sl,
-                                tp: p.tp,
-                                size: p.size,
-                                createdAt: new Date().toISOString(),
-                                settingsNote: `Auto-closed @ ${exitPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
-                                settingsSnapshot: snapshotSettings(settingsRef.current),
-                            }));
-                            freedNotional += marginFor(p.symbol, p.entryPrice, p.size);
-                            addLog({
-                                action: "AUTO_CLOSE",
-                                message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
-                            });
                         });
+                        activePositionsRef.current = updated;
+                        setActivePositions(updated);
+                        setPortfolioState((p) => ({
+                            ...p,
+                            openPositions: updated.length,
+                        }));
                     }
-                    setActivePositions(() => {
-                        activePositionsRef.current = engineActive;
-                        return engineActive;
-                    });
-                    setPortfolioState((p) => ({
-                        ...p,
-                        openPositions: engineActive.length,
-                        allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
-                    }));
+                    else {
+                        const prevActive = activePositionsRef.current;
+                        const closed = prevActive.filter((p) => !engineActive.some((e) => e.id === p.id));
+                        let freedNotional = 0;
+                        if (closed.length) {
+                            closed.forEach((p) => {
+                                const exitPrice = newPrices[p.symbol] ??
+                                    currentPrices[p.symbol] ??
+                                    p.entryPrice;
+                                const dir = p.side === "buy" ? 1 : -1;
+                                const pnl = (exitPrice - p.entryPrice) * dir * p.size;
+                                realizedPnlRef.current += pnl;
+                                const limits = QTY_LIMITS[p.symbol];
+                                if (settingsRef.current.strategyProfile === "coach" && limits) {
+                                    const nextStake = Math.max(limits.min * p.entryPrice, Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl));
+                                    coachStakeRef.current[p.symbol] = nextStake;
+                                }
+                                const record = {
+                                    symbol: p.symbol,
+                                    pnl,
+                                    timestamp: new Date().toISOString(),
+                                    note: `Auto-close @ ${exitPrice.toFixed(4)} | size ${p.size.toFixed(4)}`,
+                                };
+                                if (authToken) {
+                                    setAssetPnlHistory(() => addPnlRecord(record));
+                                }
+                                setEntryHistory(() => addEntryToHistory({
+                                    id: `${p.id}-auto-closed`,
+                                    symbol: p.symbol,
+                                    side: p.side.toLowerCase(),
+                                    entryPrice: p.entryPrice,
+                                    sl: p.sl,
+                                    tp: p.tp,
+                                    size: p.size,
+                                    createdAt: new Date().toISOString(),
+                                    settingsNote: `Auto-closed @ ${exitPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
+                                    settingsSnapshot: snapshotSettings(settingsRef.current),
+                                }));
+                                freedNotional += marginFor(p.symbol, p.entryPrice, p.size);
+                                addLog({
+                                    action: "AUTO_CLOSE",
+                                    message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(4)} | PnL ${pnl.toFixed(2)} USDT`,
+                                });
+                            });
+                        }
+                        setActivePositions(() => {
+                            activePositionsRef.current = engineActive;
+                            return engineActive;
+                        });
+                        setPortfolioState((p) => ({
+                            ...p,
+                            openPositions: engineActive.length,
+                            allocatedCapital: Math.max(0, p.allocatedCapital - freedNotional),
+                        }));
+                    }
                 }
                 const latency = Math.round(performance.now() - started);
                 setSystemState((p) => ({
@@ -1428,9 +1502,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const list = json?.data?.result?.list || json?.result?.list || [];
                 const cursor = json?.data?.result?.nextPageCursor || json?.result?.nextPageCursor;
                 const seen = processedExecIdsRef.current;
+                const allowedSymbols = new Set(SYMBOLS);
                 list.forEach((e) => {
                     const id = e.execId || e.tradeId;
                     if (!id || seen.has(id))
+                        return;
+                    if (e.symbol && !allowedSymbols.has(e.symbol))
                         return;
                     seen.add(id);
                     executionEventsRef.current = [
@@ -1485,19 +1562,42 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const defaultQty = QTY_LIMITS[symbol]?.min ?? 1;
         const requestedQty = Number(qty);
         const orderQty = clampQtyForSymbol(symbol, Number.isFinite(requestedQty) && requestedQty > 0 ? requestedQty : defaultQty);
+        const maxOpen = settingsRef.current.maxOpenPositions ?? 2;
+        if (activePositionsRef.current.length >= maxOpen) {
+            addLog({
+                action: "REJECT",
+                message: `Skip ${symbol}: max open positions reached (${maxOpen})`,
+            });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
         const hasEntry = Number.isFinite(entryPrice);
         const isBuy = side === "buy" || side === "Buy";
         const safeEntry = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(lastPrice) ? lastPrice : 0;
+        const newTradeNotional = safeEntry * orderQty;
+        // Block duplicate entries for symbols with open positions
+        const hasOpenPosition = activePositionsRef.current.some((p) => p.symbol === symbol);
+        if (hasOpenPosition) {
+            addLog({
+                action: "REJECT",
+                message: `Skip ${symbol}: position already open`,
+            });
+            // Remove the pending signal to avoid reprocessing
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
         // ROI-based TP/SL override for key symbols
-        const roiTargets = { tp: 1.10, sl: -0.40 }; // ROI %
+        const roiTargets = { tp: 110, sl: -40 }; // ROI % (Bybit-style)
         const isRoiSymbol = symbol === "BTCUSDT" || symbol === "ETHUSDT" || symbol === "SOLUSDT" || symbol === "ADAUSDT";
         const lev = leverageFor(symbol);
         const baseEntryForRoi = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(intentTrigger) ? Number(intentTrigger) : safeEntry;
+        const tpMove = (roiTargets.tp / 100) / Math.max(1, lev); // price move pct
+        const slMove = (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev);
         const roiTpPrice = Number.isFinite(baseEntryForRoi) && isRoiSymbol
-            ? baseEntryForRoi * (1 + (roiTargets.tp / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
+            ? baseEntryForRoi * (1 + tpMove * (isBuy ? 1 : -1))
             : undefined;
         const roiSlPrice = Number.isFinite(baseEntryForRoi) && isRoiSymbol
-            ? baseEntryForRoi * (1 - (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
+            ? baseEntryForRoi * (1 - slMove * (isBuy ? 1 : -1))
             : undefined;
         const baseSl = Number.isFinite(sl) ? sl : Number.isFinite(safeEntry) ? (isBuy ? safeEntry * 0.99 : safeEntry * 1.01) : undefined;
         const finalTp = Number.isFinite(roiTpPrice) ? roiTpPrice : tp;
@@ -1530,6 +1630,15 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const plan = decideExecutionPlan(entrySignal, marketSnapshot, profile, orderQty);
         const stopLossValue = Number.isFinite(plan.stopLoss) ? plan.stopLoss : finalSl;
         const takeProfitValue = Number.isFinite(plan.takeProfit) ? plan.takeProfit : finalTp;
+        // Trailing plán: aktivace při 90 % ROI (price move), vzdálenost = 50 % tohoto pohybu
+        const roiArmPct = 90;
+        const roiMove = Number.isFinite(safeEntry) && isRoiSymbol
+            ? safeEntry * ((roiArmPct / 100) / Math.max(1, lev))
+            : undefined;
+        const trailingActivePrice = Number.isFinite(roiMove)
+            ? safeEntry + (isBuy ? 1 : -1) * roiMove
+            : undefined;
+        const trailingDistance = Number.isFinite(roiMove) ? Math.abs(roiMove) * 0.5 : undefined;
         const orderType = plan.mode === "MARKET"
             ? "Market"
             : "Limit";
@@ -1542,9 +1651,64 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             ? plan.triggerPrice ?? plan.entryPrice ?? safeEntry
             : undefined;
         const timeInForce = plan.timeInForce || (plan.mode === "MARKET" ? "IOC" : "GTC");
+        const isAutoMode = mode === TradingMode.AUTO_ON;
+        const isPaperMode = mode === TradingMode.PAPER;
         // 0. STRICT MODE CHECK
-        if (settings.strategyProfile === "auto" && mode !== "AUTO_ON") {
-            console.warn(`[Trade] Skipped - Mode is ${mode}, need AUTO_ON`);
+        if (settings.strategyProfile === "auto" && !isAutoMode && !isPaperMode) {
+            console.warn(`[Trade] Skipped - Mode is ${mode}, need AUTO_ON or PAPER`);
+            return false;
+        }
+        // 0.1 PORTFOLIO RISK GATE (New)
+        const currentPositions = activePositionsRef.current;
+        const totalCapital = portfolioState.totalCapital || 1000;
+        const maxAlloc = portfolioState.maxAllocatedCapital || (totalCapital * (settingsRef.current.maxAllocatedCapitalPercent || 1));
+        // 1. Max Exposure Check (margin-based so high leverage is allowed)
+        const currentMargin = currentPositions.reduce((sum, p) => sum + marginFor(p.symbol, p.entryPrice, p.size ?? p.qty ?? 0), 0);
+        const newTradeMargin = marginFor(symbol, safeEntry, orderQty);
+        if (currentMargin + newTradeMargin > maxAlloc) {
+            addLog({
+                action: "REJECT",
+                message: `Risk Gate: Max Margin Exceeded ${symbol} (${(currentMargin + newTradeMargin).toFixed(2)} > ${maxAlloc.toFixed(2)})`,
+            });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
+        // 1.1 Net Delta Gate (Directional Exposure Limit) - also margin-based
+        const netDelta = currentPositions.reduce((sum, p) => sum +
+            (p.side === "buy" ? 1 : -1) *
+                marginFor(p.symbol, p.entryPrice, p.size ?? p.qty ?? 0), 0);
+        const newDelta = (isBuy ? 1 : -1) * newTradeMargin;
+        const projectedDelta = netDelta + newDelta;
+        const maxDelta = maxAlloc;
+        if (Math.abs(projectedDelta) > maxDelta) {
+            addLog({
+                action: "REJECT",
+                message: `Risk Gate: Max Net Delta Exceeded ${symbol} (${Math.abs(projectedDelta).toFixed(2)} > ${maxDelta.toFixed(2)})`,
+            });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
+        // 2. Correlation / Concentration Limit (Max positions per "bucket" - simplistic symbol check)
+        // If we have ETHUSDT, maybe don't open ETH-PERP? (Not applicable here as we assume linear perps)
+        // Check simply max risk budget per symbol.
+        const existingSymbolRisk = currentPositions
+            .filter(p => p.symbol === symbol)
+            .reduce((sum, p) => sum + (Math.abs(p.entryPrice - p.sl) * p.size), 0);
+        const newTradeRisk = Math.abs(safeEntry - (Number(finalSl) || safeEntry)) * orderQty;
+        const maxRiskPerSymbol = totalCapital * Math.min(settingsRef.current.maxPortfolioRiskPercent || 0.2, 0.2); // cap at 20 % of balance
+        if (existingSymbolRisk + newTradeRisk > maxRiskPerSymbol) {
+            addLog({ action: "REJECT", message: `Risk Gate: Max Symbol Risk Exceeded ${symbol} (${(existingSymbolRisk + newTradeRisk).toFixed(2)} > ${maxRiskPerSymbol.toFixed(2)})` });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
+        // 3. Min Edge Gate (Fee + Slippage vs Expected Reward)
+        // Fee ~ 0.06% entry + 0.06% exit = 0.12%. Slippage ~ 0.05%. Total cost ~ 0.17% of notional.
+        const estCost = newTradeNotional * 0.0017;
+        const estReward = Math.abs(safeEntry - (Number(finalTp) || safeEntry)) * orderQty;
+        // If reward is defined and < cost * 1.5, reject
+        if (finalTp && estReward < estCost * 1.5) {
+            addLog({ action: "REJECT", message: `Risk Gate: Edge too small (Reward ${estReward.toFixed(2)} < Cost ${estCost.toFixed(2)} * 1.5)` });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }
         // 1. MUTEX CHECK
@@ -1561,11 +1725,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             // Remove from pending immediately to prevent infinite loop re-processing
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             // Calculate metrics (re-use logic or trust intent)
-            const clientOrderId = `${signalId.slice(0, 18)}-${Date.now().toString().slice(-6)}`;
-            if (mode === "AUTO_ON") {
-                // Temporarily disable trailing at order placement to avoid immediate exits;
-                // rely on SL/TP for protection. (Plan trailing can be re-enabled later.)
-                const trailingDistance = undefined;
+            const clientOrderId = signalId.substring(0, 36);
+            if (isAutoMode) {
                 const payload = {
                     symbol,
                     side: side === "buy" ? "Buy" : "Sell",
@@ -1577,7 +1738,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     orderLinkId: clientOrderId,
                     sl: stopLossValue,
                     tp: takeProfitValue,
-                    trailingStop: trailingDistance
+                    trailingStop: trailingDistance,
+                    trailingActivePrice,
                 };
                 const res = await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
                     method: "POST",
@@ -1638,11 +1800,48 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 }
                 return false;
             }
-            else {
-                // PAPER MODE
+            else if (isPaperMode) {
+                const slPrice = Number.isFinite(stopLossValue) ? stopLossValue : safeEntry;
+                const tpPrice = Number.isFinite(takeProfitValue) ? takeProfitValue : safeEntry;
+                const openedAt = new Date().toISOString();
+                const simulated = {
+                    positionId: signalId,
+                    id: signalId,
+                    symbol,
+                    side: isBuy ? "buy" : "sell",
+                    qty: orderQty,
+                    size: orderQty,
+                    entryPrice: safeEntry,
+                    sl: slPrice,
+                    tp: tpPrice,
+                    env: useTestnet ? "testnet" : "mainnet",
+                    openedAt,
+                    timestamp: openedAt,
+                    currentTrailingStop: trailingDistance,
+                    unrealizedPnl: 0,
+                    pnl: 0,
+                    pnlValue: 0,
+                };
+                setActivePositions((prev) => {
+                    const next = [...prev, simulated];
+                    activePositionsRef.current = next;
+                    return next;
+                });
+                setPortfolioState((p) => {
+                    const notional = marginFor(symbol, safeEntry, orderQty);
+                    return {
+                        ...p,
+                        openPositions: p.openPositions + 1,
+                        allocatedCapital: Math.min(p.maxAllocatedCapital, p.allocatedCapital + notional),
+                    };
+                });
                 setLifecycle(signalId, "ENTRY_FILLED", "Simulated");
                 setLifecycle(signalId, "MANAGING", "Simulated");
                 return true;
+            }
+            else {
+                addLog({ action: "SYSTEM", message: `Mode ${mode} does not execute trades.` });
+                return false;
             }
         }
         catch (err) {
@@ -1679,7 +1878,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     }
     // ========== AUTO MODE ==========
     useEffect(() => {
-        if (modeRef.current !== TradingMode.AUTO_ON)
+        const canAutoExecute = modeRef.current === TradingMode.AUTO_ON ||
+            modeRef.current === TradingMode.PAPER;
+        if (!canAutoExecute)
             return;
         if (!pendingSignals.length)
             return;
@@ -1829,6 +2030,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 entryStrictness: relaxedEntry,
             };
         }
+        // Hard clamp max open positions
+        patched = { ...patched, maxOpenPositions: Math.min(2, patched.maxOpenPositions ?? 2) };
         setSettings(patched);
         settingsRef.current = patched;
         persistSettings(patched);

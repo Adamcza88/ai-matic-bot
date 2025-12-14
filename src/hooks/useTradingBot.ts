@@ -1754,7 +1754,6 @@ export const useTradingBot = (
             symbol,
             Number.isFinite(requestedQty) && requestedQty > 0 ? requestedQty : defaultQty
         );
-        const newTradeNotional = safeEntry * orderQty;
         const maxOpen = settingsRef.current.maxOpenPositions ?? 2;
         if (activePositionsRef.current.length >= maxOpen) {
             addLog({
@@ -1767,6 +1766,7 @@ export const useTradingBot = (
         const hasEntry = Number.isFinite(entryPrice);
         const isBuy = side === "buy" || side === "Buy";
         const safeEntry = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(lastPrice) ? (lastPrice as number) : 0;
+        const newTradeNotional = safeEntry * orderQty;
 
         // Block duplicate entries for symbols with open positions
         const hasOpenPosition = activePositionsRef.current.some((p) => p.symbol === symbol);
