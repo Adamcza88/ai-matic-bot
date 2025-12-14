@@ -1341,6 +1341,7 @@ export type EngineSignal = {
   id: string;
   symbol: string;
   intent: { side: "buy" | "sell"; entry: number; sl: number; tp: number };
+  kind?: "BREAKOUT" | "PULLBACK" | "MOMENTUM" | "MEAN_REVERSION" | "OTHER";
   risk: number;
   message: string;
   createdAt: string;

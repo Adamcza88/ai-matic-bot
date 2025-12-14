@@ -88,6 +88,8 @@ export type PendingSignal = {
   id: string;
   symbol: string;
   intent: TradeIntent;
+   profile?: "trend" | "scalp" | "swing" | "intraday" | "coach";
+   kind?: "BREAKOUT" | "PULLBACK" | "MOMENTUM" | "MEAN_REVERSION" | "OTHER";
   risk: number;
   message: string;
   createdAt: string;

@@ -18,6 +18,13 @@ import {
 } from "../types";
 
 import { Candle, evaluateStrategyForSymbol } from "@/engine/botEngine";
+import {
+    decideExecutionPlan,
+    EntrySignal as ExecEntrySignal,
+    MarketSnapshot as ExecMarketSnapshot,
+    StrategyProfile as ExecStrategyProfile,
+    SignalKind as ExecSignalKind,
+} from "@/engine/execution/executionRouter";
 import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
 import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../lib/entryHistory";
 import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
@@ -1205,6 +1212,8 @@ export const useTradingBot = (
                                         {
                                             id: `${symbol}-coach-${Date.now()}`,
                                             symbol,
+                                            profile: "coach",
+                                            kind: "BREAKOUT",
                                             risk: 0.8,
                                             createdAt: new Date().toISOString(),
                                             ...coachSignal,
@@ -1224,6 +1233,8 @@ export const useTradingBot = (
                                         {
                                             id: `${symbol}-situational-${Date.now()}`,
                                             symbol,
+                                            profile: "coach",
+                                            kind: "MEAN_REVERSION",
                                             risk: 0.5,
                                             createdAt: new Date().toISOString(),
                                             ...situational,
@@ -1273,7 +1284,7 @@ export const useTradingBot = (
                             const signal = decision?.signal;
                             if (signal) {
                                 setPendingSignals((prev) => [
-                                    { ...signal, symbol, intent: { ...signal.intent, symbol, qty: 0 } }, // FIX: Enrich intent
+                                    { ...signal, symbol, profile, kind: signal.kind ?? "BREAKOUT", intent: { ...signal.intent, symbol, qty: 0 } }, // FIX: Enrich intent
                                     ...prev
                                 ]);
                                 addLog({
@@ -1483,6 +1494,8 @@ export const useTradingBot = (
                                     .toString(16)
                                     .slice(2)}`,
                                 symbol,
+                                profile: (settingsRef.current.strategyProfile === "auto" ? "intraday" : settingsRef.current.strategyProfile) as any,
+                                kind: "MOMENTUM",
                                 intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
                                 risk: 0.7,
                                 message: `TEST signal ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
@@ -1537,6 +1550,8 @@ export const useTradingBot = (
                                     .toString(16)
                                     .slice(2)}`,
                                 symbol,
+                                profile: (settingsRef.current.strategyProfile === "auto" ? "intraday" : settingsRef.current.strategyProfile) as any,
+                                kind: "MOMENTUM",
                                 intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
                                 risk: 0.6,
                                 message: `Keepalive ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
@@ -1639,10 +1654,10 @@ export const useTradingBot = (
         if (!signal) return false;
 
         const { symbol, side } = signal.intent;
-        const { sl, tp, qty, trailingStopDistance } = signal.intent;
+        const { sl, tp, qty, trailingStopDistance, price: intentPrice, triggerPrice: intentTrigger } = signal.intent;
         const lastPrice = currentPricesRef.current[symbol];
         const entryPrice = Number(
-            signal.intent.price ??
+            intentPrice ??
             signal.intent.entry ??
             (Number.isFinite(lastPrice) ? lastPrice : NaN)
         );
@@ -1654,25 +1669,70 @@ export const useTradingBot = (
         );
         const hasEntry = Number.isFinite(entryPrice);
         const isBuy = side === "buy" || side === "Buy";
-        const useStop = hasEntry && Number.isFinite(lastPrice)
-            ? (isBuy ? entryPrice > lastPrice! : entryPrice < lastPrice!)
-            : false;
-        const orderType = hasEntry ? "Limit" : "Market";
-        const price = hasEntry ? entryPrice : undefined;
-        const triggerPrice = hasEntry && useStop ? entryPrice : undefined;
-        const timeInForce = hasEntry ? "GTC" : "IOC";
+        const safeEntry = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(lastPrice) ? (lastPrice as number) : 0;
+
         // ROI-based TP/SL override for key symbols
         const roiTargets = { tp: 1.10, sl: -0.40 }; // ROI %
         const isRoiSymbol = symbol === "BTCUSDT" || symbol === "ETHUSDT" || symbol === "SOLUSDT" || symbol === "ADAUSDT";
         const lev = leverageFor(symbol);
-        const roiTpPrice = hasEntry && isRoiSymbol
-            ? entryPrice * (1 + (roiTargets.tp / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
+        const baseEntryForRoi = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(intentTrigger) ? Number(intentTrigger) : safeEntry;
+        const roiTpPrice = Number.isFinite(baseEntryForRoi) && isRoiSymbol
+            ? (baseEntryForRoi as number) * (1 + (roiTargets.tp / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
             : undefined;
-        const roiSlPrice = hasEntry && isRoiSymbol
-            ? entryPrice * (1 - (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
+        const roiSlPrice = Number.isFinite(baseEntryForRoi) && isRoiSymbol
+            ? (baseEntryForRoi as number) * (1 - (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
             : undefined;
+        const baseSl = Number.isFinite(sl) ? sl : Number.isFinite(safeEntry) ? (isBuy ? safeEntry * 0.99 : safeEntry * 1.01) : undefined;
         const finalTp = Number.isFinite(roiTpPrice) ? roiTpPrice : tp;
-        const finalSl = Number.isFinite(roiSlPrice) ? roiSlPrice : sl;
+        const finalSl = Number.isFinite(roiSlPrice) ? roiSlPrice : baseSl;
+
+        const profileSetting =
+            (signal.profile as ExecStrategyProfile) ||
+            ((settingsRef.current.strategyProfile === "auto" ? "intraday" : settingsRef.current.strategyProfile) as ExecStrategyProfile);
+        const profile: ExecStrategyProfile =
+            profileSetting === "scalp" ||
+                profileSetting === "intraday" ||
+                profileSetting === "swing" ||
+                profileSetting === "trend" ||
+                profileSetting === "coach"
+                ? profileSetting
+                : "intraday";
+        const kind: ExecSignalKind = (signal.kind as ExecSignalKind) || "BREAKOUT";
+
+        const entrySignal: ExecEntrySignal = {
+            symbol,
+            side: isBuy ? "Buy" : "Sell",
+            kind,
+            entry: safeEntry,
+            stopLoss: Number(finalSl ?? safeEntry || 0),
+            takeProfit: finalTp,
+        };
+
+        const hist = priceHistoryRef.current[symbol] || [];
+        const atrAbs = computeAtrFromHistory(hist, 14) || 0;
+        const last = Number.isFinite(lastPrice) ? (lastPrice as number) : safeEntry;
+        const marketSnapshot: ExecMarketSnapshot = {
+            last: last || safeEntry || 0,
+            atrPct: last > 0 ? (atrAbs / last) * 100 : 0,
+        };
+
+        const plan = decideExecutionPlan(entrySignal, marketSnapshot, profile, orderQty);
+
+        const orderType =
+            plan.mode === "MARKET"
+                ? "Market"
+                : "Limit";
+        const price =
+            plan.mode === "LIMIT"
+                ? plan.entryPrice ?? safeEntry
+                : plan.mode === "STOP_LIMIT"
+                    ? plan.limitPrice ?? plan.entryPrice ?? safeEntry
+                    : undefined;
+        const triggerPrice =
+            plan.mode === "STOP_LIMIT"
+                ? plan.triggerPrice ?? plan.entryPrice ?? safeEntry
+                : undefined;
+        const timeInForce = plan.timeInForce || (plan.mode === "MARKET" ? "IOC" : "GTC");
 
         // 0. STRICT MODE CHECK
         if (settings.strategyProfile === "auto" && mode !== "AUTO_ON") {
@@ -1700,6 +1760,9 @@ export const useTradingBot = (
             const clientOrderId = `${signalId.slice(0, 18)}-${Date.now().toString().slice(-6)}`;
 
             if (mode === "AUTO_ON") {
+                const trailingDistance = plan.trailing
+                    ? Math.abs(plan.trailing.lockedStopPrice - safeEntry)
+                    : trailingStopDistance;
                 const payload = {
                     symbol,
                     side: side === "buy" ? "Buy" : "Sell",
@@ -1709,9 +1772,9 @@ export const useTradingBot = (
                     triggerPrice,
                     timeInForce,
                     orderLinkId: clientOrderId,
-                    sl: finalSl,
-                    tp: finalTp,
-                    trailingStop: trailingStopDistance
+                    sl: plan.stopLoss ?? finalSl,
+                    tp: plan.takeProfit ?? finalTp,
+                    trailingStop: trailingDistance
                 };
 
                 const res = await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
