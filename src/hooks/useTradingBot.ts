@@ -1416,81 +1416,115 @@ export const useTradingBot = (
                 setCurrentPrices(newPrices);
                 currentPricesRef.current = newPrices;
 
-                // Simulované pozice aktualizujeme jen pokud NEMÁME auth token (tj. není přímá vazba na burzu).
-                if (!authToken) {
-                    const prevActive = activePositionsRef.current;
-                    const closed = prevActive.filter(
-                        (p) => !engineActive.some((e) => e.id === p.id)
-                    );
+                // Simulované pozice aktualizujeme jen pokud NEMÁME auth token (tj. není přímá vazba na burzu) nebo jsme v PAPER módu.
+                if (!authToken || mode === TradingMode.PAPER) {
+                    if (mode === TradingMode.PAPER) {
+                        const merged: ActivePosition[] = [
+                            ...activePositionsRef.current,
+                        ];
+                        engineActive.forEach((pos) => {
+                            if (!merged.some((p) => p.id === pos.id)) {
+                                merged.push(pos);
+                            }
+                        });
 
-                    let freedNotional = 0;
-                    if (closed.length) {
-                        closed.forEach((p) => {
-                            const exitPrice =
+                        const updated = merged.map((p) => {
+                            const live =
                                 newPrices[p.symbol] ??
                                 currentPrices[p.symbol] ??
                                 p.entryPrice;
                             const dir = p.side === "buy" ? 1 : -1;
-                            const pnl =
-                                (exitPrice - p.entryPrice) * dir * p.size;
-                            realizedPnlRef.current += pnl;
-                            const limits = QTY_LIMITS[p.symbol];
-                            if (settingsRef.current.strategyProfile === "coach" && limits) {
-                                const nextStake = Math.max(
-                                    limits.min * p.entryPrice,
-                                    Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl)
-                                );
-                                coachStakeRef.current[p.symbol] = nextStake;
-                            }
-                            const record: AssetPnlRecord = {
-                                symbol: p.symbol,
+                            const size = p.size ?? p.qty ?? 0;
+                            const pnl = (live - p.entryPrice) * dir * size;
+                            return {
+                                ...p,
+                                unrealizedPnl: pnl,
                                 pnl,
-                                timestamp: new Date().toISOString(),
-                                note: `Auto-close @ ${exitPrice.toFixed(
-                                    4
-                                )} | size ${p.size.toFixed(4)}`,
+                                pnlValue: pnl,
                             };
-                            if (authToken) {
-                                setAssetPnlHistory(() => addPnlRecord(record));
-                            }
-                            setEntryHistory(() =>
-                                addEntryToHistory({
-                                    id: `${p.id}-auto-closed`,
+                        });
+
+                        activePositionsRef.current = updated;
+                        setActivePositions(updated);
+                        setPortfolioState((p) => ({
+                            ...p,
+                            openPositions: updated.length,
+                        }));
+                    } else {
+                        const prevActive = activePositionsRef.current;
+                        const closed = prevActive.filter(
+                            (p) => !engineActive.some((e) => e.id === p.id)
+                        );
+
+                        let freedNotional = 0;
+                        if (closed.length) {
+                            closed.forEach((p) => {
+                                const exitPrice =
+                                    newPrices[p.symbol] ??
+                                    currentPrices[p.symbol] ??
+                                    p.entryPrice;
+                                const dir = p.side === "buy" ? 1 : -1;
+                                const pnl =
+                                    (exitPrice - p.entryPrice) * dir * p.size;
+                                realizedPnlRef.current += pnl;
+                                const limits = QTY_LIMITS[p.symbol];
+                                if (settingsRef.current.strategyProfile === "coach" && limits) {
+                                    const nextStake = Math.max(
+                                        limits.min * p.entryPrice,
+                                        Math.min(limits.max * p.entryPrice, p.entryPrice * p.size + pnl)
+                                    );
+                                    coachStakeRef.current[p.symbol] = nextStake;
+                                }
+                                const record: AssetPnlRecord = {
                                     symbol: p.symbol,
-                                    side: p.side.toLowerCase() as "buy" | "sell",
-                                    entryPrice: p.entryPrice,
-                                    sl: p.sl,
-                                    tp: p.tp,
-                                    size: p.size,
-                                    createdAt: new Date().toISOString(),
-                                    settingsNote: `Auto-closed @ ${exitPrice.toFixed(
+                                    pnl,
+                                    timestamp: new Date().toISOString(),
+                                    note: `Auto-close @ ${exitPrice.toFixed(
+                                        4
+                                    )} | size ${p.size.toFixed(4)}`,
+                                };
+                                if (authToken) {
+                                    setAssetPnlHistory(() => addPnlRecord(record));
+                                }
+                                setEntryHistory(() =>
+                                    addEntryToHistory({
+                                        id: `${p.id}-auto-closed`,
+                                        symbol: p.symbol,
+                                        side: p.side.toLowerCase() as "buy" | "sell",
+                                        entryPrice: p.entryPrice,
+                                        sl: p.sl,
+                                        tp: p.tp,
+                                        size: p.size,
+                                        createdAt: new Date().toISOString(),
+                                        settingsNote: `Auto-closed @ ${exitPrice.toFixed(
+                                            4
+                                        )} | PnL ${pnl.toFixed(2)} USDT`,
+                                        settingsSnapshot: snapshotSettings(settingsRef.current),
+                                    })
+                                );
+                                freedNotional += marginFor(p.symbol, p.entryPrice, p.size);
+                                addLog({
+                                    action: "AUTO_CLOSE",
+                                    message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
                                         4
                                     )} | PnL ${pnl.toFixed(2)} USDT`,
-                                    settingsSnapshot: snapshotSettings(settingsRef.current),
-                                })
-                            );
-                            freedNotional += marginFor(p.symbol, p.entryPrice, p.size);
-                            addLog({
-                                action: "AUTO_CLOSE",
-                                message: `${p.symbol} auto-closed @ ${exitPrice.toFixed(
-                                    4
-                                )} | PnL ${pnl.toFixed(2)} USDT`,
+                                });
                             });
-                        });
-                    }
+                        }
 
-                    setActivePositions(() => {
-                        activePositionsRef.current = engineActive;
-                        return engineActive;
-                    });
-                    setPortfolioState((p) => ({
-                        ...p,
-                        openPositions: engineActive.length,
-                        allocatedCapital: Math.max(
-                            0,
-                            p.allocatedCapital - freedNotional
-                        ),
-                    }));
+                        setActivePositions(() => {
+                            activePositionsRef.current = engineActive;
+                            return engineActive;
+                        });
+                        setPortfolioState((p) => ({
+                            ...p,
+                            openPositions: engineActive.length,
+                            allocatedCapital: Math.max(
+                                0,
+                                p.allocatedCapital - freedNotional
+                            ),
+                        }));
+                    }
                 }
 
                 const latency = Math.round(performance.now() - started);
@@ -1822,10 +1856,12 @@ export const useTradingBot = (
                 ? plan.triggerPrice ?? plan.entryPrice ?? safeEntry
                 : undefined;
         const timeInForce = plan.timeInForce || (plan.mode === "MARKET" ? "IOC" : "GTC");
+        const isAutoMode = mode === TradingMode.AUTO_ON;
+        const isPaperMode = mode === TradingMode.PAPER;
 
         // 0. STRICT MODE CHECK
-        if (settings.strategyProfile === "auto" && mode !== "AUTO_ON") {
-            console.warn(`[Trade] Skipped - Mode is ${mode}, need AUTO_ON`);
+        if (settings.strategyProfile === "auto" && !isAutoMode && !isPaperMode) {
+            console.warn(`[Trade] Skipped - Mode is ${mode}, need AUTO_ON or PAPER`);
             return false;
         }
 
@@ -1897,7 +1933,7 @@ export const useTradingBot = (
             // Calculate metrics (re-use logic or trust intent)
             const clientOrderId = signalId.substring(0, 36);
 
-            if (mode === "AUTO_ON") {
+            if (isAutoMode) {
                 const payload = {
                     symbol,
                     side: side === "buy" ? "Buy" : "Sell",
@@ -1984,11 +2020,48 @@ export const useTradingBot = (
                 }
                 return false;
 
-            } else {
-                // PAPER MODE
+            } else if (isPaperMode) {
+                const slPrice = Number.isFinite(stopLossValue) ? (stopLossValue as number) : safeEntry;
+                const tpPrice = Number.isFinite(takeProfitValue) ? (takeProfitValue as number) : safeEntry;
+                const openedAt = new Date().toISOString();
+                const simulated: ActivePosition = {
+                    positionId: signalId,
+                    id: signalId,
+                    symbol,
+                    side: isBuy ? "buy" : "sell",
+                    qty: orderQty,
+                    size: orderQty,
+                    entryPrice: safeEntry,
+                    sl: slPrice,
+                    tp: tpPrice,
+                    env: useTestnet ? "testnet" : "mainnet",
+                    openedAt,
+                    timestamp: openedAt,
+                    currentTrailingStop: trailingDistance,
+                    unrealizedPnl: 0,
+                    pnl: 0,
+                    pnlValue: 0,
+                };
+
+                setActivePositions((prev) => {
+                    const next = [...prev, simulated];
+                    activePositionsRef.current = next;
+                    return next;
+                });
+                setPortfolioState((p) => {
+                    const notional = marginFor(symbol, safeEntry, orderQty);
+                    return {
+                        ...p,
+                        openPositions: p.openPositions + 1,
+                        allocatedCapital: Math.min(p.maxAllocatedCapital, p.allocatedCapital + notional),
+                    };
+                });
                 setLifecycle(signalId, "ENTRY_FILLED", "Simulated");
                 setLifecycle(signalId, "MANAGING", "Simulated");
                 return true;
+            } else {
+                addLog({ action: "SYSTEM", message: `Mode ${mode} does not execute trades.` });
+                return false;
             }
 
         } catch (err: any) {
@@ -2030,7 +2103,10 @@ export const useTradingBot = (
 
     // ========== AUTO MODE ==========
     useEffect(() => {
-        if (modeRef.current !== TradingMode.AUTO_ON) return;
+        const canAutoExecute =
+            modeRef.current === TradingMode.AUTO_ON ||
+            modeRef.current === TradingMode.PAPER;
+        if (!canAutoExecute) return;
         if (!pendingSignals.length) return;
 
         const sig = pendingSignals[0];
