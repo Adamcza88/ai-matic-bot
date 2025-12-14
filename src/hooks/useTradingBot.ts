@@ -27,7 +27,7 @@ import {
 } from "@/engine/execution/executionRouter";
 import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
 import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../lib/entryHistory";
-import { addPnlRecord, loadPnlHistory, AssetPnlMap } from "../lib/pnlHistory";
+import { addPnlRecord, loadPnlHistory, AssetPnlMap, clearPnlHistory } from "../lib/pnlHistory";
 
 // SYMBOLS
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
@@ -2102,6 +2102,16 @@ export const useTradingBot = (
         setEntryHistory(() => removeEntryFromHistory(id));
     };
 
+    const resetPnlHistory = () => {
+        setAssetPnlHistory(() => clearPnlHistory());
+        realizedPnlRef.current = 0;
+        setPortfolioState((p) => ({
+            ...p,
+            dailyPnl: 0,
+            currentDrawdown: 0,
+        }));
+    };
+
     const rejectSignal = (id: string) => {
         setPendingSignals((prev) => prev.filter((s) => s.id !== id));
 
@@ -2149,6 +2159,7 @@ export const useTradingBot = (
         refreshMainnetTrades: fetchTrades,
         assetPnlHistory,
         removeEntryHistoryItem,
+        resetPnlHistory,
     };
 };
 

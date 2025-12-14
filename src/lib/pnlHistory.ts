@@ -46,3 +46,9 @@ export function addPnlRecord(record: AssetPnlRecord): AssetPnlMap {
   persistPnlHistory(next);
   return next;
 }
+
+export function clearPnlHistory(): AssetPnlMap {
+  const empty: AssetPnlMap = {};
+  persistPnlHistory(empty);
+  return empty;
+}
