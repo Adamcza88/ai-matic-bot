@@ -560,8 +560,8 @@ export class TradingBot {
     const profile = this.config.strategyProfile;
     const tpR = tpMap[profile] ?? 1.4;
     const widthR = widthMap[profile] ?? 0.4;
-    // Trigger a bit před TP: tpR - (widthR / 2) replikace zadání (např. scalp 1.4R TP, width 0.4R => trigger 1.2R)
-    const triggerR = tpR - widthR / 2;
+    // Trigger těsně pod TP: blízko cíle (např. scalp 1.4R -> trigger 1.35R)
+    const triggerR = tpR - 0.05;
     if (rMultiple < triggerR || this.position.slDistance <= 0) return;
     const widthAbs = widthR * this.position.slDistance;
     const target = this.position.side === "long"

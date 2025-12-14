@@ -26,7 +26,7 @@ import {
     SignalKind as ExecSignalKind,
 } from "@/engine/execution/executionRouter";
 import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
-import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory } from "../lib/entryHistory";
+import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory, persistEntryHistory } from "../lib/entryHistory";
 import { addPnlRecord, loadPnlHistory, AssetPnlMap, clearPnlHistory } from "../lib/pnlHistory";
 
 // SYMBOLS

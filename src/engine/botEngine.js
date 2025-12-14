@@ -398,7 +398,7 @@ export class TradingBot {
         const profile = this.config.strategyProfile;
         const tpR = tpMap[profile] ?? 1.4;
         const widthR = widthMap[profile] ?? 0.4;
-        const triggerR = tpR - widthR / 2;
+        const triggerR = tpR - 0.05;
         if (rMultiple < triggerR || this.position.slDistance <= 0)
             return;
         const widthAbs = widthR * this.position.slDistance;
