@@ -1661,6 +1661,18 @@ export const useTradingBot = (
         const price = hasEntry ? entryPrice : undefined;
         const triggerPrice = hasEntry && useStop ? entryPrice : undefined;
         const timeInForce = hasEntry ? "GTC" : "IOC";
+        // ROI-based TP/SL override for key symbols
+        const roiTargets = { tp: 1.10, sl: -0.40 }; // ROI %
+        const isRoiSymbol = symbol === "BTCUSDT" || symbol === "ETHUSDT" || symbol === "SOLUSDT" || symbol === "ADAUSDT";
+        const lev = leverageFor(symbol);
+        const roiTpPrice = hasEntry && isRoiSymbol
+            ? entryPrice * (1 + (roiTargets.tp / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
+            : undefined;
+        const roiSlPrice = hasEntry && isRoiSymbol
+            ? entryPrice * (1 - (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev) * (isBuy ? 1 : -1))
+            : undefined;
+        const finalTp = Number.isFinite(roiTpPrice) ? roiTpPrice : tp;
+        const finalSl = Number.isFinite(roiSlPrice) ? roiSlPrice : sl;
 
         // 0. STRICT MODE CHECK
         if (settings.strategyProfile === "auto" && mode !== "AUTO_ON") {
@@ -1697,8 +1709,8 @@ export const useTradingBot = (
                     triggerPrice,
                     timeInForce,
                     orderLinkId: clientOrderId,
-                    sl,
-                    tp,
+                    sl: finalSl,
+                    tp: finalTp,
                     trailingStop: trailingStopDistance
                 };
 
