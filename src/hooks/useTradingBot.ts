@@ -1691,6 +1691,15 @@ export const useTradingBot = (
             symbol,
             Number.isFinite(requestedQty) && requestedQty > 0 ? requestedQty : defaultQty
         );
+        const maxOpen = settingsRef.current.maxOpenPositions ?? 2;
+        if (activePositionsRef.current.length >= maxOpen) {
+            addLog({
+                action: "REJECT",
+                message: `Skip ${symbol}: max open positions reached (${maxOpen})`,
+            });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
         const hasEntry = Number.isFinite(entryPrice);
         const isBuy = side === "buy" || side === "Buy";
         const safeEntry = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(lastPrice) ? (lastPrice as number) : 0;
