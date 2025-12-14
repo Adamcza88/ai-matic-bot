@@ -588,11 +588,7 @@ export class TradingBot {
         ? (currentPrice - this.position.entryPrice) / this.position.slDistance
         : (this.position.entryPrice - currentPrice) / this.position.slDistance)
       : 0;
-
-    this.applyStrategyTrailing(rMultiple);
-    if (rMultiple >= this.config.trailingActivationR) {
-      this.updateTrailingStop(lt);
-    }
+    // Trailing stop disabled for now; rely on SL/TP only.
     this.updateTakeProfit(ht, lt);
     this.applyPyramiding(rMultiple);
     this.applyPartialExits(rMultiple);

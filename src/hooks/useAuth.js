@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { allowlistedEmails, supabase } from "../lib/supabaseClient";
+import { allowlistedEmails, supabase, supabaseReady } from "../lib/supabaseClient";
 export function useAuth() {
     const [state, setState] = useState({
         session: null,
@@ -8,7 +8,17 @@ export function useAuth() {
     });
     const [isAuthenticating, setIsAuthenticating] = useState(false);
     const allowedListLoaded = useMemo(() => allowlistedEmails.length > 0, []);
+    const missingSupabaseMsg = "Supabase client not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.";
     const evaluateSession = (session) => {
+        if (!supabase) {
+            setState({
+                session: null,
+                user: null,
+                status: "blocked",
+                error: missingSupabaseMsg,
+            });
+            return;
+        }
         if (!session) {
             setState({ session: null, user: null, status: "signed_out" });
             return;
@@ -31,6 +41,15 @@ export function useAuth() {
         setState({ session, user: session.user, status: "ready" });
     };
     useEffect(() => {
+        if (!supabaseReady || !supabase) {
+            setState({
+                session: null,
+                user: null,
+                status: "blocked",
+                error: missingSupabaseMsg,
+            });
+            return;
+        }
         supabase.auth
             .getSession()
             .then(({ data, error }) => {
@@ -61,6 +80,10 @@ export function useAuth() {
         };
     }, []);
     const signInWithGoogle = async () => {
+        if (!supabase) {
+            setState((prev) => ({ ...prev, error: missingSupabaseMsg }));
+            return;
+        }
         setIsAuthenticating(true);
         const { error } = await supabase.auth.signInWithOAuth({
             provider: "google",
@@ -77,6 +100,8 @@ export function useAuth() {
         setIsAuthenticating(false);
     };
     const signOut = async () => {
+        if (!supabase)
+            return;
         await supabase.auth.signOut();
         setState({ session: null, user: null, status: "signed_out" });
     };

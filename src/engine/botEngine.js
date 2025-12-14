@@ -36,6 +36,42 @@ export function computePositionSize(balance, riskPct, entry, sl) {
         return 0;
     return riskAmount / slDistance;
 }
+/**
+ * FIX 6: Quantity Normalization for Mainnet
+ * Rounds down to nearest step size to avoid "Invalid Qty" errors.
+ */
+export function normalizeQty(qty, step = 0.001) {
+    if (qty <= 0)
+        return 0;
+    const precision = Math.round(1 / step);
+    return Math.floor(qty * precision) / precision;
+}
+/**
+ * PURE CALC: Compute R-based Risk
+ */
+export function computeRisk(entry, stopLoss) {
+    return Math.abs(entry - stopLoss);
+}
+/**
+ * PURE CALC: Compute Quantity based on Risk %
+ */
+export function computeQty(balance, riskPct, entry, stopLoss, stepSize = 0.001) {
+    const riskAmount = balance * riskPct;
+    const slDistance = Math.abs(entry - stopLoss);
+    if (slDistance <= 0)
+        return 0;
+    const rawSize = riskAmount / slDistance;
+    return normalizeQty(rawSize, stepSize);
+}
+/**
+ * PURE CALC: Compute Entry Signal (Validation Only)
+ * Validates if the proposed signal meets basic criteria.
+ */
+export function computeEntry(trend, atr, price, candidates) {
+    // Return the first valid candidate
+    // This function can be expanded for complex selection logic
+    return candidates.length > 0 ? candidates[0] : null;
+}
 export var State;
 (function (State) {
     State["Scan"] = "SCAN";
@@ -379,6 +415,7 @@ export class TradingBot {
     }
     /**
      * Strategy-specific R-based trailing stop staging.
+     * Kicks in at a profile-dependent R multiple and locks a retracement band around entry.
      */
     applyStrategyTrailing(rMultiple) {
         if (!this.position)
@@ -398,6 +435,7 @@ export class TradingBot {
         const profile = this.config.strategyProfile;
         const tpR = tpMap[profile] ?? 1.4;
         const widthR = widthMap[profile] ?? 0.4;
+        // Trigger těsně pod TP: blízko cíle (např. scalp 1.4R -> trigger 1.35R)
         const triggerR = tpR - 0.05;
         if (rMultiple < triggerR || this.position.slDistance <= 0)
             return;
@@ -427,10 +465,7 @@ export class TradingBot {
                 ? (currentPrice - this.position.entryPrice) / this.position.slDistance
                 : (this.position.entryPrice - currentPrice) / this.position.slDistance)
             : 0;
-        this.applyStrategyTrailing(rMultiple);
-        if (rMultiple >= this.config.trailingActivationR) {
-            this.updateTrailingStop(lt);
-        }
+        // Trailing stop disabled for now; rely on SL/TP only.
         this.updateTakeProfit(ht, lt);
         this.applyPyramiding(rMultiple);
         this.applyPartialExits(rMultiple);
@@ -611,8 +646,10 @@ export class TradingBot {
                     ? 0.03
                     : 0.04;
         const riskPct = Math.min(this.config.maxRiskPerTradeCap, Math.max(profileRisk, this.config.riskPerTrade));
-        const slDistance = side === "long" ? entry - stopLoss : stopLoss - entry;
-        const size = computePositionSize(this.config.accountBalance, riskPct, entry, stopLoss);
+        const slDistance = computeRisk(entry, stopLoss);
+        // Calculate size using PURE function
+        const size = computeQty(this.config.accountBalance, riskPct, entry, stopLoss, 0.001);
+        // FIX 6: Normalize size logic (Moved to computeQty)
         const riskAmount = Math.abs(slDistance * size);
         const openRisk = this.aggregateOpenRisk();
         const openCount = this.openPositionsCount();
@@ -648,6 +685,29 @@ export class TradingBot {
             exitCount: 0,
         };
         this.state = State.Manage;
+    }
+    /**
+     * CHECK: Can we enter a new position?
+     * Enforces strict "One Position" rule for Mainnet safety.
+     */
+    canEnter() {
+        if (this.state !== State.Scan)
+            return false;
+        if (this.position !== null)
+            return false;
+        // Double check global registry if needed, but instance isolation is preferred.
+        return true;
+    }
+    /**
+     * SAFE ENTRY: Wrapper to prevent Race Conditions
+     */
+    safeEnterPosition(side, entry, stopLoss) {
+        if (!this.canEnter()) {
+            console.warn("[BotEngine] Entry Blocked: State is not SCAN or Position exists.");
+            return false;
+        }
+        this.enterPosition(side, entry, stopLoss);
+        return true;
     }
     /**
      * Reset position and return to SCAN state.

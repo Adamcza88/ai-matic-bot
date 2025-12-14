@@ -1,32 +1,30 @@
-// JS runtime mirror of coachStrategy.ts for node --test without ts-node
-export const coachDefaults = {
+const DEFAULT_COACH_PARAMS = {
     baseWindow: 10,
     volumeMultiplier: 1.5,
-    breakoutBufferPct: 0.0015,
+    breakoutBufferPct: 0.0015, // 0.15% above base high
     tpRiskMultiple: 2.2,
-    minTpPct: 0.003,
+    minTpPct: 0.003, // 0.3%
 };
-
 function ema(values, period) {
     const k = 2 / (period + 1);
     const res = [];
     values.forEach((v, i) => {
         if (i === 0) {
             res.push(v);
-        } else {
+        }
+        else {
             res.push(v * k + res[i - 1] * (1 - k));
         }
     });
     return res;
 }
-
-export function detectCoachBreakout(candles, params = coachDefaults) {
-    if (!Array.isArray(candles) || candles.length < Math.max(30, params.baseWindow + 5)) return null;
+export function detectCoachBreakout(candles, params = DEFAULT_COACH_PARAMS) {
+    if (candles.length < Math.max(30, params.baseWindow + 5))
+        return null;
     const closes = candles.map((c) => c.close);
     const highs = candles.map((c) => c.high);
     const lows = candles.map((c) => c.low);
     const volumes = candles.map((c) => c.volume || 0);
-
     const ema10Arr = ema(closes, 10);
     const ema20Arr = ema(closes, 20);
     const lastIdx = candles.length - 1;
@@ -34,10 +32,8 @@ export function detectCoachBreakout(candles, params = coachDefaults) {
     const lastVolume = volumes[lastIdx];
     const ema10 = ema10Arr[lastIdx];
     const ema20 = ema20Arr[lastIdx];
-
     const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
     const volStrong = avgVol > 0 && lastVolume >= params.volumeMultiplier * avgVol;
-
     const priorHigh = Math.max(...highs.slice(-(params.baseWindow + 1), -1));
     const baseLow = Math.min(...lows.slice(-(params.baseWindow + 1), -1));
     const breakoutThreshold = priorHigh * (1 + params.breakoutBufferPct);
@@ -46,9 +42,9 @@ export function detectCoachBreakout(candles, params = coachDefaults) {
     const breakdown = lastClose < breakdownThreshold && lastClose < ema10 && lastClose < ema20;
     const emaAlignedUp = ema10 > ema20;
     const emaAlignedDown = ema10 < ema20;
-
     if (breakout && volStrong && emaAlignedUp) {
-        if (!Number.isFinite(baseLow) || baseLow <= 0 || lastClose <= baseLow) return null;
+        if (!Number.isFinite(baseLow) || baseLow <= 0 || lastClose <= baseLow)
+            return null;
         const entry = lastClose;
         const sl = baseLow;
         const riskPerUnit = entry - sl;
@@ -58,9 +54,9 @@ export function detectCoachBreakout(candles, params = coachDefaults) {
             message: `Coach breakout @ ${entry.toFixed(4)} | vol x${(lastVolume / Math.max(avgVol, 1e-8)).toFixed(2)}`,
         };
     }
-
     if (breakdown && volStrong && emaAlignedDown) {
-        if (!Number.isFinite(priorHigh) || priorHigh <= 0 || lastClose >= priorHigh) return null;
+        if (!Number.isFinite(priorHigh) || priorHigh <= 0 || lastClose >= priorHigh)
+            return null;
         const entry = lastClose;
         const sl = priorHigh;
         const riskPerUnit = sl - entry;
@@ -70,10 +66,9 @@ export function detectCoachBreakout(candles, params = coachDefaults) {
             message: `Coach breakdown @ ${entry.toFixed(4)} | vol x${(lastVolume / Math.max(avgVol, 1e-8)).toFixed(2)}`,
         };
     }
-
     return null;
 }
-
+export const coachDefaults = DEFAULT_COACH_PARAMS;
 function lastMatchingDay(days, targetWeekday) {
     for (let i = days.length - 1; i >= 0; i--) {
         const d = new Date(days[i].time).getUTCDay();
@@ -83,13 +78,18 @@ function lastMatchingDay(days, targetWeekday) {
     }
     return null;
 }
-
 export function detectSituationalEdges(daily, currentPrice) {
-    if (!Array.isArray(daily) || daily.length < 3) return null;
-    const days = daily.map((d) => ({ time: d.openTime, high: d.high, low: d.low }));
-
+    if (!Array.isArray(daily) || daily.length < 3)
+        return null;
+    const days = daily.map((d) => ({
+        time: d.openTime,
+        high: d.high,
+        low: d.low,
+    }));
     const friday = lastMatchingDay(days, 5);
-    const thursday = friday && friday.idx > 0 ? { idx: friday.idx - 1, day: days[friday.idx - 1] } : null;
+    const thursday = friday && friday.idx > 0
+        ? { idx: friday.idx - 1, day: days[friday.idx - 1] }
+        : null;
     if (friday && thursday) {
         if (friday.day.high < thursday.day.high && currentPrice > friday.day.low) {
             const sl = Math.max(friday.day.high, thursday.day.high);
@@ -106,7 +106,6 @@ export function detectSituationalEdges(daily, currentPrice) {
             };
         }
     }
-
     const wednesday = lastMatchingDay(days, 3);
     let monday = null;
     if (wednesday) {
@@ -116,7 +115,9 @@ export function detectSituationalEdges(daily, currentPrice) {
                 monday = { idx: i, day: days[i] };
                 break;
             }
-            if (wednesday.idx - i > 6) break;
+            // stop if we passed further back than a week
+            if (wednesday.idx - i > 6)
+                break;
         }
     }
     if (wednesday && monday) {
@@ -135,6 +136,5 @@ export function detectSituationalEdges(daily, currentPrice) {
             };
         }
     }
-
     return null;
 }

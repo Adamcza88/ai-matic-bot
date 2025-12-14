@@ -46,3 +46,8 @@ export function addPnlRecord(record) {
     persistPnlHistory(next);
     return next;
 }
+export function clearPnlHistory() {
+    const empty = {};
+    persistPnlHistory(empty);
+    return empty;
+}
