@@ -1743,6 +1743,24 @@ export const useTradingBot = (
         const stopLossValue = Number.isFinite(plan.stopLoss) ? plan.stopLoss : finalSl;
         const takeProfitValue = Number.isFinite(plan.takeProfit) ? plan.takeProfit : finalTp;
 
+        // Trailing plan derived from profile ArmR/LockR
+        const rDist = Number.isFinite(stopLossValue) ? Math.abs(safeEntry - (stopLossValue as number)) : 0;
+        const armLockMap: Record<ExecStrategyProfile, { arm: number; lock: number }> = {
+            scalp: { arm: 1.2, lock: 0.4 },
+            intraday: { arm: 1.4, lock: 0.6 },
+            swing: { arm: 1.6, lock: 0.8 },
+            trend: { arm: 2.0, lock: 1.1 },
+            coach: { arm: 1.4, lock: 0.6 },
+        };
+        const armLock = armLockMap[profile] || armLockMap.intraday;
+        const gapR = armLock.arm - armLock.lock;
+        const trailingDistance =
+            rDist > 0 && gapR > 0 ? gapR * rDist : undefined;
+        const trailingActivePrice =
+            rDist > 0
+                ? safeEntry + (isBuy ? 1 : -1) * armLock.arm * rDist
+                : undefined;
+
         const orderType =
             plan.mode === "MARKET"
                 ? "Market"
@@ -1785,9 +1803,6 @@ export const useTradingBot = (
             const clientOrderId = `${signalId.slice(0, 18)}-${Date.now().toString().slice(-6)}`;
 
             if (mode === "AUTO_ON") {
-                // Temporarily disable trailing at order placement to avoid immediate exits;
-                // rely on SL/TP for protection. (Plan trailing can be re-enabled later.)
-                const trailingDistance = undefined;
                 const payload = {
                     symbol,
                     side: side === "buy" ? "Buy" : "Sell",
@@ -1799,7 +1814,8 @@ export const useTradingBot = (
                     orderLinkId: clientOrderId,
                     sl: stopLossValue,
                     tp: takeProfitValue,
-                    trailingStop: trailingDistance
+                    trailingStop: trailingDistance,
+                    trailingActivePrice,
                 };
 
                 const res = await fetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {

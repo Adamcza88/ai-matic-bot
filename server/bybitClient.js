@@ -259,6 +259,7 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
       const tsResult = await setTradingStop({
         symbol: order.symbol,
         trailingStop: order.trailingStop,
+        activePrice: order.trailingActivePrice,
         positionIdx: 0,
       }, creds, useTestnet);
 
@@ -295,6 +296,10 @@ export async function setTradingStop(protection, creds, useTestnet = true) {
 
   if (protection.trailingStop != null) {
     rawTsBody.trailingStop = String(protection.trailingStop);
+  }
+
+  if (protection.activePrice != null) {
+    rawTsBody.activePrice = String(protection.activePrice);
   }
 
   const tsBody = cleanObject(rawTsBody);

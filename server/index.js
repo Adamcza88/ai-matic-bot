@@ -74,7 +74,7 @@ app.post("/api/:env/order", async (req, res) => {
   const endpoint = req.originalUrl;
   const env = req.params.env === "main" ? "mainnet" : "testnet";
 
-  const { symbol, side, qty, orderType, sl, tp, orderLinkId, timeInForce, trailingStop, price, triggerPrice } = req.body;
+  const { symbol, side, qty, orderType, sl, tp, orderLinkId, timeInForce, trailingStop, trailingActivePrice, price, triggerPrice } = req.body;
 
   const roiSymbols = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"]);
   const leverageMap = { BTCUSDT: 100, ETHUSDT: 100, SOLUSDT: 100, ADAUSDT: 75 };
@@ -119,11 +119,14 @@ app.post("/api/:env/order", async (req, res) => {
       triggerPrice,
       sl: roiSl,
       tp: roiTp,
+      trailingStop,
+      trailingActivePrice,
       orderLinkId,
       timeInForce,
       takeProfit: roiTp,
       stopLoss: roiSl,
-      trailingStop
+      trailingStop,
+      trailingActivePrice
     }, creds, env === "testnet");
 
     if (result.retCode !== 0) {
