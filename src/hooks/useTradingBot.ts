@@ -1800,6 +1800,43 @@ export const useTradingBot = (
             return false;
         }
 
+        // 0.1 PORTFOLIO RISK GATE (New)
+        const currentPositions = activePositionsRef.current;
+        const totalCapital = portfolioState.totalCapital || 1000;
+
+        // 1. Max Notional Exposure Check (e.g. max 3x leverage globally)
+        const currentNotional = currentPositions.reduce((sum, p) => sum + (p.entryPrice * p.size), 0);
+        const newTradeNotional = safeEntry * orderQty;
+        const maxNotional = totalCapital * 3.0; // Hardcoded safety limit for now, or add to settings
+        if (currentNotional + newTradeNotional > maxNotional) {
+            addLog({ action: "REJECT", message: `Risk Gate: Max Notional Exceeded (${(currentNotional + newTradeNotional).toFixed(0)} > ${maxNotional.toFixed(0)})` });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
+
+        // 2. Correlation / Concentration Limit (Max positions per "bucket" - simplistic symbol check)
+        // If we have ETHUSDT, maybe don't open ETH-PERP? (Not applicable here as we assume linear perps)
+        // Check simply max risk budget per symbol.
+        const existingSymbolRisk = currentPositions.filter(p => p.symbol === symbol).reduce((sum, p) => sum + (Math.abs(p.entryPrice - p.sl) * p.size), 0);
+        const newTradeRisk = Math.abs(safeEntry - (Number(finalSl) || safeEntry)) * orderQty;
+        const maxRiskPerSymbol = totalCapital * 0.02; // 2% risk per symbol max
+        if (existingSymbolRisk + newTradeRisk > maxRiskPerSymbol) {
+            addLog({ action: "REJECT", message: `Risk Gate: Max Symbol Risk Exceeded` });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
+
+        // 3. Min Edge Gate (Fee + Slippage vs Expected Reward)
+        // Fee ~ 0.06% entry + 0.06% exit = 0.12%. Slippage ~ 0.05%. Total cost ~ 0.17% of notional.
+        const estCost = newTradeNotional * 0.0017;
+        const estReward = Math.abs(safeEntry - (Number(finalTp) || safeEntry)) * orderQty;
+        // If reward is defined and < cost * 1.5, reject
+        if (finalTp && estReward < estCost * 1.5) {
+            addLog({ action: "REJECT", message: `Risk Gate: Edge too small (Reward ${estReward.toFixed(2)} < Cost ${estCost.toFixed(2)} * 1.5)` });
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
+
         // 1. MUTEX CHECK
         if (executionLocksRef.current.has(symbol)) {
             console.warn(`[Trade] Skipped - Execution locked for ${symbol}`);
@@ -1817,7 +1854,7 @@ export const useTradingBot = (
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
 
             // Calculate metrics (re-use logic or trust intent)
-            const clientOrderId = `${signalId.slice(0, 18)}-${Date.now().toString().slice(-6)}`;
+            const clientOrderId = signalId.substring(0, 36);
 
             if (mode === "AUTO_ON") {
                 const payload = {
