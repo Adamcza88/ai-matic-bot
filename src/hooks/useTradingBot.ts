@@ -302,6 +302,26 @@ function computeAtrPair(candles: Candle[]) {
     return { atrShort, atrLong };
 }
 
+function computeEma(candles: Candle[], period: number) {
+    if (!candles || candles.length === 0) return 0;
+    const k = 2 / (period + 1);
+    let ema = candles[0].close;
+    for (let i = 1; i < candles.length; i++) {
+        ema = candles[i].close * k + ema * (1 - k);
+    }
+    return ema;
+}
+
+function scoreVol(atrPct: number) {
+    // Prefer 0.2 % – 0.8 % intraday volatility, decay outside.
+    const idealMin = 0.002;
+    const idealMax = 0.008;
+    if (atrPct <= 0) return 0;
+    if (atrPct < idealMin) return atrPct / idealMin; // up to 1
+    if (atrPct > idealMax) return Math.max(0, 1 - (atrPct - idealMax) / idealMax);
+    return 1.2; // slight bonus inside sweet spot
+}
+
 const resolveRiskPct = (settings: AISettings) => {
     const base = settings.baseRiskPerTrade;
     if (settings.strategyProfile === "scalp") {
@@ -1202,16 +1222,87 @@ export const useTradingBot = (
             ? computeScalpDynamicRisk(settings)
             : resolveRiskPct(settings);
 
-    const getVolatilityMultiplier = (symbol: string) => {
-        const hist = priceHistoryRef.current[symbol] || [];
-        if (!hist.length) return 1;
-        const { atrShort, atrLong } = computeAtrPair(hist);
-        if (!atrShort || !atrLong) return 1;
-        const ratio = atrLong / Math.max(atrShort, 1e-8);
-        return Math.min(4, Math.max(0.5, ratio * 0.8));
+const getVolatilityMultiplier = (symbol: string) => {
+    const hist = priceHistoryRef.current[symbol] || [];
+    if (!hist.length) return 1;
+    const { atrShort, atrLong } = computeAtrPair(hist);
+    if (!atrShort || !atrLong) return 1;
+    const ratio = atrLong / Math.max(atrShort, 1e-8);
+    return Math.min(4, Math.max(0.5, ratio * 0.8));
+};
+
+type RankedSignal = { signal: PendingSignal; score: number; reason: string };
+
+function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSignal | null {
+    if (!candles || candles.length < 30) return null;
+    const price = candles[candles.length - 1]?.close;
+    const prevClose = candles[candles.length - 2]?.close ?? price;
+    if (!Number.isFinite(price) || price <= 0) return null;
+
+    const { atrShort, atrLong } = computeAtrPair(candles);
+    const atrPct = atrShort > 0 ? atrShort / price : 0;
+    const emaFast = computeEma(candles.slice(-80), 14);
+    const emaSlow = computeEma(candles.slice(-120), 50);
+    const trendStrength = Math.abs(emaFast - emaSlow) / Math.max(price, 1e-8);
+
+    let side: "buy" | "sell" | null = null;
+    if (emaFast > emaSlow * 1.0003 && price > emaFast) side = "buy";
+    if (emaFast < emaSlow * 0.9997 && price < emaFast) side = "sell";
+    if (!side) return null;
+
+    const recent = candles.slice(-6);
+    const recentHigh = Math.max(...recent.map((c) => c.high));
+    const recentLow = Math.min(...recent.map((c) => c.low));
+
+    const pullbackTrigger =
+        side === "buy"
+            ? prevClose < emaFast && price > emaFast && price > prevClose && price >= emaFast * 0.997
+            : prevClose > emaFast && price < emaFast && price < prevClose && price <= emaFast * 1.003;
+
+    const breakoutTrigger =
+        side === "buy"
+            ? price > recentHigh && prevClose <= recentHigh * 1.0005
+            : price < recentLow && prevClose >= recentLow * 0.9995;
+
+    if (!pullbackTrigger && !breakoutTrigger) return null;
+
+    const slDistance = Math.max(atrShort * 1.3, price * 0.0015);
+    const tpDistance = slDistance * 2.2;
+    const sl = side === "buy" ? price - slDistance : price + slDistance;
+    const tp = side === "buy" ? price + tpDistance : price - tpDistance;
+
+    const momentum = ((price - prevClose) / price) * (side === "buy" ? 1 : -1);
+    const volScore = scoreVol(atrPct);
+    const score = trendStrength * 2 + momentum * 3 + volScore;
+    const risk = Math.max(0.5, Math.min(0.95, 0.55 + score));
+
+    const triggerLabel = pullbackTrigger ? "pullback" : "breakout";
+    const reason = `${symbol} ${side.toUpperCase()} | ${triggerLabel} | trend ${(
+        trendStrength * 100
+    ).toFixed(2)}bps | ATR ${atrPct ? (atrPct * 100).toFixed(2) : "0"}%`;
+
+    const signal: PendingSignal = {
+        id: `${symbol}-dir-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+        symbol,
+        profile: "intraday",
+        kind: pullbackTrigger ? "PULLBACK" : "BREAKOUT",
+        risk,
+        createdAt: new Date().toISOString(),
+        intent: {
+            side,
+            entry: price,
+            sl,
+            tp,
+            symbol,
+            qty: 0,
+        },
+        message: reason,
     };
 
-    // ========== FETCH CEN Z BYBIT (mainnet / testnet) ==========
+    return { signal, score, reason };
+}
+
+// ========== FETCH CEN Z BYBIT (mainnet / testnet) ==========
     useEffect(() => {
         if (mode === TradingMode.OFF) {
             setSystemState((p) => ({ ...p, bybitStatus: "Disconnected" }));
@@ -1232,6 +1323,7 @@ export const useTradingBot = (
                 const newPrices: Record<string, number> = {};
                 const newHistory: any = { ...priceHistoryRef.current };
                 const engineActive: ActivePosition[] = [];
+                const rankedCandidates: RankedSignal[] = [];
 
                 for (const symbol of SYMBOLS) {
                     const url = `${URL_KLINE}&symbol=${symbol}&interval=1&limit=200`;
@@ -1249,6 +1341,9 @@ export const useTradingBot = (
 
                     newHistory[symbol] = candles;
                     newPrices[symbol] = candles[candles.length - 1].close;
+
+                    const candidate = buildDirectionalCandidate(symbol, candles);
+                    if (candidate) rankedCandidates.push(candidate);
 
                     if (mode !== TradingMode.BACKTEST) {
                         // === Custom Coach strategy: Base 'n Break / Wedge Pop approximation ===
@@ -1535,122 +1630,24 @@ export const useTradingBot = (
                     lastError: null,
                 }));
 
-                // === TEST MODE: GENERUJ RYCHLÉ SIGNÁLY PRO VŠECHNY ASSETY, KTERÉ NEJSOU OTEVŘENÉ ===
-                if (settingsRef.current.entryStrictness === "test") {
-                    const now = Date.now();
-                    if (
-                        lastTestSignalAtRef.current &&
-                        now - lastTestSignalAtRef.current < 4000
-                    ) {
-                        // Throttle generování test signálů
-                    } else {
-                        lastTestSignalAtRef.current = now;
-                        const activeSymbols = new Set(
-                            activePositionsRef.current.map((p) => p.symbol)
-                        );
-                        const pendingSymbols = new Set(
-                            pendingSignalsRef.current.map((p) => p.symbol)
-                        );
-                        const nowIso = new Date().toISOString();
-                        const newTestSignals: PendingSignal[] = [];
-                        for (const symbol of SYMBOLS) {
-                            if (activeSymbols.has(symbol)) continue;
-                            if (pendingSymbols.has(symbol)) continue;
-                            if (
-                                pendingSignalsRef.current.length + newTestSignals.length >=
-                                MAX_TEST_PENDING
-                            )
-                                break;
-                            const price = newPrices[symbol];
-                            if (!price) continue;
-                            const side: "buy" | "sell" =
-                                Math.random() > 0.5 ? "buy" : "sell";
-                            const offsetPct = 0.003 + Math.random() * 0.01; // 0.3% – 1.3%
-                            const sl =
-                                side === "buy"
-                                    ? price * (1 - offsetPct)
-                                    : price * (1 + offsetPct);
-                            const tp =
-                                side === "buy"
-                                    ? price * (1 + offsetPct)
-                                    : price * (1 - offsetPct);
-                            newTestSignals.push({
-                                id: `${symbol}-${Date.now()}-${Math.random()
-                                    .toString(16)
-                                    .slice(2)}`,
-                                symbol,
-                                profile: (settingsRef.current.strategyProfile === "auto" ? "intraday" : settingsRef.current.strategyProfile) as any,
-                                kind: "MOMENTUM",
-                                intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
-                                risk: 0.7,
-                                message: `TEST signal ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
-                                    4
-                                )}`,
-                                createdAt: nowIso,
-                            });
-                        }
-                        if (newTestSignals.length) {
-                            setPendingSignals((prev) => [
-                                ...newTestSignals,
-                                ...prev,
-                            ]);
-                            newTestSignals.forEach((s) =>
-                                addLog({
-                                    action: "SIGNAL",
-                                    message: s.message,
-                                })
-                            );
-                        }
-                    }
-                }
-
-                // Keepalive signály pro ostatní profily: pokud není žádný pending/aktivní delší dobu, vytvoř fallback
+                // Smarter fallback vstup: seřadit kandidáty podle skóre a vzít top 2, jen když není nic otevřené/pending
+                const noActive = activePositionsRef.current.length === 0;
+                const noPending = pendingSignalsRef.current.length === 0;
                 if (
                     settingsRef.current.entryStrictness !== "test" &&
-                    pendingSignalsRef.current.length === 0 &&
-                    activePositionsRef.current.length === 0
+                    noActive &&
+                    noPending
                 ) {
-                    const now = Date.now();
-                    if (
-                        !lastKeepaliveAtRef.current ||
-                        now - lastKeepaliveAtRef.current > KEEPALIVE_SIGNAL_INTERVAL_MS
-                    ) {
-                        lastKeepaliveAtRef.current = now;
-                        const keepSignals: PendingSignal[] = [];
-                        const nowIso = new Date().toISOString();
-                        for (const symbol of SYMBOLS) {
-                            if (keepSignals.length >= MAX_TEST_PENDING) break;
-                            const price = newPrices[symbol];
-                            if (!price) continue;
-                            const hist = priceHistoryRef.current[symbol] || [];
-                            const atr = computeAtrFromHistory(hist, 20) || price * 0.005;
-                            const side: "buy" | "sell" =
-                                Math.random() > 0.5 ? "buy" : "sell";
-                            const sl =
-                                side === "buy" ? price - 1.5 * atr : price + 1.5 * atr;
-                            const tp =
-                                side === "buy" ? price + 2.5 * atr : price - 2.5 * atr;
-                            keepSignals.push({
-                                id: `${symbol}-keep-${Date.now()}-${Math.random()
-                                    .toString(16)
-                                    .slice(2)}`,
-                                symbol,
-                                profile: (settingsRef.current.strategyProfile === "auto" ? "intraday" : settingsRef.current.strategyProfile) as any,
-                                kind: "MOMENTUM",
-                                intent: { side, entry: price, sl, tp, symbol, qty: 0 }, // FIX: A1 Type Compliance
-                                risk: 0.6,
-                                message: `Keepalive ${side.toUpperCase()} ${symbol} @ ${price.toFixed(
-                                    4
-                                )}`,
-                                createdAt: nowIso,
-                            });
-                        }
-                        if (keepSignals.length) {
-                            setPendingSignals((prev) => [...keepSignals, ...prev]);
-                            keepSignals.forEach((s) =>
-                                addLog({ action: "SIGNAL", message: s.message })
-                            );
-                        }
+                    const ranked = rankedCandidates
+                        .sort((a, b) => b.score - a.score)
+                        .slice(0, 2)
+                        .map((r) => r.signal);
+                    if (ranked.length) {
+                        setPendingSignals((prev) => [...ranked, ...prev]);
+                        rankedCandidates
+                            .sort((a, b) => b.score - a.score)
+                            .slice(0, 2)
+                            .forEach((r) => addLog({ action: "SIGNAL", message: r.reason }));
                     }
                 }
             } catch (err: any) {
