@@ -52,6 +52,7 @@ export default function Dashboard({
     refreshTestnetOrders,
     assetPnlHistory,
     removeEntryHistoryItem,
+    resetPnlHistory,
   } = bot;
 
   const setProfile = (profile: AISettings["strategyProfile"]) => {
@@ -493,7 +494,7 @@ export default function Dashboard({
                   No activity yet.
                 </div>
               ) : (
-                logEntries.slice(0, 15).map((l) => (
+                logEntries.slice(0, 10).map((l) => (
                   <div
                     key={l.id}
                     className="text-sm flex gap-3 py-2 border-b border-white/5 last:border-0"
@@ -648,9 +649,19 @@ export default function Dashboard({
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-slate-400">Asset PnL History</CardTitle>
-            <span className="text-xs text-slate-500">
-              {Object.keys(assetPnlHistory).length} assets
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">
+                {Object.keys(assetPnlHistory).length} assets
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => resetPnlHistory()}
+                className="h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white"
+              >
+                Reset
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             {Object.keys(assetPnlHistory).length === 0 ? (
