@@ -1704,7 +1704,7 @@ export const useTradingBot = (
             side: isBuy ? "Buy" : "Sell",
             kind,
             entry: safeEntry,
-            stopLoss: Number(finalSl ?? safeEntry || 0),
+            stopLoss: Number(finalSl ?? safeEntry ?? 0),
             takeProfit: finalTp,
         };
 
