@@ -1,17 +1,18 @@
 import { createDemoOrder, getWalletBalance } from "../../server/bybitClient.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 
-const MAX_QTY = {
-  SOLUSDT: 3.5,
-  BTCUSDT: 0.005,
-  ETHUSDT: 0.15,
-  ADAUSDT: 858,
+const QTY_BOUNDS = {
+  SOLUSDT: { min: 3.5, max: 3.5 },
+  BTCUSDT: { min: 0.005, max: 0.005 },
+  ETHUSDT: { min: 0.15, max: 0.15 },
+  ADAUSDT: { min: 858, max: 858 },
 };
 
 function clampQty(symbol, qty) {
-  const limit = MAX_QTY[symbol];
+  const bounds = QTY_BOUNDS[symbol];
   const safe = Math.max(0, Number(qty) || 0);
-  return limit ? Math.min(limit, safe) : safe;
+  if (!bounds) return safe;
+  return Math.min(bounds.max, Math.max(bounds.min, safe));
 }
 
 function setCors(res) {
@@ -105,7 +106,9 @@ export default async function handler(req, res) {
       });
     }
 
-    const safeQty = qty && Number(qty) > 0 ? Number(qty) : 1;
+    const bounds = QTY_BOUNDS[symbol];
+    const defaultQty = bounds?.min ?? 1;
+    const safeQty = qty && Number(qty) > 0 ? Number(qty) : defaultQty;
     const cappedQty = clampQty(symbol, safeQty);
 
     const payload = {

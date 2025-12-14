@@ -176,9 +176,11 @@ export interface BotConfig {
 }
 
 function applyProfileOverrides(cfg: BotConfig): BotConfig {
-  if (cfg.strategyProfile !== "scalp") return cfg;
+  if (cfg.strategyProfile !== "scalp") {
+    return { ...cfg, maxOpenPositions: Math.min(cfg.maxOpenPositions, 2) };
+  }
   const scalpRisk = Math.min(Math.max(cfg.riskPerTrade, 0.01), 0.02);
-  return {
+  const base = {
     ...cfg,
     riskPerTrade: scalpRisk,
     maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
@@ -197,6 +199,7 @@ function applyProfileOverrides(cfg: BotConfig): BotConfig {
       { triggerR: 2, stopToR: 1 },
     ],
   };
+  return { ...base, maxOpenPositions: Math.min(base.maxOpenPositions, 2) };
 }
 
 /**
@@ -231,7 +234,7 @@ export const defaultConfig: BotConfig = {
   maxRiskPerTradeCap: 0.07,
   tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
   enforceSessionHours: false,
-  maxOpenPositions: 5,
+  maxOpenPositions: 2,
   maxExitChunks: 3,
   trailingActivationR: 2,
   minStopPercent: 0.0035,

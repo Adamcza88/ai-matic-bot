@@ -46,10 +46,10 @@ const TARGET_NOTIONAL: Record<string, number> = {
     ADAUSDT: 350, // odpovídá screenshotu při 75x
 };
 const QTY_LIMITS: Record<string, { min: number; max: number }> = {
-    BTCUSDT: { min: 0.0005, max: 0.005 },
-    ETHUSDT: { min: 0.001, max: 0.15 },
-    SOLUSDT: { min: 0.01, max: 3.5 },
-    ADAUSDT: { min: 10, max: 858 },
+    BTCUSDT: { min: 0.005, max: 0.005 },
+    ETHUSDT: { min: 0.15, max: 0.15 },
+    SOLUSDT: { min: 3.5, max: 3.5 },
+    ADAUSDT: { min: 858, max: 858 },
 };
 
 // RISK / STRATEGY
@@ -68,7 +68,7 @@ const AI_MATIC_PRESET: AISettings = {
     baseRiskPerTrade: 0.02,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
-    maxOpenPositions: 4,
+    maxOpenPositions: 2,
     strategyProfile: "auto",
     entryStrictness: "base",
     enforceSessionHours: true,
@@ -103,7 +103,7 @@ const AI_MATIC_X_PRESET: AISettings = {
     baseRiskPerTrade: 0.02,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
-    maxOpenPositions: 4,
+    maxOpenPositions: 2,
     strategyProfile: "auto",
     entryStrictness: "ultra",
     enforceSessionHours: false,
