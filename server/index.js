@@ -74,7 +74,7 @@ app.post("/api/:env/order", async (req, res) => {
   const endpoint = req.originalUrl;
   const env = req.params.env === "main" ? "mainnet" : "testnet";
 
-  const { symbol, side, qty, orderType, sl, tp, orderLinkId, timeInForce, trailingStop } = req.body;
+  const { symbol, side, qty, orderType, sl, tp, orderLinkId, timeInForce, trailingStop, price, triggerPrice } = req.body;
 
   try {
     const authHeader = req.headers.authorization;
@@ -91,10 +91,21 @@ app.post("/api/:env/order", async (req, res) => {
     }
 
     // Reuse createDemoOrder for both main/testnet logic in server (it handles 'useTestnet' flag)
-    const result = await createDemoOrder(creds, {
-      symbol, side, qty, orderType, sl, tp, orderLinkId, timeInForce,
-      takeProfit: tp, stopLoss: sl, trailingStop
-    }, env === "testnet");
+    const result = await createDemoOrder({
+      symbol,
+      side,
+      qty,
+      orderType,
+      price,
+      triggerPrice,
+      sl,
+      tp,
+      orderLinkId,
+      timeInForce,
+      takeProfit: tp,
+      stopLoss: sl,
+      trailingStop
+    }, creds, env === "testnet");
 
     if (result.retCode !== 0) {
       return sendError(res, 400, `Bybit Rejected: ${result.retMsg}`, {

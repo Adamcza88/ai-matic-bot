@@ -75,6 +75,9 @@ export type TradeIntent = {
   side: "Buy" | "Sell" | "buy" | "sell"; // Compat: support both cases
   qty: number;           // New: Explicit qty
   entry?: number;
+  price?: number;        // Optional explicit limit price
+  triggerPrice?: number; // Optional stop trigger price
+  orderType?: "Market" | "Limit" | "Stop" | "StopLimit";
   sl?: number;
   tp?: number;
   trailingStopDistance?: number; // New: optional trailing stop

@@ -164,7 +164,9 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     orderType: order.orderType || "Market",
     qty: safeQty,
     price: order.price ? String(order.price) : undefined, // undefined will be cleaned
-    timeInForce: order.timeInForce || "IOC",
+    triggerPrice: order.triggerPrice ? String(order.triggerPrice) : undefined,
+    orderFilter: order.triggerPrice ? "StopOrder" : undefined,
+    timeInForce: order.timeInForce || (order.orderType === "Limit" ? "GTC" : "IOC"),
     reduceOnly: order.reduceOnly ?? false,
     orderLinkId: order.orderLinkId || undefined,
   };

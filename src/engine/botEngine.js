@@ -623,10 +623,10 @@ export class TradingBot {
             return;
         }
         const rrMap = {
-            trend: 4,
-            scalp: 1.2,
-            swing: 3.5,
-            intraday: 2.5,
+            trend: 2.2,
+            scalp: 1.4,
+            swing: 1.8,
+            intraday: 1.6,
         };
         const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
         this.position = {

@@ -1640,12 +1640,27 @@ export const useTradingBot = (
 
         const { symbol, side } = signal.intent;
         const { sl, tp, qty, trailingStopDistance } = signal.intent;
+        const lastPrice = currentPricesRef.current[symbol];
+        const entryPrice = Number(
+            signal.intent.price ??
+            signal.intent.entry ??
+            (Number.isFinite(lastPrice) ? lastPrice : NaN)
+        );
         const defaultQty = QTY_LIMITS[symbol]?.min ?? 1;
         const requestedQty = Number(qty);
         const orderQty = clampQtyForSymbol(
             symbol,
             Number.isFinite(requestedQty) && requestedQty > 0 ? requestedQty : defaultQty
         );
+        const hasEntry = Number.isFinite(entryPrice);
+        const isBuy = side === "buy" || side === "Buy";
+        const useStop = hasEntry && Number.isFinite(lastPrice)
+            ? (isBuy ? entryPrice > lastPrice! : entryPrice < lastPrice!)
+            : false;
+        const orderType = hasEntry ? "Limit" : "Market";
+        const price = hasEntry ? entryPrice : undefined;
+        const triggerPrice = hasEntry && useStop ? entryPrice : undefined;
+        const timeInForce = hasEntry ? "GTC" : "IOC";
 
         // 0. STRICT MODE CHECK
         if (settings.strategyProfile === "auto" && mode !== "AUTO_ON") {
@@ -1677,8 +1692,10 @@ export const useTradingBot = (
                     symbol,
                     side: side === "buy" ? "Buy" : "Sell",
                     qty: Number(orderQty.toFixed(4)),
-                    orderType: "Market",
-                    timeInForce: "IOC",
+                    orderType,
+                    price,
+                    triggerPrice,
+                    timeInForce,
                     orderLinkId: clientOrderId,
                     sl,
                     tp,
