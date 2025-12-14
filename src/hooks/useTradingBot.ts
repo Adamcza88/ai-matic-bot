@@ -485,7 +485,12 @@ export const useTradingBot = (
     }, [portfolioState.dailyPnl, portfolioState.totalCapital]);
 
     useEffect(() => {
-        setEntryHistory(loadEntryHistory());
+        const hist = loadEntryHistory();
+        const trimmed = hist.slice(0, 10);
+        if (hist.length !== trimmed.length) {
+            persistEntryHistory(trimmed);
+        }
+        setEntryHistory(trimmed);
         setAssetPnlHistory(loadPnlHistory());
     }, []);
 
@@ -1112,7 +1117,7 @@ export const useTradingBot = (
             timestamp: new Date().toISOString(),
             ...entry,
         };
-        setLogEntries((prev) => [log, ...prev].slice(0, 200));
+        setLogEntries((prev) => [log, ...prev].slice(0, 10));
     }
 
     const registerOutcome = (pnl: number) => {
@@ -1718,6 +1723,9 @@ export const useTradingBot = (
 
         const plan = decideExecutionPlan(entrySignal, marketSnapshot, profile, orderQty);
 
+        const stopLossValue = Number.isFinite(plan.stopLoss) ? plan.stopLoss : finalSl;
+        const takeProfitValue = Number.isFinite(plan.takeProfit) ? plan.takeProfit : finalTp;
+
         const orderType =
             plan.mode === "MARKET"
                 ? "Market"
@@ -1760,9 +1768,9 @@ export const useTradingBot = (
             const clientOrderId = `${signalId.slice(0, 18)}-${Date.now().toString().slice(-6)}`;
 
             if (mode === "AUTO_ON") {
-                const trailingDistance = plan.trailing
-                    ? Math.abs(plan.trailing.lockedStopPrice - safeEntry)
-                    : trailingStopDistance;
+                // Temporarily disable trailing at order placement to avoid immediate exits;
+                // rely on SL/TP for protection. (Plan trailing can be re-enabled later.)
+                const trailingDistance = undefined;
                 const payload = {
                     symbol,
                     side: side === "buy" ? "Buy" : "Sell",
@@ -1772,8 +1780,8 @@ export const useTradingBot = (
                     triggerPrice,
                     timeInForce,
                     orderLinkId: clientOrderId,
-                    sl: plan.stopLoss ?? finalSl,
-                    tp: plan.takeProfit ?? finalTp,
+                    sl: stopLossValue,
+                    tp: takeProfitValue,
                     trailingStop: trailingDistance
                 };
 

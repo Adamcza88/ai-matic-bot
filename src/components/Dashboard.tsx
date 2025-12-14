@@ -488,7 +488,7 @@ export default function Dashboard({
             <CardTitle className="text-sm font-medium text-slate-400">Live Feed</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[200px] overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+            <div className="h-[360px] overflow-y-auto space-y-2 pr-2 custom-scrollbar">
               {logEntries.length === 0 ? (
                 <div className="text-sm text-slate-500 italic">
                   No activity yet.

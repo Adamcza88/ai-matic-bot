@@ -1,7 +1,7 @@
 import { EntryHistoryRecord } from "../types";
 
 const STORAGE_KEY = "ai-matic:entry-history";
-const MAX_RECORDS = 200;
+const MAX_RECORDS = 10;
 
 function getStorage(): Storage | null {
   try {
