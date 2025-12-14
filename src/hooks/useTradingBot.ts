@@ -1679,6 +1679,18 @@ export const useTradingBot = (
         const isBuy = side === "buy" || side === "Buy";
         const safeEntry = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(lastPrice) ? (lastPrice as number) : 0;
 
+        // Block duplicate entries for symbols with open positions
+        const hasOpenPosition = activePositionsRef.current.some((p) => p.symbol === symbol);
+        if (hasOpenPosition) {
+            addLog({
+                action: "REJECT",
+                message: `Skip ${symbol}: position already open`,
+            });
+            // Remove the pending signal to avoid reprocessing
+            setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
+            return false;
+        }
+
         // ROI-based TP/SL override for key symbols
         const roiTargets = { tp: 110, sl: -40 }; // ROI % (Bybit-style)
         const isRoiSymbol = symbol === "BTCUSDT" || symbol === "ETHUSDT" || symbol === "SOLUSDT" || symbol === "ADAUSDT";
