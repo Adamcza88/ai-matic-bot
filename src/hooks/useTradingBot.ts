@@ -1754,6 +1754,7 @@ export const useTradingBot = (
             symbol,
             Number.isFinite(requestedQty) && requestedQty > 0 ? requestedQty : defaultQty
         );
+        const newTradeNotional = safeEntry * orderQty;
         const maxOpen = settingsRef.current.maxOpenPositions ?? 2;
         if (activePositionsRef.current.length >= maxOpen) {
             addLog({
