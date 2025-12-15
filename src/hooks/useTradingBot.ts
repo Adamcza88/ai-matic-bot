@@ -407,6 +407,8 @@ function buildZone(candles: Candle[], bosIdx: number, direction: "buy" | "sell")
     return null;
 }
 
+type StructureDebug = { structure: StructureResult; reason: string } | { structure: null; reason: string };
+
 function evaluateMarketStructure(
     c4h: Candle[],
     c1h: Candle[],
@@ -414,6 +416,17 @@ function evaluateMarketStructure(
     c5: Candle[],
     symbol: string
 ): StructureResult {
+    const res = evaluateMarketStructureWithReason(c4h, c1h, c15, c5, symbol);
+    return res.structure;
+}
+
+function evaluateMarketStructureWithReason(
+    c4h: Candle[],
+    c1h: Candle[],
+    c15: Candle[],
+    c5: Candle[],
+    symbol: string
+): StructureDebug {
     const gates: string[] = [];
 
     const bias4h = (() => {
@@ -423,7 +436,7 @@ function evaluateMarketStructure(
         if (bosDn && (!bosUp || bosDn.idx > bosUp.idx)) return "bearish" as StructureBias;
         return null;
     })();
-    if (!bias4h) return null;
+    if (!bias4h) return { structure: null, reason: "HTF_BIAS" };
     gates.push("HTF_BIAS_OK");
 
     const bias1h = (() => {
@@ -433,7 +446,7 @@ function evaluateMarketStructure(
         if (bosDn && (!bosUp || bosDn.idx > bosUp.idx)) return "bearish" as StructureBias;
         return null;
     })();
-    if (bias1h !== bias4h) return null;
+    if (bias1h !== bias4h) return { structure: null, reason: "HTF_CONFIRM" };
     gates.push("HTF_CONFIRM_OK");
 
     const choch15 = (() => {
@@ -443,24 +456,24 @@ function evaluateMarketStructure(
         if (bias4h === "bearish" && bosDn) return "bearish";
         return null;
     })();
-    if (!choch15) return null;
+    if (!choch15) return { structure: null, reason: "LTF_CHOCH" };
     gates.push("LTF_CHOCH_OK");
 
     const bos5 = findLastSwingBreak(c5, bias4h);
-    if (!bos5) return null;
+    if (!bos5) return { structure: null, reason: "LTF_BOS" };
     gates.push("LTF_BOS_OK");
 
     const dir: "buy" | "sell" = bias4h === "bullish" ? "buy" : "sell";
     const zone = buildZone(c5, bos5.idx, dir);
-    if (!zone) return null;
+    if (!zone) return { structure: null, reason: "ZONE" };
     gates.push("ZONE_DEFINED_OK");
 
     const lastClose = c5[c5.length - 1]?.close;
-    if (!Number.isFinite(lastClose)) return null;
+    if (!Number.isFinite(lastClose)) return { structure: null, reason: "PRICE" };
     const inZone =
         lastClose >= Math.min(zone.zoneLow, zone.zoneHigh) &&
         lastClose <= Math.max(zone.zoneLow, zone.zoneHigh);
-    if (!inZone) return null;
+    if (!inZone) return { structure: null, reason: "RETEST" };
     gates.push("RETEST_OK");
 
     const entry = lastClose;
@@ -472,16 +485,19 @@ function evaluateMarketStructure(
     const netR = netRrr(entry, sl, tp1, TAKER_FEE);
 
     return {
-        bias: bias4h,
-        zoneHigh: zone.zoneHigh,
-        zoneLow: zone.zoneLow,
-        entry,
-        sl,
-        tp1,
-        tp2,
-        netRrr: netR,
-        direction: dir,
-        gates,
+        structure: {
+            bias: bias4h,
+            zoneHigh: zone.zoneHigh,
+            zoneLow: zone.zoneLow,
+            entry,
+            sl,
+            tp1,
+            tp2,
+            netRrr: netR,
+            direction: dir,
+            gates,
+        },
+        reason: netR >= 1.5 ? "OK" : "NET_RRR",
     };
 }
 
@@ -1623,31 +1639,32 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
                 const newHistory: any = { ...priceHistoryRef.current };
                 const structCandidates: { symbol: string; signal: PendingSignal; netRrr: number; structureScore: number }[] = [];
 
-                for (const symbol of SYMBOLS) {
-                    const fetchInterval = async (interval: string, limit = 200) => {
-                        const url = `${URL_KLINE}&symbol=${symbol}&interval=${interval}&limit=${limit}`;
-                        const res = await fetch(url);
-                        const json = await res.json();
-                        if (json.retCode !== 0) throw new Error(json.retMsg);
-                        return parseKlines(json.result?.list ?? []);
-                    };
+        for (const symbol of SYMBOLS) {
+            const fetchInterval = async (interval: string, limit = 200) => {
+                const url = `${URL_KLINE}&symbol=${symbol}&interval=${interval}&limit=${limit}`;
+                const res = await fetch(url);
+                const json = await res.json();
+                if (json.retCode !== 0) throw new Error(json.retMsg);
+                return parseKlines(json.result?.list ?? []);
+            };
 
-                    const c5 = await fetchInterval("5", 200);
-                    const c15 = await fetchInterval("15", 200);
-                    const c1h = await fetchInterval("60", 200);
-                    const c4h = await fetchInterval("240", 200);
-                    if (!c5.length || !c15.length || !c1h.length || !c4h.length) continue;
+            const c5 = await fetchInterval("5", 200);
+            const c15 = await fetchInterval("15", 200);
+            const c1h = await fetchInterval("60", 200);
+            const c4h = await fetchInterval("240", 200);
+            if (!c5.length || !c15.length || !c1h.length || !c4h.length) continue;
 
-                    newHistory[symbol] = c5;
-                    newPrices[symbol] = c5[c5.length - 1].close;
+            newHistory[symbol] = c5;
+            newPrices[symbol] = c5[c5.length - 1].close;
 
-                    const structure = evaluateMarketStructure(c4h, c1h, c15, c5, symbol);
-                    if (structure && structure.netRrr >= 1.5) {
-                        const sig: PendingSignal = {
-                            id: `${symbol}-ms-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-                            symbol,
-                            profile: "intraday",
-                            kind: "BREAKOUT",
+            const structureDebug = evaluateMarketStructureWithReason(c4h, c1h, c15, c5, symbol);
+            const structure = structureDebug.structure;
+            if (structure && structure.netRrr >= 1.5) {
+                const sig: PendingSignal = {
+                    id: `${symbol}-ms-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+                    symbol,
+                    profile: "intraday",
+                    kind: "BREAKOUT",
                             risk: Math.min(0.95, Math.max(0.5, structure.netRrr / 2)),
                             createdAt: new Date().toISOString(),
                             intent: {
@@ -1659,11 +1676,20 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
                                 qty: 0,
                             },
                             message: `MS ${structure.direction.toUpperCase()} netRRR ${structure.netRrr.toFixed(2)} gates ${structure.gates.join(",")}`,
-                        };
-                        const structureScore = structure.gates.length / 6;
-                        structCandidates.push({ symbol, signal: sig, netRrr: structure.netRrr, structureScore });
-                    }
+                    };
+                    const structureScore = structure.gates.length / 6;
+                    structCandidates.push({ symbol, signal: sig, netRrr: structure.netRrr, structureScore });
+            } else {
+                // Debug log for missing signals (sampled)
+                const nowSec = Math.floor(Date.now() / 1000);
+                if (nowSec % 180 === 0) {
+                    addLog({
+                        action: "SYSTEM",
+                        message: `NO SIGNAL ${symbol} reason ${structureDebug.reason}`,
+                    });
                 }
+            }
+        }
 
                 if (cancel) return;
 

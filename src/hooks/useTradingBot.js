@@ -113,7 +113,7 @@ const AI_MATIC_X_PRESET = {
     tradingEndHour: 23,
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
 };
-export const INITIAL_RISK_SETTINGS = AI_MATIC_X_PRESET;
+export const INITIAL_RISK_SETTINGS = AI_MATIC_PRESET;
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 function loadStoredSettings() {
     try {
@@ -368,6 +368,10 @@ function buildZone(candles, bosIdx, direction) {
     return null;
 }
 function evaluateMarketStructure(c4h, c1h, c15, c5, symbol) {
+    const res = evaluateMarketStructureWithReason(c4h, c1h, c15, c5, symbol);
+    return res.structure;
+}
+function evaluateMarketStructureWithReason(c4h, c1h, c15, c5, symbol) {
     const gates = [];
     const bias4h = (() => {
         const bosUp = findLastSwingBreak(c4h, "bullish");
@@ -379,7 +383,7 @@ function evaluateMarketStructure(c4h, c1h, c15, c5, symbol) {
         return null;
     })();
     if (!bias4h)
-        return null;
+        return { structure: null, reason: "HTF_BIAS" };
     gates.push("HTF_BIAS_OK");
     const bias1h = (() => {
         const bosUp = findLastSwingBreak(c1h, "bullish");
@@ -391,7 +395,7 @@ function evaluateMarketStructure(c4h, c1h, c15, c5, symbol) {
         return null;
     })();
     if (bias1h !== bias4h)
-        return null;
+        return { structure: null, reason: "HTF_CONFIRM" };
     gates.push("HTF_CONFIRM_OK");
     const choch15 = (() => {
         const bosUp = findLastSwingBreak(c15, "bullish");
@@ -403,24 +407,24 @@ function evaluateMarketStructure(c4h, c1h, c15, c5, symbol) {
         return null;
     })();
     if (!choch15)
-        return null;
+        return { structure: null, reason: "LTF_CHOCH" };
     gates.push("LTF_CHOCH_OK");
     const bos5 = findLastSwingBreak(c5, bias4h);
     if (!bos5)
-        return null;
+        return { structure: null, reason: "LTF_BOS" };
     gates.push("LTF_BOS_OK");
     const dir = bias4h === "bullish" ? "buy" : "sell";
     const zone = buildZone(c5, bos5.idx, dir);
     if (!zone)
-        return null;
+        return { structure: null, reason: "ZONE" };
     gates.push("ZONE_DEFINED_OK");
     const lastClose = c5[c5.length - 1]?.close;
     if (!Number.isFinite(lastClose))
-        return null;
+        return { structure: null, reason: "PRICE" };
     const inZone = lastClose >= Math.min(zone.zoneLow, zone.zoneHigh) &&
         lastClose <= Math.max(zone.zoneLow, zone.zoneHigh);
     if (!inZone)
-        return null;
+        return { structure: null, reason: "RETEST" };
     gates.push("RETEST_OK");
     const entry = lastClose;
     const buffer = Math.max(entry * STOP_MIN_PCT, entry * 0.0005);
@@ -430,16 +434,19 @@ function evaluateMarketStructure(c4h, c1h, c15, c5, symbol) {
     const tp2 = dir === "buy" ? entry + 2 * r : entry - 2 * r;
     const netR = netRrr(entry, sl, tp1, TAKER_FEE);
     return {
-        bias: bias4h,
-        zoneHigh: zone.zoneHigh,
-        zoneLow: zone.zoneLow,
-        entry,
-        sl,
-        tp1,
-        tp2,
-        netRrr: netR,
-        direction: dir,
-        gates,
+        structure: {
+            bias: bias4h,
+            zoneHigh: zone.zoneHigh,
+            zoneLow: zone.zoneLow,
+            entry,
+            sl,
+            tp1,
+            tp2,
+            netRrr: netR,
+            direction: dir,
+            gates,
+        },
+        reason: netR >= 1.5 ? "OK" : "NET_RRR",
     };
 }
 function findRecentHigherLow(candles, lookback = 60) {
@@ -1469,7 +1476,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         continue;
                     newHistory[symbol] = c5;
                     newPrices[symbol] = c5[c5.length - 1].close;
-                    const structure = evaluateMarketStructure(c4h, c1h, c15, c5, symbol);
+                    const structureDebug = evaluateMarketStructureWithReason(c4h, c1h, c15, c5, symbol);
+                    const structure = structureDebug.structure;
                     if (structure && structure.netRrr >= 1.5) {
                         const sig = {
                             id: `${symbol}-ms-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
@@ -1490,6 +1498,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         };
                         const structureScore = structure.gates.length / 6;
                         structCandidates.push({ symbol, signal: sig, netRrr: structure.netRrr, structureScore });
+                    }
+                    else {
+                        // Debug log for missing signals (sampled)
+                        const nowSec = Math.floor(Date.now() / 1000);
+                        if (nowSec % 180 === 0) {
+                            addLog({
+                                action: "SYSTEM",
+                                message: `NO SIGNAL ${symbol} reason ${structureDebug.reason}`,
+                            });
+                        }
                     }
                 }
                 if (cancel)
