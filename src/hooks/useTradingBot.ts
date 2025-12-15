@@ -1795,11 +1795,17 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
                 const cursor = json?.data?.result?.nextPageCursor || json?.result?.nextPageCursor;
                 const seen = processedExecIdsRef.current;
                 const allowedSymbols = new Set(SYMBOLS);
+                const nowMs = Date.now();
+                const freshMs = 5 * 60 * 1000; // show only last 5 minutes
                 list.forEach((e: any) => {
                     const id = e.execId || e.tradeId;
                     if (!id || seen.has(id)) return;
                     if (e.symbol && !allowedSymbols.has(e.symbol)) return;
                     seen.add(id);
+                    const execTs = e.execTime ? Number(e.execTime) : Date.now();
+                    if (!Number.isFinite(execTs)) return;
+                    const isFresh = nowMs - execTs <= freshMs;
+                    if (!isFresh) return;
                     executionEventsRef.current = [
                         {
                             id,
@@ -1808,7 +1814,7 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
                             orderLinkId: e.orderLinkId || e.orderLinkID || e.clientOrderId,
                             price: Number(e.execPrice ?? e.price ?? 0),
                             qty: Number(e.execQty ?? e.qty ?? 0),
-                            time: e.execTime ? new Date(Number(e.execTime)).toISOString() : new Date().toISOString(),
+                            time: new Date(execTs).toISOString(),
                         },
                         ...executionEventsRef.current,
                     ].slice(0, 200);
