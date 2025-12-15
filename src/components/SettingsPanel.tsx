@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { AISettings } from "../types";
 
 interface Props {
@@ -14,7 +14,87 @@ const SettingsPanel: React.FC<Props> = ({
   onUpdateSettings,
   onClose,
 }) => {
-  const [local] = useState(settings);
+  const local = settings;
+
+  const AI_MATIC_PRESET_UI: AISettings = {
+    riskMode: "ai-matic",
+    strictRiskAdherence: true,
+    pauseOnHighVolatility: false,
+    avoidLowLiquidity: false,
+    useTrendFollowing: true,
+    smcScalpMode: true,
+    useLiquiditySweeps: false,
+    useVolatilityExpansion: true,
+    maxDailyLossPercent: 0.07,
+    maxDailyProfitPercent: 0.5,
+    maxDrawdownPercent: 0.2,
+    baseRiskPerTrade: 0.02,
+    maxPortfolioRiskPercent: 0.2,
+    maxAllocatedCapitalPercent: 1.0,
+    maxOpenPositions: 2,
+    strategyProfile: "auto",
+    entryStrictness: "base",
+    enforceSessionHours: true,
+    haltOnDailyLoss: true,
+    haltOnDrawdown: true,
+    useDynamicPositionSizing: true,
+    lockProfitsWithTrail: true,
+    requireConfirmationInAuto: false,
+    positionSizingMultiplier: 1.0,
+    customInstructions: "",
+    customStrategy: "",
+    min24hVolume: 50,
+    minProfitFactor: 1.0,
+    minWinRate: 65,
+    tradingStartHour: 0,
+    tradingEndHour: 23,
+    tradingDays: [0, 1, 2, 3, 4, 5, 6],
+  };
+
+  const AI_MATIC_X_PRESET_UI: AISettings = {
+    riskMode: "ai-matic-x",
+    strictRiskAdherence: true,
+    pauseOnHighVolatility: false,
+    avoidLowLiquidity: false,
+    useTrendFollowing: true,
+    smcScalpMode: true,
+    useLiquiditySweeps: false,
+    useVolatilityExpansion: true,
+    maxDailyLossPercent: 0.1,
+    maxDailyProfitPercent: 1.0,
+    maxDrawdownPercent: 0.2,
+    baseRiskPerTrade: 0.02,
+    maxPortfolioRiskPercent: 0.2,
+    maxAllocatedCapitalPercent: 1.0,
+    maxOpenPositions: 2,
+    strategyProfile: "auto",
+    entryStrictness: "ultra",
+    enforceSessionHours: false,
+    haltOnDailyLoss: true,
+    haltOnDrawdown: true,
+    useDynamicPositionSizing: true,
+    lockProfitsWithTrail: true,
+    requireConfirmationInAuto: false,
+    positionSizingMultiplier: 1.2,
+    customInstructions: "",
+    customStrategy: "",
+    min24hVolume: 50,
+    minProfitFactor: 1.1,
+    minWinRate: 65,
+    tradingStartHour: 0,
+    tradingEndHour: 23,
+    tradingDays: [0, 1, 2, 3, 4, 5, 6],
+  };
+
+  const presets: Record<AISettings["riskMode"], AISettings> = {
+    "ai-matic": AI_MATIC_PRESET_UI,
+    "ai-matic-x": AI_MATIC_X_PRESET_UI,
+  };
+
+  const applyPreset = (mode: AISettings["riskMode"]) => {
+    const preset = presets[mode];
+    onUpdateSettings(preset);
+  };
 
   return (
     <div className="fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50">
@@ -35,7 +115,7 @@ const SettingsPanel: React.FC<Props> = ({
             </label>
             <div className="flex gap-2">
               <button
-                onClick={() => onUpdateSettings({ ...local, riskMode: "ai-matic" })}
+                onClick={() => applyPreset("ai-matic")}
                 className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic"
                     ? "bg-emerald-600 text-white"
@@ -45,7 +125,7 @@ const SettingsPanel: React.FC<Props> = ({
                 AI-Matic
               </button>
               <button
-                onClick={() => onUpdateSettings({ ...local, riskMode: "ai-matic-x" })}
+                onClick={() => applyPreset("ai-matic-x")}
                 className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic-x"
                     ? "bg-emerald-600 text-white"

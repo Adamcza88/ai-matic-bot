@@ -31,12 +31,18 @@ export async function placeLimitWithProtection(input) {
     if (!orderId)
         throw new Error("Missing orderId after create");
     const fill = await client.waitForFill(orderId, timeoutMs);
-    if (!fill.filled) {
+    if (!fill.filled && !fill.partialQty) {
         await client.cancelOrder(orderId);
         throw new Error("Fill timeout");
     }
     const prot = await client.setProtection(orderId, { stopLoss });
     if (!prot.ok)
         throw new Error(`Protection failed: ${prot.error || "unknown"}`);
-    return { orderId, filled: true, avgPrice: fill.avgPrice, stopSet: prot.ok };
+    return {
+        orderId,
+        filled: fill.filled,
+        avgPrice: fill.avgPrice,
+        stopSet: prot.ok,
+        filledQty: fill.partialQty,
+    };
 }

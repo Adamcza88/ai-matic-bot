@@ -20,6 +20,7 @@ const makeClient = (opts = {}) => {
       assert.equal(orderId, "oid-1");
       assert.ok(timeoutMs > 0);
       if (opts.timeoutFill) return { filled: false };
+      if (opts.partial) return { filled: false, partialQty: 0.005, avgPrice: 100 };
       return { filled: true, avgPrice: 100 };
     },
     async setProtection(orderId, payload) {
@@ -94,4 +95,19 @@ test("fail when protection cannot be set", async () => {
       }),
     /Protection failed/
   );
+});
+
+test("partial fill still sets protection and returns filledQty", async () => {
+  const client = makeClient({ partial: true });
+  const res = await placeLimitWithProtection({
+    client,
+    symbol: "BTCUSDT",
+    side: "Buy",
+    price: 100,
+    qty: 0.01,
+    stopLoss: 99,
+  });
+  assert.equal(res.filled, false);
+  assert.equal(res.filledQty, 0.005);
+  assert.equal(client.state.protected, 1);
 });

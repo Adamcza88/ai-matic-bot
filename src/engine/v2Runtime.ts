@@ -1,5 +1,6 @@
 // src/engine/v2Runtime.ts
 import { OrderPlanV2, RiskSnapshotV2, SignalV2, TradeDirection } from "./v2Contracts";
+import { placeLimitWithProtection, BybitClient, PlaceOrderResult } from "./bybitAdapterV2";
 
 type State = "SCAN" | "PLACE" | "MANAGE" | "EXIT";
 type FeeModel = "maker" | "taker";
@@ -30,6 +31,12 @@ export class V2Runtime {
   logs: RuntimeLog[] = [];
   ordersTimestamps: number[] = [];
   openPositions: Position[] = [];
+  allowedTransitions: Record<State, State[]> = {
+    SCAN: ["PLACE", "SCAN"],
+    PLACE: ["MANAGE", "EXIT", "SCAN"],
+    MANAGE: ["EXIT", "MANAGE"],
+    EXIT: ["SCAN"],
+  };
 
   constructor(private cfg: RuntimeConfig) {}
 
@@ -38,10 +45,18 @@ export class V2Runtime {
     this.logs = this.logs.slice(0, 200);
   }
 
-  private enforceState(expected: State) {
-    if (this.state !== expected) {
-      throw new Error(`Invalid transition: state ${this.state} expected ${expected}`);
+  private enforceState(expected: State | State[]) {
+    const arr = Array.isArray(expected) ? expected : [expected];
+    if (!arr.includes(this.state)) {
+      throw new Error(`Invalid transition: state ${this.state} expected ${arr.join(",")}`);
     }
+  }
+
+  private transition(next: State) {
+    if (!this.allowedTransitions[this.state].includes(next)) {
+      throw new Error(`Forbidden transition ${this.state} -> ${next}`);
+    }
+    this.state = next;
   }
 
   private throttleOrders() {
@@ -99,8 +114,9 @@ export class V2Runtime {
       reduceOnly: false,
       clientOrderId: `v2-${Date.now()}`,
     };
-    this.state = "PLACE";
+    this.transition("PLACE");
     this.log("SIGNAL", { signal, feeModel, plan });
+    this.logRisk(snapshot);
     return plan;
   }
 
@@ -110,9 +126,9 @@ export class V2Runtime {
   }
 
   handleFill(orderId: string, symbol: string, side: TradeDirection, entry: number, qty: number, stop: number) {
-    this.enforceState("PLACE");
+    this.enforceState(["PLACE", "MANAGE"]);
     this.openPositions.push({ symbol, side, entry, stop, qty, slActive: true });
-    this.state = "MANAGE";
+    this.transition("MANAGE");
     this.log("FILL", { orderId, symbol, side, entry, qty, stop });
   }
 
@@ -145,5 +161,43 @@ export class V2Runtime {
   setSafeMode(on: boolean) {
     this.safeMode = on;
     this.log("SAFE_MODE", { on });
+  }
+
+  async placeWithAdapter(
+    client: BybitClient,
+    signal: SignalV2,
+    snapshot: RiskSnapshotV2,
+    stop: number
+  ): Promise<PlaceOrderResult> {
+    const plan = this.requestPlace(signal, snapshot, "taker", stop);
+    const res = await placeLimitWithProtection({
+      client,
+      symbol: plan.symbol,
+      side: plan.direction === "buy" ? "Buy" : "Sell",
+      price: plan.entryPrice,
+      qty: plan.size,
+      stopLoss: plan.stopLoss,
+      idempotencyKey: plan.clientOrderId,
+    });
+    this.handleOrderAck(res.orderId);
+    this.handleFill(
+      res.orderId,
+      plan.symbol,
+      plan.direction === "buy" ? "long" : "short",
+      res.avgPrice ?? plan.entryPrice,
+      plan.size,
+      plan.stopLoss
+    );
+    return res;
+  }
+
+  logRisk(snapshot: RiskSnapshotV2) {
+    this.log("RISK_SNAPSHOT", {
+      balance: snapshot.balance,
+      riskPerTradeUsd: snapshot.riskPerTradeUsd,
+      totalOpenRiskUsd: snapshot.totalOpenRiskUsd,
+      maxAllowedRiskUsd: snapshot.maxAllowedRiskUsd,
+      maxPositions: snapshot.maxPositions,
+    });
   }
 }

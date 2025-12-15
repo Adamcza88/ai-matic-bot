@@ -6,7 +6,10 @@ export type OrderSide = "Buy" | "Sell";
 export interface BybitClient {
   createOrder(payload: any): Promise<{ ok: boolean; orderId?: string; error?: string }>;
   cancelOrder(orderId: string): Promise<{ ok: boolean; error?: string }>;
-  waitForFill(orderId: string, timeoutMs: number): Promise<{ filled: boolean; avgPrice?: number }>;
+  waitForFill(
+    orderId: string,
+    timeoutMs: number
+  ): Promise<{ filled: boolean; avgPrice?: number; partialQty?: number }>;
   setProtection(orderId: string, payload: { stopLoss: number }): Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -27,6 +30,7 @@ export type PlaceOrderResult = {
   filled: boolean;
   avgPrice?: number;
   stopSet: boolean;
+  filledQty?: number;
 };
 
 const isRetryable = (err?: string) => {
@@ -71,7 +75,7 @@ export async function placeLimitWithProtection(input: PlaceOrderInput): Promise<
   if (!orderId) throw new Error("Missing orderId after create");
 
   const fill = await client.waitForFill(orderId, timeoutMs);
-  if (!fill.filled) {
+  if (!fill.filled && !fill.partialQty) {
     await client.cancelOrder(orderId);
     throw new Error("Fill timeout");
   }
@@ -79,5 +83,11 @@ export async function placeLimitWithProtection(input: PlaceOrderInput): Promise<
   const prot = await client.setProtection(orderId, { stopLoss });
   if (!prot.ok) throw new Error(`Protection failed: ${prot.error || "unknown"}`);
 
-  return { orderId, filled: true, avgPrice: fill.avgPrice, stopSet: prot.ok };
+  return {
+    orderId,
+    filled: fill.filled,
+    avgPrice: fill.avgPrice,
+    stopSet: prot.ok,
+    filledQty: fill.partialQty,
+  };
 }

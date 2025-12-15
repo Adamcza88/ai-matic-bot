@@ -1,3 +1,4 @@
+import { placeLimitWithProtection } from "./bybitAdapterV2";
 export class V2Runtime {
     cfg;
     state = "SCAN";
@@ -6,6 +7,12 @@ export class V2Runtime {
     logs = [];
     ordersTimestamps = [];
     openPositions = [];
+    allowedTransitions = {
+        SCAN: ["PLACE", "SCAN"],
+        PLACE: ["MANAGE", "EXIT", "SCAN"],
+        MANAGE: ["EXIT", "MANAGE"],
+        EXIT: ["SCAN"],
+    };
     constructor(cfg) {
         this.cfg = cfg;
     }
@@ -14,9 +21,16 @@ export class V2Runtime {
         this.logs = this.logs.slice(0, 200);
     }
     enforceState(expected) {
-        if (this.state !== expected) {
-            throw new Error(`Invalid transition: state ${this.state} expected ${expected}`);
+        const arr = Array.isArray(expected) ? expected : [expected];
+        if (!arr.includes(this.state)) {
+            throw new Error(`Invalid transition: state ${this.state} expected ${arr.join(",")}`);
         }
+    }
+    transition(next) {
+        if (!this.allowedTransitions[this.state].includes(next)) {
+            throw new Error(`Forbidden transition ${this.state} -> ${next}`);
+        }
+        this.state = next;
     }
     throttleOrders() {
         const now = Date.now();
@@ -70,8 +84,9 @@ export class V2Runtime {
             reduceOnly: false,
             clientOrderId: `v2-${Date.now()}`,
         };
-        this.state = "PLACE";
+        this.transition("PLACE");
         this.log("SIGNAL", { signal, feeModel, plan });
+        this.logRisk(snapshot);
         return plan;
     }
     handleOrderAck(orderId) {
@@ -79,9 +94,9 @@ export class V2Runtime {
         this.log("ORDER_ACK", { orderId });
     }
     handleFill(orderId, symbol, side, entry, qty, stop) {
-        this.enforceState("PLACE");
+        this.enforceState(["PLACE", "MANAGE"]);
         this.openPositions.push({ symbol, side, entry, stop, qty, slActive: true });
-        this.state = "MANAGE";
+        this.transition("MANAGE");
         this.log("FILL", { orderId, symbol, side, entry, qty, stop });
     }
     adjustStop(symbol, newStop) {
@@ -112,5 +127,29 @@ export class V2Runtime {
     setSafeMode(on) {
         this.safeMode = on;
         this.log("SAFE_MODE", { on });
+    }
+    async placeWithAdapter(client, signal, snapshot, stop) {
+        const plan = this.requestPlace(signal, snapshot, "taker", stop);
+        const res = await placeLimitWithProtection({
+            client,
+            symbol: plan.symbol,
+            side: plan.direction === "buy" ? "Buy" : "Sell",
+            price: plan.entryPrice,
+            qty: plan.size,
+            stopLoss: plan.stopLoss,
+            idempotencyKey: plan.clientOrderId,
+        });
+        this.handleOrderAck(res.orderId);
+        this.handleFill(res.orderId, plan.symbol, plan.direction === "buy" ? "long" : "short", res.avgPrice ?? plan.entryPrice, plan.size, plan.stopLoss);
+        return res;
+    }
+    logRisk(snapshot) {
+        this.log("RISK_SNAPSHOT", {
+            balance: snapshot.balance,
+            riskPerTradeUsd: snapshot.riskPerTradeUsd,
+            totalOpenRiskUsd: snapshot.totalOpenRiskUsd,
+            maxAllowedRiskUsd: snapshot.maxAllowedRiskUsd,
+            maxPositions: snapshot.maxPositions,
+        });
     }
 }
