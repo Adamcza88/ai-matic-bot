@@ -43,6 +43,7 @@ export default function Dashboard({
     pendingSignals,
     activePositions,
     logEntries,
+    updateSettings,
     closePosition,
     entryHistory,
     testnetOrders,
@@ -207,16 +208,34 @@ export default function Dashboard({
           </CardHeader>
           <CardContent>
             <div className="space-y-2 text-sm">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant={settings.riskMode === "ai-matic" ? "secondary" : "ghost"}
+                  className={settings.riskMode === "ai-matic" ? "bg-emerald-600 text-white hover:bg-emerald-700" : "text-slate-300 hover:text-white"}
+                  onClick={() => updateSettings({ ...settings, riskMode: "ai-matic" })}
+                >
+                  AI-Matic
+                </Button>
+                <Button
+                  size="sm"
+                  variant={settings.riskMode === "ai-matic-x" ? "secondary" : "ghost"}
+                  className={settings.riskMode === "ai-matic-x" ? "bg-emerald-600 text-white hover:bg-emerald-700" : "text-slate-300 hover:text-white"}
+                  onClick={() => updateSettings({ ...settings, riskMode: "ai-matic-x" })}
+                >
+                  AI-Matic-X
+                </Button>
+              </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Profile</span>
                 <Badge variant="secondary" className="bg-emerald-600/80 text-white">
-                  AI-Matic (locked)
+                  {settings.riskMode === "ai-matic-x" ? "AI-Matic-X" : "AI-Matic"}
                 </Badge>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Risk Engine</span>
                 <Badge variant="outline" className="border-emerald-500/40 text-emerald-200 bg-emerald-900/30">
-                  AI-Matic (locked)
+                  {settings.riskMode === "ai-matic-x" ? "AI-Matic-X" : "AI-Matic"}
                 </Badge>
               </div>
               <div className="flex justify-between">
