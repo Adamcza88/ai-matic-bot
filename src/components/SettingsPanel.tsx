@@ -5,22 +5,14 @@ interface Props {
   theme: string;
   lang: string;
   settings: AISettings;
-  onUpdateSettings: (s: AISettings) => void;
   onClose: () => void;
 }
 
 const SettingsPanel: React.FC<Props> = ({
   settings,
-  onUpdateSettings,
   onClose,
 }) => {
-  const [local, setLocal] = useState(settings);
-
-  const update = (field: keyof AISettings, value: any) => {
-    const updated = { ...local, [field]: value };
-    setLocal(updated);
-    onUpdateSettings(updated);
-  };
+  const [local] = useState(settings);
 
   return (
     <div className="fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50">
@@ -30,7 +22,7 @@ const SettingsPanel: React.FC<Props> = ({
             Settings
           </h2>
           <p className="text-sm text-muted-foreground">
-            Configure your AI trading parameters.
+            AI-Matic je uzamčený profil (pouze ke čtení).
           </p>
         </div>
 
@@ -39,27 +31,8 @@ const SettingsPanel: React.FC<Props> = ({
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Strategy Profile
             </label>
-            <div className="flex gap-2 flex-wrap">
-              {[
-                { key: "off", label: "Off" },
-                { key: "auto", label: "Auto" },
-                { key: "scalp", label: "Scalp" },
-                { key: "intraday", label: "Intraday" },
-                { key: "swing", label: "Swing" },
-                { key: "trend", label: "Trend" },
-              ].map((opt) => (
-                <button
-                  key={opt.key}
-                  onClick={() => update("strategyProfile", opt.key as any)}
-                  className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input hover:bg-accent hover:text-accent-foreground h-9 px-3 ${
-                    local.strategyProfile === opt.key
-                      ? "bg-primary text-primary-foreground hover:bg-primary/90 border-primary"
-                      : "bg-background"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+            <div className="rounded-md border border-input bg-emerald-600/80 text-white px-3 py-2 text-sm">
+              AI-Matic (locked)
             </div>
           </div>
 
@@ -67,25 +40,8 @@ const SettingsPanel: React.FC<Props> = ({
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Entry Strictness
             </label>
-            <div className="flex gap-2 flex-wrap">
-              {[
-                { key: "base", label: "Base" },
-                { key: "relaxed", label: "Relaxed" },
-                { key: "ultra", label: "Ultra" },
-                { key: "test", label: "Test" },
-              ].map((opt) => (
-                <button
-                  key={opt.key}
-                  onClick={() => update("entryStrictness", opt.key as any)}
-                  className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input hover:bg-accent hover:text-accent-foreground h-9 px-3 ${
-                    local.entryStrictness === opt.key
-                      ? "bg-blue-600 text-white hover:bg-blue-700 border-blue-600"
-                      : "bg-background"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              {local.entryStrictness} (locked)
             </div>
           </div>
 
@@ -93,27 +49,8 @@ const SettingsPanel: React.FC<Props> = ({
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Enforce Trading Hours
             </label>
-            <div className="flex gap-2">
-              <button
-                onClick={() => update("enforceSessionHours", true)}
-                className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border h-9 px-3 ${
-                  local.enforceSessionHours
-                    ? "bg-amber-500 text-black hover:bg-amber-600 border-amber-500"
-                    : "bg-background text-slate-300 border-input hover:bg-accent hover:text-accent-foreground"
-                }`}
-              >
-                On
-              </button>
-              <button
-                onClick={() => update("enforceSessionHours", false)}
-                className={`inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border h-9 px-3 ${
-                  !local.enforceSessionHours
-                    ? "bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600"
-                    : "bg-background text-slate-300 border-input hover:bg-accent hover:text-accent-foreground"
-                }`}
-              >
-                Off
-              </button>
+            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              {local.enforceSessionHours ? "On" : "Off"} (locked)
             </div>
           </div>
 
@@ -122,29 +59,17 @@ const SettingsPanel: React.FC<Props> = ({
               <label className="text-sm font-medium leading-none">
                 Base Risk %
               </label>
-              <input
-                type="number"
-                step="0.01"
-                value={local.baseRiskPerTrade}
-                onChange={(e) =>
-                  update("baseRiskPerTrade", Number(e.target.value))
-                }
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-              />
+              <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+                {(local.baseRiskPerTrade * 100).toFixed(2)}%
+              </div>
             </div>
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none">
                 Max Drawdown %
               </label>
-              <input
-                type="number"
-                step="0.01"
-                value={local.maxDrawdownPercent}
-                onChange={(e) =>
-                  update("maxDrawdownPercent", Number(e.target.value))
-                }
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-              />
+              <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+                {(local.maxDrawdownPercent * 100).toFixed(2)}%
+              </div>
             </div>
           </div>
 
@@ -152,11 +77,9 @@ const SettingsPanel: React.FC<Props> = ({
             <label className="text-sm font-medium leading-none">
               Custom Strategy
             </label>
-            <textarea
-              value={local.customStrategy}
-              onChange={(e) => update("customStrategy", e.target.value)}
-              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            />
+            <div className="flex min-h-[80px] w-full rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              Locked for AI-Matic
+            </div>
           </div>
         </div>
 

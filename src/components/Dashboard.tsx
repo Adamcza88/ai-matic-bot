@@ -393,42 +393,48 @@ export default function Dashboard({
         {/* === LIVE FEED === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-slate-400">Live Feed</CardTitle>
+            <CardTitle className="text-sm font-medium text-slate-400">
+              Live Feed {useTestnet ? "(hidden on Testnet)" : "(Mainnet)"}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-[360px] overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-              {logEntries.length === 0 ? (
+              {useTestnet ? (
                 <div className="text-sm text-slate-500 italic">
-                  No activity yet.
+                  Live feed je z bezpečnostních důvodů skrytý na Testnetu. Přepni na MAINNET pro zobrazení.
                 </div>
-              ) : (
-                logEntries
-                  .filter((l) => {
-                    const msg = l.message || "";
-                    const allowed = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
-                    return allowed.some((s) => msg.includes(s));
-                  })
-                  .slice(0, 10)
-                  .map((l) => (
-                  <div
-                    key={l.id}
-                    className="text-sm flex gap-3 py-2 border-b border-white/5 last:border-0"
-                  >
-                    <span className="text-slate-500 text-xs whitespace-nowrap font-mono w-20">
-                      {new Date(l.timestamp).toLocaleTimeString([], {
-                        hour12: false,
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        second: "2-digit",
-                      })}
-                    </span>
-                    <span className="font-medium text-blue-400 w-24 text-xs uppercase tracking-wider">
-                      {l.action}
-                    </span>
-                    <span className="text-slate-300">{l.message}</span>
+              ) : logEntries.length === 0 ? (
+                  <div className="text-sm text-slate-500 italic">
+                    No activity yet.
                   </div>
-                ))
-              )}
+                ) : (
+                  logEntries
+                    .filter((l) => {
+                      const msg = l.message || "";
+                      const allowed = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
+                      return allowed.some((s) => msg.includes(s));
+                    })
+                    .slice(0, 10)
+                    .map((l) => (
+                      <div
+                        key={l.id}
+                        className="text-sm flex gap-3 py-2 border-b border-white/5 last:border-0"
+                      >
+                        <span className="text-slate-500 text-xs whitespace-nowrap font-mono w-20">
+                          {new Date(l.timestamp).toLocaleTimeString([], {
+                            hour12: false,
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            second: "2-digit",
+                          })}
+                        </span>
+                        <span className="font-medium text-blue-400 w-24 text-xs uppercase tracking-wider">
+                          {l.action}
+                        </span>
+                        <span className="text-slate-300">{l.message}</span>
+                      </div>
+                    ))
+                )}
             </div>
           </CardContent>
         </Card>
