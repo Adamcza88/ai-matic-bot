@@ -5,11 +5,13 @@ interface Props {
   theme: string;
   lang: string;
   settings: AISettings;
+  onUpdateSettings: (s: AISettings) => void;
   onClose: () => void;
 }
 
 const SettingsPanel: React.FC<Props> = ({
   settings,
+  onUpdateSettings,
   onClose,
 }) => {
   const [local] = useState(settings);
@@ -31,8 +33,27 @@ const SettingsPanel: React.FC<Props> = ({
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Strategy Profile
             </label>
-            <div className="rounded-md border border-input bg-emerald-600/80 text-white px-3 py-2 text-sm">
-              AI-Matic (locked)
+            <div className="flex gap-2">
+              <button
+                onClick={() => onUpdateSettings({ ...local, riskMode: "ai-matic" })}
+                className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
+                  local.riskMode === "ai-matic"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-800 text-slate-200"
+                }`}
+              >
+                AI-Matic
+              </button>
+              <button
+                onClick={() => onUpdateSettings({ ...local, riskMode: "ai-matic-x" })}
+                className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
+                  local.riskMode === "ai-matic-x"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-800 text-slate-200"
+                }`}
+              >
+                AI-Matic-X
+              </button>
             </div>
           </div>
 

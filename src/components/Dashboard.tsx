@@ -121,6 +121,7 @@ export default function Dashboard({
           theme="dark"
           lang="en"
           settings={settings}
+          onUpdateSettings={updateSettings}
           onClose={() => setShowSettings(false)}
         />
       )}
