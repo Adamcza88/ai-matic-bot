@@ -40,14 +40,13 @@ export default function Dashboard({
     systemState,
     portfolioState,
     settings,
-  pendingSignals,
-  activePositions,
-  logEntries,
-  updateSettings,
-  closePosition,
-  entryHistory,
-  testnetOrders,
-  testnetTrades,
+    pendingSignals,
+    activePositions,
+    logEntries,
+    closePosition,
+    entryHistory,
+    testnetOrders,
+    testnetTrades,
     ordersError,
     refreshTestnetOrders,
     assetPnlHistory,
@@ -121,7 +120,6 @@ export default function Dashboard({
           theme="dark"
           lang="en"
           settings={settings}
-          onUpdateSettings={(s: AISettings) => updateSettings(s)}
           onClose={() => setShowSettings(false)}
         />
       )}
