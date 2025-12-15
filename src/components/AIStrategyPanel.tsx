@@ -10,15 +10,8 @@ interface Props {
 
 const AIStrategyPanel: React.FC<Props> = ({
   settings,
-  onUpdateSettings,
 }) => {
-  const [local, setLocal] = useState(settings);
-
-  const update = (field: keyof AISettings, value: any) => {
-    const updated = { ...local, [field]: value };
-    setLocal(updated);
-    onUpdateSettings(updated);
-  };
+  const [local] = useState(settings);
 
   return (
     <div className="rounded-xl border bg-card text-card-foreground shadow-xs">
@@ -28,109 +21,54 @@ const AIStrategyPanel: React.FC<Props> = ({
 
       <div className="p-6 pt-0 grid gap-4">
         <div className="grid gap-2">
-          <label className="text-sm font-medium leading-none">Strategy</label>
-          <div className="flex gap-2 flex-wrap">
-            {[
-              { key: "off", label: "Off" },
-              { key: "auto", label: "Auto" },
-              { key: "scalp", label: "Scalp" },
-              { key: "intraday", label: "Intraday" },
-              { key: "swing", label: "Swing" },
-              { key: "trend", label: "Trend" },
-            ].map((opt) => (
-              <button
-                key={opt.key}
-                onClick={() => update("strategyProfile", opt.key as any)}
-                className={`inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring border border-input hover:bg-accent hover:text-accent-foreground h-8 px-3 ${local.strategyProfile === opt.key
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90 border-primary"
-                    : "bg-background"
-                  }`}
-              >
-                {opt.label}
-              </button>
-              ))}
+          <label className="text-sm font-medium leading-none">Profil</label>
+          <div className="rounded-md border border-input bg-emerald-600/80 text-white px-3 py-2 text-sm">
+            AI-Matic (uzamčeno)
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <label className="text-sm font-medium leading-none">Risk Engine</label>
+          <div className="rounded-md border border-input bg-emerald-900/30 text-emerald-200 px-3 py-2 text-sm">
+            AI-Matic (uzamčeno)
           </div>
         </div>
 
         <div className="grid gap-2">
           <label className="text-sm font-medium leading-none">Entry Strictness</label>
-          <div className="flex gap-2 flex-wrap">
-            {[
-              { key: "base", label: "Base" },
-              { key: "relaxed", label: "Relaxed" },
-              { key: "ultra", label: "Ultra" },
-              { key: "test", label: "Test" },
-            ].map((opt) => (
-              <button
-                key={opt.key}
-                onClick={() => update("entryStrictness", opt.key as any)}
-                className={`inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring border border-input hover:bg-accent hover:text-accent-foreground h-8 px-3 ${
-                  local.entryStrictness === opt.key
-                    ? "bg-blue-600 text-white hover:bg-blue-700 border-blue-600"
-                    : "bg-background"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+          <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+            {local.entryStrictness} (uzamčeno)
           </div>
         </div>
 
         <div className="grid gap-2">
           <label className="text-sm font-medium leading-none">Enforce Trading Hours</label>
-          <div className="flex gap-2 flex-wrap">
-            {[
-              { key: true, label: "On" },
-              { key: false, label: "Off" },
-            ].map((opt) => (
-              <button
-                key={opt.label}
-                onClick={() => update("enforceSessionHours", opt.key)}
-                className={`inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring border border-input hover:bg-accent hover:text-accent-foreground h-8 px-3 ${
-                  local.enforceSessionHours === opt.key
-                    ? opt.key
-                      ? "bg-amber-500 text-black hover:bg-amber-600 border-amber-500"
-                      : "bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600"
-                    : "bg-background"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+          <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+            {local.enforceSessionHours ? "On" : "Off"} (uzamčeno)
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none">Base Risk %</label>
-            <input
-              type="number"
-              value={local.baseRiskPerTrade}
-              onChange={(e) => update("baseRiskPerTrade", Number(e.target.value))}
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-              step="0.01"
-            />
+            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              {(local.baseRiskPerTrade * 100).toFixed(2)}%
+            </div>
           </div>
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none">Max Drawdown %</label>
-            <input
-              type="number"
-              value={local.maxDrawdownPercent}
-              onChange={(e) => update("maxDrawdownPercent", Number(e.target.value))}
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-              step="0.01"
-            />
+            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              {(local.maxDrawdownPercent * 100).toFixed(2)}%
+            </div>
           </div>
         </div>
 
         <div className="grid gap-2">
           <label className="text-sm font-medium leading-none">Custom Strategy Text</label>
-          <textarea
-            value={local.customStrategy}
-            onChange={(e) => update("customStrategy", e.target.value)}
-            className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-          />
+          <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+            Uzamčeno pro AI-Matic
+          </div>
         </div>
       </div>
     </div>

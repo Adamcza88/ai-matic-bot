@@ -55,10 +55,6 @@ export default function Dashboard({
     resetPnlHistory,
   } = bot;
 
-  const setProfile = (profile: AISettings["strategyProfile"]) => {
-    updateSettings({ ...settings, strategyProfile: profile });
-  };
-
   return (
     <div className="space-y-6">
       {/* Header Controls */}
@@ -215,115 +211,27 @@ export default function Dashboard({
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-slate-400">Profile</span>
-                <Badge variant="secondary" className="capitalize bg-slate-800 text-slate-300 hover:bg-slate-700">
-                  {settings.strategyProfile}
+                <Badge variant="secondary" className="bg-emerald-600/80 text-white">
+                  AI-Matic (locked)
                 </Badge>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Risk Engine</span>
-                <Badge
-                  variant="outline"
-                  className={
-                    settings.riskMode === "ai-matic-x"
-                      ? "border-emerald-500/50 text-emerald-400 bg-emerald-500/10"
-                      : "border-slate-600 text-slate-200 bg-slate-800"
-                  }
-                >
-                  {settings.riskMode === "ai-matic-x" ? "AI-Matic-X" : "AI-Matic"}
+                <Badge variant="outline" className="border-emerald-500/40 text-emerald-200 bg-emerald-900/30">
+                  AI-Matic (locked)
                 </Badge>
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                  {[
-                    { key: "off", label: "Off" },
-                    { key: "auto", label: "Auto" },
-                    { key: "coach", label: "Coach" },
-                    { key: "scalp", label: "Scalp" },
-                    { key: "intraday", label: "Intraday" },
-                    { key: "swing", label: "Swing" },
-                    { key: "trend", label: "Trend" },
-                  ].map((opt) => (
-                  <Button
-                    key={opt.key}
-                    size="sm"
-                    variant={settings.strategyProfile === opt.key ? "secondary" : "ghost"}
-                    className={
-                      settings.strategyProfile === opt.key
-                        ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                        : "text-slate-300 hover:text-white"
-                    }
-                    onClick={() => setProfile(opt.key as any)}
-                  >
-                    {opt.label}
-                  </Button>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {[
-                  { key: "ai-matic", label: "AI-Matic" },
-                  { key: "ai-matic-x", label: "AI-Matic-X" },
-                ].map((opt) => (
-                  <Button
-                    key={opt.key}
-                    size="sm"
-                    variant={settings.riskMode === opt.key ? "secondary" : "ghost"}
-                    className={
-                      settings.riskMode === opt.key
-                        ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                        : "text-slate-300 hover:text-white"
-                    }
-                    onClick={() => updateSettings({ ...settings, riskMode: opt.key as any })}
-                  >
-                    {opt.label}
-                  </Button>
-                ))}
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Entry Strictness</span>
                 <Badge variant="outline" className="capitalize border-slate-700 text-slate-300 bg-slate-800">
-                  {settings.entryStrictness}
+                  {settings.entryStrictness} (locked)
                 </Badge>
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {[
-                  { key: "base", label: "Base" },
-                  { key: "relaxed", label: "Relaxed" },
-                  { key: "ultra", label: "Ultra" },
-                  { key: "test", label: "Test" },
-                ].map((opt) => (
-                  <Button
-                    key={opt.key}
-                    size="sm"
-                    variant={settings.entryStrictness === opt.key ? "secondary" : "ghost"}
-                    className={
-                      settings.entryStrictness === opt.key
-                        ? "bg-blue-600 text-white hover:bg-blue-700"
-                        : "text-slate-300 hover:text-white"
-                    }
-                    onClick={() => updateSettings({ ...settings, entryStrictness: opt.key as any })}
-                  >
-                    {opt.label}
-                  </Button>
-                ))}
               </div>
               <div className="flex items-center justify-between pt-1">
                 <span className="text-slate-400">Enforce Trading Hours</span>
-                <Button
-                  size="sm"
-                  variant={settings.enforceSessionHours ? "secondary" : "ghost"}
-                  className={
-                    settings.enforceSessionHours
-                      ? "bg-amber-500 text-black hover:bg-amber-600"
-                      : "text-slate-300 hover:text-white"
-                  }
-                  onClick={() =>
-                    updateSettings({
-                      ...settings,
-                      enforceSessionHours: !settings.enforceSessionHours,
-                    })
-                  }
-                >
-                  {settings.enforceSessionHours ? "On" : "Off"}
-                </Button>
+                <Badge variant="outline" className="border-slate-700 text-slate-300 bg-slate-800">
+                  {settings.enforceSessionHours ? "On" : "Off"} (locked)
+                </Badge>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Base Risk</span>
