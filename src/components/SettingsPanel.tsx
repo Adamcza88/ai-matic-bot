@@ -197,11 +197,11 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="grid gap-2">
-              <label className="text-sm font-medium leading-none">
-                Base Risk %
-              </label>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none">
+              Base Risk %
+            </label>
               <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
                 {(local.baseRiskPerTrade * 100).toFixed(2)}%
               </div>
@@ -214,21 +214,12 @@ const SettingsPanel: React.FC<Props> = ({
                 {(local.maxDrawdownPercent * 100).toFixed(2)}%
               </div>
             </div>
-        </div>
-
-        <div className="grid gap-2">
-          <label className="text-sm font-medium leading-none">
-            Custom Strategy
-          </label>
-          <div className="flex min-h-[80px] w-full rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
-            Locked for AI-Matic
           </div>
-        </div>
 
-        <div className="mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
-          <div className="font-semibold text-white">{meta.title}</div>
-          <div className="text-slate-300">{meta.description}</div>
-          <ul className="list-disc list-inside space-y-1 text-slate-400">
+          <div className="mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
+            <div className="font-semibold text-white">{meta.title}</div>
+            <div className="text-slate-300">{meta.description}</div>
+            <ul className="list-disc list-inside space-y-1 text-slate-400">
             {meta.notes.map((n) => (
               <li key={n}>{n}</li>
             ))}
