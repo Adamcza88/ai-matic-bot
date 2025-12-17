@@ -633,6 +633,50 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const id = setInterval(checkReset, 60_000);
         return () => clearInterval(id);
     }, [walletEquity]);
+    // Pull wallet equity (Unified Trading, USDT/USD) from backend and map to totalCapital
+    useEffect(() => {
+        if (!authToken)
+            return;
+        let cancel = false;
+        const fetchWallet = async () => {
+            try {
+                const url = new URL(`${apiBase}${apiPrefix}/wallet`);
+                url.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
+                const res = await fetch(url.toString(), {
+                    headers: { Authorization: `Bearer ${authToken}` },
+                });
+                if (!res.ok)
+                    return;
+                const json = await res.json();
+                const list = json?.data?.list ?? json?.list ?? [];
+                const first = list?.[0] ?? {};
+                const coins = Array.isArray(first.coin) ? first.coin : [];
+                const pickCoin = coins.find((c) => c.coin === "USDT") || coins.find((c) => c.coin === "USD");
+                const coinBalance = pickCoin ? Number(pickCoin.walletBalance ?? pickCoin.equity) : null;
+                const equity = Number(first.totalEquity) ||
+                    coinBalance ||
+                    Number(json?.data?.totalEquity) ||
+                    null;
+                if (equity != null && !cancel) {
+                    setPortfolioState((prev) => ({
+                        ...prev,
+                        totalCapital: equity,
+                        peakCapital: Math.max(prev.peakCapital, equity),
+                    }));
+                    setWalletEquity(equity);
+                }
+            }
+            catch {
+                // ignore wallet fetch errors for UI
+            }
+        };
+        fetchWallet();
+        const id = setInterval(fetchWallet, 60_000);
+        return () => {
+            cancel = true;
+            clearInterval(id);
+        };
+    }, [apiBase, apiPrefix, authToken, useTestnet]);
     useEffect(() => {
         setPortfolioState((prev) => {
             const equity = prev.totalCapital + prev.dailyPnl;
