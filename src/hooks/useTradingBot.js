@@ -866,17 +866,25 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         const pnlJson = await pnlRes.json();
                         const pnlList = pnlJson?.data?.result?.list || pnlJson?.result?.list || [];
                         const records = Array.isArray(pnlList)
-                            ? pnlList.map((r) => ({
-                                symbol: r.symbol || "UNKNOWN",
-                                pnl: Number(r.closedPnl ?? r.realisedPnl ?? 0),
-                                timestamp: r.updatedTime ? new Date(Number(r.updatedTime)).toISOString() : new Date().toISOString(),
-                                note: "Bybit closed pnl",
-                            }))
+                            ? pnlList.map((r) => {
+                                const tsMsRaw = Number(r.updatedTime ?? r.execTime ?? r.createdTime ?? Date.now());
+                                const tsMs = Number.isFinite(tsMsRaw) ? tsMsRaw : Date.now();
+                                return {
+                                    symbol: r.symbol || "UNKNOWN",
+                                    pnl: Number(r.closedPnl ?? r.realisedPnl ?? 0),
+                                    timestamp: new Date(tsMs).toISOString(),
+                                    tsMs,
+                                    note: "Bybit closed pnl",
+                                };
+                            })
                             : [];
+                        // Filtruj striktně na dnešní den podle UTC, aby se do denního PnL nedostaly staré záznamy
+                        const filtered = records.filter((rec) => rec.tsMs >= startTime && rec.tsMs <= endTime);
+                        const filteredRecords = filtered.map(({ tsMs, ...rest }) => rest);
                         setAssetPnlHistory((prev) => {
                             const next = { ...prev };
                             const seen = closedPnlSeenRef.current;
-                            records.forEach((rec) => {
+                            filteredRecords.forEach((rec) => {
                                 const key = `${rec.symbol}-${rec.timestamp}-${rec.pnl}`;
                                 if (seen.has(key))
                                     return;
@@ -890,7 +898,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             }
                             return next;
                         });
-                        const realizedToday = records.reduce((sum, r) => sum + (r.pnl || 0), 0);
+                        const realizedToday = filteredRecords.reduce((sum, r) => sum + (r.pnl || 0), 0);
                         realizedPnlRef.current = realizedToday; // Daily realized PnL (today only)
                     }
                     else {
