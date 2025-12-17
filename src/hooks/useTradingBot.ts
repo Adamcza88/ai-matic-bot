@@ -756,6 +756,20 @@ export const useTradingBot = (
     }, [activePositions]);
 
     useEffect(() => {
+        const checkReset = () => {
+            const today = new Date().toISOString().split("T")[0];
+            if (lastResetDayRef.current !== today) {
+                lastResetDayRef.current = today;
+                realizedPnlRef.current = 0;
+                setPortfolioState((prev) => ({ ...prev, dailyPnl: 0 }));
+            }
+        };
+        checkReset();
+        const id = setInterval(checkReset, 60_000);
+        return () => clearInterval(id);
+    }, []);
+
+    useEffect(() => {
         setPortfolioState((prev) => {
             const equity = prev.totalCapital + prev.dailyPnl;
             const peakCapital = Math.max(prev.peakCapital, equity);
@@ -1346,27 +1360,7 @@ export const useTradingBot = (
                 }));
             }
 
-            // Daily Loss Halt (Realized + Unrealized)
-            const positions = activePositionsRef.current;
-            const realized = portfolioState.dailyPnl;
-            const unrealized = positions.reduce((sum, p) => sum + (p.pnl || 0), 0);
-            const totalDailyPnl = realized + unrealized;
-            const maxLoss = -(portfolioState.totalCapital * (settingsRef.current.maxDailyLossPercent || 0.05));
-
-            if (totalDailyPnl < maxLoss) {
-                if (modeRef.current !== "OFF" && !dailyHaltAtRef.current) {
-                    dailyHaltAtRef.current = Date.now();
-                    addLog({ action: "SYSTEM", message: `DAILY LOSS HIT: ${totalDailyPnl.toFixed(2)} < ${maxLoss.toFixed(2)}. Halting.` });
-                    // Logic to stop new entries is in performTrade (portfolioState check needed there or mode switch)
-                    // Here we can force mode to OFF or specific HALT state if we had one.
-                    // For now, we rely on dailyHaltAtRef to be checked in performTrade (it's not yet).
-                    // Let's just log and update system state.
-                    setSystemState(prev => ({ ...prev, lastError: "Daily Loss Limit Hit" }));
-                }
-            } else {
-                dailyHaltAtRef.current = null; // Reset if recovered (optional, usually daily limit is sticky)
-            }
-
+                const positions = activePositionsRef.current;
                 for (const p of positions) {
                     if (!p || !p.symbol) continue;
                     const dir = p.side === "buy" ? 1 : -1;
@@ -1451,9 +1445,9 @@ export const useTradingBot = (
     const settingsRef = useRef(settings);
     settingsRef.current = settings;
     const realizedPnlRef = useRef(0);
+    const lastResetDayRef = useRef<string | null>(null);
 
     const lifecycleRef = useRef<Map<string, string>>(new Map());
-    const dailyHaltAtRef = useRef<number | null>(null);
     const lastTestSignalAtRef = useRef<number | null>(null);
     const lastKeepaliveAtRef = useRef<number | null>(null);
     const coachStakeRef = useRef<Record<string, number>>({});

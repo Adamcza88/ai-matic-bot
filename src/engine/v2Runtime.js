@@ -1,4 +1,4 @@
-import { placeLimitWithProtection } from "./bybitAdapterV2";
+import { placeLimitWithProtection } from "./bybitAdapterV2.js";
 export class V2Runtime {
     cfg;
     state = "SCAN";

@@ -1,6 +1,6 @@
 // src/engine/v2Runtime.ts
 import { OrderPlanV2, RiskSnapshotV2, SignalV2, TradeDirection } from "./v2Contracts";
-import { placeLimitWithProtection, BybitClient, PlaceOrderResult } from "./bybitAdapterV2";
+import { placeLimitWithProtection, BybitClient, PlaceOrderResult } from "./bybitAdapterV2.js";
 
 type State = "SCAN" | "PLACE" | "MANAGE" | "EXIT";
 type FeeModel = "maker" | "taker";
