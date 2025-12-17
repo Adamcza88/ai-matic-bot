@@ -457,6 +457,42 @@ export default function Dashboard({
           </CardContent>
         </Card>
 
+        {/* === BOT LOG === */}
+        <Card className="bg-slate-900/50 border-white/10 text-white">
+          <CardHeader>
+            <CardTitle className="text-sm font-medium text-slate-400">
+              Bot Log (posledních {Math.min(logEntries.length, 20)})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[300px] overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+              {logEntries.length === 0 ? (
+                <div className="text-sm text-slate-500 italic">Žádné logy.</div>
+              ) : (
+                logEntries.slice(0, 20).map((l) => (
+                  <div
+                    key={l.id}
+                    className="text-sm flex gap-3 py-2 border-b border-white/5 last:border-0"
+                  >
+                    <span className="text-slate-500 text-xs whitespace-nowrap font-mono w-20">
+                      {new Date(l.timestamp).toLocaleTimeString([], {
+                        hour12: false,
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </span>
+                    <span className="font-medium text-amber-300 w-24 text-xs uppercase tracking-wider">
+                      {l.action}
+                    </span>
+                    <span className="text-slate-300 break-words">{l.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         {/* === ENTRY HISTORY === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

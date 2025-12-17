@@ -189,7 +189,8 @@ export interface LogEntry {
   | "SYSTEM"
   | "MODEL_RETRAIN_START"
   | "MODEL_RETRAIN_COMPLETE"
-  | "REJECT";
+  | "REJECT"
+  | "STATUS";
   message: string;
 }
 

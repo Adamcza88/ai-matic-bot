@@ -721,6 +721,22 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     useEffect(() => {
         activePositionsRef.current = activePositions;
     }, [activePositions]);
+    // Periodický status log každé 3 minuty (plus okamžitě na start)
+    useEffect(() => {
+        const tick = () => {
+            const pos = activePositionsRef.current.length;
+            const pending = pendingSignalsRef.current.length;
+            const err = systemState.lastError || "none";
+            const modeLabel = useTestnet ? "TESTNET" : "MAINNET";
+            addLog({
+                action: "STATUS",
+                message: `${modeLabel} | positions=${pos} pending=${pending} lastError=${err}`,
+            });
+        };
+        tick();
+        const id = setInterval(tick, 180_000);
+        return () => clearInterval(id);
+    }, [useTestnet, systemState.lastError]);
     // Generic fetchOrders that respects API prefix (unlike previous confusing split)
     const fetchOrders = useCallback(async () => {
         if (!authToken) {
@@ -1352,7 +1368,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             timestamp: new Date().toISOString(),
             ...entry,
         };
-        setLogEntries((prev) => [log, ...prev].slice(0, 10));
+        setLogEntries((prev) => [log, ...prev].slice(0, 50));
     }
     function logAuditEntry(action, symbol, state, gates, decision, reason, prices, sizing, netRrr) {
         const gateMsg = gates.map((g) => `${g.name}:${g.result}`).join("|");

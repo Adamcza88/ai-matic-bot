@@ -827,6 +827,23 @@ export const useTradingBot = (
         activePositionsRef.current = activePositions;
     }, [activePositions]);
 
+    // Periodický status log každé 3 minuty (plus okamžitě na start)
+    useEffect(() => {
+        const tick = () => {
+            const pos = activePositionsRef.current.length;
+            const pending = pendingSignalsRef.current.length;
+            const err = systemState.lastError || "none";
+            const modeLabel = useTestnet ? "TESTNET" : "MAINNET";
+            addLog({
+                action: "STATUS",
+                message: `${modeLabel} | positions=${pos} pending=${pending} lastError=${err}`,
+            });
+        };
+        tick();
+        const id = setInterval(tick, 180_000);
+        return () => clearInterval(id);
+    }, [useTestnet, systemState.lastError]);
+
     // Generic fetchOrders that respects API prefix (unlike previous confusing split)
     const fetchOrders = useCallback(async () => {
         if (!authToken) {
@@ -1500,7 +1517,7 @@ export const useTradingBot = (
             timestamp: new Date().toISOString(),
             ...entry,
         };
-        setLogEntries((prev) => [log, ...prev].slice(0, 10));
+        setLogEntries((prev) => [log, ...prev].slice(0, 50));
     }
 
     type AuditDecision = "TRADE" | "DENY" | "STOP" | "RETRY";
