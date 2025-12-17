@@ -15,6 +15,27 @@ const SettingsPanel: React.FC<Props> = ({
   onClose,
 }) => {
   const local = settings;
+  const profileCopy: Record<AISettings["riskMode"], { title: string; description: string; notes: string[] }> = {
+    "ai-matic": {
+      title: "AI-Matic",
+      description: "Konzervativnější intraday / scalp mix s kontrolou sezení a širšími filtry volatility.",
+      notes: [
+        "Entry strictness: Base (se session hodinama)",
+        "Base risk 2 %, risk budget 20 % / 2 pozice",
+        "Halt na denní ztrátu a drawdown, trailing profit lock",
+      ],
+    },
+    "ai-matic-x": {
+      title: "AI-Matic-X",
+      description: "Agresivnější profil s přísnějšími vstupy, bez session hours a se silnějším sizingem.",
+      notes: [
+        "Entry strictness: Ultra (bez session hodin)",
+        "Base risk 2 %, risk budget 20 % / 2 pozice",
+        "Halt na denní ztrátu/drawdown, dyn. sizing multiplier 1.2×",
+      ],
+    },
+  };
+  const meta = profileCopy[settings.riskMode];
 
   const AI_MATIC_PRESET_UI: AISettings = {
     riskMode: "ai-matic",
@@ -170,17 +191,30 @@ const SettingsPanel: React.FC<Props> = ({
                 {(local.maxDrawdownPercent * 100).toFixed(2)}%
               </div>
             </div>
-          </div>
+        </div>
 
-          <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none">
-              Custom Strategy
-            </label>
-            <div className="flex min-h-[80px] w-full rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
-              Locked for AI-Matic
-            </div>
+        <div className="grid gap-2">
+          <label className="text-sm font-medium leading-none">
+            Custom Strategy
+          </label>
+          <div className="flex min-h-[80px] w-full rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+            Locked for AI-Matic
           </div>
         </div>
+
+        <div className="mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
+          <div className="font-semibold text-white">{meta.title}</div>
+          <div className="text-slate-300">{meta.description}</div>
+          <ul className="list-disc list-inside space-y-1 text-slate-400">
+            {meta.notes.map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+          <div className="text-xs text-slate-500">
+            Parametry: Entry {local.entryStrictness} • Hours {local.enforceSessionHours ? "On" : "Off"} • Base risk {(local.baseRiskPerTrade * 100).toFixed(2)}% • Risk budget {(local.maxPortfolioRiskPercent * 100).toFixed(1)}% / {local.maxOpenPositions} pos • Max alloc {(local.maxAllocatedCapitalPercent * 100).toFixed(1)}% • Max DD {(local.maxDrawdownPercent * 100).toFixed(2)}%
+          </div>
+        </div>
+      </div>
 
         <div className="flex justify-end mt-6">
           <button
