@@ -965,10 +965,9 @@ export const useTradingBot = (
 
                 // 4. CLOSED PNL FETCH (Separate for now, simpler to keep existing logic)
                 try {
-                    const dayStart = new Date();
-                    dayStart.setHours(0, 0, 0, 0);
-                    const startTime = dayStart.getTime();
-                    const endTime = Date.now();
+                    const now = new Date();
+                    const startTime = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+                    const endTime = now.getTime();
                     const pnlUrl = new URL(`${apiBase}${apiPrefix}/closed-pnl`);
                     pnlUrl.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
                     pnlUrl.searchParams.set("startTime", String(startTime));
@@ -1010,6 +1009,8 @@ export const useTradingBot = (
 
                         const realizedToday = records.reduce((sum, r) => sum + (r.pnl || 0), 0);
                         realizedPnlRef.current = realizedToday; // Daily realized PnL (today only)
+                    } else {
+                        realizedPnlRef.current = 0;
                     }
                 } catch (e) {
                     console.warn("Closed PnL fetch failed", e);
