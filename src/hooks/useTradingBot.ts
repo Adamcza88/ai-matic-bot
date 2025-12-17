@@ -1592,20 +1592,9 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
 
         let cancel = false;
 
-        const fetchAll = async () => {
+        const analyzeSymbol = async (symbol: string) => {
             const started = performance.now();
-            const now = new Date();
-
-            if (!withinSession(settingsRef.current, now)) return;
-
-            try {
-                const URL_KLINE = `${httpBase}/v5/market/kline?category=linear`;
-
-                const newPrices: Record<string, number> = {};
-                const newHistory: any = { ...priceHistoryRef.current };
-                const structCandidates: { symbol: string; signal: PendingSignal; netRrr: number; structureScore: number }[] = [];
-
-        for (const symbol of SYMBOLS) {
+            const URL_KLINE = `${httpBase}/v5/market/kline?category=linear`;
             const fetchInterval = async (interval: string, limit = 200) => {
                 const url = `${URL_KLINE}&symbol=${symbol}&interval=${interval}&limit=${limit}`;
                 const res = await fetch(url);
@@ -1614,63 +1603,88 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
                 return parseKlines(json.result?.list ?? []);
             };
 
-            const c5 = await fetchInterval("5", 200);
-            const c15 = await fetchInterval("15", 200);
-            const c1h = await fetchInterval("60", 200);
-            const c4h = await fetchInterval("240", 200);
-            if (!c5.length || !c15.length || !c1h.length || !c4h.length) continue;
+            try {
+                const c5 = await fetchInterval("5", 200);
+                const c15 = await fetchInterval("15", 200);
+                const c1h = await fetchInterval("60", 200);
+                const c4h = await fetchInterval("240", 200);
+                if (!c5.length || !c15.length || !c1h.length || !c4h.length) return null;
 
-            newHistory[symbol] = c5;
-            newPrices[symbol] = c5[c5.length - 1].close;
-
-            const structureDebug = evaluateMarketStructureWithReason(c4h, c1h, c15, c5, symbol);
-            const structure = structureDebug.structure;
-            if (structure && structure.netRrr >= 1.5) {
-                const sig: PendingSignal = {
-                    id: `${symbol}-ms-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-                    symbol,
-                    profile: "intraday",
-                    kind: "BREAKOUT",
-                            risk: Math.min(0.95, Math.max(0.5, structure.netRrr / 2)),
-                            createdAt: new Date().toISOString(),
-                            intent: {
-                                side: structure.direction,
-                                entry: structure.entry,
-                                sl: structure.sl,
-                                tp: structure.tp2,
-                                symbol,
-                                qty: 0,
-                            },
-                            message: `MS ${structure.direction.toUpperCase()} netRRR ${structure.netRrr.toFixed(2)} gates ${structure.gates.join(",")}`,
-                    };
-                    const structureScore = structure.gates.length / 6;
-                    structCandidates.push({ symbol, signal: sig, netRrr: structure.netRrr, structureScore });
-            } else {
-                // Debug log for missing signals (sampled)
-                const nowSec = Math.floor(Date.now() / 1000);
-                if (nowSec % 180 === 0) {
-                    addLog({
-                        action: "SYSTEM",
-                        message: `NO SIGNAL ${symbol} reason ${structureDebug.reason}`,
-                    });
-                }
-            }
-        }
-
-                if (cancel) return;
-
-                priceHistoryRef.current = newHistory;
-                setCurrentPrices(newPrices);
-                currentPricesRef.current = newPrices;
+                const lastPrice = c5[c5.length - 1].close;
+                priceHistoryRef.current = { ...priceHistoryRef.current, [symbol]: c5 };
+                setCurrentPrices((prev) => {
+                    const next = { ...prev, [symbol]: lastPrice };
+                    currentPricesRef.current = next;
+                    return next;
+                });
                 dataUnavailableRef.current = false;
 
-                const latency = Math.round(performance.now() - started);
+                const structureDebug = evaluateMarketStructureWithReason(c4h, c1h, c15, c5, symbol);
+                const structure = structureDebug.structure;
+                if (structure && structure.netRrr >= 1.5) {
+                    const sig: PendingSignal = {
+                        id: `${symbol}-ms-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+                        symbol,
+                        profile: "intraday",
+                        kind: "BREAKOUT",
+                        risk: Math.min(0.95, Math.max(0.5, structure.netRrr / 2)),
+                        createdAt: new Date().toISOString(),
+                        intent: {
+                            side: structure.direction,
+                            entry: structure.entry,
+                            sl: structure.sl,
+                            tp: structure.tp2,
+                            symbol,
+                            qty: 0,
+                        },
+                        message: `MS ${structure.direction.toUpperCase()} netRRR ${structure.netRrr.toFixed(2)} gates ${structure.gates.join(",")}`,
+                    };
+                    const structureScore = structure.gates.length / 6;
+
+                    const latency = Math.round(performance.now() - started);
+                    setSystemState((p) => ({
+                        ...p,
+                        bybitStatus: "Connected",
+                        latency,
+                        lastError: null,
+                    }));
+
+                    return { symbol, signal: sig, netRrr: structure.netRrr, structureScore };
+                } else {
+                    const nowSec = Math.floor(Date.now() / 1000);
+                    if (nowSec % 180 === 0) {
+                        addLog({
+                            action: "SYSTEM",
+                            message: `NO SIGNAL ${symbol} reason ${structureDebug.reason}`,
+                        });
+                    }
+                }
+            } catch (err: any) {
+                if (cancel) return null;
+                const msg = err.message ?? "unknown";
+                dataUnavailableRef.current = true;
                 setSystemState((p) => ({
                     ...p,
-                    bybitStatus: "Connected",
-                    latency,
-                    lastError: null,
+                    bybitStatus: "Error",
+                    lastError: msg,
+                    recentErrors: [msg, ...p.recentErrors].slice(0, 10),
                 }));
+                logAuditEntry("ERROR", symbol, "DATA_FEED", [{ name: "API", result: "FAIL" }], "STOP", `Market data unavailable: ${msg}`, {});
+                addLog({ action: "ERROR", message: msg });
+            }
+            return null;
+        };
+
+        const runLoop = async () => {
+            while (!cancel) {
+                const structCandidates: { symbol: string; signal: PendingSignal; netRrr: number; structureScore: number }[] = [];
+
+                for (const symbol of SYMBOLS) {
+                    const candidate = await analyzeSymbol(symbol);
+                    if (candidate) structCandidates.push(candidate);
+                    if (cancel) return;
+                    await sleep(12_000);
+                }
 
                 const priorityOrder = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
                 const priorityRank = (s: string) => priorityOrder.indexOf(s);
@@ -1718,26 +1732,14 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
                         })
                     );
                 }
-            } catch (err: any) {
-                if (cancel) return;
-                const msg = err.message ?? "unknown";
-                dataUnavailableRef.current = true;
-                setSystemState((p) => ({
-                    ...p,
-                    bybitStatus: "Error",
-                    lastError: msg,
-                    recentErrors: [msg, ...p.recentErrors].slice(0, 10),
-                }));
-                logAuditEntry("ERROR", "MULTI", "DATA_FEED", [{ name: "API", result: "FAIL" }], "STOP", `Market data unavailable: ${msg}`, {});
-                addLog({ action: "ERROR", message: msg });
+
+                await sleep(60_000);
             }
         };
 
-        fetchAll();
-        const id = setInterval(fetchAll, 12000);
+        runLoop();
         return () => {
             cancel = true;
-            clearInterval(id);
         };
     }, [mode, useTestnet, httpBase]);
 
