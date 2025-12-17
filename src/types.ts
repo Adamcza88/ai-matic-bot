@@ -15,7 +15,6 @@ export interface AISettings {
   smcScalpMode: boolean;
   useLiquiditySweeps: boolean;
   useVolatilityExpansion: boolean;
-  strategyProfile: "off" | "auto" | "trend" | "scalp" | "swing" | "intraday" | "coach";
   entryStrictness: "base" | "relaxed" | "ultra" | "test";
   enforceSessionHours: boolean;
   haltOnDailyLoss: boolean;

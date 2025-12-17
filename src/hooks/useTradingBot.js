@@ -61,7 +61,6 @@ const AI_MATIC_PRESET = {
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 2,
-    strategyProfile: "auto",
     entryStrictness: "base",
     enforceSessionHours: true,
     haltOnDailyLoss: true,
@@ -95,7 +94,6 @@ const AI_MATIC_X_PRESET = {
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 2,
-    strategyProfile: "auto",
     entryStrictness: "ultra",
     enforceSessionHours: false,
     haltOnDailyLoss: true,
@@ -172,46 +170,6 @@ function withinSession(settings, now) {
     if (hour < settings.tradingStartHour || hour > settings.tradingEndHour)
         return false;
     return true;
-}
-function chooseStrategyProfile(candles, preferred) {
-    if (preferred === "off")
-        return null;
-    if (preferred === "coach")
-        return "scalp";
-    if (preferred === "trend")
-        return "trend";
-    if (preferred === "scalp")
-        return "scalp";
-    if (preferred === "swing")
-        return "swing";
-    if (preferred === "intraday")
-        return "intraday";
-    // auto: heuristika podle volatility
-    if (candles.length < 20)
-        return "trend";
-    const closes = candles.map((c) => c.close);
-    const highs = candles.map((c) => c.high);
-    const lows = candles.map((c) => c.low);
-    const atr = (() => {
-        let res = 0;
-        for (let i = 1; i < closes.length; i++) {
-            const hl = highs[i] - lows[i];
-            const hc = Math.abs(highs[i] - closes[i - 1]);
-            const lc = Math.abs(lows[i] - closes[i - 1]);
-            res += Math.max(hl, hc, lc);
-        }
-        const avg = res / Math.max(1, closes.length - 1);
-        return avg;
-    })();
-    const price = closes[closes.length - 1] || 1;
-    const atrPct = atr / price;
-    if (atrPct < 0.0015)
-        return "scalp";
-    if (atrPct > 0.0075)
-        return "swing";
-    if (atrPct > 0.0045)
-        return "trend";
-    return "intraday";
 }
 function snapshotSettings(settings) {
     return {
@@ -469,19 +427,6 @@ function findRecentLowerHigh(candles, lookback = 60) {
     }
     return null;
 }
-const resolveRiskPct = (settings) => {
-    const base = settings.baseRiskPerTrade;
-    if (settings.strategyProfile === "scalp") {
-        return Math.max(0.01, Math.min(base, 0.02));
-    }
-    if (settings.strategyProfile === "trend" || settings.strategyProfile === "swing") {
-        return Math.max(base, 0.03);
-    }
-    if (settings.strategyProfile === "intraday") {
-        return Math.max(base, 0.025);
-    }
-    return base;
-};
 const computePositionRisk = (p) => {
     const stop = p.currentTrailingStop ?? p.sl ?? p.entryPrice;
     const distance = Math.max(0, Math.abs(p.entryPrice - stop));
@@ -1353,7 +1298,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const lifecycleRef = useRef(new Map());
     const lastTestSignalAtRef = useRef(null);
     const lastKeepaliveAtRef = useRef(null);
-    const coachStakeRef = useRef({});
     const dataUnavailableRef = useRef(false);
     const winStreakRef = useRef(0);
     const lossStreakRef = useRef(0);
@@ -1394,26 +1338,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         }
         rollingOutcomesRef.current = [...rollingOutcomesRef.current.slice(-9), win];
     };
-    const computeScalpDynamicRisk = (settings) => {
-        const base = resolveRiskPct(settings);
-        const rolling = rollingOutcomesRef.current;
-        const wins = rolling.filter(Boolean).length;
-        const rate = rolling.length ? wins / rolling.length : 0;
-        let risk = base;
-        const hot = winStreakRef.current >= 4 ||
-            (rolling.length >= 5 && rate >= 0.65);
-        const cold = lossStreakRef.current >= 3;
-        if (hot) {
-            risk = Math.min(Math.max(base, base * 1.8), 0.02);
-        }
-        if (cold) {
-            risk = Math.max(base * 0.5, 0.005);
-        }
-        return risk;
-    };
-    const getEffectiveRiskPct = (settings) => settings.strategyProfile === "scalp"
-        ? computeScalpDynamicRisk(settings)
-        : resolveRiskPct(settings);
     const getVolatilityMultiplier = (symbol) => {
         const hist = priceHistoryRef.current[symbol] || [];
         if (!hist.length)
@@ -1769,14 +1693,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }
-        const profileSetting = signal.profile ||
-            (settingsRef.current.strategyProfile === "auto" ? "intraday" : settingsRef.current.strategyProfile);
-        const profile = profileSetting === "scalp" ||
-            profileSetting === "intraday" ||
-            profileSetting === "swing" ||
-            profileSetting === "trend" ||
-            profileSetting === "coach"
-            ? profileSetting
+        const profile = signal.profile &&
+            (signal.profile === "scalp" ||
+                signal.profile === "intraday" ||
+                signal.profile === "swing" ||
+                signal.profile === "trend" ||
+                signal.profile === "coach")
+            ? signal.profile
             : "intraday";
         const kind = signal.kind || "BREAKOUT";
         const rDist = Math.abs(safeEntry - finalSl);
@@ -1816,11 +1739,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const entryModeGate = { name: "ENTRY_MODE_OK", result: "PASS" };
         const isAutoMode = mode === TradingMode.AUTO_ON;
         const isPaperMode = mode === TradingMode.PAPER;
-        // 0. STRICT MODE CHECK
-        if (settings.strategyProfile === "auto" && !isAutoMode && !isPaperMode) {
-            console.warn(`[Trade] Skipped - Mode is ${mode}, need AUTO_ON or PAPER`);
-            return false;
-        }
         // 0.1 PORTFOLIO RISK GATE (New)
         const currentPositions = activePositionsRef.current;
         const totalCapital = portfolioState.totalCapital || ACCOUNT_BALANCE_USD;
@@ -2111,11 +2029,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const freedNotional = marginFor(target.symbol, target.entryPrice, target.size);
             realizedPnlRef.current += pnl;
             registerOutcome(pnl);
-            const limits = QTY_LIMITS[target.symbol];
-            if (settingsRef.current.strategyProfile === "coach" && limits) {
-                const nextStake = Math.max(limits.min * target.entryPrice, Math.min(limits.max * target.entryPrice, freedNotional * leverageFor(target.symbol) + pnl));
-                coachStakeRef.current[target.symbol] = nextStake;
-            }
             const record = {
                 symbol: target.symbol,
                 pnl,
@@ -2174,7 +2087,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 "maxDrawdownPercent",
                 "positionSizingMultiplier",
                 "entryStrictness",
-                "strategyProfile",
                 "enforceSessionHours",
                 "haltOnDailyLoss",
                 "haltOnDrawdown",
@@ -2183,38 +2095,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             presetKeys.forEach((k) => {
                 patched = { ...patched, [k]: basePreset[k] };
             });
-        }
-        if (patched.strategyProfile === "coach") {
-            const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
-            patched = {
-                ...patched,
-                baseRiskPerTrade: clamp(patched.baseRiskPerTrade || 0.02, 0.01, 0.03),
-                maxDailyLossPercent: Math.min(patched.maxDailyLossPercent || 0.05, 0.05),
-                positionSizingMultiplier: clamp(patched.positionSizingMultiplier || 1, 0.5, 1),
-                maxAllocatedCapitalPercent: clamp(patched.maxAllocatedCapitalPercent || 1, 0.25, 1),
-                maxPortfolioRiskPercent: clamp(patched.maxPortfolioRiskPercent || 0.08, 0.05, 0.1),
-                maxOpenPositions: 2,
-            };
-            if (patched.entryStrictness === "ultra") {
-                patched = { ...patched, entryStrictness: "base" };
-            }
-        }
-        if (patched.strategyProfile === "scalp") {
-            const relaxedEntry = patched.entryStrictness === "test"
-                ? "relaxed"
-                : patched.entryStrictness === "ultra"
-                    ? "base"
-                    : patched.entryStrictness;
-            patched = {
-                ...patched,
-                baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
-                maxOpenPositions: 1,
-                maxDailyLossPercent: Math.max(Math.min(patched.maxDailyLossPercent, 0.12), 0.08),
-                maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
-                maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
-                enforceSessionHours: false,
-                entryStrictness: relaxedEntry,
-            };
         }
         // Hard clamp max open positions
         patched = { ...patched, maxOpenPositions: Math.min(2, patched.maxOpenPositions ?? 2) };

@@ -88,7 +88,6 @@ const AI_MATIC_PRESET: AISettings = {
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 2,
-    strategyProfile: "auto",
     entryStrictness: "base",
     enforceSessionHours: true,
     haltOnDailyLoss: true,
@@ -123,7 +122,6 @@ const AI_MATIC_X_PRESET: AISettings = {
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 2,
-    strategyProfile: "auto",
     entryStrictness: "ultra",
     enforceSessionHours: false,
     haltOnDailyLoss: true,
@@ -200,40 +198,6 @@ function withinSession(settings: typeof INITIAL_RISK_SETTINGS, now: Date) {
     return true;
 }
 
-function chooseStrategyProfile(
-    candles: Candle[],
-    preferred: (typeof INITIAL_RISK_SETTINGS)["strategyProfile"]
-): "trend" | "scalp" | "swing" | "intraday" | null {
-    if (preferred === "off") return null;
-    if (preferred === "coach") return "scalp";
-    if (preferred === "trend") return "trend";
-    if (preferred === "scalp") return "scalp";
-    if (preferred === "swing") return "swing";
-    if (preferred === "intraday") return "intraday";
-    // auto: heuristika podle volatility
-    if (candles.length < 20) return "trend";
-    const closes = candles.map((c) => c.close);
-    const highs = candles.map((c) => c.high);
-    const lows = candles.map((c) => c.low);
-    const atr = (() => {
-        let res = 0;
-        for (let i = 1; i < closes.length; i++) {
-            const hl = highs[i] - lows[i];
-            const hc = Math.abs(highs[i] - closes[i - 1]);
-            const lc = Math.abs(lows[i] - closes[i - 1]);
-            res += Math.max(hl, hc, lc);
-        }
-        const avg = res / Math.max(1, closes.length - 1);
-        return avg;
-    })();
-    const price = closes[closes.length - 1] || 1;
-    const atrPct = atr / price;
-    if (atrPct < 0.0015) return "scalp";
-    if (atrPct > 0.0075) return "swing";
-    if (atrPct > 0.0045) return "trend";
-    return "intraday";
-}
-
 function snapshotSettings(settings: AISettings): AISettings {
     return {
         ...settings,
@@ -288,8 +252,6 @@ function uuidLite() {
 }
 
 // Coach detection (Base 'n Break / Wedge Pop approximation)
-import { coachDefaults, detectCoachBreakout, detectSituationalEdges } from "@/engine/coachStrategy";
-
 function computeAtrFromHistory(candles: Candle[], period: number = 20): number {
     if (!candles || candles.length < 2) return 0;
     const highs = candles.map((c) => c.high);
@@ -518,20 +480,6 @@ function findRecentLowerHigh(candles: Candle[], lookback = 60) {
     }
     return null;
 }
-
-const resolveRiskPct = (settings: AISettings) => {
-    const base = settings.baseRiskPerTrade;
-    if (settings.strategyProfile === "scalp") {
-        return Math.max(0.01, Math.min(base, 0.02));
-    }
-    if (settings.strategyProfile === "trend" || settings.strategyProfile === "swing") {
-        return Math.max(base, 0.03);
-    }
-    if (settings.strategyProfile === "intraday") {
-        return Math.max(base, 0.025);
-    }
-    return base;
-};
 
 const computePositionRisk = (p: ActivePosition) => {
     const stop = p.currentTrailingStop ?? p.sl ?? p.entryPrice;
@@ -1499,7 +1447,6 @@ export const useTradingBot = (
     const lifecycleRef = useRef<Map<string, string>>(new Map());
     const lastTestSignalAtRef = useRef<number | null>(null);
     const lastKeepaliveAtRef = useRef<number | null>(null);
-    const coachStakeRef = useRef<Record<string, number>>({});
     const dataUnavailableRef = useRef<boolean>(false);
     const winStreakRef = useRef(0);
     const lossStreakRef = useRef(0);
@@ -1555,30 +1502,6 @@ export const useTradingBot = (
         }
         rollingOutcomesRef.current = [...rollingOutcomesRef.current.slice(-9), win];
     };
-
-    const computeScalpDynamicRisk = (settings: AISettings) => {
-        const base = resolveRiskPct(settings);
-        const rolling = rollingOutcomesRef.current;
-        const wins = rolling.filter(Boolean).length;
-        const rate = rolling.length ? wins / rolling.length : 0;
-        let risk = base;
-        const hot =
-            winStreakRef.current >= 4 ||
-            (rolling.length >= 5 && rate >= 0.65);
-        const cold = lossStreakRef.current >= 3;
-        if (hot) {
-            risk = Math.min(Math.max(base, base * 1.8), 0.02);
-        }
-        if (cold) {
-            risk = Math.max(base * 0.5, 0.005);
-        }
-        return risk;
-    };
-
-    const getEffectiveRiskPct = (settings: AISettings) =>
-        settings.strategyProfile === "scalp"
-            ? computeScalpDynamicRisk(settings)
-            : resolveRiskPct(settings);
 
 const getVolatilityMultiplier = (symbol: string) => {
     const hist = priceHistoryRef.current[symbol] || [];
@@ -1953,16 +1876,15 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
             return false;
         }
 
-        const profileSetting =
-            (signal.profile as ExecStrategyProfile) ||
-            ((settingsRef.current.strategyProfile === "auto" ? "intraday" : settingsRef.current.strategyProfile) as ExecStrategyProfile);
         const profile: ExecStrategyProfile =
-            profileSetting === "scalp" ||
-                profileSetting === "intraday" ||
-                profileSetting === "swing" ||
-                profileSetting === "trend" ||
-                profileSetting === "coach"
-                ? profileSetting
+            (signal.profile as ExecStrategyProfile) && (
+                (signal.profile as ExecStrategyProfile) === "scalp" ||
+                (signal.profile as ExecStrategyProfile) === "intraday" ||
+                (signal.profile as ExecStrategyProfile) === "swing" ||
+                (signal.profile as ExecStrategyProfile) === "trend" ||
+                (signal.profile as ExecStrategyProfile) === "coach"
+            )
+                ? (signal.profile as ExecStrategyProfile)
                 : "intraday";
         const kind: ExecSignalKind = (signal.kind as ExecSignalKind) || "BREAKOUT";
 
@@ -2005,12 +1927,6 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
         const entryModeGate: { name: string; result: "PASS" | "FAIL" } = { name: "ENTRY_MODE_OK", result: "PASS" };
         const isAutoMode = mode === TradingMode.AUTO_ON;
         const isPaperMode = mode === TradingMode.PAPER;
-
-        // 0. STRICT MODE CHECK
-        if (settings.strategyProfile === "auto" && !isAutoMode && !isPaperMode) {
-            console.warn(`[Trade] Skipped - Mode is ${mode}, need AUTO_ON or PAPER`);
-            return false;
-        }
 
         // 0.1 PORTFOLIO RISK GATE (New)
         const currentPositions = activePositionsRef.current;
@@ -2340,18 +2256,6 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
             realizedPnlRef.current += pnl;
             registerOutcome(pnl);
 
-            const limits = QTY_LIMITS[target.symbol];
-            if (settingsRef.current.strategyProfile === "coach" && limits) {
-                const nextStake = Math.max(
-                    limits.min * target.entryPrice,
-                    Math.min(
-                        limits.max * target.entryPrice,
-                        freedNotional * leverageFor(target.symbol) + pnl
-                    )
-                );
-                coachStakeRef.current[target.symbol] = nextStake;
-            }
-
             const record: AssetPnlRecord = {
                 symbol: target.symbol,
                 pnl,
@@ -2419,7 +2323,6 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
                 "maxDrawdownPercent",
                 "positionSizingMultiplier",
                 "entryStrictness",
-                "strategyProfile",
                 "enforceSessionHours",
                 "haltOnDailyLoss",
                 "haltOnDrawdown",
@@ -2428,53 +2331,6 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
             presetKeys.forEach((k) => {
                 patched = { ...patched, [k]: basePreset[k] };
             });
-        }
-
-        if (patched.strategyProfile === "coach") {
-            const clamp = (v: number, min: number, max: number) =>
-                Math.min(max, Math.max(min, v));
-            patched = {
-                ...patched,
-                baseRiskPerTrade: clamp(patched.baseRiskPerTrade || 0.02, 0.01, 0.03),
-                maxDailyLossPercent: Math.min(patched.maxDailyLossPercent || 0.05, 0.05),
-                positionSizingMultiplier: clamp(
-                    patched.positionSizingMultiplier || 1,
-                    0.5,
-                    1
-                ),
-                maxAllocatedCapitalPercent: clamp(
-                    patched.maxAllocatedCapitalPercent || 1,
-                    0.25,
-                    1
-                ),
-                maxPortfolioRiskPercent: clamp(
-                    patched.maxPortfolioRiskPercent || 0.08,
-                    0.05,
-                    0.1
-                ),
-                maxOpenPositions: 2,
-            };
-            if (patched.entryStrictness === "ultra") {
-                patched = { ...patched, entryStrictness: "base" };
-            }
-        }
-        if (patched.strategyProfile === "scalp") {
-            const relaxedEntry =
-                patched.entryStrictness === "test"
-                    ? "relaxed"
-                    : patched.entryStrictness === "ultra"
-                        ? "base"
-                        : patched.entryStrictness;
-            patched = {
-                ...patched,
-                baseRiskPerTrade: Math.max(0.01, Math.min(patched.baseRiskPerTrade, 0.02)),
-                maxOpenPositions: 1,
-                maxDailyLossPercent: Math.max(Math.min(patched.maxDailyLossPercent, 0.12), 0.08),
-                maxDrawdownPercent: Math.max(patched.maxDrawdownPercent, 0.3),
-                maxPortfolioRiskPercent: Math.max(Math.min(patched.maxPortfolioRiskPercent, 0.12), 0.08),
-                enforceSessionHours: false,
-                entryStrictness: relaxedEntry,
-            };
         }
         // Hard clamp max open positions
         patched = { ...patched, maxOpenPositions: Math.min(2, patched.maxOpenPositions ?? 2) };
