@@ -626,6 +626,7 @@ export const useTradingBot = (
     const [mainnetTrades, setMainnetTrades] = useState<TestnetTrade[]>([]);
     const [mainnetError, setMainnetError] = useState<string | null>(null);
     const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap>({});
+    const [walletEquity, setWalletEquity] = useState<number | null>(null);
     const [settings, setSettings] = useState<AISettings>(() => {
         if (typeof window !== "undefined") {
             const stored = loadStoredSettings();
@@ -711,12 +712,17 @@ export const useTradingBot = (
                 lastResetDayRef.current = today;
                 realizedPnlRef.current = 0;
                 manualPnlResetRef.current = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
-                setPortfolioState((prev) => ({
-                    ...prev,
-                    dailyPnl: 0,
-                    currentDrawdown: 0,
-                    maxDrawdown: settingsRef.current.maxDrawdownPercent,
-                }));
+                setPortfolioState((prev) => {
+                    const baseCapital = walletEquity ?? prev.totalCapital;
+                    return {
+                        ...prev,
+                        totalCapital: baseCapital,
+                        dailyPnl: 0,
+                        currentDrawdown: 0,
+                        peakCapital: baseCapital,
+                        maxDrawdown: settingsRef.current.maxDrawdownPercent,
+                    };
+                });
                 closedPnlSeenRef.current = new Set();
                 clearPnlHistory();
                 setAssetPnlHistory({});
@@ -725,7 +731,7 @@ export const useTradingBot = (
         checkReset();
         const id = setInterval(checkReset, 60_000);
         return () => clearInterval(id);
-    }, []);
+    }, [walletEquity]);
 
     useEffect(() => {
         setPortfolioState((prev) => {

@@ -537,6 +537,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const [mainnetTrades, setMainnetTrades] = useState([]);
     const [mainnetError, setMainnetError] = useState(null);
     const [assetPnlHistory, setAssetPnlHistory] = useState({});
+    const [walletEquity, setWalletEquity] = useState(null);
     const [settings, setSettings] = useState(() => {
         if (typeof window !== "undefined") {
             const stored = loadStoredSettings();
@@ -612,7 +613,17 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 lastResetDayRef.current = today;
                 realizedPnlRef.current = 0;
                 manualPnlResetRef.current = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
-                setPortfolioState((prev) => ({ ...prev, dailyPnl: 0, currentDrawdown: 0, maxDrawdown: settingsRef.current.maxDrawdownPercent }));
+                setPortfolioState((prev) => {
+                    const baseCapital = walletEquity ?? prev.totalCapital;
+                    return {
+                        ...prev,
+                        totalCapital: baseCapital,
+                        dailyPnl: 0,
+                        currentDrawdown: 0,
+                        peakCapital: baseCapital,
+                        maxDrawdown: settingsRef.current.maxDrawdownPercent,
+                    };
+                });
                 closedPnlSeenRef.current = new Set();
                 clearPnlHistory();
                 setAssetPnlHistory({});
@@ -621,7 +632,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         checkReset();
         const id = setInterval(checkReset, 60_000);
         return () => clearInterval(id);
-    }, []);
+    }, [walletEquity]);
     useEffect(() => {
         setPortfolioState((prev) => {
             const equity = prev.totalCapital + prev.dailyPnl;
@@ -644,7 +655,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         // Hard reset Daily PnL snapshot to zero (user request)
         realizedPnlRef.current = 0;
         manualPnlResetRef.current = Date.now();
-        setPortfolioState((prev) => ({ ...prev, dailyPnl: 0, currentDrawdown: 0, maxDrawdown: settingsRef.current.maxDrawdownPercent }));
+        setPortfolioState((prev) => ({ ...prev, dailyPnl: 0 }));
         clearPnlHistory();
         setAssetPnlHistory({});
         closedPnlSeenRef.current = new Set();
