@@ -2306,48 +2306,30 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
 
     const updateSettings = (newS: typeof INITIAL_RISK_SETTINGS) => {
         const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
-        const basePreset =
+        const basePreset = presetFor(incomingMode);
+
+        // If risk mode changes, snap to the preset for that mode (no mix of previous settings).
+        // Otherwise merge incremental updates on top of the current state.
+        const patched: AISettings =
             incomingMode !== settingsRef.current.riskMode
-                ? presetFor(incomingMode)
-                : settingsRef.current;
-
-        let patched: AISettings = { ...basePreset, ...newS, riskMode: incomingMode };
-
-        if (incomingMode !== settingsRef.current.riskMode) {
-            const presetKeys: (keyof AISettings)[] = [
-                "baseRiskPerTrade",
-                "maxAllocatedCapitalPercent",
-                "maxPortfolioRiskPercent",
-                "maxDailyLossPercent",
-                "maxDailyProfitPercent",
-                "maxDrawdownPercent",
-                "positionSizingMultiplier",
-                "entryStrictness",
-                "enforceSessionHours",
-                "haltOnDailyLoss",
-                "haltOnDrawdown",
-                "maxOpenPositions",
-            ];
-            presetKeys.forEach((k) => {
-                patched = { ...patched, [k]: basePreset[k] };
-            });
-        }
+                ? { ...basePreset, riskMode: incomingMode }
+                : { ...settingsRef.current, ...newS, riskMode: incomingMode };
         // Hard clamp max open positions
-        patched = { ...patched, maxOpenPositions: Math.min(2, patched.maxOpenPositions ?? 2) };
+        const normalized: AISettings = { ...patched, maxOpenPositions: Math.min(2, patched.maxOpenPositions ?? 2) };
 
-        setSettings(patched);
-        settingsRef.current = patched;
-        persistSettings(patched);
+        setSettings(normalized);
+        settingsRef.current = normalized;
+        persistSettings(normalized);
         setPortfolioState((p) => {
-            const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
+            const maxAlloc = p.totalCapital * normalized.maxAllocatedCapitalPercent;
             return {
                 ...p,
-                maxOpenPositions: patched.maxOpenPositions,
+                maxOpenPositions: normalized.maxOpenPositions,
                 maxAllocatedCapital: maxAlloc,
                 allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
-                maxDailyLoss: p.totalCapital * patched.maxDailyLossPercent,
-                maxDailyProfit: p.totalCapital * patched.maxDailyProfitPercent,
-                maxDrawdown: patched.maxDrawdownPercent,
+                maxDailyLoss: p.totalCapital * normalized.maxDailyLossPercent,
+                maxDailyProfit: p.totalCapital * normalized.maxDailyProfitPercent,
+                maxDrawdown: normalized.maxDrawdownPercent,
             };
         });
     };

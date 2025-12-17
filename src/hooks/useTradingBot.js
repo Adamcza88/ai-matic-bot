@@ -2073,44 +2073,25 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     };
     const updateSettings = (newS) => {
         const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
-        const basePreset = incomingMode !== settingsRef.current.riskMode
-            ? presetFor(incomingMode)
-            : settingsRef.current;
-        let patched = { ...basePreset, ...newS, riskMode: incomingMode };
-        if (incomingMode !== settingsRef.current.riskMode) {
-            const presetKeys = [
-                "baseRiskPerTrade",
-                "maxAllocatedCapitalPercent",
-                "maxPortfolioRiskPercent",
-                "maxDailyLossPercent",
-                "maxDailyProfitPercent",
-                "maxDrawdownPercent",
-                "positionSizingMultiplier",
-                "entryStrictness",
-                "enforceSessionHours",
-                "haltOnDailyLoss",
-                "haltOnDrawdown",
-                "maxOpenPositions",
-            ];
-            presetKeys.forEach((k) => {
-                patched = { ...patched, [k]: basePreset[k] };
-            });
-        }
+        const basePreset = presetFor(incomingMode);
+        const patched = incomingMode !== settingsRef.current.riskMode
+            ? { ...basePreset, riskMode: incomingMode }
+            : { ...settingsRef.current, ...newS, riskMode: incomingMode };
         // Hard clamp max open positions
-        patched = { ...patched, maxOpenPositions: Math.min(2, patched.maxOpenPositions ?? 2) };
-        setSettings(patched);
-        settingsRef.current = patched;
-        persistSettings(patched);
+        const normalized = { ...patched, maxOpenPositions: Math.min(2, patched.maxOpenPositions ?? 2) };
+        setSettings(normalized);
+        settingsRef.current = normalized;
+        persistSettings(normalized);
         setPortfolioState((p) => {
-            const maxAlloc = p.totalCapital * patched.maxAllocatedCapitalPercent;
+            const maxAlloc = p.totalCapital * normalized.maxAllocatedCapitalPercent;
             return {
                 ...p,
-                maxOpenPositions: patched.maxOpenPositions,
+                maxOpenPositions: normalized.maxOpenPositions,
                 maxAllocatedCapital: maxAlloc,
                 allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
-                maxDailyLoss: p.totalCapital * patched.maxDailyLossPercent,
-                maxDailyProfit: p.totalCapital * patched.maxDailyProfitPercent,
-                maxDrawdown: patched.maxDrawdownPercent,
+                maxDailyLoss: p.totalCapital * normalized.maxDailyLossPercent,
+                maxDailyProfit: p.totalCapital * normalized.maxDailyProfitPercent,
+                maxDrawdown: normalized.maxDrawdownPercent,
             };
         });
     };
