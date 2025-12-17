@@ -469,25 +469,53 @@ export default function Dashboard({
               {logEntries.length === 0 ? (
                 <div className="text-sm text-slate-500 italic">Žádné logy.</div>
               ) : (
-                logEntries.slice(0, 20).map((l) => (
-                  <div
-                    key={l.id}
-                    className="text-sm flex gap-3 py-2 border-b border-white/5 last:border-0"
-                  >
-                    <span className="text-slate-500 text-xs whitespace-nowrap font-mono w-20">
-                      {new Date(l.timestamp).toLocaleTimeString([], {
-                        hour12: false,
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        second: "2-digit",
-                      })}
-                    </span>
-                    <span className="font-medium text-amber-300 w-24 text-xs uppercase tracking-wider">
-                      {l.action}
-                    </span>
-                    <span className="text-slate-300 break-words">{l.message}</span>
-                  </div>
-                ))
+                logEntries.slice(0, 20).map((l) => {
+                  const human = (() => {
+                    switch (l.action) {
+                      case "STATUS":
+                        return `Stav: ${l.message}`;
+                      case "SIGNAL":
+                        return `Signál: ${l.message}`;
+                      case "OPEN":
+                        return `Otevřeno: ${l.message}`;
+                      case "CLOSE":
+                      case "AUTO_CLOSE":
+                        return `Uzavřeno: ${l.message}`;
+                      case "ERROR":
+                        return `Chyba: ${l.message}`;
+                      case "RISK_HALT":
+                      case "RISK_BLOCK":
+                        return `Risk stop: ${l.message}`;
+                      case "REJECT":
+                        return `Zamítnuto: ${l.message}`;
+                      case "SYSTEM":
+                        return `Systém: ${l.message}`;
+                      case "RESET":
+                        return `Reset: ${l.message}`;
+                      default:
+                        return l.message;
+                    }
+                  })();
+                  return (
+                    <div
+                      key={l.id}
+                      className="text-sm flex gap-3 py-2 border-b border-white/5 last:border-0"
+                    >
+                      <span className="text-slate-500 text-xs whitespace-nowrap font-mono w-20">
+                        {new Date(l.timestamp).toLocaleTimeString([], {
+                          hour12: false,
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })}
+                      </span>
+                      <span className="font-medium text-amber-300 w-24 text-xs uppercase tracking-wider">
+                        {l.action}
+                      </span>
+                      <span className="text-slate-300 break-words">{human}</span>
+                    </div>
+                  );
+                })
               )}
             </div>
           </CardContent>
