@@ -55,6 +55,17 @@ export default function Dashboard({
     resetPnlHistory,
   } = bot;
 
+  const tzLabel = (() => {
+    const off = new Date().getTimezoneOffset();
+    if (off === -60) return "SEČ";
+    if (off === -120) return "SELČ";
+    return "lokální čas";
+  })();
+
+  const tradingWindowLabel = `${String(settings.tradingStartHour).padStart(2, "0")}:00–${String(
+    settings.tradingEndHour
+  ).padStart(2, "0")}:00 (${tzLabel})`;
+
   return (
     <div className="space-y-6">
       {/* Header Controls */}
@@ -239,16 +250,10 @@ export default function Dashboard({
                   {settings.riskMode === "ai-matic-x" ? "AI-Matic-X" : "AI-Matic"}
                 </Badge>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Entry Strictness</span>
-                <Badge variant="outline" className="capitalize border-slate-700 text-slate-300 bg-slate-800">
-                  {settings.entryStrictness} (locked)
-                </Badge>
-              </div>
               <div className="flex items-center justify-between pt-1">
                 <span className="text-slate-400">Enforce Trading Hours</span>
                 <Badge variant="outline" className="border-slate-700 text-slate-300 bg-slate-800">
-                  {settings.enforceSessionHours ? "On" : "Off"} (locked)
+                  {settings.enforceSessionHours ? `On ${tradingWindowLabel}` : `Off (${tzLabel})`}
                 </Badge>
               </div>
               <div className="flex justify-between">

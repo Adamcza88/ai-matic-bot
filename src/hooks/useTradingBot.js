@@ -214,6 +214,7 @@ function uuidLite() {
     }
     return `aim-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
+// Coach detection (Base 'n Break / Wedge Pop approximation)
 function computeAtrFromHistory(candles, period = 20) {
     if (!candles || candles.length < 2)
         return 0;
@@ -1505,7 +1506,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         structCandidates.push(candidate);
                     if (cancel)
                         return;
-                    await sleep(12000);
+                    await sleep(12_000);
                 }
                 const priorityOrder = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
                 const priorityRank = (s) => priorityOrder.indexOf(s);
@@ -1552,7 +1553,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         message: s.message,
                     }));
                 }
-                await sleep(60000);
+                await sleep(60_000);
             }
         };
         runLoop();
@@ -1697,12 +1698,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }
-        const profile = signal.profile &&
-            (signal.profile === "scalp" ||
-                signal.profile === "intraday" ||
-                signal.profile === "swing" ||
-                signal.profile === "trend" ||
-                signal.profile === "coach")
+        const profile = signal.profile && (signal.profile === "scalp" ||
+            signal.profile === "intraday" ||
+            signal.profile === "swing" ||
+            signal.profile === "trend" ||
+            signal.profile === "coach")
             ? signal.profile
             : "intraday";
         const kind = signal.kind || "BREAKOUT";
@@ -2078,6 +2078,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const updateSettings = (newS) => {
         const incomingMode = newS.riskMode ?? settingsRef.current.riskMode;
         const basePreset = presetFor(incomingMode);
+        // If risk mode changes, snap to the preset for that mode (no mix of previous settings).
+        // Otherwise merge incremental updates on top of the current state.
         const patched = incomingMode !== settingsRef.current.riskMode
             ? { ...basePreset, riskMode: incomingMode }
             : { ...settingsRef.current, ...newS, riskMode: incomingMode };

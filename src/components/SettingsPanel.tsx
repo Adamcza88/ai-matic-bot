@@ -15,12 +15,23 @@ const SettingsPanel: React.FC<Props> = ({
   onClose,
 }) => {
   const local = settings;
+  const tzLabel = (() => {
+    const off = new Date().getTimezoneOffset(); // CET: -60, CEST: -120
+    if (off === -60) return "SEČ";
+    if (off === -120) return "SELČ";
+    return "lokální čas";
+  })();
+
+  const tradingWindowLabel = `${String(local.tradingStartHour).padStart(2, "0")}:00–${String(
+    local.tradingEndHour
+  ).padStart(2, "0")}:00 (${tzLabel})`;
+
   const profileCopy: Record<AISettings["riskMode"], { title: string; description: string; notes: string[] }> = {
     "ai-matic": {
       title: "AI-Matic",
       description: "Konzervativnější intraday / scalp mix s kontrolou sezení a širšími filtry volatility.",
       notes: [
-        "Entry strictness: Base (se session hodinama)",
+        "Trading hours: On (0–23 SEČ/SELČ)",
         "Base risk 2 %, risk budget 20 % / 2 pozice",
         "Halt na denní ztrátu a drawdown, trailing profit lock",
       ],
@@ -29,7 +40,7 @@ const SettingsPanel: React.FC<Props> = ({
       title: "AI-Matic-X",
       description: "Agresivnější profil s přísnějšími vstupy, bez session hours a se silnějším sizingem.",
       notes: [
-        "Entry strictness: Ultra (bez session hodin)",
+        "Trading hours: Off",
         "Base risk 2 %, risk budget 20 % / 2 pozice",
         "Halt na denní ztrátu/drawdown, dyn. sizing multiplier 1.2×",
       ],
@@ -123,7 +134,7 @@ const SettingsPanel: React.FC<Props> = ({
             Settings
           </h2>
           <p className="text-sm text-muted-foreground">
-            AI-Matic je uzamčený profil (pouze ke čtení).
+            Zvolený profil nastaví výchozí parametry; vybrané podmínky můžeš přepnout.
           </p>
         </div>
 
@@ -158,19 +169,31 @@ const SettingsPanel: React.FC<Props> = ({
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Entry Strictness
-            </label>
-            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
-              {local.entryStrictness} (locked)
-            </div>
-          </div>
-
-          <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Enforce Trading Hours
             </label>
-            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
-              {local.enforceSessionHours ? "On" : "Off"} (locked)
+            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              <div>
+                <div className="font-medium">{local.enforceSessionHours ? "On" : "Off"}</div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {local.enforceSessionHours ? tradingWindowLabel : `Vypnuto (${tzLabel})`}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateSettings({
+                    ...settings,
+                    enforceSessionHours: !settings.enforceSessionHours,
+                  })
+                }
+                className={`rounded-md border px-3 py-1 text-sm ${
+                  local.enforceSessionHours
+                    ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                    : "border-slate-700 bg-slate-900/40 text-slate-200"
+                }`}
+              >
+                {local.enforceSessionHours ? "On" : "Off"}
+              </button>
             </div>
           </div>
 
@@ -211,7 +234,11 @@ const SettingsPanel: React.FC<Props> = ({
             ))}
           </ul>
           <div className="text-xs text-slate-500">
-            Parametry: Entry {local.entryStrictness} • Hours {local.enforceSessionHours ? "On" : "Off"} • Base risk {(local.baseRiskPerTrade * 100).toFixed(2)}% • Risk budget {(local.maxPortfolioRiskPercent * 100).toFixed(1)}% / {local.maxOpenPositions} pos • Max alloc {(local.maxAllocatedCapitalPercent * 100).toFixed(1)}% • Max DD {(local.maxDrawdownPercent * 100).toFixed(2)}%
+            Parametry: Hours {local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`} • Base risk{" "}
+            {(local.baseRiskPerTrade * 100).toFixed(2)}% • Risk budget{" "}
+            {(local.maxPortfolioRiskPercent * 100).toFixed(1)}% / {local.maxOpenPositions} pos • Max alloc{" "}
+            {(local.maxAllocatedCapitalPercent * 100).toFixed(1)}% • Max DD{" "}
+            {(local.maxDrawdownPercent * 100).toFixed(2)}%
           </div>
         </div>
       </div>

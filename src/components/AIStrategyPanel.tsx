@@ -35,13 +35,6 @@ const AIStrategyPanel: React.FC<Props> = ({
         </div>
 
         <div className="grid gap-2">
-          <label className="text-sm font-medium leading-none">Entry Strictness</label>
-          <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
-            {local.entryStrictness} (uzamčeno)
-          </div>
-        </div>
-
-        <div className="grid gap-2">
           <label className="text-sm font-medium leading-none">Enforce Trading Hours</label>
           <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
             {local.enforceSessionHours ? "On" : "Off"} (uzamčeno)
