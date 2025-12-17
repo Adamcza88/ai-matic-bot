@@ -40,10 +40,10 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose, }) => {
         smcScalpMode: true,
         useLiquiditySweeps: false,
         useVolatilityExpansion: true,
-        maxDailyLossPercent: 0.07,
-        maxDailyProfitPercent: 0.5,
-        maxDrawdownPercent: 0.2,
-        baseRiskPerTrade: 0.02,
+    maxDailyLossPercent: 0.07,
+    maxDailyProfitPercent: 0.5,
+    maxDrawdownPercent: 0.7,
+    baseRiskPerTrade: 0,
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
         maxOpenPositions: 2,
@@ -73,10 +73,10 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose, }) => {
         smcScalpMode: true,
         useLiquiditySweeps: false,
         useVolatilityExpansion: true,
-        maxDailyLossPercent: 0.1,
-        maxDailyProfitPercent: 1.0,
-        maxDrawdownPercent: 0.2,
-        baseRiskPerTrade: 0.02,
+    maxDailyLossPercent: 0.1,
+    maxDailyProfitPercent: 1.0,
+    maxDrawdownPercent: 0.7,
+    baseRiskPerTrade: 0,
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
         maxOpenPositions: 2,
@@ -114,6 +114,6 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose, }) => {
                                                 enforceSessionHours: !settings.enforceSessionHours,
                                             }), className: `rounded-md border px-3 py-1 text-sm ${local.enforceSessionHours
                                                 ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enforceSessionHours ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid grid-cols-2 gap-4", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Base Risk %" }), _jsxs("div", { className: "rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm", children: [(local.baseRiskPerTrade * 100).toFixed(2), "%"] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Max Drawdown %" }), _jsxs("div", { className: "rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm", children: [(local.maxDrawdownPercent * 100).toFixed(2), "%"] })] })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsx("ul", { className: "list-disc list-inside space-y-1 text-slate-400", children: meta.notes.map((n) => (_jsx("li", { children: n }, n))) }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Base risk", " ", (local.baseRiskPerTrade * 100).toFixed(2), "% \u2022 Risk budget", " ", (local.maxPortfolioRiskPercent * 100).toFixed(1), "% / ", local.maxOpenPositions, " pos \u2022 Max alloc", " ", (local.maxAllocatedCapitalPercent * 100).toFixed(1), "% \u2022 Max DD", " ", (local.maxDrawdownPercent * 100).toFixed(2), "%"] })] })] }), _jsx("div", { className: "flex justify-end mt-6", children: _jsx("button", { onClick: onClose, className: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full sm:w-auto", children: "Close" }) })] }) }));
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enforceSessionHours ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid gap-4", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Max Drawdown %" }), _jsxs("div", { className: "rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm", children: [(local.maxDrawdownPercent * 100).toFixed(2), "%"] })] })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsx("ul", { className: "list-disc list-inside space-y-1 text-slate-400", children: meta.notes.map((n) => (_jsx("li", { children: n }, n))) }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Base risk", " ", (local.baseRiskPerTrade * 100).toFixed(2), "% \u2022 Risk budget", " ", (local.maxPortfolioRiskPercent * 100).toFixed(1), "% / ", local.maxOpenPositions, " pos \u2022 Max alloc", " ", (local.maxAllocatedCapitalPercent * 100).toFixed(1), "% \u2022 Max DD", " ", (local.maxDrawdownPercent * 100).toFixed(2), "%"] })] })] }), _jsx("div", { className: "flex justify-end mt-6", children: _jsx("button", { onClick: onClose, className: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full sm:w-auto", children: "Close" }) })] }) }));
 };
 export default SettingsPanel;

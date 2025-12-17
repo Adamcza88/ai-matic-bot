@@ -257,20 +257,8 @@ export default function Dashboard({
                 </Badge>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Base Risk</span>
-                <span className="font-mono">{(settings.baseRiskPerTrade * 100).toFixed(2)}%</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Risk Budget</span>
-                <span className="font-mono">
-                  {(settings.maxPortfolioRiskPercent * 100).toFixed(1)}% / {settings.maxOpenPositions} pos
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Max Allocation</span>
-                <span className="font-mono">
-                  {(settings.maxAllocatedCapitalPercent * 100).toFixed(1)}%
-                </span>
+                <span className="text-slate-400">Max Positions</span>
+                <span className="font-mono">{settings.maxOpenPositions}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Max Drawdown</span>

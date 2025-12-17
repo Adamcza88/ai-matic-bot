@@ -32,7 +32,7 @@ const SettingsPanel: React.FC<Props> = ({
       description: "Konzervativnější intraday / scalp mix s kontrolou sezení a širšími filtry volatility.",
       notes: [
         "Trading hours: On (0–23 SEČ/SELČ)",
-        "Base risk 2 %, risk budget 20 % / 2 pozice",
+        "Limit: max 2 pozice současně",
         "Halt na denní ztrátu a drawdown, trailing profit lock",
       ],
     },
@@ -41,7 +41,7 @@ const SettingsPanel: React.FC<Props> = ({
       description: "Agresivnější profil s přísnějšími vstupy, bez session hours a se silnějším sizingem.",
       notes: [
         "Trading hours: Off",
-        "Base risk 2 %, risk budget 20 % / 2 pozice",
+        "Limit: max 2 pozice současně",
         "Halt na denní ztrátu/drawdown, dyn. sizing multiplier 1.2×",
       ],
     },
@@ -197,15 +197,7 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none">
-              Base Risk %
-            </label>
-              <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
-                {(local.baseRiskPerTrade * 100).toFixed(2)}%
-              </div>
-            </div>
+          <div className="grid gap-4">
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none">
                 Max Drawdown %
@@ -214,22 +206,27 @@ const SettingsPanel: React.FC<Props> = ({
                 {(local.maxDrawdownPercent * 100).toFixed(2)}%
               </div>
             </div>
+            <div className="grid gap-2">
+              <label className="text-sm font-medium leading-none">
+                Max Positions
+              </label>
+              <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+                {local.maxOpenPositions}
+              </div>
+            </div>
           </div>
 
           <div className="mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
             <div className="font-semibold text-white">{meta.title}</div>
             <div className="text-slate-300">{meta.description}</div>
             <ul className="list-disc list-inside space-y-1 text-slate-400">
-            {meta.notes.map((n) => (
+              {meta.notes.map((n) => (
               <li key={n}>{n}</li>
             ))}
           </ul>
           <div className="text-xs text-slate-500">
-            Parametry: Hours {local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`} • Base risk{" "}
-            {(local.baseRiskPerTrade * 100).toFixed(2)}% • Risk budget{" "}
-            {(local.maxPortfolioRiskPercent * 100).toFixed(1)}% / {local.maxOpenPositions} pos • Max alloc{" "}
-            {(local.maxAllocatedCapitalPercent * 100).toFixed(1)}% • Max DD{" "}
-            {(local.maxDrawdownPercent * 100).toFixed(2)}%
+            Parametry: Hours {local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`} • Max positions{" "}
+            {local.maxOpenPositions} • Max DD {(local.maxDrawdownPercent * 100).toFixed(2)}%
           </div>
         </div>
       </div>

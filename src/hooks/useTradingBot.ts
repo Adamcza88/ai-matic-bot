@@ -59,7 +59,7 @@ const QTY_LIMITS: Record<string, { min: number; max: number }> = {
     ADAUSDT: { min: 858, max: 858 },
 };
 const ACCOUNT_BALANCE_USD = 100;
-const RISK_PER_TRADE_USD = 4;
+const RISK_PER_TRADE_USD = 5;
 const MAX_TOTAL_RISK_USD = 8;
 const MAX_ACTIVE_TRADES = 2;
 const STOP_MIN_PCT = 0.0015; // 0.15 %
@@ -83,8 +83,8 @@ const AI_MATIC_PRESET: AISettings = {
     useVolatilityExpansion: true,
     maxDailyLossPercent: 0.07,
     maxDailyProfitPercent: 0.5,
-    maxDrawdownPercent: 0.2,
-    baseRiskPerTrade: 0.02,
+    maxDrawdownPercent: 0.7,
+    baseRiskPerTrade: 0,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 2,
@@ -117,8 +117,8 @@ const AI_MATIC_X_PRESET: AISettings = {
     useVolatilityExpansion: true,
     maxDailyLossPercent: 0.1,
     maxDailyProfitPercent: 1.0,
-    maxDrawdownPercent: 0.2,
-    baseRiskPerTrade: 0.02,
+    maxDrawdownPercent: 0.7,
+    baseRiskPerTrade: 0,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 2,
@@ -711,7 +711,12 @@ export const useTradingBot = (
                 lastResetDayRef.current = today;
                 realizedPnlRef.current = 0;
                 manualPnlResetRef.current = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
-                setPortfolioState((prev) => ({ ...prev, dailyPnl: 0 }));
+                setPortfolioState((prev) => ({
+                    ...prev,
+                    dailyPnl: 0,
+                    currentDrawdown: 0,
+                    maxDrawdown: settingsRef.current.maxDrawdownPercent,
+                }));
                 closedPnlSeenRef.current = new Set();
                 clearPnlHistory();
                 setAssetPnlHistory({});

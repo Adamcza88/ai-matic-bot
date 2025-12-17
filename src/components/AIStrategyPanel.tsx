@@ -43,13 +43,6 @@ const AIStrategyPanel: React.FC<Props> = ({
 
         <div className="grid grid-cols-2 gap-4">
           <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none">Base Risk %</label>
-            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
-              {(local.baseRiskPerTrade * 100).toFixed(2)}%
-            </div>
-          </div>
-
-          <div className="grid gap-2">
             <label className="text-sm font-medium leading-none">Max Drawdown %</label>
             <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
               {(local.maxDrawdownPercent * 100).toFixed(2)}%
