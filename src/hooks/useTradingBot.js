@@ -607,6 +607,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     });
     const activePositionsRef = useRef([]);
     const closedPnlSeenRef = useRef(new Set());
+    const manualPnlResetRef = useRef(0);
     const [portfolioState, setPortfolioState] = useState({
         totalCapital: INITIAL_CAPITAL,
         allocatedCapital: 0,
@@ -664,7 +665,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (lastResetDayRef.current !== today) {
                 lastResetDayRef.current = today;
                 realizedPnlRef.current = 0;
+                manualPnlResetRef.current = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
                 setPortfolioState((prev) => ({ ...prev, dailyPnl: 0 }));
+                closedPnlSeenRef.current = new Set();
+                clearPnlHistory();
+                setAssetPnlHistory({});
             }
         };
         checkReset();
@@ -692,6 +697,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         setEntryHistory(trimmed);
         // Hard reset Daily PnL snapshot to zero (user request)
         realizedPnlRef.current = 0;
+        manualPnlResetRef.current = Date.now();
         setPortfolioState((prev) => ({ ...prev, dailyPnl: 0 }));
         clearPnlHistory();
         setAssetPnlHistory({});
@@ -852,7 +858,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 // 4. CLOSED PNL FETCH (Separate for now, simpler to keep existing logic)
                 try {
                     const now = new Date();
-                    const startTime = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+                    const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+                    const startTime = Math.max(dayStart, manualPnlResetRef.current || 0);
                     const endTime = now.getTime();
                     const pnlUrl = new URL(`${apiBase}${apiPrefix}/closed-pnl`);
                     pnlUrl.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
@@ -2217,6 +2224,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const resetPnlHistory = () => {
         setAssetPnlHistory(() => clearPnlHistory());
         realizedPnlRef.current = 0;
+        manualPnlResetRef.current = Date.now();
+        closedPnlSeenRef.current = new Set();
         setPortfolioState((p) => ({
             ...p,
             dailyPnl: 0,
