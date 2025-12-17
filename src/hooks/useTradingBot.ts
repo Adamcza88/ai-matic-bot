@@ -1637,6 +1637,41 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
     return { signal, score, reason };
 }
 
+function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSignal | null {
+    // Leverage původní TradingBot engine (ATR/ADX trend + state machine)
+    // Používáme default config, lze doplnit overrides podle UI settings.
+    const decision = evaluateStrategyForSymbol(symbol, candles, {});
+    const sig = decision?.signal;
+    if (!sig || !sig.intent) return null;
+    const entry = Number(sig.intent.entry);
+    const sl = Number(sig.intent.sl);
+    const tp = Number(sig.intent.tp);
+    if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(tp)) return null;
+
+    const net = netRrrWithFees(entry, sl, tp, TAKER_FEE);
+    if (net < 1) return null;
+
+    const pending: PendingSignal = {
+        id: `${symbol}-be-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+        symbol,
+        profile: "trend",
+        kind: "BOT_ENGINE",
+        risk: Math.min(0.95, Math.max(0.5, net / 2)),
+        createdAt: new Date().toISOString(),
+        intent: {
+            side: (sig.intent.side as "buy" | "sell") || (sig.intent.side === "buy" ? "buy" : "sell"),
+            entry,
+            sl,
+            tp,
+            symbol,
+            qty: 0,
+        },
+        message: `BOT_ENGINE ${symbol} netRRR ${net.toFixed(2)}`,
+    };
+
+    return { signal: pending, score: net, reason: pending.message };
+}
+
 // ========== FETCH CEN Z BYBIT (mainnet / testnet) ==========
     useEffect(() => {
         if (mode === TradingMode.OFF) {
@@ -1736,6 +1771,9 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
                 for (const symbol of SYMBOLS) {
                     const candidate = await analyzeSymbol(symbol);
                     if (candidate) structCandidates.push(candidate);
+                    // BOT ENGINE: paralelně přidej kandidáta z TradingBotu (ATR/ADX)
+                    const botCandidate = buildBotEngineCandidate(symbol, priceHistoryRef.current[symbol] || []);
+                    if (botCandidate) structCandidates.push(botCandidate);
                     if (cancel) return;
                     await sleep(12_000);
                 }
