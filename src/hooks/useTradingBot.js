@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { TradingMode, } from "../types";
 import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
 import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory, persistEntryHistory } from "../lib/entryHistory";
-import { addPnlRecord, loadPnlHistory, clearPnlHistory } from "../lib/pnlHistory";
+import { addPnlRecord, clearPnlHistory } from "../lib/pnlHistory";
 // SYMBOLS
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 // SIMULOVANÝ / DEFAULT KAPITÁL
@@ -690,7 +690,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             persistEntryHistory(trimmed);
         }
         setEntryHistory(trimmed);
-        setAssetPnlHistory(loadPnlHistory());
+        // Hard reset Daily PnL snapshot to zero (user request)
+        realizedPnlRef.current = 0;
+        setPortfolioState((prev) => ({ ...prev, dailyPnl: 0 }));
+        clearPnlHistory();
+        setAssetPnlHistory({});
+        closedPnlSeenRef.current = new Set();
     }, []);
     // Keep only top-2 highest-risk pending signals to focus on nejpravděpodobnější obchody
     useEffect(() => {
