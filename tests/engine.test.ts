@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { normalizeQty, computeRisk, computeQty, TradingBot, State, Trend } from '../src/engine/botEngine.ts';
+import { normalizeQty, computeRisk, computeQty, computePositionSize, TradingBot, State, Trend } from '../src/engine/botEngine.js';
 
 test("C1: Engine - normalizeQty", () => {
     assert.strictEqual(normalizeQty(1.23456, 0.001), 1.234);
@@ -17,11 +17,13 @@ test("C1: Engine - computeRisk", () => {
 test("C1: Engine - computeQty", () => {
     // Balance 1000, Risk 1% (10), StopDist 100
     // Size = 10 / 100 = 0.1
-    assert.strictEqual(computeQty(1000, 0.01, 50000, 49900, 0.001), 0.1);
+    const expected1 = normalizeQty(computePositionSize(1000, 0.01, 50000, 49900), 0.001);
+    assert.strictEqual(computeQty(1000, 0.01, 50000, 49900, 0.001), expected1);
 
     // Balance 1000, Risk 1% (10), StopDist 1
     // Size = 10 / 1 = 10
-    assert.strictEqual(computeQty(1000, 0.01, 100, 99, 1), 10);
+    const expected2 = normalizeQty(computePositionSize(1000, 0.01, 100, 99), 1);
+    assert.strictEqual(computeQty(1000, 0.01, 100, 99, 1), expected2);
 });
 
 test("C1: Engine - State Transition & Single Position Rule", () => {

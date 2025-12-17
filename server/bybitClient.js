@@ -466,7 +466,7 @@ export async function listExecutions(
   return res.data;
 }
 
-export async function listClosedPnl(creds, { limit = 50, cursor } = {}, useTestnet = true) {
+export async function listClosedPnl(creds, { limit = 50, cursor, startTime, endTime } = {}, useTestnet = true) {
   ensureConfigured(creds);
   const q = new URLSearchParams({
     category: "linear",
@@ -474,6 +474,8 @@ export async function listClosedPnl(creds, { limit = 50, cursor } = {}, useTestn
     limit: String(limit),
   });
   if (cursor) q.set("cursor", cursor);
+  if (startTime != null && String(startTime).length > 0) q.set("startTime", String(startTime));
+  if (endTime != null && String(endTime).length > 0) q.set("endTime", String(endTime));
   const res = await buildSignedGet(`/v5/position/closed-pnl?${q.toString()}`, creds, useTestnet);
   return res.data;
 }

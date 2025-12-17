@@ -965,7 +965,17 @@ export const useTradingBot = (
 
                 // 4. CLOSED PNL FETCH (Separate for now, simpler to keep existing logic)
                 try {
-                    const pnlRes = await fetch(`${apiBase}${apiPrefix}/closed-pnl?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                    const dayStart = new Date();
+                    dayStart.setHours(0, 0, 0, 0);
+                    const startTime = dayStart.getTime();
+                    const endTime = Date.now();
+                    const pnlUrl = new URL(`${apiBase}${apiPrefix}/closed-pnl`);
+                    pnlUrl.searchParams.set("net", useTestnet ? "testnet" : "mainnet");
+                    pnlUrl.searchParams.set("startTime", String(startTime));
+                    pnlUrl.searchParams.set("endTime", String(endTime));
+                    pnlUrl.searchParams.set("limit", "200");
+
+                    const pnlRes = await fetch(pnlUrl.toString(), {
                         headers: { Authorization: `Bearer ${authToken}` },
                     });
                     if (pnlRes.ok) {
@@ -998,8 +1008,8 @@ export const useTradingBot = (
                             return next;
                         });
 
-                        const realized = records.reduce((sum, r) => sum + (r.pnl || 0), 0);
-                        realizedPnlRef.current = realized; // Update ref for PnL tracking
+                        const realizedToday = records.reduce((sum, r) => sum + (r.pnl || 0), 0);
+                        realizedPnlRef.current = realizedToday; // Daily realized PnL (today only)
                     }
                 } catch (e) {
                     console.warn("Closed PnL fetch failed", e);

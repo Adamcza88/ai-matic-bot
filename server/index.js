@@ -195,7 +195,7 @@ const handleGetRequest = async (req, res, fetcher) => {
 
     // We need to match signature.
     let result;
-    if (fetcher === getDemoPositions || fetcher === getWalletBalance) {
+    if (fetcher === getDemoPositions || fetcher === getWalletBalance || fetcher === reconcileState) {
       result = await fetcher(creds, isTestnet);
     } else {
       result = await fetcher(creds, req.query, isTestnet);
