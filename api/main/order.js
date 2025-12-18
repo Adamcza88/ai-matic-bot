@@ -1,20 +1,6 @@
 import { createDemoOrder, getWalletBalance } from "../../server/bybitClient.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 
-const QTY_BOUNDS = {
-  SOLUSDT: { min: 3.5, max: 3.5 },
-  BTCUSDT: { min: 0.005, max: 0.005 },
-  ETHUSDT: { min: 0.15, max: 0.15 },
-  ADAUSDT: { min: 858, max: 858 },
-};
-
-function clampQty(symbol, qty) {
-  const bounds = QTY_BOUNDS[symbol];
-  const safe = Math.max(0, Number(qty) || 0);
-  if (!bounds) return safe;
-  return Math.min(bounds.max, Math.max(bounds.min, safe));
-}
-
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
@@ -108,15 +94,12 @@ export default async function handler(req, res) {
       });
     }
 
-    const bounds = QTY_BOUNDS[symbol];
-    const defaultQty = bounds?.min ?? 1;
-    const safeQty = qty && Number(qty) > 0 ? Number(qty) : defaultQty;
-    const cappedQty = clampQty(symbol, safeQty);
+    const safeQty = qty && Number(qty) > 0 ? Number(qty) : 1;
 
     const payload = {
       symbol,
       side: sideFormatted,
-      qty: cappedQty,
+      qty: safeQty,
       price: price != null ? Number(price) : undefined,
       triggerPrice: triggerPrice != null ? Number(triggerPrice) : undefined,
       sl: sl != null ? Number(sl) : undefined,

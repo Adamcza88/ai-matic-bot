@@ -29,7 +29,7 @@ export default function App() {
       const saved = localStorage.getItem("ai-matic-useTestnet");
       if (saved !== null) return saved === "true";
     }
-    return true; // Default to TESTNET
+    return false; // Default to MAINNET
   });
 
   useEffect(() => {

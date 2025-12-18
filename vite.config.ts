@@ -8,6 +8,8 @@ export default defineConfig({
         alias: {
             "@": path.resolve(__dirname, "./src"),
         },
+        // Prefer TypeScript sources when both `.js` and `.ts/.tsx` exist.
+        extensions: [".ts", ".tsx", ".mjs", ".js", ".jsx", ".json"],
     },
     server: {
         proxy: {

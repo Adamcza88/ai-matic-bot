@@ -532,3 +532,46 @@ export async function listDemoTrades(creds, { limit = 50 } = {}, useTestnet = tr
 
   return res.data;
 }
+
+export async function cancelOrder(
+  { symbol, orderId, orderLinkId },
+  creds,
+  useTestnet = true
+) {
+  ensureConfigured(creds);
+
+  if (!symbol) throw new Error("cancelOrder: missing symbol");
+  if (!orderId && !orderLinkId) throw new Error("cancelOrder: missing orderId/orderLinkId");
+
+  const rawBody = {
+    category: "linear",
+    symbol,
+    orderId: orderId || undefined,
+    orderLinkId: orderLinkId || undefined,
+  };
+  const body = cleanObject(rawBody);
+
+  const timestamp = Date.now().toString();
+  const recvWindow = "5000";
+  const bodyStr = JSON.stringify(body);
+  const payload = timestamp + creds.apiKey + recvWindow + bodyStr;
+  const signature = sign(payload, creds.apiSecret);
+
+  const res = await withRetry(() =>
+    axios.post(`${resolveBase(useTestnet)}/v5/order/cancel`, body, {
+      headers: {
+        "X-BAPI-API-KEY": creds.apiKey,
+        "X-BAPI-SIGN": signature,
+        "X-BAPI-SIGN-TYPE": "2",
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": recvWindow,
+        "Content-Type": "application/json",
+      },
+    })
+  );
+
+  const logTag = useTestnet ? "[BYBIT TESTNET]" : "[BYBIT MAINNET]";
+  console.error(`${logTag} Cancel:`, JSON.stringify({ payload: body, response: res.data }, null, 2));
+
+  return res.data;
+}

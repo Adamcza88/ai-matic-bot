@@ -38,6 +38,11 @@ export default async function handler(req, res) {
             return protectionHandler(req, res);
         }
 
+        if (path === "/api/demo/cancel") {
+            const { default: cancelHandler } = await import("./demo/cancel.js");
+            return cancelHandler(req, res);
+        }
+
         if (path === "/api/demo/wallet") {
             const { default: walletHandler } = await import("./demo/wallet.js");
             return walletHandler(req, res);
@@ -78,6 +83,11 @@ export default async function handler(req, res) {
         if (path === "/api/main/protection") {
             const { default: protectionHandler } = await import("./main/protection.js");
             return protectionHandler(req, res);
+        }
+
+        if (path === "/api/main/cancel") {
+            const { default: cancelHandler } = await import("./main/cancel.js");
+            return cancelHandler(req, res);
         }
 
         if (path === "/api/main/wallet") {

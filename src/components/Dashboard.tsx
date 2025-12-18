@@ -1,5 +1,5 @@
 // src/components/Dashboard.tsx
-import { AISettings, TradingMode } from "../types";
+import { TradingMode } from "../types";
 import type { TradingBotApi } from "../hooks/useTradingBot";
 import {
   Card,
@@ -9,16 +9,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Activity, AlertTriangle, TrendingUp, Wallet, Zap } from "lucide-react";
-import SettingsPanel from "./SettingsPanel";
-import { useState } from "react";
-
-const QTY_LIMITS: Record<string, { min: number; max: number }> = {
-  BTCUSDT: { min: 0.001, max: 0.01 },
-  ETHUSDT: { min: 0.01, max: 5 },
-  SOLUSDT: { min: 0.1, max: 100 },
-  ADAUSDT: { min: 1, max: 10000 },
-};
+import { Activity, TrendingUp, Zap } from "lucide-react";
 
 type DashboardProps = {
   mode: TradingMode;
@@ -35,36 +26,23 @@ export default function Dashboard({
   setUseTestnet,
   bot,
 }: DashboardProps) {
-  const [showSettings, setShowSettings] = useState(false);
   const {
     systemState,
     portfolioState,
-    settings,
-    pendingSignals,
     activePositions,
     logEntries,
-    updateSettings,
-    closePosition,
-    entryHistory,
     testnetOrders,
     testnetTrades,
     ordersError,
     refreshTestnetOrders,
     assetPnlHistory,
-    removeEntryHistoryItem,
     resetPnlHistory,
   } = bot;
-
-  const tzLabel = (() => {
-    const off = new Date().getTimezoneOffset();
-    if (off === -60) return "SEČ";
-    if (off === -120) return "SELČ";
-    return "lokální čas";
-  })();
-
-  const tradingWindowLabel = `${String(settings.tradingStartHour).padStart(2, "0")}:00–${String(
-    settings.tradingEndHour
-  ).padStart(2, "0")}:00 (${tzLabel})`;
+  const modeOptions: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
+  const allowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+  const exchangeOrders = testnetOrders;
+  const exchangeTrades = testnetTrades;
+  const refreshOrders = refreshTestnetOrders;
 
   return (
     <div className="space-y-6">
@@ -75,19 +53,11 @@ export default function Dashboard({
             Dashboard
           </h2>
           <p className="text-slate-400 hidden lg:block">
-            Autonomous trading system control center
+            Deterministic Scalp Profile 1 (15m/1m)
           </p>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-slate-200"
-            onClick={() => setShowSettings(true)}
-          >
-            Settings
-          </Button>
           <div className="flex items-center bg-slate-900 p-1 rounded-lg border border-white/10">
             <Button
               variant={useTestnet ? "secondary" : "ghost"}
@@ -108,7 +78,7 @@ export default function Dashboard({
           </div>
 
           <div className="flex items-center bg-slate-900 p-1 rounded-lg border border-white/10">
-            {Object.values(TradingMode).map((m) => (
+            {modeOptions.map((m) => (
               <Button
                 key={m}
                 variant={mode === m ? "secondary" : "ghost"}
@@ -126,16 +96,6 @@ export default function Dashboard({
           </div>
         </div>
       </div>
-
-      {showSettings && (
-        <SettingsPanel
-          theme="dark"
-          lang="en"
-          settings={settings}
-          onUpdateSettings={updateSettings}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {/* === SYSTEM + PORTFOLIO === */}
@@ -180,19 +140,12 @@ export default function Dashboard({
                     ${portfolioState.totalCapital.toFixed(2)}
                   </span>
                 </div>
-                {settings.entryStrictness !== "test" ? (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Allocated</span>
-                    <span className="font-mono text-slate-300">
-                      ${portfolioState.allocatedCapital.toFixed(2)}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Allocated</span>
-                    <span className="font-mono text-slate-500">Disabled in TEST</span>
-                  </div>
-                )}
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Allocated</span>
+                  <span className="font-mono text-slate-300">
+                    ${portfolioState.allocatedCapital.toFixed(2)}
+                  </span>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Daily PnL</span>
                   <span
@@ -210,59 +163,45 @@ export default function Dashboard({
           </CardContent>
         </Card>
 
-        {/* === AI STRATEGY SETTINGS === */}
+        {/* === STRATEGY PROFILE === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-slate-400 flex items-center gap-2">
               <Zap className="w-4 h-4" />
-              AI Strategy
+              Strategy Profile
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2 text-sm">
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant={settings.riskMode === "ai-matic" ? "secondary" : "ghost"}
-                  className={settings.riskMode === "ai-matic" ? "bg-emerald-600 text-white hover:bg-emerald-700" : "text-slate-300 hover:text-white"}
-                  onClick={() => updateSettings({ ...settings, riskMode: "ai-matic" })}
-                >
-                  AI-Matic
-                </Button>
-                <Button
-                  size="sm"
-                  variant={settings.riskMode === "ai-matic-x" ? "secondary" : "ghost"}
-                  className={settings.riskMode === "ai-matic-x" ? "bg-emerald-600 text-white hover:bg-emerald-700" : "text-slate-300 hover:text-white"}
-                  onClick={() => updateSettings({ ...settings, riskMode: "ai-matic-x" })}
-                >
-                  AI-Matic-X
-                </Button>
-              </div>
-              <div className="flex justify-between">
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400">Profile</span>
                 <Badge variant="secondary" className="bg-emerald-600/80 text-white">
-                  {settings.riskMode === "ai-matic-x" ? "AI-Matic-X" : "AI-Matic"}
+                  Deterministic Scalp v1
                 </Badge>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Risk Engine</span>
-                <Badge variant="outline" className="border-emerald-500/40 text-emerald-200 bg-emerald-900/30">
-                  {settings.riskMode === "ai-matic-x" ? "AI-Matic-X" : "AI-Matic"}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-slate-400">Enforce Trading Hours</span>
-                <Badge variant="outline" className="border-slate-700 text-slate-300 bg-slate-800">
-                  {settings.enforceSessionHours ? `On ${tradingWindowLabel}` : `Off (${tzLabel})`}
-                </Badge>
+                <span className="text-slate-400">Symbols</span>
+                <span className="font-mono">{allowedSymbols.join(", ")}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Max Positions</span>
-                <span className="font-mono">{settings.maxOpenPositions}</span>
+                <span className="text-slate-400">Timeframes</span>
+                <span className="font-mono">HTF 15m · LTF 1m</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Max Drawdown</span>
-                <span className="font-mono">{(settings.maxDrawdownPercent * 100).toFixed(2)}%</span>
+                <span className="text-slate-400">Session</span>
+                <span className="font-mono">London + NY (UTC)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Risk</span>
+                <span className="font-mono">4 USDT / trade · 8 USDT total · max 2 pos</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Entry</span>
+                <span className="font-mono">ST15 bias + ST1 flip + EMA21 pullback + RVOL≥1.2</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Execution</span>
+                <span className="font-mono">PostOnly LIMIT · timeout 1×1m</span>
               </div>
             </div>
           </CardContent>
@@ -283,119 +222,52 @@ export default function Dashboard({
               </div>
             ) : (
               <div className="space-y-3">
-                {activePositions.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between p-4 border border-white/5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
-                  >
-                    <div>
-                      <div className="font-bold flex items-center gap-2 text-lg">
-                        {p.symbol}
-                        <Badge
-                          variant="outline"
-                          className={
-                            p.side === "buy"
-                              ? "border-emerald-500/50 text-emerald-500 bg-emerald-500/10"
-                              : "border-red-500/50 text-red-500 bg-red-500/10"
-                          }
-                        >
-                          {p.side.toUpperCase()}
-                        </Badge>
-                      </div>
-                      <div className="text-xs text-slate-400 mt-1 font-mono">
-                        Entry: {p.entryPrice} | Size: {p.size.toFixed(4)}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div
-                        className={`font-mono font-bold text-lg ${p.unrealizedPnl >= 0
-                          ? "text-emerald-500"
-                          : "text-red-500"
-                          }`}
-                      >
-                        {p.unrealizedPnl > 0 ? "+" : ""}
-                        {p.unrealizedPnl.toFixed(2)} USD
-                      </div>
-                      <div className="text-xs text-slate-400 mt-1 font-mono">
-                        TP: {p.tp} | SL: {p.currentTrailingStop ?? p.sl}
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="mt-2 text-red-400 hover:text-white hover:bg-red-500/10"
-                        onClick={() => closePosition(p.id)}
-                      >
-                        Close
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="mt-4 text-xs text-slate-500">
-              Limits per asset (qty):{" "}
-              {Object.entries(QTY_LIMITS)
-                .map(([sym, lim]) => `${sym} ${lim.min}–${lim.max}`)
-                .join(" · ")}
-            </div>
-          </CardContent>
-        </Card>
+                {activePositions.map((p) => {
+                  const size = Number(p.size ?? p.qty ?? 0);
+                  const sideLower = String(p.side ?? "").toLowerCase();
+                  const isBuy = sideLower === "buy";
+                  const sl = Number(p.currentTrailingStop ?? p.sl ?? 0) || undefined;
+                  const tp = Number(p.tp ?? 0) || undefined;
+                  const upnl = Number(p.unrealizedPnl ?? 0) || 0;
 
-        {/* === PENDING SIGNALS === */}
-        <Card className="bg-slate-900/50 border-white/10 text-white">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-amber-500" />
-              Pending Signals
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {pendingSignals.length === 0 ? (
-              <div className="text-sm text-slate-500 italic py-8 text-center border border-dashed border-slate-800 rounded-lg">
-                No signals detected.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {pendingSignals.map((s) => (
-                  <div
-                    key={s.id}
-                    className="p-4 border border-white/5 rounded-lg bg-white/5 space-y-3"
-                  >
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold">{s.symbol}</span>
-                      <Badge
-                        variant="outline"
-                        className={
-                          s.intent.side === "buy"
-                            ? "border-emerald-500/50 text-emerald-500"
-                            : "border-red-500/50 text-red-500"
-                        }
-                      >
-                        {s.intent.side.toUpperCase()}
-                      </Badge>
+                  return (
+                    <div
+                      key={p.positionId || p.id || p.symbol}
+                      className="flex items-center justify-between p-4 border border-white/5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                    >
+                      <div>
+                        <div className="font-bold flex items-center gap-2 text-lg">
+                          {p.symbol}
+                          <Badge
+                            variant="outline"
+                            className={
+                              isBuy
+                                ? "border-emerald-500/50 text-emerald-500 bg-emerald-500/10"
+                                : "border-red-500/50 text-red-500 bg-red-500/10"
+                            }
+                          >
+                            {sideLower.toUpperCase()}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-slate-400 mt-1 font-mono">
+                          Entry: {p.entryPrice} | Size: {Number.isFinite(size) ? size.toFixed(4) : "-"}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div
+                          className={`font-mono font-bold text-lg ${upnl >= 0 ? "text-emerald-500" : "text-red-500"
+                            }`}
+                        >
+                          {upnl > 0 ? "+" : ""}
+                          {upnl.toFixed(2)} USD
+                        </div>
+                        <div className="text-xs text-slate-400 mt-1 font-mono">
+                          TP: {tp ?? "-"} | SL: {sl ?? "-"}
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-400 font-mono">
-                      Entry: {s.intent.entry} | Risk: {(s.risk * 100).toFixed(1)}%
-                    </div>
-                    <div className="flex gap-2 pt-1">
-                      <Button
-                        size="sm"
-                        onClick={() => bot.executeTrade(s.id)}
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                      >
-                        Execute
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => bot.rejectSignal(s.id)}
-                        className="flex-1"
-                      >
-                        Reject
-                      </Button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -422,8 +294,7 @@ export default function Dashboard({
                   logEntries
                     .filter((l) => {
                       const msg = l.message || "";
-                      const allowed = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
-                      return allowed.some((s) => msg.includes(s));
+                      return allowedSymbols.some((s) => msg.includes(s));
                     })
                     .slice(0, 10)
                     .map((l) => (
@@ -514,62 +385,11 @@ export default function Dashboard({
           </CardContent>
         </Card>
 
-        {/* === ENTRY HISTORY === */}
-        <Card className="bg-slate-900/50 border-white/10 text-white">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-slate-400">Entry History</CardTitle>
-            <span className="text-xs text-slate-500">
-              {entryHistory.length} uložených vstupů
-            </span>
-          </CardHeader>
-          <CardContent>
-            {entryHistory.length === 0 ? (
-              <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
-                Zatím žádné uložené vstupy.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {entryHistory.slice(0, 8).map((h) => (
-                  <div
-                    key={h.id}
-                    className="p-3 rounded-lg border border-white/5 bg-white/5"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-semibold">{h.symbol}</span>
-                        <Badge
-                          variant="outline"
-                          className={h.side === "buy" ? "border-emerald-500/50 text-emerald-500" : "border-red-500/50 text-red-500"}
-                        >
-                          {h.side.toUpperCase()}
-                        </Badge>
-                      </div>
-                      <button
-                        onClick={() => removeEntryHistoryItem(h.id)}
-                        className="text-xs text-slate-500 hover:text-red-400"
-                        title="Odstranit uložený signál"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono mt-1">
-                      Entry {h.entryPrice} | SL {h.sl ?? "-"} | TP {h.tp ?? "-"} | Size {h.size.toFixed(3)}
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-1">
-                      {new Date(h.createdAt).toLocaleString()} · {h.settingsNote}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
         {/* === EXCHANGE ORDERS (TESTNET/MAINNET) === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-slate-400">
-              {useTestnet ? "Testnet Orders" : "Bybit Orders"}
+              {useTestnet ? "Testnet Orders" : "Mainnet Orders"}
             </CardTitle>
             <div className="flex items-center gap-2">
               {ordersError && (
@@ -580,7 +400,7 @@ export default function Dashboard({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => refreshTestnetOrders()}
+                onClick={() => refreshOrders()}
                 className="h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white"
               >
                 Refresh
@@ -592,13 +412,13 @@ export default function Dashboard({
               <div className="text-sm text-red-400 italic py-6 text-center border border-red-500/30 bg-red-500/5 rounded-lg">
                 Orders API failed: {ordersError}
               </div>
-            ) : testnetOrders.length === 0 ? (
+            ) : exchangeOrders.length === 0 ? (
               <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
-                Žádné otevřené testnet orders.
+                {useTestnet ? "Žádné otevřené testnet orders." : "Žádné otevřené mainnet orders."}
               </div>
             ) : (
               <div className="space-y-3">
-                {testnetOrders.slice(0, 8).map((o) => (
+                {exchangeOrders.slice(0, 8).map((o) => (
                   <div
                     key={o.orderId}
                     className="p-3 rounded-lg border border-white/5 bg-white/5"
@@ -622,11 +442,11 @@ export default function Dashboard({
                 ))}
               </div>
             )}
-            {testnetTrades.length > 0 && (
+            {exchangeTrades.length > 0 && (
               <div className="mt-4 pt-3 border-t border-white/10">
                 <div className="text-xs text-slate-400 mb-2">Latest fills</div>
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
-                  {testnetTrades.slice(0, 10).map((t) => (
+                  {exchangeTrades.slice(0, 10).map((t) => (
                     <div key={t.id} className="text-xs font-mono text-slate-300 flex justify-between">
                       <span className="flex-1 truncate">{t.symbol}</span>
                       <span className={t.side === "Buy" ? "text-emerald-400" : "text-red-400"}>{t.side}</span>

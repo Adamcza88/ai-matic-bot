@@ -46,6 +46,8 @@ export async function getInstrumentInfo(symbol, useTestnet = true) {
             maxQty: Number(item.lotSizeFilter.maxOrderQty),
             stepSize: Number(item.lotSizeFilter.qtyStep),
             minNotional: Number(item.lotSizeFilter.minNotionalValue || 0),
+            tickSize: Number(item.priceFilter?.tickSize ?? 0),
+            contractValue: Number(item.contractSize ?? 1),
         };
 
         CACHE.set(key, { ts: now, data: info });
@@ -55,6 +57,6 @@ export async function getInstrumentInfo(symbol, useTestnet = true) {
         // Return fallback if cache exists (even if stale) or defaults
         if (cached) return cached.data;
         // Fallback defaults
-        return { minQty: 0.001, stepSize: 0.001, minNotional: 5 };
+        return { minQty: 0.001, stepSize: 0.001, minNotional: 5, tickSize: 0.01, contractValue: 1 };
     }
 }
