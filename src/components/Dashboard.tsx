@@ -208,51 +208,6 @@ export default function Dashboard({
           </CardContent>
         </Card>
 
-        {/* === SIGNAL CHECKLIST === */}
-        <Card className="bg-slate-900/50 border-white/10 text-white">
-          <CardHeader>
-            <CardTitle className="text-sm font-medium text-slate-400">
-              Signal Checklist (last scan)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {allowedSymbols.map((sym) => {
-                const diag = scanDiagnostics?.[sym];
-                const gates = diag?.gates ?? [];
-                return (
-                  <div key={sym} className="p-3 rounded-lg border border-white/5 bg-white/5">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-mono font-semibold">{sym}</span>
-                      <Badge variant="outline" className={diag?.signalActive ? "border-emerald-500/50 text-emerald-400" : "border-slate-500/50 text-slate-400"}>
-                        {diag?.signalActive ? "SIGNAL" : "NO SIGNAL"}
-                      </Badge>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      {gates.map((g) => (
-                        <div key={g.name} className="flex items-center gap-2">
-                          <span className={`h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
-                          <span className="text-slate-300">{g.name}</span>
-                        </div>
-                      ))}
-                      <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}`} />
-                        <span className="text-slate-300">
-                          Exec allowed ({diag?.executionAllowed === true ? "YES" : diag?.executionAllowed === false ? "WAIT BBO" : "N/A"})
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-slate-500" />
-                        <span className="text-slate-400">BBO age: {diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"}</span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-
         {/* === ACTIVE POSITIONS === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader>
@@ -338,11 +293,7 @@ export default function Dashboard({
                   </div>
                 ) : (
                   logEntries
-                    .filter((l) => {
-                      const msg = l.message || "";
-                      return allowedSymbols.some((s) => msg.includes(s));
-                    })
-                    .slice(0, 10)
+                    .slice(0, 25)
                     .map((l) => (
                       <div
                         key={l.id}
@@ -367,66 +318,47 @@ export default function Dashboard({
           </CardContent>
         </Card>
 
-        {/* === BOT LOG === */}
+        {/* === SIGNAL CHECKLIST (detailed) === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader>
             <CardTitle className="text-sm font-medium text-slate-400">
-              Bot Log (posledních {Math.min(logEntries.length, 20)})
+              Signal Checklist (last scan)
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px] overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-              {logEntries.length === 0 ? (
-                <div className="text-sm text-slate-500 italic">Žádné logy.</div>
-              ) : (
-                logEntries.slice(0, 20).map((l) => {
-                  const human = (() => {
-                    switch (l.action) {
-                      case "STATUS":
-                        return `Stav: ${l.message}`;
-                      case "SIGNAL":
-                        return `Signál: ${l.message}`;
-                      case "OPEN":
-                        return `Otevřeno: ${l.message}`;
-                      case "CLOSE":
-                      case "AUTO_CLOSE":
-                        return `Uzavřeno: ${l.message}`;
-                      case "ERROR":
-                        return `Chyba: ${l.message}`;
-                      case "RISK_HALT":
-                      case "RISK_BLOCK":
-                        return `Risk stop: ${l.message}`;
-                      case "REJECT":
-                        return `Zamítnuto: ${l.message}`;
-                      case "SYSTEM":
-                        return `Systém: ${l.message}`;
-                      case "RESET":
-                        return `Reset: ${l.message}`;
-                      default:
-                        return l.message;
-                    }
-                  })();
-                  return (
-                    <div
-                      key={l.id}
-                      className="text-sm flex gap-3 py-2 border-b border-white/5 last:border-0"
-                    >
-                      <span className="text-slate-500 text-xs whitespace-nowrap font-mono w-20">
-                        {new Date(l.timestamp).toLocaleTimeString([], {
-                          hour12: false,
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          second: "2-digit",
-                        })}
-                      </span>
-                      <span className="font-medium text-amber-300 w-24 text-xs uppercase tracking-wider">
-                        {l.action}
-                      </span>
-                      <span className="text-slate-300 break-words">{human}</span>
+            <div className="space-y-4">
+              {allowedSymbols.map((sym) => {
+                const diag = scanDiagnostics?.[sym];
+                const gates = diag?.gates ?? [];
+                return (
+                  <div key={sym} className="p-3 rounded-lg border border-white/5 bg-white/5">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono font-semibold">{sym}</span>
+                      <Badge variant="outline" className={diag?.signalActive ? "border-emerald-500/50 text-emerald-400" : "border-slate-500/50 text-slate-400"}>
+                        {diag?.signalActive ? "SIGNAL" : "NO SIGNAL"}
+                      </Badge>
                     </div>
-                  );
-                })
-              )}
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {gates.map((g) => (
+                        <div key={g.name} className="flex items-center gap-2">
+                          <span className={`h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
+                          <span className="text-slate-300">{g.name}</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}`} />
+                        <span className="text-slate-300">
+                          Exec allowed ({diag?.executionAllowed === true ? "YES" : diag?.executionAllowed === false ? "WAIT BBO" : "N/A"})
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-slate-500" />
+                        <span className="text-slate-400">BBO age: {diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
