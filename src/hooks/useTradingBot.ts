@@ -2742,8 +2742,14 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     }
                 }
 
-                // Urgent symbol first: pending due
                 const now = Date.now();
+
+                const isSymbolReady = (sym: string) => {
+                    const st = ensureSymbolState(sym);
+                    return now >= st.nextAllowedAt && now >= st.pausedUntil;
+                };
+
+                // Urgent pending tasks always first
                 let urgent: string | null = null;
                 for (const sym of SYMBOLS) {
                     const st = ensureSymbolState(sym);
@@ -2756,26 +2762,42 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                         p.stage === "SAFE_CLOSE" ||
                         (p.stage === "PLACED" && (now >= p.statusCheckAt || now >= p.timeoutAt)) ||
                         (p.stage === "CANCEL_SENT" && p.cancelVerifyAt != null && now >= p.cancelVerifyAt) ||
-                        (p.stage === "CANCEL_VERIFY") ||
+                        p.stage === "CANCEL_VERIFY" ||
                         (p.stage === "FILLED_NEED_SL" && p.fillAt != null && now >= p.fillAt + CFG.postFillDelayMs) ||
                         (p.stage === "SL_SENT" && p.slVerifyAt != null && now >= p.slVerifyAt) ||
-                        (p.stage === "SL_VERIFY") ||
-                        (p.stage === "TP_SENT") ||
+                        p.stage === "SL_VERIFY" ||
+                        p.stage === "TP_SENT" ||
                         (p.stage === "TP_VERIFY" && p.tpVerifyAt != null && now >= p.tpVerifyAt);
-                    if (due && now >= st.nextAllowedAt) {
+                    if (due && isSymbolReady(sym)) {
                         urgent = sym;
                         break;
                     }
                 }
 
+                const htfMs = 15 * 60_000;
+                const ltfMs = 60_000;
+                const expectedHtf = expectedOpenTime(now, htfMs, CFG.htfCloseDelayMs);
+                const expectedLtf = expectedOpenTime(now, ltfMs, CFG.ltfCloseDelayMs);
+
+                const htfDue = SYMBOLS.find((sym) => {
+                    const st = ensureSymbolState(sym);
+                    if (!isSymbolReady(sym)) return false;
+                    return !st.htf || st.htf.barOpenTime < expectedHtf || (st.htfConfirm && st.htfConfirm.expectedOpenTime === expectedHtf);
+                });
+
+                const ltfDue = SYMBOLS.find((sym) => {
+                    const st = ensureSymbolState(sym);
+                    if (!isSymbolReady(sym)) return false;
+                    return !st.ltf || st.ltf.barOpenTime < expectedLtf || (st.ltfConfirm && st.ltfConfirm.expectedOpenTime === expectedLtf);
+                });
+
                 const idx = scalpRotationIdxRef.current;
                 const rotated = SYMBOLS[idx % SYMBOLS.length];
                 scalpRotationIdxRef.current = idx + 1;
 
-                const target = urgent || rotated;
+                const target = urgent || htfDue || ltfDue || rotated;
                 const did = await processSymbol(target);
                 if (!did && urgent && target !== rotated) {
-                    // fallback to rotation if urgent had nothing to do
                     await processSymbol(rotated);
                 }
             } catch (err: any) {
