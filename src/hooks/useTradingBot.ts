@@ -1952,6 +1952,11 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             return nowMs - bbo.ts > staleMs;
         };
 
+        const isCancelSafeError = (err: any) => {
+            const msg = String(err?.message || "").toLowerCase();
+            return msg.includes("order not exists") || msg.includes("too late");
+        };
+
         const ensureSymbolState = (symbol: string) => {
             const map = scalpStateRef.current;
             if (!map[symbol]) {
@@ -2200,7 +2205,15 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 // If still open and 1m bar done → cancel
                 if (p.stage === "PLACED" && now >= p.timeoutAt) {
                     logTiming("CANCEL_SEND", "timeout");
-                    await cancelOrderByLinkId(p.symbol, p.orderLinkId);
+                    try {
+                        await cancelOrderByLinkId(p.symbol, p.orderLinkId);
+                    } catch (err: any) {
+                        if (isCancelSafeError(err)) {
+                            // Treat as already cancelled/fill; advance to verify
+                        } else {
+                            throw err;
+                        }
+                    }
                     p.stage = "CANCEL_SENT";
                     p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2234,7 +2247,14 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     st.pending = undefined;
                     addLog({ action: "SYSTEM", message: `CANCEL_OK ${p.symbol} id=${p.orderLinkId}` });
                 } else {
-                    p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
+                    if (!found && st.pending?.stage === "CANCEL_SENT") {
+                        // If cancel already processed on exchange, treat as OK
+                        scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
+                        st.pending = undefined;
+                        addLog({ action: "SYSTEM", message: `CANCEL_OK ${p.symbol} id=${p.orderLinkId} (missing in history)` });
+                    } else {
+                        p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
+                    }
                 }
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
