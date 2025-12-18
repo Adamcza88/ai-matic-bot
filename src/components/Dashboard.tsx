@@ -37,6 +37,7 @@ export default function Dashboard({
     refreshTestnetOrders,
     assetPnlHistory,
     resetPnlHistory,
+    scanDiagnostics,
   } = bot;
   const modeOptions: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
   const allowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
@@ -203,6 +204,51 @@ export default function Dashboard({
                 <span className="text-slate-400">Execution</span>
                 <span className="font-mono">PostOnly LIMIT · timeout 1×1m</span>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* === SIGNAL CHECKLIST === */}
+        <Card className="bg-slate-900/50 border-white/10 text-white">
+          <CardHeader>
+            <CardTitle className="text-sm font-medium text-slate-400">
+              Signal Checklist (last scan)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {allowedSymbols.map((sym) => {
+                const diag = scanDiagnostics?.[sym];
+                const gates = diag?.gates ?? [];
+                return (
+                  <div key={sym} className="p-3 rounded-lg border border-white/5 bg-white/5">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono font-semibold">{sym}</span>
+                      <Badge variant="outline" className={diag?.signalActive ? "border-emerald-500/50 text-emerald-400" : "border-slate-500/50 text-slate-400"}>
+                        {diag?.signalActive ? "SIGNAL" : "NO SIGNAL"}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {gates.map((g) => (
+                        <div key={g.name} className="flex items-center gap-2">
+                          <span className={`h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
+                          <span className="text-slate-300">{g.name}</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}`} />
+                        <span className="text-slate-300">
+                          Exec allowed ({diag?.executionAllowed === true ? "YES" : diag?.executionAllowed === false ? "WAIT BBO" : "N/A"})
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-slate-500" />
+                        <span className="text-slate-400">BBO age: {diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>

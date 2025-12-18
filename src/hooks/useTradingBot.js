@@ -611,6 +611,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const [mainnetTrades, setMainnetTrades] = useState([]);
     const [mainnetError, setMainnetError] = useState(null);
     const [assetPnlHistory, setAssetPnlHistory] = useState({});
+    const [scanDiagnostics, setScanDiagnostics] = useState({});
     const [walletEquity, setWalletEquity] = useState(null);
     const [settings, setSettings] = useState(() => {
         if (typeof window !== "undefined") {
@@ -2382,6 +2383,27 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 action: "SIGNAL",
                 message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`,
             });
+            // Update diagnostics snapshot
+            setScanDiagnostics((prev) => ({
+                ...prev,
+                [symbol]: {
+                    symbol,
+                    lastUpdated: now,
+                    signalActive,
+                    executionAllowed: signalActive ? executionAllowed : "N/A",
+                    bboAgeMs: Number.isFinite(bboAgeMs) ? Math.floor(bboAgeMs) : Infinity,
+                    gates: [
+                        { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
+                        { name: "ST flip", ok: flipped },
+                        { name: "EMA pullback", ok: closeToEma || touched },
+                        { name: "Close vs ST", ok: closeVsSt },
+                        { name: "HTF line projection", ok: htfProj },
+                        { name: "RVOL ≥ 1.2", ok: rvolOk },
+                        { name: "Anti-breakout", ok: antiBreakout },
+                        { name: "BBO fresh", ok: !bboStale },
+                    ],
+                },
+            }));
             if (!signalActive) {
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -3234,5 +3256,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         assetPnlHistory,
         removeEntryHistoryItem,
         resetPnlHistory,
+        scanDiagnostics,
     };
 };

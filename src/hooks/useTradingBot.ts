@@ -719,6 +719,14 @@ export const useTradingBot = (
     const [mainnetTrades, setMainnetTrades] = useState<TestnetTrade[]>([]);
     const [mainnetError, setMainnetError] = useState<string | null>(null);
     const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap>({});
+    const [scanDiagnostics, setScanDiagnostics] = useState<Record<string, {
+        symbol: string;
+        lastUpdated: number;
+        signalActive: boolean;
+        executionAllowed: boolean | string;
+        bboAgeMs: number;
+        gates: { name: string; ok: boolean }[];
+    }>>({});
     const [walletEquity, setWalletEquity] = useState<number | null>(null);
     const [settings, setSettings] = useState<AISettings>(() => {
         if (typeof window !== "undefined") {
@@ -2690,6 +2698,28 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`,
             });
 
+            // Update diagnostics snapshot
+            setScanDiagnostics((prev) => ({
+                ...prev,
+                [symbol]: {
+                    symbol,
+                    lastUpdated: now,
+                    signalActive,
+                    executionAllowed: signalActive ? executionAllowed : "N/A",
+                    bboAgeMs: Number.isFinite(bboAgeMs) ? Math.floor(bboAgeMs) : Infinity,
+                    gates: [
+                        { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
+                        { name: "ST flip", ok: flipped },
+                        { name: "EMA pullback", ok: closeToEma || touched },
+                        { name: "Close vs ST", ok: closeVsSt },
+                        { name: "HTF line projection", ok: htfProj },
+                        { name: "RVOL ≥ 1.2", ok: rvolOk },
+                        { name: "Anti-breakout", ok: antiBreakout },
+                        { name: "BBO fresh", ok: !bboStale },
+                    ],
+                },
+            }));
+
             if (!signalActive) {
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -3604,6 +3634,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
         assetPnlHistory,
         removeEntryHistoryItem,
         resetPnlHistory,
+        scanDiagnostics,
     };
 };
 
