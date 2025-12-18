@@ -2662,8 +2662,8 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             const signalActive = flipped && (closeToEma || touched) && closeVsSt && htfProj && rvolOk && antiBreakout;
 
-            // BBO needed only when signal active or we have pending/position
-            const needBbo = signalActive || hasPending || hasOpenPos;
+            // BBO needed only when signal active or we have pending/position, but always bootstrap if missing
+            const needBbo = !st.bbo || signalActive || hasPending || hasOpenPos;
             if (needBbo && isBboStale(st.bbo, now, 1500)) {
                 const reason = st.bbo ? "stale" : "bootstrap";
                 if (reason === "stale") {
