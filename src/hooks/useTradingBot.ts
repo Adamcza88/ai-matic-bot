@@ -2690,6 +2690,14 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             const rvolOk = isGateEnabled("RVOL ≥ 1.2") ? rvolRaw : true;
             const antiBreakout = isGateEnabled("Anti-breakout") ? antiBreakoutRaw : true;
 
+            const gateFailures: string[] = [];
+            if (!flipped) gateFailures.push("ST flip");
+            if (!emaOk) gateFailures.push("EMA pullback");
+            if (!closeVsSt) gateFailures.push("Close vs ST");
+            if (!htfProj) gateFailures.push("HTF line");
+            if (!rvolOk) gateFailures.push("RVOL");
+            if (!antiBreakout) gateFailures.push("Anti-breakout");
+
             const signalActive = flipped && emaOk && closeVsSt && htfProj && rvolOk && antiBreakout;
 
             // BBO needed when signal active / pending / open pos, always bootstrap, and refresh if stale >5s to avoid drift
@@ -2715,10 +2723,10 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             const bboStale = isBboStale(st.bbo, now, 1500);
             const executionAllowed = signalActive ? !bboStale : true;
 
-            const gateDetails = `flip=${flipped} ema=${closeToEma || touched} closeSt=${closeVsSt} htfLine=${htfProj} rvol=${rvolOk} breakout=${antiBreakout} bboFresh=${!bboStale}`;
+            const gateDetails = `flip=${flippedRaw}/${flipped} ema=${closeToEma || touched}/${emaOk} closeSt=${closeVsStRaw}/${closeVsSt} htfLine=${htfProjRaw}/${htfProj} rvol=${rvolRaw}/${rvolOk} breakout=${antiBreakoutRaw}/${antiBreakout} bboFresh=${!bboStale}`;
             addLog({
                 action: "SIGNAL",
-                message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms | ${gateDetails}`,
+                message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms | fail=[${gateFailures.join(",") || "none"}] | gates raw/gated: ${gateDetails}`,
             });
 
             // Update diagnostics snapshot
