@@ -2387,6 +2387,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             if (!executionAllowed) {
+                if (bboAgeMs > 10_000) {
+                    st.pausedUntil = now + 5_000;
+                    st.pausedReason = "PAUSED_DATA_STALE";
+                    addLog({ action: "SYSTEM", message: `PAUSE ${symbol} DATA_STALE age=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms` });
+                }
                 // signal držíme, čekáme na čerstvé BBO v dalším ticku (bez posunu scan markeru)
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
