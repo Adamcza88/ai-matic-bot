@@ -30,7 +30,7 @@ export default function App() {
             if (saved !== null)
                 return saved === "true";
         }
-        return true; // Default to TESTNET
+        return false; // Default to MAINNET
     });
     useEffect(() => {
         localStorage.setItem("ai-matic-mode", mode);
