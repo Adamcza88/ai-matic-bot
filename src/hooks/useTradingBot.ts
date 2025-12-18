@@ -1690,6 +1690,7 @@ export const useTradingBot = (
     const scalpRotationIdxRef = useRef(0);
     const scalpActiveSymbolRef = useRef<string | null>(null);
     const scalpSymbolLockUntilRef = useRef(0);
+    const scalpForceSafeUntilRef = useRef(0);
     const scalpSafeRef = useRef(false);
     const scalpGlobalCooldownUntilRef = useRef(0);
     const modeRef = useRef(mode);
@@ -2125,14 +2126,6 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             }
 
             if (p.stage === "PLACED") {
-                if (now >= p.timeoutAt) {
-                    await cancelOrderByLinkId(p.symbol, p.orderLinkId);
-                    p.stage = "CANCEL_SENT";
-                    p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    addLog({ action: "SYSTEM", message: `CANCEL ${p.symbol} id=${p.orderLinkId} reason=TIMEOUT` });
-                    return true;
-                }
                 if (now < p.statusCheckAt) return false;
 
                 const hist = await fetchOrderHistoryOnce(net);
@@ -2140,43 +2133,51 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
                     return o.symbol === p.symbol && link === p.orderLinkId;
                 });
-                if (!found) {
-                    p.statusCheckAt = now + CFG.orderStatusDelayMs;
+                if (found) {
+                    const status = found.orderStatus || found.order_status || found.status;
+                    const avg = Number(found.avgPrice ?? found.avg_price ?? found.price ?? p.limitPrice);
+                    if (status === "Filled" || status === "PartiallyFilled") {
+                        scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
+                        p.reservedRiskUsd = 0;
+                        const entry = Number.isFinite(avg) && avg > 0 ? avg : p.limitPrice;
+                        const dir = p.side === "Buy" ? 1 : -1;
+                        const oneR = Math.abs(entry - p.sl);
+                        const tick = st.instrument?.tickSize ?? 0;
+                        p.oneR = oneR;
+                        p.tp = Number.isFinite(tick) && tick > 0
+                            ? roundToTick(entry + dir * CFG.tpR * oneR, tick)
+                            : entry + dir * CFG.tpR * oneR;
+                        p.stage = "FILLED_NEED_SL";
+                        p.fillAt = now;
+                        st.manage = {
+                            symbol: p.symbol,
+                            side: p.side,
+                            entry,
+                            qty: p.qty,
+                            oneR,
+                            partialTaken: false,
+                            maxPrice: entry,
+                            minPrice: entry,
+                        };
+                        addLog({ action: "SYSTEM", message: `FILL ${p.symbol} ${p.side} avg=${avg}` });
+                    } else if (status === "Cancelled" || status === "Rejected") {
+                        scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
+                        st.pending = undefined;
+                        addLog({ action: "SYSTEM", message: `ENTRY_ABORT ${p.symbol} status=${status}` });
+                    }
+                }
+
+                // If still open and 1m bar done → cancel
+                if (p.stage === "PLACED" && now >= p.timeoutAt) {
+                    await cancelOrderByLinkId(p.symbol, p.orderLinkId);
+                    p.stage = "CANCEL_SENT";
+                    p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    addLog({ action: "SYSTEM", message: `CANCEL ${p.symbol} id=${p.orderLinkId} reason=TIMEOUT` });
                     return true;
                 }
-                const status = found.orderStatus || found.order_status || found.status;
-                const avg = Number(found.avgPrice ?? found.avg_price ?? found.price ?? p.limitPrice);
-                if (status === "Filled" || status === "PartiallyFilled") {
-                    scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
-                    p.reservedRiskUsd = 0;
-                    const entry = Number.isFinite(avg) && avg > 0 ? avg : p.limitPrice;
-                    const dir = p.side === "Buy" ? 1 : -1;
-                    const oneR = Math.abs(entry - p.sl);
-                    const tick = st.instrument?.tickSize ?? 0;
-                    p.oneR = oneR;
-                    p.tp = Number.isFinite(tick) && tick > 0
-                        ? roundToTick(entry + dir * CFG.tpR * oneR, tick)
-                        : entry + dir * CFG.tpR * oneR;
-                    p.stage = "FILLED_NEED_SL";
-                    p.fillAt = now;
-                    st.manage = {
-                        symbol: p.symbol,
-                        side: p.side,
-                        entry,
-                        qty: p.qty,
-                        oneR,
-                        partialTaken: false,
-                        maxPrice: entry,
-                        minPrice: entry,
-                    };
-                    addLog({ action: "SYSTEM", message: `FILL ${p.symbol} ${p.side} avg=${avg}` });
-                }
-                if (status === "Cancelled" || status === "Rejected") {
-                    scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
-                    st.pending = undefined;
-                    addLog({ action: "SYSTEM", message: `ENTRY_ABORT ${p.symbol} status=${status}` });
-                } else {
+
+                if (p.stage === "PLACED") {
                     p.statusCheckAt = now + CFG.orderStatusDelayMs;
                 }
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2214,6 +2215,9 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 } catch (err: any) {
                     p.stage = "SAFE_CLOSE";
                     p.taskReason = `SL_SET_FAILED:${err?.message || "unknown"}`;
+                    scalpForceSafeUntilRef.current = Date.now() + 30 * 60_000; // 30m safe window
+                    scalpSafeRef.current = true;
+                    addLog({ action: "ERROR", message: `SAFE_MODE triggered (SL_SET_FAILED ${p.symbol})` });
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
                 }
@@ -2239,6 +2243,9 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     if (age > 2000) {
                         p.stage = "SAFE_CLOSE";
                         p.taskReason = "SL_MISSING";
+                        scalpForceSafeUntilRef.current = Date.now() + 30 * 60_000; // 30m safe window
+                        scalpSafeRef.current = true;
+                        addLog({ action: "ERROR", message: `SAFE_MODE triggered (SL missing ${p.symbol})` });
                     } else {
                         p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
                     }
@@ -2744,7 +2751,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             scalpBusyRef.current = true;
             try {
                 cleanupRecentIds();
-                const safeNow = getApiErrorRate() > 0.05;
+                const safeNow = getApiErrorRate() > 0.05 || scalpForceSafeUntilRef.current > Date.now();
                 if (safeNow !== scalpSafeRef.current) {
                     scalpSafeRef.current = safeNow;
                     addLog({
