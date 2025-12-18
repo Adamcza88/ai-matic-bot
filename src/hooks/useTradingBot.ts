@@ -1687,6 +1687,8 @@ export const useTradingBot = (
     const scalpRecentIdsRef = useRef<Map<string, number>>(new Map());
     const scalpBusyRef = useRef(false);
     const scalpRotationIdxRef = useRef(0);
+    const scalpActiveSymbolRef = useRef<string | null>(null);
+    const scalpSymbolLockUntilRef = useRef(0);
     const scalpSafeRef = useRef(false);
     const scalpGlobalCooldownUntilRef = useRef(0);
     const modeRef = useRef(mode);
@@ -2334,6 +2336,20 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
         const processSymbol = async (symbol: string): Promise<boolean> => {
             const st = ensureSymbolState(symbol);
             const now = Date.now();
+
+            // Global active-symbol lock: if jiný symbol je v PLACE/MANAGE/EXIT, čekáme.
+            const engaged = Boolean(st.pending || st.manage);
+            const locked = scalpActiveSymbolRef.current;
+            if (locked && locked !== symbol) {
+                if (engaged || now < scalpSymbolLockUntilRef.current) return false;
+            }
+            if (!locked && engaged) {
+                scalpActiveSymbolRef.current = symbol;
+                scalpSymbolLockUntilRef.current = now + CFG.symbolFetchGapMs;
+            } else if (locked === symbol && engaged) {
+                scalpSymbolLockUntilRef.current = Math.max(scalpSymbolLockUntilRef.current, now + CFG.symbolFetchGapMs);
+            }
+
             if (now < st.nextAllowedAt) return false;
             if (now < st.pausedUntil) return false;
 
@@ -2365,7 +2381,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                         : { expectedOpenTime: expected15, stage: 0 as const, attempts: 0 };
                 const candles = await fetchKlines(symbol, "15", 60);
                 const last = candles[candles.length - 1];
-                if (!last || last.openTime < expected15) {
+                if (!last || last.openTime !== expected15) {
                     conf.attempts += 1;
                     st.htfConfirm = conf;
                     st.nextAllowedAt = now + 250;
@@ -2427,7 +2443,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                         : { expectedOpenTime: expected1, stage: 0 as const, attempts: 0 };
                 const candles = await fetchKlines(symbol, "1", 50);
                 const last = candles[candles.length - 1];
-                if (!last || last.openTime < expected1) {
+                if (!last || last.openTime !== expected1) {
                     conf.attempts += 1;
                     st.ltfConfirm = conf;
                     st.nextAllowedAt = now + 250;
@@ -2711,6 +2727,10 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 };
             }
             st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+            const stillEngaged = Boolean(st.pending || st.manage);
+            if (!stillEngaged && scalpActiveSymbolRef.current === symbol && now >= scalpSymbolLockUntilRef.current) {
+                scalpActiveSymbolRef.current = null;
+            }
             return true;
         };
 
@@ -2754,6 +2774,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 // Urgent pending tasks always first
                 let urgent: string | null = null;
                 for (const sym of SYMBOLS) {
+                    if (scalpActiveSymbolRef.current && scalpActiveSymbolRef.current !== sym) continue;
                     const st = ensureSymbolState(sym);
                     const p = st.pending;
                     if (!p) continue;
@@ -2782,20 +2803,23 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 const expectedLtf = expectedOpenTime(now, ltfMs, CFG.ltfCloseDelayMs);
 
                 const htfDue = SYMBOLS.find((sym) => {
+                    if (scalpActiveSymbolRef.current && scalpActiveSymbolRef.current !== sym) return false;
                     const st = ensureSymbolState(sym);
                     if (!isSymbolReady(sym)) return false;
                     return !st.htf || st.htf.barOpenTime < expectedHtf || (st.htfConfirm && st.htfConfirm.expectedOpenTime === expectedHtf);
                 });
 
                 const ltfDue = SYMBOLS.find((sym) => {
+                    if (scalpActiveSymbolRef.current && scalpActiveSymbolRef.current !== sym) return false;
                     const st = ensureSymbolState(sym);
                     if (!isSymbolReady(sym)) return false;
                     return !st.ltf || st.ltf.barOpenTime < expectedLtf || (st.ltfConfirm && st.ltfConfirm.expectedOpenTime === expectedLtf);
                 });
 
                 const idx = scalpRotationIdxRef.current;
-                const rotated = SYMBOLS[idx % SYMBOLS.length];
+                let rotated = SYMBOLS[idx % SYMBOLS.length];
                 scalpRotationIdxRef.current = idx + 1;
+                if (scalpActiveSymbolRef.current) rotated = scalpActiveSymbolRef.current;
 
                 const target = urgent || htfDue || ltfDue || rotated;
                 await processSymbol(target);
