@@ -2379,9 +2379,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const bboAgeMs = st.bbo ? now - st.bbo.ts : Infinity;
             const bboStale = isBboStale(st.bbo, now, 1500);
             const executionAllowed = signalActive ? !bboStale : true;
+            const gateDetails = `flip=${flipped} ema=${closeToEma || touched} closeSt=${closeVsSt} htfLine=${htfProj} rvol=${rvolOk} breakout=${antiBreakout} bboFresh=${!bboStale}`;
             addLog({
                 action: "SIGNAL",
-                message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`,
+                message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms | ${gateDetails}`,
             });
             // Update diagnostics snapshot
             setScanDiagnostics((prev) => ({
