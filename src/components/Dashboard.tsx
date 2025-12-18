@@ -1,6 +1,7 @@
 // src/components/Dashboard.tsx
 import { TradingMode } from "../types";
 import type { TradingBotApi } from "../hooks/useTradingBot";
+import { useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -44,6 +45,43 @@ export default function Dashboard({
   const exchangeOrders = testnetOrders;
   const exchangeTrades = testnetTrades;
   const refreshOrders = refreshTestnetOrders;
+
+  const CHECKLIST_DEFAULTS = useMemo(
+    () => ({
+      "HTF bias": true,
+      "ST flip": true,
+      "EMA pullback": true,
+      "Close vs ST": true,
+      "HTF line projection": true,
+      "RVOL ≥ 1.2": true,
+      "Anti-breakout": true,
+      "BBO fresh": true,
+      "Exec allowed": true,
+      "BBO age": true,
+    }),
+    []
+  );
+
+  const [checklistEnabled, setChecklistEnabled] = useState<Record<string, boolean>>(() => {
+    if (typeof localStorage === "undefined") return CHECKLIST_DEFAULTS;
+    try {
+      const raw = localStorage.getItem("ai-matic-checklist-enabled");
+      if (!raw) return CHECKLIST_DEFAULTS;
+      const parsed = JSON.parse(raw) as Record<string, boolean>;
+      return { ...CHECKLIST_DEFAULTS, ...parsed };
+    } catch {
+      return CHECKLIST_DEFAULTS;
+    }
+  });
+
+  useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem("ai-matic-checklist-enabled", JSON.stringify(checklistEnabled));
+  }, [checklistEnabled]);
+
+  const toggleChecklist = (name: string) => {
+    setChecklistEnabled((p) => ({ ...p, [name]: !(p[name] ?? true) }));
+  };
 
   return (
     <div className="space-y-6">
@@ -190,7 +228,7 @@ export default function Dashboard({
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Session</span>
-                <span className="font-mono">London + NY (UTC)</span>
+                <span className="font-mono">24/7</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Risk</span>
@@ -293,7 +331,14 @@ export default function Dashboard({
                   </div>
                 ) : (
                   logEntries
-                    .slice(0, 25)
+                    .filter((l) => {
+                      if (l.action === "SIGNAL" || l.action === "ERROR") return true;
+                      const msg = String(l.message || "");
+                      if (msg.startsWith("TIMING ")) return true;
+                      if (msg.startsWith("PAUSE ") || msg.includes("SAFE_MODE")) return true;
+                      return false;
+                    })
+                    .slice(0, 50)
                     .map((l) => (
                       <div
                         key={l.id}
@@ -340,21 +385,41 @@ export default function Dashboard({
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       {gates.map((g) => (
-                        <div key={g.name} className="flex items-center gap-2">
+                        <button
+                          key={g.name}
+                          type="button"
+                          onClick={() => toggleChecklist(g.name)}
+                          className="flex items-center gap-2 text-left"
+                          title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
+                        >
                           <span className={`h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
-                          <span className="text-slate-300">{g.name}</span>
-                        </div>
+                          <span className={checklistEnabled[g.name] ? "text-white" : "text-slate-500"}>
+                            {g.name}
+                          </span>
+                        </button>
                       ))}
-                      <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleChecklist("Exec allowed")}
+                        className="flex items-center gap-2 text-left"
+                        title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
+                      >
                         <span className={`h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}`} />
-                        <span className="text-slate-300">
+                        <span className={checklistEnabled["Exec allowed"] ? "text-white" : "text-slate-500"}>
                           Exec allowed ({diag?.executionAllowed === true ? "YES" : diag?.executionAllowed === false ? "WAIT BBO" : "N/A"})
                         </span>
-                      </div>
-                      <div className="flex items-center gap-2">
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleChecklist("BBO age")}
+                        className="flex items-center gap-2 text-left"
+                        title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
+                      >
                         <span className="h-2 w-2 rounded-full bg-slate-500" />
-                        <span className="text-slate-400">BBO age: {diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"}</span>
-                      </div>
+                        <span className={checklistEnabled["BBO age"] ? "text-white" : "text-slate-500"}>
+                          BBO age: {diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"}
+                        </span>
+                      </button>
                     </div>
                   </div>
                 );
