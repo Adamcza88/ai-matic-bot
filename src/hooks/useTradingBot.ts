@@ -2104,6 +2104,15 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 if (now < scalpGlobalCooldownUntilRef.current) return false;
                 if (st.htf && now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) return false;
 
+                // Refresh BBO just before place to keep it fresh
+                if (isBboStale(st.bbo, now, 1500)) {
+                    logTiming("FETCH_BBO", "pre_place");
+                    const bbo = await fetchBbo(p.symbol);
+                    st.bbo = bbo;
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+
                 logTiming("PLACE_LIMIT", "entry");
                 try {
                     await placeLimit(p);
@@ -2374,25 +2383,6 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             if (now < st.nextAllowedAt) return false;
 
-            // Always refresh BBO if stale/missing even when paused (stale=1.5s)
-            const bboStale = isBboStale(st.bbo, now, 1500);
-            if (!st.bbo || bboStale) {
-                const reason = !st.bbo ? "bootstrap" : "stale";
-                if (reason === "stale") {
-                    const last = staleBboLogRef.current[symbol] ?? 0;
-                    if (now - last > 2000) {
-                        logTiming("FETCH_BBO", reason);
-                        staleBboLogRef.current[symbol] = now;
-                    }
-                } else {
-                    logTiming("FETCH_BBO", reason);
-                }
-                const bbo = await fetchBbo(symbol);
-                st.bbo = bbo;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-
             const paused = now < st.pausedUntil;
 
             if (st.pending) {
@@ -2653,6 +2643,8 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             if (st.htf.bias === "NONE") return false;
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) return false;
 
+            const hasPending = Boolean(st.pending);
+            const hasOpenPos = Boolean(getOpenPos(symbol));
             const isLong = st.htf.bias === "LONG";
             const wantsDir: SuperTrendDir = isLong ? "UP" : "DOWN";
 
@@ -2670,7 +2662,25 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             const signalActive = flipped && (closeToEma || touched) && closeVsSt && htfProj && rvolOk && antiBreakout;
 
-            // BBO age for execution
+            // BBO needed only when signal active or we have pending/position
+            const needBbo = signalActive || hasPending || hasOpenPos;
+            if (needBbo && isBboStale(st.bbo, now, 1500)) {
+                const reason = st.bbo ? "stale" : "bootstrap";
+                if (reason === "stale") {
+                    const last = staleBboLogRef.current[symbol] ?? 0;
+                    if (now - last > 2000) {
+                        logTiming("FETCH_BBO", reason);
+                        staleBboLogRef.current[symbol] = now;
+                    }
+                } else {
+                    logTiming("FETCH_BBO", reason);
+                }
+                const bbo = await fetchBbo(symbol);
+                st.bbo = bbo;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+
             const bboAgeMs = st.bbo ? now - st.bbo.ts : Infinity;
             const executionAllowed = !isBboStale(st.bbo, now, 1500);
 
