@@ -2376,10 +2376,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             const bboAgeMs = st.bbo ? now - st.bbo.ts : Infinity;
-            const executionAllowed = !isBboStale(st.bbo, now, 1500);
+            const bboStale = isBboStale(st.bbo, now, 1500);
+            const executionAllowed = signalActive ? !bboStale : true;
             addLog({
                 action: "SIGNAL",
-                message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${executionAllowed} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`,
+                message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`,
             });
             if (!signalActive) {
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
@@ -2387,7 +2388,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             if (!executionAllowed) {
-                if (bboAgeMs > 10_000) {
+                if (signalActive && bboAgeMs > 10_000) {
                     st.pausedUntil = now + 5_000;
                     st.pausedReason = "PAUSED_DATA_STALE";
                     addLog({ action: "SYSTEM", message: `PAUSE ${symbol} DATA_STALE age=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms` });
