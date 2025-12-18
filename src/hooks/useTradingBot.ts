@@ -2546,7 +2546,8 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                                     statusCheckAt: now,
                                     timeoutAt: now,
                                 };
-                                return false;
+                                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                return true;
                             }
                         }
                         if (profit >= CFG.trailActivateR * r) {
@@ -2576,7 +2577,8 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                                     statusCheckAt: now,
                                     timeoutAt: now,
                                 };
-                                return false;
+                                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                return true;
                             }
                         }
                     }
@@ -2707,9 +2709,9 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     statusCheckAt: now + CFG.orderStatusDelayMs,
                     timeoutAt: now + 60_000,
                 };
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
             }
-            return false;
+            st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+            return true;
         };
 
         const tick = async () => {
@@ -2796,10 +2798,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 scalpRotationIdxRef.current = idx + 1;
 
                 const target = urgent || htfDue || ltfDue || rotated;
-                const did = await processSymbol(target);
-                if (!did && urgent && target !== rotated) {
-                    await processSymbol(rotated);
-                }
+                await processSymbol(target);
             } catch (err: any) {
                 setSystemState((p) => ({
                     ...p,

@@ -2244,7 +2244,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                                     statusCheckAt: now,
                                     timeoutAt: now,
                                 };
-                                return false;
+                                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                return true;
                             }
                         }
                         if (profit >= CFG.trailActivateR * r) {
@@ -2273,7 +2274,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                                     statusCheckAt: now,
                                     timeoutAt: now,
                                 };
-                                return false;
+                                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                return true;
                             }
                         }
                     }
@@ -2418,9 +2420,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     statusCheckAt: now + CFG.orderStatusDelayMs,
                     timeoutAt: now + 60_000,
                 };
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
             }
-            return false;
+            st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+            return true;
         };
         const tick = async () => {
             if (cancel)
@@ -2504,10 +2506,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const rotated = SYMBOLS[idx % SYMBOLS.length];
                 scalpRotationIdxRef.current = idx + 1;
                 const target = urgent || htfDue || ltfDue || rotated;
-                const did = await processSymbol(target);
-                if (!did && urgent && target !== rotated) {
-                    await processSymbol(rotated);
-                }
+                await processSymbol(target);
             }
             catch (err) {
                 setSystemState((p) => ({
