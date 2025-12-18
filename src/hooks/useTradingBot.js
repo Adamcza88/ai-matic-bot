@@ -1632,6 +1632,22 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return Infinity;
             return (ask - bid) / mid;
         };
+        const isGateEnabled = (name) => {
+            try {
+                if (typeof localStorage === "undefined")
+                    return true;
+                const raw = localStorage.getItem("ai-matic-checklist-enabled");
+                if (!raw)
+                    return true;
+                const parsed = JSON.parse(raw);
+                if (typeof parsed[name] === "boolean")
+                    return parsed[name];
+            }
+            catch {
+                // ignore errors and treat as enabled
+            }
+            return true;
+        };
         const isBboStale = (bbo, nowMs, staleMs = 1500) => {
             if (!bbo)
                 return true;
@@ -2337,7 +2353,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return false;
             if (now < scalpGlobalCooldownUntilRef.current)
                 return false;
-            if (st.htf.bias === "NONE")
+            const biasOk = isGateEnabled("HTF bias") ? st.htf.bias !== "NONE" : true;
+            if (!biasOk)
                 return false;
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs)
                 return false;
@@ -2346,17 +2363,24 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const isLong = st.htf.bias === "LONG";
             const wantsDir = isLong ? "UP" : "DOWN";
             // Signal purely z OHLCV/indikátorů
-            const flipped = st.ltf.prevStDir !== st.ltf.stDir && st.ltf.stDir === wantsDir;
+            const flippedRaw = st.ltf.prevStDir !== st.ltf.stDir && st.ltf.stDir === wantsDir;
             const touchBand = Math.max(2 * st.instrument.tickSize, CFG.touchBandAtrFrac * st.ltf.atr14);
             const closeToEma = Math.abs(st.ltf.last.close - st.ltf.ema21) <= touchBand;
             const touched = isLong ? st.ltf.last.low <= st.ltf.ema21 + touchBand : st.ltf.last.high >= st.ltf.ema21 - touchBand;
-            const closeVsSt = isLong ? st.ltf.last.close > st.ltf.stLine : st.ltf.last.close < st.ltf.stLine;
-            const htfProj = isLong ? st.ltf.last.close > st.htf.stLine : st.ltf.last.close < st.htf.stLine;
-            const rvolOk = st.ltf.rvol >= CFG.rvolMin;
+            const closeVsStRaw = isLong ? st.ltf.last.close > st.ltf.stLine : st.ltf.last.close < st.ltf.stLine;
+            const htfProjRaw = isLong ? st.ltf.last.close > st.htf.stLine : st.ltf.last.close < st.htf.stLine;
+            const rvolRaw = st.ltf.rvol >= CFG.rvolMin;
             const range = st.ltf.last.high - st.ltf.last.low;
             const body = Math.abs(st.ltf.last.close - st.ltf.last.open);
-            const antiBreakout = !(range >= CFG.antiBreakoutRangeAtr * st.ltf.atr14) && !(range > 0 && body >= CFG.antiBreakoutBodyFrac * range);
-            const signalActive = flipped && (closeToEma || touched) && closeVsSt && htfProj && rvolOk && antiBreakout;
+            const antiBreakoutRaw = !(range >= CFG.antiBreakoutRangeAtr * st.ltf.atr14) && !(range > 0 && body >= CFG.antiBreakoutBodyFrac * range);
+            // Apply UI toggles: disabled gate = auto-pass
+            const flipped = isGateEnabled("ST flip") ? flippedRaw : true;
+            const emaOk = isGateEnabled("EMA pullback") ? closeToEma || touched : true;
+            const closeVsSt = isGateEnabled("Close vs ST") ? closeVsStRaw : true;
+            const htfProj = isGateEnabled("HTF line projection") ? htfProjRaw : true;
+            const rvolOk = isGateEnabled("RVOL ≥ 1.2") ? rvolRaw : true;
+            const antiBreakout = isGateEnabled("Anti-breakout") ? antiBreakoutRaw : true;
+            const signalActive = flipped && emaOk && closeVsSt && htfProj && rvolOk && antiBreakout;
             // BBO needed when signal active / pending / open pos, always bootstrap, and refresh if stale >5s to avoid drift
             const needBbo = !st.bbo || signalActive || hasPending || hasOpenPos || isBboStale(st.bbo, now, 5000);
             if (needBbo && isBboStale(st.bbo, now, 1500)) {
