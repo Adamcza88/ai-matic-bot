@@ -2123,7 +2123,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const bias = dir === "UP" ? "LONG" : "SHORT";
                 const prevDir = st.htf?.stDir;
                 const flipped = prevDir && prevDir !== dir;
-                // Flip handling: block entries for next 15m candle and cancel pending entries
+                // Flip handling: block entries for next 15m candle and cancel pending entries/signals
                 const blockedUntil = flipped ? expected15 + htfMs : (st.htf?.blockedUntilBarOpenTime ?? 0);
                 st.htf = { barOpenTime: expected15, stDir: dir, stLine: line, bias, blockedUntilBarOpenTime: blockedUntil };
                 if (flipped) {
@@ -2132,10 +2132,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         st.pending.timeoutAt = now;
                         st.pending.taskReason = "HTF_FLIP";
                     }
-                    if (st.pending?.stage === "READY_TO_PLACE") {
+                    else if (st.pending) {
                         scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (st.pending.reservedRiskUsd || 0));
                         st.pending = undefined;
                     }
+                    // clear any manage state; do not open new entries until block lifts
+                    st.manage = undefined;
                     setPendingSignals((prev) => prev.filter((s) => s.symbol !== symbol));
                 }
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2300,6 +2302,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             // Entry scan
             if (!st.htf || !st.ltf || !st.instrument)
                 return false;
+            if (st.ltfLastScanBarOpenTime === st.ltf.barOpenTime)
+                return false;
             if (scalpSafeRef.current)
                 return false;
             if (now < scalpGlobalCooldownUntilRef.current)
@@ -2416,6 +2420,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 { name: "RVOL", result: "PASS" },
             ];
             logAuditEntry("SIGNAL", symbol, "SCAN", gates, canPlaceOrders ? "TRADE" : "DENY", "SCALP_SIGNAL", { entry: limit, sl, tp }, { notional: limit * qty, leverage: leverageFor(symbol) });
+            st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
             if (canPlaceOrders) {
                 // Reserve risk only for actual pending entry orders
                 scalpReservedRiskUsdRef.current += reservedRiskUsd;
