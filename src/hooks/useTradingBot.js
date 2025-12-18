@@ -1430,6 +1430,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const scalpRotationIdxRef = useRef(0);
     const scalpActiveSymbolRef = useRef(null);
     const scalpSymbolLockUntilRef = useRef(0);
+    const staleBboLogRef = useRef({});
     const scalpForceSafeUntilRef = useRef(0);
     const scalpSafeRef = useRef(false);
     const scalpGlobalCooldownUntilRef = useRef(0);
@@ -1629,6 +1630,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (!Number.isFinite(mid) || mid <= 0)
                 return Infinity;
             return (ask - bid) / mid;
+        };
+        const isBboStale = (bbo, nowMs, staleMs = 1500) => {
+            if (!bbo)
+                return true;
+            return nowMs - bbo.ts > staleMs;
         };
         const ensureSymbolState = (symbol) => {
             const map = scalpStateRef.current;
@@ -2077,9 +2083,20 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             if (now < st.nextAllowedAt)
                 return false;
-            // Always refresh BBO if stale/missing even when paused
-            if (!st.bbo || now - st.bbo.ts > 2000) {
-                logTiming("FETCH_BBO", !st.bbo ? "bootstrap" : "stale");
+            // Always refresh BBO if stale/missing even when paused (stale=1.5s)
+            const bboStale = isBboStale(st.bbo, now, 1500);
+            if (!st.bbo || bboStale) {
+                const reason = !st.bbo ? "bootstrap" : "stale";
+                if (reason === "stale") {
+                    const last = staleBboLogRef.current[symbol] ?? 0;
+                    if (now - last > 2000) {
+                        logTiming("FETCH_BBO", reason);
+                        staleBboLogRef.current[symbol] = now;
+                    }
+                }
+                else {
+                    logTiming("FETCH_BBO", reason);
+                }
                 const bbo = await fetchBbo(symbol);
                 st.bbo = bbo;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2350,7 +2367,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const signalActive = flipped && (closeToEma || touched) && closeVsSt && htfProj && rvolOk && antiBreakout;
             // BBO age for execution
             const bboAgeMs = st.bbo ? now - st.bbo.ts : Infinity;
-            const executionAllowed = bboAgeMs <= 2000;
+            const executionAllowed = !isBboStale(st.bbo, now, 1500);
             addLog({
                 action: "SIGNAL",
                 message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${executionAllowed} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`,

@@ -1690,6 +1690,7 @@ export const useTradingBot = (
     const scalpRotationIdxRef = useRef(0);
     const scalpActiveSymbolRef = useRef<string | null>(null);
     const scalpSymbolLockUntilRef = useRef(0);
+    const staleBboLogRef = useRef<Record<string, number>>({});
     const scalpForceSafeUntilRef = useRef(0);
     const scalpSafeRef = useRef(false);
     const scalpGlobalCooldownUntilRef = useRef(0);
@@ -1923,6 +1924,11 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             const mid = (bid + ask) / 2;
             if (!Number.isFinite(mid) || mid <= 0) return Infinity;
             return (ask - bid) / mid;
+        };
+
+        const isBboStale = (bbo: { ts: number } | undefined, nowMs: number, staleMs = 1500) => {
+            if (!bbo) return true;
+            return nowMs - bbo.ts > staleMs;
         };
 
         const ensureSymbolState = (symbol: string) => {
@@ -2368,9 +2374,19 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             if (now < st.nextAllowedAt) return false;
 
-            // Always refresh BBO if stale/missing even when paused
-            if (!st.bbo || now - st.bbo.ts > 2000) {
-                logTiming("FETCH_BBO", !st.bbo ? "bootstrap" : "stale");
+            // Always refresh BBO if stale/missing even when paused (stale=1.5s)
+            const bboStale = isBboStale(st.bbo, now, 1500);
+            if (!st.bbo || bboStale) {
+                const reason = !st.bbo ? "bootstrap" : "stale";
+                if (reason === "stale") {
+                    const last = staleBboLogRef.current[symbol] ?? 0;
+                    if (now - last > 2000) {
+                        logTiming("FETCH_BBO", reason);
+                        staleBboLogRef.current[symbol] = now;
+                    }
+                } else {
+                    logTiming("FETCH_BBO", reason);
+                }
                 const bbo = await fetchBbo(symbol);
                 st.bbo = bbo;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2656,7 +2672,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             // BBO age for execution
             const bboAgeMs = st.bbo ? now - st.bbo.ts : Infinity;
-            const executionAllowed = bboAgeMs <= 2000;
+            const executionAllowed = !isBboStale(st.bbo, now, 1500);
 
             addLog({
                 action: "SIGNAL",
