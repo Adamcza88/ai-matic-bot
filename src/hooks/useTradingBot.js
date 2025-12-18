@@ -2321,7 +2321,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     }
                 }
             }
-            // Entry scan
+            // Entry scan (signal + execution separated)
             if (!st.htf || !st.ltf || !st.instrument)
                 return false;
             if (st.ltfLastScanBarOpenTime === st.ltf.barOpenTime)
@@ -2334,58 +2334,66 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return false;
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs)
                 return false;
-            // Guardrails: spread and low ATR
+            const isLong = st.htf.bias === "LONG";
+            const wantsDir = isLong ? "UP" : "DOWN";
+            // Signal purely z OHLCV/indikátorů
+            const flipped = st.ltf.prevStDir !== st.ltf.stDir && st.ltf.stDir === wantsDir;
+            const touchBand = Math.max(2 * st.instrument.tickSize, CFG.touchBandAtrFrac * st.ltf.atr14);
+            const closeToEma = Math.abs(st.ltf.last.close - st.ltf.ema21) <= touchBand;
+            const touched = isLong ? st.ltf.last.low <= st.ltf.ema21 + touchBand : st.ltf.last.high >= st.ltf.ema21 - touchBand;
+            const closeVsSt = isLong ? st.ltf.last.close > st.ltf.stLine : st.ltf.last.close < st.ltf.stLine;
+            const htfProj = isLong ? st.ltf.last.close > st.htf.stLine : st.ltf.last.close < st.htf.stLine;
+            const rvolOk = st.ltf.rvol >= CFG.rvolMin;
+            const range = st.ltf.last.high - st.ltf.last.low;
+            const body = Math.abs(st.ltf.last.close - st.ltf.last.open);
+            const antiBreakout = !(range >= CFG.antiBreakoutRangeAtr * st.ltf.atr14) && !(range > 0 && body >= CFG.antiBreakoutBodyFrac * range);
+            const signalActive = flipped && (closeToEma || touched) && closeVsSt && htfProj && rvolOk && antiBreakout;
+            // BBO age for execution
+            const bboAgeMs = st.bbo ? now - st.bbo.ts : Infinity;
+            const executionAllowed = bboAgeMs <= 2000;
+            addLog({
+                action: "SIGNAL",
+                message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${executionAllowed} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`,
+            });
+            if (!signalActive) {
+                st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+            if (!executionAllowed) {
+                // signal držíme, čekáme na čerstvé BBO v dalším ticku (bez posunu scan markeru)
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+            // Execution guardrails (spread/ATR)
             const sp = spreadPct(st.bbo.bid, st.bbo.ask);
-            if (sp > CFG.spreadMaxPct)
-                return false;
+            if (sp > CFG.spreadMaxPct) {
+                st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             const atrPct = st.ltf.atr14 > 0 ? st.ltf.atr14 / Math.max(1e-8, st.ltf.last.close) : 0;
             if (atrPct < CFG.lowAtrMinPct) {
                 st.pausedUntil = now + 30 * 60 * 1000;
                 st.pausedReason = "STOP_LOW_ATR";
-                return false;
+                st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
             }
-            const isLong = st.htf.bias === "LONG";
-            const wantsDir = isLong ? "UP" : "DOWN";
-            // HTF ST projection (15m constant for block)
-            if (isLong && st.ltf.last.close <= st.htf.stLine)
-                return false;
-            if (!isLong && st.ltf.last.close >= st.htf.stLine)
-                return false;
-            // LTF supertrend flip trigger
-            const flipped = st.ltf.prevStDir !== st.ltf.stDir && st.ltf.stDir === wantsDir;
-            if (!flipped)
-                return false;
-            // Pullback to EMA21
-            const touchBand = Math.max(2 * st.instrument.tickSize, CFG.touchBandAtrFrac * st.ltf.atr14);
-            const closeToEma = Math.abs(st.ltf.last.close - st.ltf.ema21) <= touchBand;
-            const touched = isLong ? st.ltf.last.low <= st.ltf.ema21 + touchBand : st.ltf.last.high >= st.ltf.ema21 - touchBand;
-            if (!closeToEma && !touched)
-                return false;
-            // Close vs ST line
-            if (isLong && st.ltf.last.close <= st.ltf.stLine)
-                return false;
-            if (!isLong && st.ltf.last.close >= st.ltf.stLine)
-                return false;
-            // RVOL gate
-            if (st.ltf.rvol < CFG.rvolMin)
-                return false;
-            // Anti-breakout rejection
-            const range = st.ltf.last.high - st.ltf.last.low;
-            const body = Math.abs(st.ltf.last.close - st.ltf.last.open);
-            if (range >= CFG.antiBreakoutRangeAtr * st.ltf.atr14)
-                return false;
-            if (range > 0 && body >= CFG.antiBreakoutBodyFrac * range)
-                return false;
             // Build limit price (maker-first)
             const offset = Math.max(2 * st.instrument.tickSize, CFG.offsetAtrFrac * st.ltf.atr14);
             const limitRaw = isLong
                 ? Math.min(st.bbo.ask - st.instrument.tickSize, st.bbo.bid + offset)
                 : Math.max(st.bbo.bid + st.instrument.tickSize, st.bbo.ask - offset);
             const limit = roundToTick(limitRaw, st.instrument.tickSize);
-            if (isLong && limit >= st.bbo.ask)
-                return false;
-            if (!isLong && limit <= st.bbo.bid)
-                return false;
+            if (isLong && limit >= st.bbo.ask) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+            if (!isLong && limit <= st.bbo.bid) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             // SL from micro swing (L=3,R=3), fallback to ST line
             const slBuf = Math.max(st.instrument.tickSize, CFG.slBufferAtrFrac * st.ltf.atr14);
             const pivotLow = findLastPivotLow(st.ltf.candles, 3, 3);
@@ -2396,43 +2404,56 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 sl = roundToTick(st.ltf.stLine - slBuf, st.instrument.tickSize);
             if (!isLong && sl <= limit)
                 sl = roundToTick(st.ltf.stLine + slBuf, st.instrument.tickSize);
-            if (isLong && sl >= limit)
-                return false;
-            if (!isLong && sl <= limit)
-                return false;
+            if (isLong && sl >= limit) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+            if (!isLong && sl <= limit) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             const oneR = Math.abs(limit - sl);
-            if (!Number.isFinite(oneR) || oneR <= 0)
-                return false;
+            if (!Number.isFinite(oneR) || oneR <= 0) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             const tp = roundToTick(isLong ? limit + CFG.tpR * oneR : limit - CFG.tpR * oneR, st.instrument.tickSize);
             // Risk sizing (4/8 USDT) with reservation
             const openRisk = computeOpenRiskUsd();
             const riskTarget = Math.min(4, Math.max(0, 8 - openRisk));
-            if (riskTarget <= 0)
-                return false;
+            if (riskTarget <= 0) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             const qtyRaw = riskTarget / (oneR * Math.max(1e-8, st.instrument.contractValue));
             const qty = roundDownToStep(qtyRaw, st.instrument.stepSize);
-            if (!Number.isFinite(qty) || qty < st.instrument.minQty)
-                return false;
+            if (!Number.isFinite(qty) || qty < st.instrument.minQty) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             const reservedRiskUsd = oneR * qty * st.instrument.contractValue;
-            if (reservedRiskUsd > 4 + 1e-6)
-                return false;
-            if (openRisk + reservedRiskUsd > 8 + 1e-6)
-                return false;
+            if (reservedRiskUsd > 4 + 1e-6 || openRisk + reservedRiskUsd > 8 + 1e-6) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             const openCount = activePositionsRef.current.filter((p) => {
                 if (!SYMBOLS.includes(p.symbol))
                     return false;
                 return Math.abs(Number(p.size ?? p.qty ?? 0)) > 0;
             }).length;
-            if (openCount >= 2)
-                return false;
+            if (openCount >= 2) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             const side = isLong ? "Buy" : "Sell";
             const id = buildId(symbol, side, st.htf.barOpenTime, st.ltf.barOpenTime);
             const recent = scalpRecentIdsRef.current.get(id);
-            if (recent && now - recent <= CFG.maxRecentIdWindowMs)
-                return false;
+            if (recent && now - recent <= CFG.maxRecentIdWindowMs) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             scalpRecentIdsRef.current.set(id, now);
             const gates = [
-                { name: "SESSION", result: "PASS" },
                 { name: "SPREAD", result: "PASS" },
                 { name: "HTF_BIAS", result: "PASS" },
                 { name: "LTF_FLIP", result: "PASS" },
