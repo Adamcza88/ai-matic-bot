@@ -2368,11 +2368,15 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             if (now < st.nextAllowedAt) return false;
 
-            // Data staleness pause (no new trades when data older than 2s)
-            if (st.bbo && now - st.bbo.ts > 2000) {
-                st.pausedUntil = Math.max(st.pausedUntil, now + 1000);
-                st.pausedReason = "DATA_STALE";
+            // Always refresh BBO if stale/missing even when paused
+            if (!st.bbo || now - st.bbo.ts > 2000) {
+                logTiming("FETCH_BBO", !st.bbo ? "bootstrap" : "stale");
+                const bbo = await fetchBbo(symbol);
+                st.bbo = bbo;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
             }
+
             const paused = now < st.pausedUntil;
 
             if (st.pending) {
@@ -2551,15 +2555,6 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 return true;
             }
 
-            // BBO freshness guard (2s)
-            if (!st.bbo || now - st.bbo.ts > 2000) {
-                logTiming("FETCH_BBO", !st.bbo ? "bootstrap" : "stale");
-                const bbo = await fetchBbo(symbol);
-                st.bbo = bbo;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-
             // Manage tasks (partial / trailing) based on current LTF close
             if (st.manage && st.instrument && st.ltf) {
                 const pos = getOpenPos(symbol);
@@ -2573,12 +2568,12 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     const profit = (px - st.manage.entry) * dir;
                     const r = st.manage.oneR || Math.abs(st.manage.entry - (pos.sl ?? st.manage.entry));
                     if (r > 0) {
-                        if (!st.manage.partialTaken && profit >= CFG.partialAtR * r) {
-                            const closeQtyRaw = st.manage.qty * CFG.partialFrac;
-                            const closeQty = roundDownToStep(closeQtyRaw, st.instrument.stepSize);
-                            if (closeQty >= st.instrument.minQty) {
-                                st.pending = {
-                                    stage: "PARTIAL_EXIT",
+                if (!st.manage.partialTaken && profit >= CFG.partialAtR * r) {
+                    const closeQtyRaw = st.manage.qty * CFG.partialFrac;
+                    const closeQty = roundDownToStep(closeQtyRaw, st.instrument.stepSize);
+                    if (closeQty >= st.instrument.minQty) {
+                        st.pending = {
+                            stage: "PARTIAL_EXIT",
                                     orderLinkId: `partial:${symbol}:${expected1}`,
                                     symbol,
                                     side: st.manage.side,

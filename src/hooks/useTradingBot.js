@@ -2077,10 +2077,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             if (now < st.nextAllowedAt)
                 return false;
-            // Data staleness pause (no new trades when data older than 2s)
-            if (st.bbo && now - st.bbo.ts > 2000) {
-                st.pausedUntil = Math.max(st.pausedUntil, now + 1000);
-                st.pausedReason = "DATA_STALE";
+            // Always refresh BBO if stale/missing even when paused
+            if (!st.bbo || now - st.bbo.ts > 2000) {
+                logTiming("FETCH_BBO", !st.bbo ? "bootstrap" : "stale");
+                const bbo = await fetchBbo(symbol);
+                st.bbo = bbo;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
             }
             const paused = now < st.pausedUntil;
             if (st.pending) {
@@ -2243,14 +2246,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     rvol,
                     last: last,
                 };
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            // BBO freshness guard (2s)
-            if (!st.bbo || now - st.bbo.ts > 2000) {
-                logTiming("FETCH_BBO", !st.bbo ? "bootstrap" : "stale");
-                const bbo = await fetchBbo(symbol);
-                st.bbo = bbo;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
