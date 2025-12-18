@@ -1916,13 +1916,6 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
         const net = useTestnet ? "testnet" : "mainnet";
         const canPlaceOrders = mode === TradingMode.AUTO_ON && Boolean(authToken);
 
-        const inLondonOrNy = (now: Date) => {
-            const h = now.getUTCHours();
-            const london = h >= 7 && h < 16;
-            const ny = h >= 12 && h < 21;
-            return london || ny;
-        };
-
         const expectedOpenTime = (nowMs: number, tfMs: number, delayMs: number) =>
             Math.floor((nowMs - delayMs) / tfMs) * tfMs;
 
@@ -2091,7 +2084,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
         const buildId = (symbol: string, side: "Buy" | "Sell", htfBar: number, ltfBar: number) =>
             `${symbol}:${side}:${htfBar}:${ltfBar}`;
 
-        const handlePending = async (st: ScalpSymbolState): Promise<boolean> => {
+        const handlePending = async (st: ScalpSymbolState, plannedAt: number, logTiming: (kind: string, reason?: string) => void): Promise<boolean> => {
             const p = st.pending;
             if (!p) return false;
             const now = Date.now();
@@ -2103,9 +2096,9 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 if (!canPlaceOrders) return false;
                 if (scalpSafeRef.current) return false;
                 if (now < scalpGlobalCooldownUntilRef.current) return false;
-                if (!inLondonOrNy(new Date(now))) return false;
                 if (st.htf && now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) return false;
 
+                logTiming("PLACE_LIMIT", "entry");
                 try {
                     await placeLimit(p);
                 } catch (err: any) {
@@ -2128,6 +2121,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             if (p.stage === "PLACED") {
                 if (now < p.statusCheckAt) return false;
 
+                logTiming("READ_ORDER", "status_check");
                 const hist = await fetchOrderHistoryOnce(net);
                 const found = hist.list.find((o: any) => {
                     const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
@@ -2169,6 +2163,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
                 // If still open and 1m bar done → cancel
                 if (p.stage === "PLACED" && now >= p.timeoutAt) {
+                    logTiming("CANCEL_SEND", "timeout");
                     await cancelOrderByLinkId(p.symbol, p.orderLinkId);
                     p.stage = "CANCEL_SENT";
                     p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
@@ -2191,6 +2186,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             }
 
             if (p.stage === "CANCEL_VERIFY") {
+                logTiming("CANCEL_VERIFY", "post_cancel_delay");
                 const hist = await fetchOrderHistoryOnce(net);
                 const found = hist.list.find((o: any) => {
                     const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
@@ -2210,6 +2206,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             if (p.stage === "FILLED_NEED_SL") {
                 if (!p.fillAt || now < p.fillAt + CFG.postFillDelayMs) return false;
+                logTiming("PLACE_SL", "post_fill_delay");
                 try {
                     await setProtection(p.symbol, p.sl, undefined);
                 } catch (err: any) {
@@ -2234,6 +2231,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             }
 
             if (p.stage === "SL_VERIFY") {
+                logTiming("VERIFY_SL", "post_sl_delay");
                 const posResp = await fetchPositionsOnce(net);
                 const found = posResp.list.find((pp: any) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
                 const tol = Math.abs((currentPricesRef.current[p.symbol] ?? p.limitPrice) * 0.001) || 0.5;
@@ -2257,6 +2255,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             }
 
             if (p.stage === "TP_SENT") {
+                logTiming("PLACE_TP", "post_sl_verify");
                 try {
                     await setProtection(p.symbol, undefined, p.tp);
                 } catch (err: any) {
@@ -2273,6 +2272,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             if (p.stage === "TP_VERIFY") {
                 if (!p.tpVerifyAt || now < p.tpVerifyAt) return false;
+                logTiming("VERIFY_TP", "post_tp_delay");
                 const posResp = await fetchPositionsOnce(net);
                 const found = posResp.list.find((pp: any) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
                 const tol = Math.abs((currentPricesRef.current[p.symbol] ?? p.limitPrice) * 0.001) || 0.5;
@@ -2341,9 +2341,17 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             return false;
         };
 
-        const processSymbol = async (symbol: string): Promise<boolean> => {
+        const processSymbol = async (symbol: string, plannedAt: number): Promise<boolean> => {
             const st = ensureSymbolState(symbol);
             const now = Date.now();
+
+            const logTiming = (kind: string, reason?: string) => {
+                const ts = Date.now();
+                addLog({
+                    action: "SYSTEM",
+                    message: `TIMING ${kind} ${symbol} delay=${ts - plannedAt}ms reason=${reason || "-"}`,
+                });
+            };
 
             // Global active-symbol lock: if jiný symbol je v PLACE/MANAGE/EXIT, čekáme.
             const engaged = Boolean(st.pending || st.manage);
@@ -2359,12 +2367,23 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             }
 
             if (now < st.nextAllowedAt) return false;
-            if (now < st.pausedUntil) return false;
+
+            // Data staleness pause (no new trades when data older than 2s)
+            if (st.bbo && now - st.bbo.ts > 2000) {
+                st.pausedUntil = Math.max(st.pausedUntil, now + 1000);
+                st.pausedReason = "DATA_STALE";
+            }
+            const paused = now < st.pausedUntil;
 
             if (st.pending) {
-                const did = await handlePending(st);
-                if (did) return true;
+                const allowManage = paused ? st.pending.stage !== "READY_TO_PLACE" : true;
+                const allowSafe = scalpSafeRef.current ? st.pending.stage !== "READY_TO_PLACE" : true;
+                if (allowManage && allowSafe) {
+                    const did = await handlePending(st, plannedAt, logTiming);
+                    if (did) return true;
+                }
             }
+            if (paused || scalpSafeRef.current) return false;
 
             // If position closed on exchange, clear manage state
             if (st.manage && !getOpenPos(symbol)) {
@@ -2373,6 +2392,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             // Instrument bootstrap
             if (!st.instrument) {
+                logTiming("FETCH_INSTRUMENT", locked && locked !== symbol ? "lock" : undefined);
                 const info = await fetchInstrument(symbol);
                 st.instrument = info;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2387,6 +2407,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     st.htfConfirm && st.htfConfirm.expectedOpenTime === expected15
                         ? st.htfConfirm
                         : { expectedOpenTime: expected15, stage: 0 as const, attempts: 0 };
+                logTiming("FETCH_HTF", st.htfConfirm ? "retry_confirm" : undefined);
                 const candles = await fetchKlines(symbol, "15", 60);
                 const last = candles[candles.length - 1];
                 if (!last || last.openTime !== expected15) {
@@ -2427,6 +2448,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 st.htf = { barOpenTime: expected15, stDir: dir, stLine: line, bias, blockedUntilBarOpenTime: blockedUntil };
                 if (flipped) {
                     addLog({ action: "SYSTEM", message: `HTF_FLIP ${symbol} ${prevDir}→${dir} blockUntil=${new Date(blockedUntil).toISOString()}` });
+                    logTiming("HTF_FLIP", "cancel_pending");
                     if (st.pending?.stage === "PLACED") {
                         st.pending.timeoutAt = now;
                         st.pending.taskReason = "HTF_FLIP";
@@ -2450,6 +2472,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     st.ltfConfirm && st.ltfConfirm.expectedOpenTime === expected1
                         ? st.ltfConfirm
                         : { expectedOpenTime: expected1, stage: 0 as const, attempts: 0 };
+                logTiming("FETCH_LTF", st.ltfConfirm ? "retry_confirm" : undefined);
                 const candles = await fetchKlines(symbol, "1", 50);
                 const last = candles[candles.length - 1];
                 if (!last || last.openTime !== expected1) {
@@ -2530,6 +2553,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             // BBO freshness guard (2s)
             if (!st.bbo || now - st.bbo.ts > 2000) {
+                logTiming("FETCH_BBO", !st.bbo ? "bootstrap" : "stale");
                 const bbo = await fetchBbo(symbol);
                 st.bbo = bbo;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2615,7 +2639,6 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             if (st.ltfLastScanBarOpenTime === st.ltf.barOpenTime) return false;
             if (scalpSafeRef.current) return false;
             if (now < scalpGlobalCooldownUntilRef.current) return false;
-            if (!inLondonOrNy(new Date(now))) return false;
             if (st.htf.bias === "NONE") return false;
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) return false;
 
@@ -2750,6 +2773,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             if (scalpBusyRef.current) return;
             scalpBusyRef.current = true;
             try {
+                const tickStarted = Date.now();
                 cleanupRecentIds();
                 const safeNow = getApiErrorRate() > 0.05 || scalpForceSafeUntilRef.current > Date.now();
                 if (safeNow !== scalpSafeRef.current) {
@@ -2832,13 +2856,13 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 scalpRotationIdxRef.current = idx + 1;
                 if (scalpActiveSymbolRef.current) rotated = scalpActiveSymbolRef.current;
 
-                const target = urgent || htfDue || ltfDue || rotated;
-                await processSymbol(target);
-            } catch (err: any) {
-                setSystemState((p) => ({
-                    ...p,
-                    bybitStatus: "Error",
-                    lastError: err?.message || "scalp tick error",
+            const target = urgent || htfDue || ltfDue || rotated;
+            await processSymbol(target, tickStarted);
+        } catch (err: any) {
+            setSystemState((p) => ({
+                ...p,
+                bybitStatus: "Error",
+                lastError: err?.message || "scalp tick error",
                     recentErrors: [err?.message || "scalp tick error", ...p.recentErrors].slice(0, 10),
                 }));
             } finally {

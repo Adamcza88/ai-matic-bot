@@ -1623,12 +1623,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         };
         const net = useTestnet ? "testnet" : "mainnet";
         const canPlaceOrders = mode === TradingMode.AUTO_ON && Boolean(authToken);
-        const inLondonOrNy = (now) => {
-            const h = now.getUTCHours();
-            const london = h >= 7 && h < 16;
-            const ny = h >= 12 && h < 21;
-            return london || ny;
-        };
         const expectedOpenTime = (nowMs, tfMs, delayMs) => Math.floor((nowMs - delayMs) / tfMs) * tfMs;
         const spreadPct = (bid, ask) => {
             const mid = (bid + ask) / 2;
@@ -1794,7 +1788,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const getOpenPos = (symbol) => activePositionsRef.current.find((p) => p.symbol === symbol && Math.abs(Number(p.size ?? p.qty ?? 0)) > 0);
         const computeOpenRiskUsd = () => openRiskUsd(activePositionsRef.current) + scalpReservedRiskUsdRef.current;
         const buildId = (symbol, side, htfBar, ltfBar) => `${symbol}:${side}:${htfBar}:${ltfBar}`;
-        const handlePending = async (st) => {
+        const handlePending = async (st, plannedAt, logTiming) => {
             const p = st.pending;
             if (!p)
                 return false;
@@ -1809,10 +1803,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     return false;
                 if (now < scalpGlobalCooldownUntilRef.current)
                     return false;
-                if (!inLondonOrNy(new Date(now)))
-                    return false;
                 if (st.htf && now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs)
                     return false;
+                logTiming("PLACE_LIMIT", "entry");
                 try {
                     await placeLimit(p);
                 }
@@ -1835,6 +1828,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (p.stage === "PLACED") {
                 if (now < p.statusCheckAt)
                     return false;
+                logTiming("READ_ORDER", "status_check");
                 const hist = await fetchOrderHistoryOnce(net);
                 const found = hist.list.find((o) => {
                     const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
@@ -1876,6 +1870,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 }
                 // If still open and 1m bar done → cancel
                 if (p.stage === "PLACED" && now >= p.timeoutAt) {
+                    logTiming("CANCEL_SEND", "timeout");
                     await cancelOrderByLinkId(p.symbol, p.orderLinkId);
                     p.stage = "CANCEL_SENT";
                     p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
@@ -1896,6 +1891,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return false;
             }
             if (p.stage === "CANCEL_VERIFY") {
+                logTiming("CANCEL_VERIFY", "post_cancel_delay");
                 const hist = await fetchOrderHistoryOnce(net);
                 const found = hist.list.find((o) => {
                     const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
@@ -1916,6 +1912,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (p.stage === "FILLED_NEED_SL") {
                 if (!p.fillAt || now < p.fillAt + CFG.postFillDelayMs)
                     return false;
+                logTiming("PLACE_SL", "post_fill_delay");
                 try {
                     await setProtection(p.symbol, p.sl, undefined);
                 }
@@ -1940,6 +1937,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return false;
             }
             if (p.stage === "SL_VERIFY") {
+                logTiming("VERIFY_SL", "post_sl_delay");
                 const posResp = await fetchPositionsOnce(net);
                 const found = posResp.list.find((pp) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
                 const tol = Math.abs((currentPricesRef.current[p.symbol] ?? p.limitPrice) * 0.001) || 0.5;
@@ -1964,6 +1962,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             if (p.stage === "TP_SENT") {
+                logTiming("PLACE_TP", "post_sl_verify");
                 try {
                     await setProtection(p.symbol, undefined, p.tp);
                 }
@@ -1981,6 +1980,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (p.stage === "TP_VERIFY") {
                 if (!p.tpVerifyAt || now < p.tpVerifyAt)
                     return false;
+                logTiming("VERIFY_TP", "post_tp_delay");
                 const posResp = await fetchPositionsOnce(net);
                 const found = posResp.list.find((pp) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
                 const tol = Math.abs((currentPricesRef.current[p.symbol] ?? p.limitPrice) * 0.001) || 0.5;
@@ -2051,9 +2051,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             return false;
         };
-        const processSymbol = async (symbol) => {
+        const processSymbol = async (symbol, plannedAt) => {
             const st = ensureSymbolState(symbol);
             const now = Date.now();
+            const logTiming = (kind, reason) => {
+                const ts = Date.now();
+                addLog({
+                    action: "SYSTEM",
+                    message: `TIMING ${kind} ${symbol} delay=${ts - plannedAt}ms reason=${reason || "-"}`,
+                });
+            };
             // Global active-symbol lock: if jiný symbol je v PLACE/MANAGE/EXIT, čekáme.
             const engaged = Boolean(st.pending || st.manage);
             const locked = scalpActiveSymbolRef.current;
@@ -2070,19 +2077,30 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             if (now < st.nextAllowedAt)
                 return false;
-            if (now < st.pausedUntil)
-                return false;
-            if (st.pending) {
-                const did = await handlePending(st);
-                if (did)
-                    return true;
+            // Data staleness pause (no new trades when data older than 2s)
+            if (st.bbo && now - st.bbo.ts > 2000) {
+                st.pausedUntil = Math.max(st.pausedUntil, now + 1000);
+                st.pausedReason = "DATA_STALE";
             }
+            const paused = now < st.pausedUntil;
+            if (st.pending) {
+                const allowManage = paused ? st.pending.stage !== "READY_TO_PLACE" : true;
+                const allowSafe = scalpSafeRef.current ? st.pending.stage !== "READY_TO_PLACE" : true;
+                if (allowManage && allowSafe) {
+                    const did = await handlePending(st, plannedAt, logTiming);
+                    if (did)
+                        return true;
+                }
+            }
+            if (paused || scalpSafeRef.current)
+                return false;
             // If position closed on exchange, clear manage state
             if (st.manage && !getOpenPos(symbol)) {
                 st.manage = undefined;
             }
             // Instrument bootstrap
             if (!st.instrument) {
+                logTiming("FETCH_INSTRUMENT", locked && locked !== symbol ? "lock" : undefined);
                 const info = await fetchInstrument(symbol);
                 st.instrument = info;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2095,6 +2113,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const conf = st.htfConfirm && st.htfConfirm.expectedOpenTime === expected15
                     ? st.htfConfirm
                     : { expectedOpenTime: expected15, stage: 0, attempts: 0 };
+                logTiming("FETCH_HTF", st.htfConfirm ? "retry_confirm" : undefined);
                 const candles = await fetchKlines(symbol, "15", 60);
                 const last = candles[candles.length - 1];
                 if (!last || last.openTime !== expected15) {
@@ -2133,6 +2152,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 st.htf = { barOpenTime: expected15, stDir: dir, stLine: line, bias, blockedUntilBarOpenTime: blockedUntil };
                 if (flipped) {
                     addLog({ action: "SYSTEM", message: `HTF_FLIP ${symbol} ${prevDir}→${dir} blockUntil=${new Date(blockedUntil).toISOString()}` });
+                    logTiming("HTF_FLIP", "cancel_pending");
                     if (st.pending?.stage === "PLACED") {
                         st.pending.timeoutAt = now;
                         st.pending.taskReason = "HTF_FLIP";
@@ -2155,6 +2175,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const conf = st.ltfConfirm && st.ltfConfirm.expectedOpenTime === expected1
                     ? st.ltfConfirm
                     : { expectedOpenTime: expected1, stage: 0, attempts: 0 };
+                logTiming("FETCH_LTF", st.ltfConfirm ? "retry_confirm" : undefined);
                 const candles = await fetchKlines(symbol, "1", 50);
                 const last = candles[candles.length - 1];
                 if (!last || last.openTime !== expected1) {
@@ -2227,6 +2248,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             // BBO freshness guard (2s)
             if (!st.bbo || now - st.bbo.ts > 2000) {
+                logTiming("FETCH_BBO", !st.bbo ? "bootstrap" : "stale");
                 const bbo = await fetchBbo(symbol);
                 st.bbo = bbo;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2312,8 +2334,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (scalpSafeRef.current)
                 return false;
             if (now < scalpGlobalCooldownUntilRef.current)
-                return false;
-            if (!inLondonOrNy(new Date(now)))
                 return false;
             if (st.htf.bias === "NONE")
                 return false;
@@ -2461,6 +2481,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return;
             scalpBusyRef.current = true;
             try {
+                const tickStarted = Date.now();
                 cleanupRecentIds();
                 const safeNow = getApiErrorRate() > 0.05 || scalpForceSafeUntilRef.current > Date.now();
                 if (safeNow !== scalpSafeRef.current) {
@@ -2544,7 +2565,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 if (scalpActiveSymbolRef.current)
                     rotated = scalpActiveSymbolRef.current;
                 const target = urgent || htfDue || ltfDue || rotated;
-                await processSymbol(target);
+                await processSymbol(target, tickStarted);
             }
             catch (err) {
                 setSystemState((p) => ({
