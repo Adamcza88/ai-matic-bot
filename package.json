@@ -9,6 +9,7 @@
     "lint": "tsc --noEmit",
     "eslint": "eslint . --ext .ts,.tsx",
     "test:coach": "node --test tests/coachStrategy.test.js",
+    "test:ema50": "node --test tests/ema50Pullback.test.js",
     "preview": "vite preview",
     "start": "npm run dev"
   },

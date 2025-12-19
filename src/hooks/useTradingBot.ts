@@ -322,6 +322,28 @@ function computeAtrFromHistory(candles: Candle[], period: number = 20): number {
     return sum / slice.length;
 }
 
+function calculateChandelierStop(
+    candles: Candle[],
+    direction: 'buy' | 'sell',
+    period: number = 22,
+    multiplier: number = 3
+): number {
+    if (candles.length < period) {
+        return 0;
+    }
+
+    const recentCandles = candles.slice(-period);
+    const atr = computeAtrFromHistory(recentCandles, period);
+
+    if (direction === 'buy') {
+        const highestHigh = Math.max(...recentCandles.map(c => c.high));
+        return highestHigh - atr * multiplier;
+    } else { // 'sell'
+        const lowestLow = Math.min(...recentCandles.map(c => c.low));
+        return lowestLow + atr * multiplier;
+    }
+}
+
 function computeAtrPair(candles: Candle[]) {
     const atrShort = computeAtrFromHistory(candles, 14);
     const atrLong = computeAtrFromHistory(candles, 50) || atrShort || 1;
@@ -1883,58 +1905,78 @@ const getVolatilityMultiplier = (symbol: string) => {
 type RankedSignal = { signal: PendingSignal; score: number; reason: string };
 
 function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSignal | null {
-    if (!candles || candles.length < 30) return null;
+    if (!candles || candles.length < 50) return null; // Need enough for 50 EMA and Chandelier
     const price = candles[candles.length - 1]?.close;
-    const prevClose = candles[candles.length - 2]?.close ?? price;
     if (!Number.isFinite(price) || price <= 0) return null;
 
-    const { atrShort, atrLong } = computeAtrPair(candles);
-    const atrPct = atrShort > 0 ? atrShort / price : 0;
-    const emaFast = computeEma(candles.slice(-80), 14);
-    const emaSlow = computeEma(candles.slice(-120), 50);
-    const trendStrength = Math.abs(emaFast - emaSlow) / Math.max(price, 1e-8);
+    const emaSlow = computeEma(candles, 50);
 
     let side: "buy" | "sell" | null = null;
-    if (emaFast > emaSlow * 1.0003 && price > emaFast) side = "buy";
-    if (emaFast < emaSlow * 0.9997 && price < emaFast) side = "sell";
+    const lastCandle = candles[candles.length - 1];
+    const prevCandle = candles[candles.length - 2];
+
+    // Long condition: price above 50 EMA, with two consecutive red candles for a pullback
+    if (price > emaSlow &&
+        lastCandle.close < lastCandle.open &&
+        prevCandle.close < prevCandle.open) {
+        side = "buy";
+    }
+
+    // Short condition: price below 50 EMA, with two consecutive green candles for a pullback
+    if (price < emaSlow &&
+        lastCandle.close > lastCandle.open &&
+        prevCandle.close > prevCandle.open) {
+        side = "sell";
+    }
+
     if (!side) return null;
 
-    const recent = candles.slice(-6);
-    const recentHigh = Math.max(...recent.map((c) => c.high));
-    const recentLow = Math.min(...recent.map((c) => c.low));
+    // Invalidation: breakout candle size is significantly larger than the average.
+    // I will check the candle before the two pullback candles.
+    const breakoutCandle = candles[candles.length - 3];
+    if (breakoutCandle) {
+        const avgCandleSize = computeAtrFromHistory(candles.slice(-20, -3), 17); // ATR of 17 candles before the pullback
+        if (avgCandleSize > 0) {
+            const breakoutCandleSize = Math.abs(breakoutCandle.high - breakoutCandle.low);
+            if (breakoutCandleSize > avgCandleSize * 3) { // 3x larger is "significant"
+                return null; // Invalidate trade
+            }
+        }
+    }
 
-    const pullbackTrigger =
-        side === "buy"
-            ? prevClose < emaFast && price > emaFast && price > prevClose && price >= emaFast * 0.997
-            : prevClose > emaFast && price < emaFast && price < prevClose && price <= emaFast * 1.003;
 
-    const breakoutTrigger =
-        side === "buy"
-            ? price > recentHigh && prevClose <= recentHigh * 1.0005
-            : price < recentLow && prevClose >= recentLow * 0.9995;
+    const sl = calculateChandelierStop(candles, side, 22, 3);
+    if (sl === 0) return null; // Not enough data
 
-    if (!pullbackTrigger && !breakoutTrigger) return null;
+    // Invalidation: pullback breaks below the EMA
+    if (side === 'buy' && Math.min(lastCandle.low, prevCandle.low) < emaSlow) {
+        return null;
+    }
+    // Invalidation: pullback breaks above the EMA
+    if (side === 'sell' && Math.max(lastCandle.high, prevCandle.high) > emaSlow) {
+        return null;
+    }
 
-    const slDistance = Math.max(atrShort * 1.3, price * 0.0015);
-    const tpDistance = slDistance * 2.2;
-    const sl = side === "buy" ? price - slDistance : price + slDistance;
+
+    const slDistance = Math.abs(price - sl);
+    if (slDistance < price * STOP_MIN_PCT) return null; // Stop too tight
+
+    const tpDistance = slDistance * 1.5; // Targeting 1.5R profit
     const tp = side === "buy" ? price + tpDistance : price - tpDistance;
 
-    const momentum = ((price - prevClose) / price) * (side === "buy" ? 1 : -1);
+    const { atrShort } = computeAtrPair(candles);
+    const atrPct = atrShort > 0 ? atrShort / price : 0;
     const volScore = scoreVol(atrPct);
-    const score = trendStrength * 2 + momentum * 3 + volScore;
-    const risk = Math.max(0.5, Math.min(0.95, 0.55 + score));
+    const score = volScore; // Simplified score for now
+    const risk = Math.min(0.95, Math.max(0.5, netRrrWithFees(price, sl, tp, TAKER_FEE) / 2));
 
-    const triggerLabel = pullbackTrigger ? "pullback" : "breakout";
-    const reason = `${symbol} ${side.toUpperCase()} | ${triggerLabel} | trend ${(
-        trendStrength * 100
-    ).toFixed(2)}bps | ATR ${atrPct ? (atrPct * 100).toFixed(2) : "0"}%`;
+    const reason = `${symbol} ${side.toUpperCase()} | 50 EMA + 2-bar pullback | Chandelier SL`;
 
     const signal: PendingSignal = {
-        id: `${symbol}-dir-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+        id: `${symbol}-ema50-pullback-${Date.now()}`,
         symbol,
-        profile: "intraday",
-        kind: pullbackTrigger ? "PULLBACK" : "BREAKOUT",
+        profile: "intraday-ema50",
+        kind: "PULLBACK",
         risk,
         createdAt: new Date().toISOString(),
         intent: {
