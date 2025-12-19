@@ -92,7 +92,7 @@ export default function Dashboard({
             Dashboard
           </h2>
           <p className="text-slate-400 hidden lg:block">
-            Deterministic Scalp Profile 1 (15m/1m)
+            AI-MATIC (15m/1m)
           </p>
         </div>
 
@@ -215,7 +215,7 @@ export default function Dashboard({
               <div className="flex justify-between items-center">
                 <span className="text-slate-400">Profile</span>
                 <Badge variant="secondary" className="bg-emerald-600/80 text-white">
-                  Deterministic Scalp v1
+                  AI-MATIC
                 </Badge>
               </div>
               <div className="flex justify-between">
