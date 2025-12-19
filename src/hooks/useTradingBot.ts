@@ -1665,19 +1665,22 @@ export const useTradingBot = (
                         if (candles && candles.length > 15) {
                             atr = scalpComputeAtr(candles as any, 14).slice(-1)[0] ?? 0;
                         }
+                        const entry = p.entryPrice;
+                        const lastPx = currentPricesRef.current[p.symbol] || entry;
+                        const buffer = Math.max(entry * STOP_MIN_PCT, entry * 0.001, 0.1);
                         const baseR = Math.max(
-                            p.entryPrice * STOP_MIN_PCT,
-                            atr > 0 ? atr * 0.5 : p.entryPrice * 0.002
+                            entry * STOP_MIN_PCT,
+                            atr > 0 ? atr * 0.5 : entry * 0.002
                         );
                         const fallbackSl = missingSl
                             ? dir > 0
-                                ? p.entryPrice - baseR
-                                : p.entryPrice + baseR
+                                ? Math.min(entry - baseR, lastPx - buffer)
+                                : Math.max(entry + baseR, lastPx + buffer)
                             : p.sl;
                         const fallbackTp = missingTp
                             ? dir > 0
-                                ? p.entryPrice + 1.4 * baseR
-                                : p.entryPrice - 1.4 * baseR
+                                ? Math.max(entry + 1.4 * baseR, lastPx + buffer)
+                                : Math.min(entry - 1.4 * baseR, lastPx - buffer)
                             : p.tp;
                         const trailing = missingTrailing ? undefined : p.currentTrailingStop;
                         const ok = await commitProtection(`recon-${p.id}`, p.symbol, fallbackSl, fallbackTp, trailing);
@@ -2620,6 +2623,19 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 if (!Number.isFinite(newSl)) {
                     st.pending = undefined;
                     return false;
+                }
+                const pos = posForPending;
+                if (pos) {
+                    const lastPx = currentPricesRef.current[p.symbol] || pos.entryPrice || 0;
+                    const tick = st.instrument?.tickSize ?? Math.max((lastPx || 1) * 0.0001, 0.1);
+                    const isBuy = String(pos.side || "").toLowerCase() === "buy";
+                    const valid = isBuy ? newSl < lastPx - tick : newSl > lastPx + tick;
+                    if (!valid) {
+                        st.pending = undefined;
+                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                        addLog({ action: "SYSTEM", message: `TRAIL_SKIP ${p.symbol} sl=${newSl} last=${lastPx}` });
+                        return true;
+                    }
                 }
                 try {
                     await setProtection(p.symbol, newSl, undefined);
