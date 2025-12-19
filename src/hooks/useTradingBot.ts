@@ -42,6 +42,9 @@ import {
 
 // SYMBOLS (Deterministic Scalp Profile 1)
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+// SYMBOLS (AI-MATIC-SCALP)
+const SMC_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "HBARUSDT", "NEARUSDT", "AVAXUSDT"];
+const ALL_SYMBOLS = Array.from(new Set([...SYMBOLS, ...SMC_SYMBOLS]));
 
 // SIMULOVANÝ / DEFAULT KAPITÁL
 const INITIAL_CAPITAL = 100; // Unified Trading balance snapshot
@@ -151,6 +154,40 @@ const AI_MATIC_X_PRESET: AISettings = {
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
 };
 
+const AI_MATIC_SCALP_PRESET: AISettings = {
+    riskMode: "ai-matic-scalp",
+    strictRiskAdherence: true,
+    pauseOnHighVolatility: false,
+    avoidLowLiquidity: false,
+    useTrendFollowing: true,
+    smcScalpMode: true,
+    useLiquiditySweeps: false,
+    useVolatilityExpansion: false,
+    maxDailyLossPercent: 0.03,
+    maxDailyProfitPercent: 0.5,
+    maxDrawdownPercent: 0.7,
+    baseRiskPerTrade: 0,
+    maxPortfolioRiskPercent: 0.2,
+    maxAllocatedCapitalPercent: 1.0,
+    maxOpenPositions: 2,
+    entryStrictness: "ultra",
+    enforceSessionHours: false,
+    haltOnDailyLoss: true,
+    haltOnDrawdown: true,
+    useDynamicPositionSizing: true,
+    lockProfitsWithTrail: true,
+    requireConfirmationInAuto: false,
+    positionSizingMultiplier: 1.0,
+    customInstructions: "",
+    customStrategy: "",
+    min24hVolume: 50,
+    minProfitFactor: 1.0,
+    minWinRate: 65,
+    tradingStartHour: 0,
+    tradingEndHour: 23,
+    tradingDays: [0, 1, 2, 3, 4, 5, 6],
+};
+
 export const INITIAL_RISK_SETTINGS: AISettings = AI_MATIC_PRESET;
 
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
@@ -217,7 +254,11 @@ function snapshotSettings(settings: AISettings): AISettings {
 }
 
 const presetFor = (mode: AISettings["riskMode"]): AISettings =>
-    mode === "ai-matic-x" ? AI_MATIC_X_PRESET : AI_MATIC_PRESET;
+    mode === "ai-matic-x"
+        ? AI_MATIC_X_PRESET
+        : mode === "ai-matic-scalp"
+            ? AI_MATIC_SCALP_PRESET
+            : AI_MATIC_PRESET;
 
 const clampQtyForSymbol = (symbol: string, qty: number) => {
     const limits = QTY_LIMITS[symbol];
@@ -1208,7 +1249,7 @@ export const useTradingBot = (
             }
             const data = await res.json();
             const list = data?.data?.list || data?.list || data?.result?.list || [];
-            const allowed = new Set(SYMBOLS);
+            const allowed = new Set(ALL_SYMBOLS);
             const mapped: TestnetTrade[] = Array.isArray(list)
                 ? list
                     .filter((t: any) => allowed.has(t.symbol))
@@ -1575,6 +1616,11 @@ export const useTradingBot = (
                         continue;
                     }
 
+                    // AI-MATIC-SCALP manages its own trailing rules; don't apply legacy trailing heuristics.
+                    if (settingsRef.current.riskMode === "ai-matic-scalp") {
+                        continue;
+                    }
+
                     // Trailing rules: +1R -> SL = BE+fees; +1.5R -> SL = entry + 0.5R*dir; +2R -> SL = entry + 1R*dir
                     const feeShift = p.entryPrice * TAKER_FEE * 2;
                     let newSl: number | null = null;
@@ -1633,7 +1679,14 @@ export const useTradingBot = (
     });
 
     const priceHistoryRef = useRef<Record<string, Candle[]>>({});
-    type ScalpInstrument = { tickSize: number; stepSize: number; minQty: number; contractValue: number };
+    type ScalpInstrument = {
+        tickSize: number;
+        stepSize: number;
+        minQty: number;
+        minNotional: number;
+        maxQty: number;
+        contractValue: number;
+    };
     type ScalpBbo = { bid: number; ask: number; ts: number };
     type ScalpBias = "LONG" | "SHORT" | "NONE";
     type ScalpConfirm = {
@@ -1741,10 +1794,21 @@ export const useTradingBot = (
     const scalpForceSafeUntilRef = useRef(0);
     const scalpSafeRef = useRef(false);
     const scalpGlobalCooldownUntilRef = useRef(0);
+
+    // ========== AI-MATIC-SCALP (SMC/AMD) runtime refs ==========
+    const smcStateRef = useRef<Record<string, any>>({});
+    const smcBusyRef = useRef(false);
+    const smcRotationIdxRef = useRef(0);
+    const smcGlobalCooldownUntilRef = useRef(0);
+    const smcLastTrailUpdateAtRef = useRef<Record<string, number>>({});
     const modeRef = useRef(mode);
     modeRef.current = mode;
     const settingsRef = useRef(settings);
     settingsRef.current = settings;
+    const portfolioStateRef = useRef(portfolioState);
+    portfolioStateRef.current = portfolioState;
+    const walletEquityRef = useRef(walletEquity);
+    walletEquityRef.current = walletEquity;
     const realizedPnlRef = useRef(0);
     const lastResetDayRef = useRef<string | null>(null);
 
@@ -1928,6 +1992,9 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             setSystemState((p) => ({ ...p, bybitStatus: "Disconnected" }));
             return;
         }
+        if (settings.riskMode === "ai-matic-scalp") {
+            return;
+        }
 
         let cancel = false;
 
@@ -2029,6 +2096,8 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 tickSize: Number(item.priceFilter?.tickSize ?? 0),
                 stepSize: Number(item.lotSizeFilter?.qtyStep ?? 0),
                 minQty: Number(item.lotSizeFilter?.minOrderQty ?? 0),
+                minNotional: Number(item.lotSizeFilter?.minNotionalValue ?? 0),
+                maxQty: Number(item.lotSizeFilter?.maxOrderQty ?? Number.POSITIVE_INFINITY),
                 contractValue: Number(item.contractSize ?? 1),
             };
         };
@@ -3121,7 +3190,927 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             cancel = true;
             clearInterval(id);
         };
-    }, [mode, useTestnet, httpBase, authToken, apiBase, apiPrefix, queuedFetch, fetchOrderHistoryOnce, fetchPositionsOnce, forceClosePosition]);
+    }, [mode, settings.riskMode, useTestnet, httpBase, authToken, apiBase, apiPrefix, queuedFetch, fetchOrderHistoryOnce, fetchPositionsOnce, forceClosePosition]);
+
+    // ========== AI-MATIC-SCALP (SMC/AMD) ==========
+    useEffect(() => {
+        if (mode === TradingMode.OFF) return;
+        if (settings.riskMode !== "ai-matic-scalp") return;
+
+        let cancel = false;
+
+        const CFG = {
+            tickMs: 650,
+            symbolFetchGapMs: 450,
+            orderStatusDelayMs: 600,
+            postFillDelayMs: 250,
+            postSlVerifyDelayMs: 400,
+            maxDataAgeMs: 2500,
+            maxSpreadPct: 0.0012,
+
+            // Sessions (Europe/Prague)
+            asiaStartH: 2,
+            asiaEndH: 6,
+            londonKillStartH: 8,
+            londonKillEndH: 11,
+            nyKillStartH: 14,
+            nyKillEndH: 17,
+
+            // Asia/AMD thresholds
+            asiaRangePctThreshold: 0.36,
+            sweepMinPct: 0.045,
+            sweepMaxPct: 0.18,
+
+            // Entry
+            entryTfPrimary: "1" as const,
+            entryTfFallback: "5" as const,
+            chochDeadlineMinPrimary: 10,
+            m1NoiseSwitchMin: 15,
+            fvgSizePctLarge: 0.07,
+            entryTimeoutM1Bars: 15,
+            entryTimeoutM5Bars: 12,
+
+            // SL/ATR buffers
+            atrPeriod: 14,
+            slBufferStdK: 1.0,
+
+            // Risk & margin caps
+            riskPerTradePct: 0.01,
+            minRiskUsdt: 10,
+            riskCapUsdt: 200,
+            maxMarginPerPosUsdt: 5,
+            marginSafety: 0.95,
+            maxOpenPositions: 2,
+            globalEntryCooldownMs: 300_000,
+
+            // TP1 + runner
+            tp1R: 1.0,
+            splitTp1Frac: 0.5,
+
+            // Trailing stop (client-side via SL updates)
+            trailUpdateMs: 60_000,
+            trailPhase1Ms: 15 * 60_000,
+            trailPhase2Ms: 60 * 60_000,
+            trailMultPhase1: 1.5,
+            trailMultPhase2: 3.0,
+            trailMinImproveTicks: 2,
+
+            // Daily stop
+            dailyLossPct: 0.03,
+        } as const;
+
+        const net = useTestnet ? "testnet" : "mainnet";
+        const canPlaceOrders = mode === TradingMode.AUTO_ON && Boolean(authToken);
+
+        const LEVERAGE_SMC: Record<string, number> = {
+            BTCUSDT: 100,
+            ETHUSDT: 100,
+            SOLUSDT: 100,
+            XRPUSDT: 100,
+            ADAUSDT: 75,
+            HBARUSDT: 75,
+            NEARUSDT: 75,
+            AVAXUSDT: 75,
+        };
+
+        const SLIPPAGE_PCT: Record<string, number> = {
+            BTCUSDT: 0.0002,
+            ETHUSDT: 0.0002,
+            SOLUSDT: 0.0005,
+            XRPUSDT: 0.0005,
+            ADAUSDT: 0.0005,
+            HBARUSDT: 0.0015,
+            NEARUSDT: 0.0015,
+            AVAXUSDT: 0.0015,
+        };
+
+        const MAKER_FEE = 0.0002;
+        const TAKER_FEE_SMC = 0.00055; // worst-case (round-turn uses taker)
+
+        const MAX_STRATEGY_QTY: Record<string, number> = {
+            BTCUSDT: 0.005,
+            ETHUSDT: 0.15,
+            SOLUSDT: 3.6,
+            XRPUSDT: 185,
+            ADAUSDT: 950,
+            HBARUSDT: 3190,
+            NEARUSDT: 155,
+            AVAXUSDT: 20,
+        };
+
+        const tzParts = (d: Date, timeZone: string) => {
+            const fmt = new Intl.DateTimeFormat("en-GB", {
+                timeZone,
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+            });
+            const parts = fmt.formatToParts(d);
+            const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+            const year = get("year");
+            const month = get("month");
+            const day = get("day");
+            const hour = get("hour");
+            const minute = get("minute");
+            const second = get("second");
+            const dayKey = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+            return { year, month, day, hour, minute, second, dayKey };
+        };
+
+        const inWindow = (h: number, m: number, startH: number, startM: number, endH: number, endM: number) => {
+            const t = h * 60 + m;
+            const a = startH * 60 + startM;
+            const b = endH * 60 + endM;
+            return t >= a && t < b;
+        };
+
+        const floorToStep = (x: number, step: number) => {
+            if (!Number.isFinite(x) || !Number.isFinite(step) || step <= 0) return 0;
+            const k = Math.round(1 / step);
+            return Math.floor(x * k) / k;
+        };
+
+        const ceilToStep = (x: number, step: number) => {
+            if (!Number.isFinite(x) || !Number.isFinite(step) || step <= 0) return 0;
+            const k = Math.round(1 / step);
+            return Math.ceil(x * k) / k;
+        };
+
+        const spreadPct = (bid: number, ask: number) => {
+            const mid = (bid + ask) / 2;
+            if (!Number.isFinite(mid) || mid <= 0) return Infinity;
+            return (ask - bid) / mid;
+        };
+
+        const equityNow = () => {
+            const v = Number(walletEquityRef.current ?? portfolioStateRef.current.totalCapital ?? 0);
+            return Number.isFinite(v) && v > 0 ? v : ACCOUNT_BALANCE_USD;
+        };
+
+        const riskBudget = () => {
+            const raw = equityNow() * CFG.riskPerTradePct;
+            return Math.max(CFG.minRiskUsdt, Math.min(raw, CFG.riskCapUsdt));
+        };
+
+        const leverageForSmc = (symbol: string) => LEVERAGE_SMC[symbol] ?? 50;
+        const slipFor = (symbol: string) => SLIPPAGE_PCT[symbol] ?? 0.001;
+        const maxStrategyQtyFor = (symbol: string) => MAX_STRATEGY_QTY[symbol] ?? Number.POSITIVE_INFINITY;
+
+        const expectedOpenTime = (nowMs: number, tfMs: number, delayMs: number) =>
+            Math.floor((nowMs - delayMs) / tfMs) * tfMs;
+
+        const fetchInstrument = async (symbol: string): Promise<ScalpInstrument> => {
+            const url = `${httpBase}/v5/market/instruments-info?category=linear&symbol=${symbol}`;
+            const res = await queuedFetch(url, undefined, "data");
+            const json = await res.json();
+            if (json.retCode !== 0) throw new Error(json.retMsg);
+            const item = json?.result?.list?.[0];
+            if (!item) throw new Error(`Instrument not found for ${symbol}`);
+            return {
+                tickSize: Number(item.priceFilter?.tickSize ?? 0),
+                stepSize: Number(item.lotSizeFilter?.qtyStep ?? 0),
+                minQty: Number(item.lotSizeFilter?.minOrderQty ?? 0),
+                minNotional: Number(item.lotSizeFilter?.minNotionalValue ?? 0),
+                maxQty: Number(item.lotSizeFilter?.maxOrderQty ?? Number.POSITIVE_INFINITY),
+                contractValue: Number(item.contractSize ?? 1),
+            };
+        };
+
+        const fetchBbo = async (symbol: string): Promise<ScalpBbo> => {
+            const url = `${httpBase}/v5/market/tickers?category=linear&symbol=${symbol}`;
+            const res = await queuedFetch(url, undefined, "data");
+            const json = await res.json();
+            if (json.retCode !== 0) throw new Error(json.retMsg);
+            const item = json?.result?.list?.[0];
+            const bid = Number(item?.bid1Price ?? 0);
+            const ask = Number(item?.ask1Price ?? 0);
+            if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0) {
+                throw new Error(`Invalid BBO for ${symbol}`);
+            }
+            return { bid, ask, ts: Date.now() };
+        };
+
+        const fetchKlines = async (symbol: string, interval: string, limit: number) => {
+            const url = `${httpBase}/v5/market/kline?category=linear&symbol=${symbol}&interval=${interval}&limit=${limit}`;
+            const res = await queuedFetch(url, undefined, "data");
+            const json = await res.json();
+            if (json.retCode !== 0) throw new Error(json.retMsg);
+            return parseKlines(json.result?.list ?? []);
+        };
+
+        const cancelOrderByLinkId = async (symbol: string, orderLinkId: string) => {
+            if (!authToken) return;
+            const res = await queuedFetch(`${apiBase}${apiPrefix}/cancel?net=${net}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({ symbol, orderLinkId }),
+            }, "order");
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || body?.ok === false) {
+                throw new Error(body?.error || `Cancel failed (${res.status})`);
+            }
+            const rc = body?.data?.retCode ?? body?.retCode;
+            if (rc && rc !== 0) throw new Error(body?.data?.retMsg || body?.retMsg || "Cancel rejected");
+            return body;
+        };
+
+        const placeLimit = async (symbol: string, side: "Buy" | "Sell", qty: number, price: number, orderLinkId: string, reduceOnly = false, tif: "GTC" | "PostOnly" = "PostOnly") => {
+            if (!authToken) throw new Error("Missing auth token for live trading");
+            const res = await queuedFetch(`${apiBase}${apiPrefix}/order?net=${net}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({
+                    symbol,
+                    side,
+                    qty,
+                    orderType: "Limit",
+                    price,
+                    timeInForce: tif,
+                    reduceOnly,
+                    orderLinkId,
+                }),
+            }, "order");
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || body?.ok === false) {
+                throw new Error(body?.error || `Order failed (${res.status})`);
+            }
+            const rc = body?.data?.retCode ?? body?.retCode;
+            if (rc && rc !== 0) throw new Error(body?.data?.retMsg || body?.retMsg || "Order rejected");
+            return body;
+        };
+
+        const placeReduceOnlyMarket = async (symbol: string, side: "Buy" | "Sell", qty: number, orderLinkId?: string) => {
+            if (!authToken) return null;
+            const res = await queuedFetch(`${apiBase}${apiPrefix}/order?net=${net}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({
+                    symbol,
+                    side,
+                    qty,
+                    orderType: "Market",
+                    timeInForce: "IOC",
+                    reduceOnly: true,
+                    orderLinkId,
+                }),
+            }, "order");
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || body?.ok === false) {
+                throw new Error(body?.error || `Market close failed (${res.status})`);
+            }
+            const rc = body?.data?.retCode ?? body?.retCode;
+            if (rc && rc !== 0) throw new Error(body?.data?.retMsg || body?.retMsg || "Market close rejected");
+            return body;
+        };
+
+        const setProtection = async (symbol: string, sl?: number, tp?: number) => {
+            if (!authToken) return null;
+            const res = await queuedFetch(`${apiBase}${apiPrefix}/protection?net=${net}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({ symbol, sl, tp, positionIdx: 0, slTriggerBy: "LastPrice", tpTriggerBy: "LastPrice" }),
+            }, "order");
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || body?.ok === false) {
+                throw new Error(body?.error || `Protection failed (${res.status})`);
+            }
+            const rc = body?.data?.retCode ?? body?.retCode;
+            if (rc && rc !== 0) throw new Error(body?.data?.retMsg || body?.retMsg || "Protection rejected");
+            return body;
+        };
+
+        const panicClose = async (reason: string) => {
+            if (!authToken) return;
+            addLog({ action: "RISK_HALT", message: `AI-MATIC-SCALP PANIC: ${reason}` });
+
+            // Cancel known open orders for our symbols
+            try {
+                const ord = await fetchOrdersOnce(net);
+                const list = ord.list || [];
+                for (const o of list) {
+                    if (!SMC_SYMBOLS.includes(String(o.symbol))) continue;
+                    const orderId = o.orderId || o.orderID;
+                    const orderLinkId = o.orderLinkId || o.orderLinkID;
+                    try {
+                        await queuedFetch(`${apiBase}${apiPrefix}/cancel?net=${net}`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+                            body: JSON.stringify({ symbol: o.symbol, orderId, orderLinkId }),
+                        }, "order");
+                    } catch {
+                        // ignore best-effort cancels
+                    }
+                }
+            } catch {
+                // ignore
+            }
+
+            // Close positions for our symbols
+            try {
+                const pos = await fetchPositionsOnce(net);
+                for (const p of pos.list || []) {
+                    const sym = String(p.symbol || "");
+                    if (!SMC_SYMBOLS.includes(sym)) continue;
+                    const size = Math.abs(Number(p.size ?? 0));
+                    if (!Number.isFinite(size) || size <= 0) continue;
+                    const side = String(p.side || "").toLowerCase() === "buy" ? "Sell" : "Buy";
+                    try {
+                        await placeReduceOnlyMarket(sym, side as any, size, `AMSCALP:PANIC:${Date.now()}`);
+                    } catch {
+                        // ignore, best effort
+                    }
+                }
+            } catch {
+                // ignore
+            }
+        };
+
+        const ensureState = (symbol: string) => {
+            const map = smcStateRef.current;
+            if (!map[symbol]) {
+                map[symbol] = {
+                    symbol,
+                    nextAllowedAt: 0,
+                    cooldownUntil: 0,
+                };
+            }
+            return map[symbol];
+        };
+        SMC_SYMBOLS.forEach(ensureState);
+
+        const computeAsiaBox = (m15: Candle[], now: Date) => {
+            const tz = "Europe/Prague";
+            const { dayKey: dayKeyNow } = tzParts(now, tz);
+            const inAsia = (ts: number) => {
+                const p = tzParts(new Date(ts), tz);
+                if (p.dayKey !== dayKeyNow) return false;
+                return inWindow(p.hour, p.minute, CFG.asiaStartH, 0, CFG.asiaEndH, 0);
+            };
+            let hi = -Infinity;
+            let lo = Infinity;
+            for (const c of m15) {
+                if (!inAsia(c.openTime)) continue;
+                hi = Math.max(hi, c.high);
+                lo = Math.min(lo, c.low);
+            }
+            if (!Number.isFinite(hi) || !Number.isFinite(lo) || lo <= 0 || hi <= 0 || hi <= lo) return null;
+            const rangePct = ((hi - lo) / lo) * 100;
+            return { dayKey: dayKeyNow, high: hi, low: lo, rangePct };
+        };
+
+        const detectSweep = (m15Last: Candle, asia: { high: number; low: number }) => {
+            const sweepHigh = m15Last.high > asia.high;
+            const sweepLow = m15Last.low < asia.low;
+            if (!sweepHigh && !sweepLow) return null;
+            if (sweepHigh) {
+                const pct = ((m15Last.high - asia.high) / asia.high) * 100;
+                if (pct < CFG.sweepMinPct || pct > CFG.sweepMaxPct) return null;
+                const closeBackIn = m15Last.close < asia.high;
+                if (!closeBackIn) return null;
+                return { dir: "SHORT" as const, pct };
+            }
+            const pct = ((asia.low - m15Last.low) / asia.low) * 100;
+            if (pct < CFG.sweepMinPct || pct > CFG.sweepMaxPct) return null;
+            const closeBackIn = m15Last.close > asia.low;
+            if (!closeBackIn) return null;
+            return { dir: "LONG" as const, pct };
+        };
+
+        const findImmediateFvg = (candles: Candle[], side: "LONG" | "SHORT") => {
+            if (candles.length < 3) return null;
+            const c1 = candles[candles.length - 3];
+            const c3 = candles[candles.length - 1];
+            if (side === "LONG") {
+                if (c1.high >= c3.low) return null;
+                const proximal = c3.low;
+                const distal = c1.high;
+                return { proximal, distal, size: proximal - distal };
+            }
+            if (c1.low <= c3.high) return null;
+            const proximal = c3.high;
+            const distal = c1.low;
+            return { proximal, distal, size: distal - proximal };
+        };
+
+        const buildEntryFromFvg = (symbol: string, side: "LONG" | "SHORT", entryTf: "1" | "5", ltfCandles: Candle[], instrument: ScalpInstrument) => {
+            const last = ltfCandles[ltfCandles.length - 1];
+            const price = last?.close ?? 0;
+            if (!Number.isFinite(price) || price <= 0) return null;
+            const pivotLow = findLastPivotLow(ltfCandles as any, 3, 3);
+            const pivotHigh = findLastPivotHigh(ltfCandles as any, 3, 3);
+
+            // Minimal CHoCH gate (deterministic): last close must break last confirmed pivot against the sweep direction.
+            if (side === "LONG") {
+                if (pivotHigh == null || last.close <= pivotHigh + instrument.tickSize) return null;
+            } else {
+                if (pivotLow == null || last.close >= pivotLow - instrument.tickSize) return null;
+            }
+
+            const fvg = findImmediateFvg(ltfCandles.slice(-3), side);
+            if (!fvg) return null;
+
+            const fvgSizePct = (Math.abs(fvg.size) / Math.max(price, 1e-8)) * 100;
+            let entryRaw = fvg.proximal;
+            if (fvgSizePct > CFG.fvgSizePctLarge) {
+                entryRaw = (fvg.proximal + fvg.distal) / 2;
+            }
+
+            // SL from swing on same TF, buffered by ATR
+            const atr = scalpComputeAtr(ltfCandles as any, CFG.atrPeriod).slice(-1)[0] ?? 0;
+            const buffer = Math.max(instrument.tickSize, CFG.slBufferStdK * Math.max(0, atr));
+            let slRaw =
+                side === "LONG"
+                    ? (pivotLow != null ? pivotLow - buffer : entryRaw - buffer)
+                    : (pivotHigh != null ? pivotHigh + buffer : entryRaw + buffer);
+
+            // Directional rounding (entry post-only maker; SL conservative)
+            const entry = side === "LONG" ? floorToStep(entryRaw, instrument.tickSize) : ceilToStep(entryRaw, instrument.tickSize);
+            const sl = side === "LONG" ? floorToStep(slRaw, instrument.tickSize) : ceilToStep(slRaw, instrument.tickSize);
+            if (!Number.isFinite(entry) || !Number.isFinite(sl) || entry <= 0) return null;
+            if (side === "LONG" && sl >= entry) return null;
+            if (side === "SHORT" && sl <= entry) return null;
+
+            // Risk sizing (worst-case fees+slip on entry and SL)
+            const fees = TAKER_FEE_SMC;
+            const slip = slipFor(symbol);
+            const lUnit = Math.abs(entry - sl) + (entry + sl) * fees + (entry + sl) * slip;
+            if (!Number.isFinite(lUnit) || lUnit <= 0) return null;
+            const qtyRiskRaw = riskBudget() / lUnit;
+
+            const qtyCapRaw = (CFG.maxMarginPerPosUsdt * leverageForSmc(symbol) * CFG.marginSafety) / entry;
+            const qtyRaw = Math.min(qtyRiskRaw, qtyCapRaw, maxStrategyQtyFor(symbol));
+            const qty = floorToStep(qtyRaw, instrument.stepSize);
+
+            const minNotional = instrument.minNotional > 0 ? instrument.minNotional : 5;
+            if (qty < instrument.minQty) return null;
+            if (qty > instrument.maxQty) return null;
+            if (qty * entry < minNotional) return null;
+
+            const sideBybit: "Buy" | "Sell" = side === "LONG" ? "Buy" : "Sell";
+            const r = Math.abs(entry - sl);
+            const tp1Raw = side === "LONG" ? entry + CFG.tp1R * r : entry - CFG.tp1R * r;
+            const tp1 = side === "LONG" ? ceilToStep(tp1Raw, instrument.tickSize) : floorToStep(tp1Raw, instrument.tickSize);
+
+            const entryBars = entryTf === "1" ? CFG.entryTimeoutM1Bars : CFG.entryTimeoutM5Bars;
+            const entryTimeoutMs = entryBars * (entryTf === "1" ? 60_000 : 5 * 60_000);
+
+            return { symbol, side: sideBybit, entry, sl, tp1, qty, entryTf, entryTimeoutMs };
+        };
+
+        const getOpenPos = (symbol: string) =>
+            activePositionsRef.current.find((p) => p.symbol === symbol && Math.abs(Number(p.size ?? p.qty ?? 0)) > 0);
+
+        const resetIfNewDay = () => {
+            const now = new Date();
+            const dayKeyUtc = now.toISOString().slice(0, 10);
+            const global = smcStateRef.current as any;
+            if (global.__dayKeyUtc !== dayKeyUtc) {
+                global.__dayKeyUtc = dayKeyUtc;
+                global.__startEquity = equityNow();
+                global.__sleepUntil = 0;
+                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP: new UTC day ${dayKeyUtc}, startEquity=${global.__startEquity.toFixed(2)}` });
+            }
+        };
+
+        const maybeDailyStop = async () => {
+            const global = smcStateRef.current as any;
+            const startEq = Number(global.__startEquity ?? 0);
+            if (!Number.isFinite(startEq) || startEq <= 0) return;
+            const dd = startEq - equityNow();
+            const limit = startEq * CFG.dailyLossPct;
+            if (dd >= limit && !(global.__sleepUntil > Date.now())) {
+                global.__sleepUntil = Date.now() + (24 * 60 * 60_000); // safety; next reset will clear
+                await panicClose(`Daily loss ${dd.toFixed(2)} >= ${limit.toFixed(2)}`);
+            }
+        };
+
+        const handlePending = async (st: any): Promise<boolean> => {
+            const p = st.pending;
+            if (!p) return false;
+            const now = Date.now();
+            if (now < st.nextAllowedAt) return false;
+
+            if (p.stage === "READY_TO_PLACE") {
+                if (!canPlaceOrders) return false;
+                if (now < smcGlobalCooldownUntilRef.current) return false;
+                if ((smcStateRef.current as any).__sleepUntil > now) return false;
+
+                try {
+                    await placeLimit(p.symbol, p.side, p.qty, p.entry, p.entryLinkId, false, "PostOnly");
+                } catch (err: any) {
+                    st.pending = undefined;
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP PLACE_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                    return true;
+                }
+                p.stage = "PLACED";
+                p.statusCheckAt = now + CFG.orderStatusDelayMs;
+                p.timeoutAt = now + p.entryTimeoutMs;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP PLACE ${p.symbol} ${p.side} entry=${p.entry} qty=${p.qty} id=${p.entryLinkId}` });
+                return true;
+            }
+
+            if (p.stage === "PLACED") {
+                if (now < p.statusCheckAt) return false;
+                if (now >= p.timeoutAt) {
+                    p.stage = "CANCEL_SENT";
+                    p.cancelAttempts = 0;
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                // Missed move invalidation (1R)
+                const lastPx = currentPricesRef.current[p.symbol] ?? p.entry;
+                const dir = p.side === "Buy" ? 1 : -1;
+                const r = Math.abs(p.entry - p.sl);
+                const tp1Trigger = p.entry + dir * r;
+                if ((dir > 0 && lastPx >= tp1Trigger) || (dir < 0 && lastPx <= tp1Trigger)) {
+                    p.stage = "CANCEL_SENT";
+                    p.cancelAttempts = 0;
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+
+                const hist = await fetchOrderHistoryOnce(net);
+                const found = hist.list.find((o: any) => {
+                    const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
+                    return o.symbol === p.symbol && link === p.entryLinkId;
+                });
+                if (found) {
+                    const status = found.orderStatus || found.order_status || found.status;
+                    const avg = Number(found.avgPrice ?? found.avg_price ?? found.price ?? p.entry);
+                    if (status === "Filled" || status === "PartiallyFilled") {
+                        const entryFill = Number.isFinite(avg) && avg > 0 ? avg : p.entry;
+                        p.filledEntry = entryFill;
+                        p.stage = "FILLED_NEED_SL";
+                        p.fillAt = now;
+                        smcGlobalCooldownUntilRef.current = now + CFG.globalEntryCooldownMs;
+                        addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP FILL ${p.symbol} avg=${entryFill}` });
+                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                        return true;
+                    }
+                    if (status === "Cancelled" || status === "Rejected") {
+                        st.pending = undefined;
+                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                        return true;
+                    }
+                }
+                p.statusCheckAt = now + CFG.orderStatusDelayMs;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+
+            if (p.stage === "CANCEL_SENT") {
+                const attempts = p.cancelAttempts ?? 0;
+                if (attempts >= 3) {
+                    st.pending = undefined;
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                try {
+                    await cancelOrderByLinkId(p.symbol, p.entryLinkId);
+                } catch {
+                    // ignore and verify
+                }
+                p.cancelAttempts = attempts + 1;
+                p.stage = "CANCEL_VERIFY";
+                p.statusCheckAt = now + CFG.orderStatusDelayMs;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+
+            if (p.stage === "CANCEL_VERIFY") {
+                if (now < p.statusCheckAt) return false;
+                const hist = await fetchOrderHistoryOnce(net);
+                const found = hist.list.find((o: any) => {
+                    const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
+                    return o.symbol === p.symbol && link === p.entryLinkId;
+                });
+                const status = found?.orderStatus || found?.order_status || found?.status;
+                if (status === "Cancelled" || status === "Rejected") {
+                    st.pending = undefined;
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                p.stage = "CANCEL_SENT";
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+
+            if (p.stage === "FILLED_NEED_SL") {
+                if (now < (p.fillAt ?? 0) + CFG.postFillDelayMs) return false;
+                try {
+                    await setProtection(p.symbol, p.sl, undefined);
+                } catch (err: any) {
+                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP SL_SET_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                    p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                p.stage = "SL_VERIFY";
+                p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+
+            if (p.stage === "SL_VERIFY") {
+                if (!p.slVerifyAt || now < p.slVerifyAt) return false;
+                const pos = await fetchPositionsOnce(net);
+                const found = pos.list.find((pp: any) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
+                const tol = Math.abs((currentPricesRef.current[p.symbol] ?? p.entry) * 0.001) || 0.5;
+                const ok = found && Math.abs(Number(found.stopLoss ?? 0) - p.sl) <= tol;
+                if (!ok) {
+                    const attempts = p.slSetAttempts ?? 0;
+                    if (attempts < 3) {
+                        p.slSetAttempts = attempts + 1;
+                        p.stage = "FILLED_NEED_SL";
+                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                        return true;
+                    }
+                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP SL_MISSING -> SAFE_CLOSE ${p.symbol}` });
+                    p.stage = "SAFE_CLOSE";
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                p.stage = "TP1_PLACE";
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+
+            if (p.stage === "TP1_PLACE") {
+                if (!canPlaceOrders) return false;
+                const instrument: ScalpInstrument | undefined = st.instrument;
+                if (!instrument) return false;
+                const tp1QtyRaw = p.qty * CFG.splitTp1Frac;
+                let tp1Qty = floorToStep(tp1QtyRaw, instrument.stepSize);
+                let runnerQty = p.qty - tp1Qty;
+                if (tp1Qty < instrument.minQty || runnerQty < instrument.minQty) {
+                    tp1Qty = p.qty;
+                    runnerQty = 0;
+                }
+                p.tp1Qty = tp1Qty;
+                p.runnerQty = runnerQty;
+
+                const exitSide: "Buy" | "Sell" = p.side === "Buy" ? "Sell" : "Buy";
+                try {
+                    await placeLimit(p.symbol, exitSide, tp1Qty, p.tp1, p.tp1LinkId, true, "GTC");
+                } catch (err: any) {
+                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP TP1_PLACE_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                p.stage = "TP1_WAIT";
+                p.statusCheckAt = now + CFG.orderStatusDelayMs;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+
+            if (p.stage === "TP1_WAIT") {
+                if (now < p.statusCheckAt) return false;
+                const hist = await fetchOrderHistoryOnce(net);
+                const found = hist.list.find((o: any) => {
+                    const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
+                    return o.symbol === p.symbol && link === p.tp1LinkId;
+                });
+                const status = found?.orderStatus || found?.order_status || found?.status;
+                if (status === "Filled") {
+                    p.tp1FilledAt = now;
+                    p.stage = "BE_SET";
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                p.statusCheckAt = now + CFG.orderStatusDelayMs;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+
+            if (p.stage === "BE_SET") {
+                const instrument: ScalpInstrument | undefined = st.instrument;
+                if (!instrument) return false;
+                const be = p.side === "Buy" ? floorToStep(p.entry, instrument.tickSize) : ceilToStep(p.entry, instrument.tickSize);
+                try {
+                    await setProtection(p.symbol, be, undefined);
+                } catch (err: any) {
+                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP BE_SET_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                st.manage = {
+                    symbol: p.symbol,
+                    side: p.side,
+                    entry: p.entry,
+                    qty: p.qty,
+                    runnerQty: p.runnerQty ?? 0,
+                    tp1At: p.tp1FilledAt ?? now,
+                };
+                st.pending = undefined;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TP1_FILLED ${p.symbol} -> BE + runner=${(p.runnerQty ?? 0).toFixed(8)}` });
+                return true;
+            }
+
+            if (p.stage === "SAFE_CLOSE") {
+                const pos = getOpenPos(p.symbol);
+                if (!pos) {
+                    st.pending = undefined;
+                    return true;
+                }
+                const closeSide = String(pos.side).toLowerCase() === "buy" ? "Sell" : "Buy";
+                const qty = Number(pos.size ?? pos.qty ?? 0);
+                try {
+                    await placeReduceOnlyMarket(p.symbol, closeSide as any, qty, `AMSCALP:SAFE:${Date.now()}`);
+                } catch {
+                    // ignore
+                }
+                st.pending = undefined;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+
+            return false;
+        };
+
+        const tick = async () => {
+            if (cancel) return;
+            if (smcBusyRef.current) return;
+            smcBusyRef.current = true;
+            try {
+                resetIfNewDay();
+                await maybeDailyStop();
+
+                // Global SLEEP
+                const global = smcStateRef.current as any;
+                if (global.__sleepUntil > Date.now()) return;
+
+                const nowMs = Date.now();
+                const now = new Date(nowMs);
+                const prg = tzParts(now, "Europe/Prague");
+                const inLondonKill = inWindow(prg.hour, prg.minute, CFG.londonKillStartH, 0, CFG.londonKillEndH, 0);
+                const inNyKill = inWindow(prg.hour, prg.minute, CFG.nyKillStartH, 0, CFG.nyKillEndH, 0);
+                const inKill = inLondonKill || inNyKill;
+
+                // Rotate symbols to spread API load
+                const idx = smcRotationIdxRef.current % SMC_SYMBOLS.length;
+                smcRotationIdxRef.current++;
+                const symbol = SMC_SYMBOLS[idx];
+                const st = ensureState(symbol);
+
+                // Per-symbol cooldown
+                if (nowMs < (st.cooldownUntil ?? 0)) return;
+
+                // Pending tasks first
+                if (await handlePending(st)) return;
+
+                // Manage open runner (trailing + emergency)
+                const pos = getOpenPos(symbol);
+                if (pos && st.instrument) {
+                    // Emergency structural invalidation (simple: close beyond last pivot against us on M1)
+                    const m1 = await fetchKlines(symbol, "1", 120);
+                    const lastM1 = m1[m1.length - 1];
+                    const dir = String(pos.side).toLowerCase() === "buy" ? 1 : -1;
+                    const protectedLow = findLastPivotLow(m1 as any, 3, 3);
+                    const protectedHigh = findLastPivotHigh(m1 as any, 3, 3);
+                    if (dir > 0 && protectedLow != null && lastM1?.close < protectedLow - st.instrument.tickSize) {
+                        await placeReduceOnlyMarket(symbol, "Sell", Number(pos.size ?? pos.qty ?? 0), `AMSCALP:EMER:${nowMs}`);
+                        st.cooldownUntil = nowMs + 5 * 60_000;
+                        st.manage = undefined;
+                        addLog({ action: "AUTO_CLOSE", message: `AI-MATIC-SCALP EMERGENCY_EXIT ${symbol} (M1 close < protectedLow)` });
+                        return;
+                    }
+                    if (dir < 0 && protectedHigh != null && lastM1?.close > protectedHigh + st.instrument.tickSize) {
+                        await placeReduceOnlyMarket(symbol, "Buy", Number(pos.size ?? pos.qty ?? 0), `AMSCALP:EMER:${nowMs}`);
+                        st.cooldownUntil = nowMs + 5 * 60_000;
+                        st.manage = undefined;
+                        addLog({ action: "AUTO_CLOSE", message: `AI-MATIC-SCALP EMERGENCY_EXIT ${symbol} (M1 close > protectedHigh)` });
+                        return;
+                    }
+
+                    // Trailing updates only if TP1 already filled (manage exists)
+                    if (st.manage?.tp1At && st.manage.runnerQty > 0) {
+                        const lastTrailAt = smcLastTrailUpdateAtRef.current[symbol] ?? 0;
+                        if (nowMs - lastTrailAt >= CFG.trailUpdateMs) {
+                            const m5 = await fetchKlines(symbol, "5", 200);
+                            const atr5 = scalpComputeAtr(m5 as any, CFG.atrPeriod).slice(-1)[0] ?? 0;
+                            const sinceTp1 = nowMs - st.manage.tp1At;
+                            const mult = sinceTp1 >= CFG.trailPhase2Ms ? CFG.trailMultPhase2 : CFG.trailMultPhase1;
+                            const dist = Math.max(atr5 * mult, st.instrument.tickSize * 2);
+                            const lastPx = currentPricesRef.current[symbol] ?? Number(pos.entryPrice ?? pos.avgEntryPrice ?? 0);
+                            const newSlRaw = dir > 0 ? lastPx - dist : lastPx + dist;
+                            const newSl = dir > 0 ? floorToStep(newSlRaw, st.instrument.tickSize) : ceilToStep(newSlRaw, st.instrument.tickSize);
+                            const currentSl = Number(pos.sl ?? 0);
+                            const improves = dir > 0 ? newSl > currentSl + CFG.trailMinImproveTicks * st.instrument.tickSize : newSl < currentSl - CFG.trailMinImproveTicks * st.instrument.tickSize;
+                            if (Number.isFinite(newSl) && improves) {
+                                await setProtection(symbol, newSl, undefined);
+                                smcLastTrailUpdateAtRef.current[symbol] = nowMs;
+                                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL ${symbol} SL->${newSl}` });
+                                return;
+                            }
+                            smcLastTrailUpdateAtRef.current[symbol] = nowMs;
+                        }
+                    }
+                }
+
+                // No new entries if max open positions reached
+                const openPositions = activePositionsRef.current.filter((p) => Math.abs(Number(p.size ?? p.qty ?? 0)) > 0);
+                if (openPositions.length >= CFG.maxOpenPositions) return;
+                if (nowMs < smcGlobalCooldownUntilRef.current) return;
+
+                // Basic data fetch (instrument + bbo)
+                if (!st.instrument) {
+                    st.instrument = await fetchInstrument(symbol);
+                    st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
+                    return;
+                }
+                if (!st.bbo || nowMs - st.bbo.ts > CFG.maxDataAgeMs) {
+                    st.bbo = await fetchBbo(symbol);
+                    st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
+                    return;
+                }
+                const sp = spreadPct(st.bbo.bid, st.bbo.ask);
+                if (sp > CFG.maxSpreadPct) return;
+
+                // Only scan for sweep setup in London killzone (Prague)
+                if (!inKill) return;
+
+                const m15 = await fetchKlines(symbol, "15", 300);
+                const asia = computeAsiaBox(m15, now);
+                if (!asia) return;
+                if (asia.rangePct > CFG.asiaRangePctThreshold) return; // prefer standard AMD day
+
+                // Use last closed M15 candle for sweep detection
+                const lastClosedOpen = expectedOpenTime(nowMs, 15 * 60_000, 2500);
+                const m15Last = m15.find((c) => c.openTime === lastClosedOpen) ?? m15[m15.length - 2];
+                if (!m15Last) return;
+                const sw = detectSweep(m15Last, asia);
+                if (!sw) return;
+
+                // Decide LTF: default M1, fallback M5 if too late/noisy
+                const minsSinceSweep = (nowMs - m15Last.openTime) / 60_000;
+                const entryTf = minsSinceSweep <= CFG.chochDeadlineMinPrimary ? CFG.entryTfPrimary : CFG.entryTfFallback;
+                const ltf = await fetchKlines(symbol, entryTf, entryTf === "1" ? 240 : 240);
+
+                const proposal = buildEntryFromFvg(symbol, sw.dir, entryTf, ltf, st.instrument);
+                if (!proposal) return;
+
+                // Guard post-only cross
+                if (proposal.side === "Buy" && proposal.entry >= st.bbo.ask) return;
+                if (proposal.side === "Sell" && proposal.entry <= st.bbo.bid) return;
+
+                const tsSec = Math.floor(nowMs / 1000);
+                const entryLinkId = `AMSCALP_E_${symbol}_${tsSec}`;
+                const tp1LinkId = `AMSCALP_T1_${symbol}_${tsSec}`;
+
+                st.pending = {
+                    stage: "READY_TO_PLACE",
+                    symbol,
+                    side: proposal.side,
+                    entry: proposal.entry,
+                    sl: proposal.sl,
+                    tp1: proposal.tp1,
+                    qty: proposal.qty,
+                    entryTf,
+                    entryTimeoutMs: proposal.entryTimeoutMs,
+                    entryLinkId,
+                    tp1LinkId,
+                    statusCheckAt: nowMs + CFG.orderStatusDelayMs,
+                };
+                st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
+                addLog({ action: "SIGNAL", message: `AI-MATIC-SCALP SETUP ${symbol} ${proposal.side} entry=${proposal.entry} sl=${proposal.sl} tp1=${proposal.tp1} qty=${proposal.qty}` });
+            } catch (err: any) {
+                setSystemState((p) => ({
+                    ...p,
+                    bybitStatus: "Error",
+                    lastError: err?.message || "smc tick error",
+                    recentErrors: [err?.message || "smc tick error", ...p.recentErrors].slice(0, 10),
+                }));
+            } finally {
+                smcBusyRef.current = false;
+            }
+        };
+
+        const id = setInterval(() => void tick(), CFG.tickMs);
+        void tick();
+        return () => {
+            cancel = true;
+            clearInterval(id);
+        };
+    }, [mode, settings.riskMode, useTestnet, httpBase, authToken, apiBase, apiPrefix, queuedFetch, fetchOrdersOnce, fetchOrderHistoryOnce, fetchPositionsOnce]);
 
     // Executions polling (pro rychlejší fill detection)
     useEffect(() => {
@@ -3142,7 +4131,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 const list = json?.data?.result?.list || json?.result?.list || [];
                 const cursor = json?.data?.result?.nextPageCursor || json?.result?.nextPageCursor;
                 const seen = processedExecIdsRef.current;
-                const allowedSymbols = new Set(SYMBOLS);
+                const allowedSymbols = new Set(ALL_SYMBOLS);
                 const nowMs = Date.now();
                 const freshMs = 5 * 60 * 1000; // show only last 5 minutes
                 list.forEach((e: any) => {

@@ -41,7 +41,45 @@ export default function Dashboard({
     scanDiagnostics,
   } = bot;
   const modeOptions: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
-  const allowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+  const profileMeta = useMemo(() => {
+    const riskMode = bot.settings?.riskMode ?? "ai-matic";
+    if (riskMode === "ai-matic-scalp") {
+      return {
+        label: "AI-MATIC-SCALP",
+        subtitle: "SMC/AMD (1h/15m/5m/1m)",
+        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "HBARUSDT", "NEARUSDT", "AVAXUSDT"],
+        timeframes: "HTF 1h · M15 · M5 · LTF 1m",
+        session: "London/NY killzones (Prague)",
+        risk: "1% equity (min 10 / cap 200) · margin 5/pos · max 2 pos",
+        entry: "Sweep → CHoCH → FVG → PostOnly LIMIT",
+        execution: "LIMIT(PostOnly) + SL server-side + TP1 1R",
+      };
+    }
+    if (riskMode === "ai-matic-x") {
+      return {
+        label: "AI-MATIC-X",
+        subtitle: "AI-MATIC (15m/1m)",
+        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+        timeframes: "HTF 15m · LTF 1m",
+        session: "24/7",
+        risk: "4 USDT / trade · 8 USDT total · max 2 pos",
+        entry: "ST15 bias + ST1 flip + EMA21 pullback + RVOL≥1.2",
+        execution: "PostOnly LIMIT · timeout 1×1m",
+      };
+    }
+    return {
+      label: "AI-MATIC",
+      subtitle: "AI-MATIC (15m/1m)",
+      symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+      timeframes: "HTF 15m · LTF 1m",
+      session: "24/7",
+      risk: "4 USDT / trade · 8 USDT total · max 2 pos",
+      entry: "ST15 bias + ST1 flip + EMA21 pullback + RVOL≥1.2",
+      execution: "PostOnly LIMIT · timeout 1×1m",
+    };
+  }, [bot.settings?.riskMode]);
+
+  const allowedSymbols = profileMeta.symbols;
   const exchangeOrders = testnetOrders;
   const exchangeTrades = testnetTrades;
   const refreshOrders = refreshTestnetOrders;
@@ -92,7 +130,7 @@ export default function Dashboard({
             Dashboard
           </h2>
           <p className="text-slate-400 hidden lg:block">
-            AI-MATIC (15m/1m)
+            {profileMeta.subtitle}
           </p>
         </div>
 
@@ -215,7 +253,7 @@ export default function Dashboard({
               <div className="flex justify-between items-center">
                 <span className="text-slate-400">Profile</span>
                 <Badge variant="secondary" className="bg-emerald-600/80 text-white">
-                  AI-MATIC
+                  {profileMeta.label}
                 </Badge>
               </div>
               <div className="flex justify-between">
@@ -224,23 +262,23 @@ export default function Dashboard({
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Timeframes</span>
-                <span className="font-mono">HTF 15m · LTF 1m</span>
+                <span className="font-mono">{profileMeta.timeframes}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Session</span>
-                <span className="font-mono">24/7</span>
+                <span className="font-mono">{profileMeta.session}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Risk</span>
-                <span className="font-mono">4 USDT / trade · 8 USDT total · max 2 pos</span>
+                <span className="font-mono">{profileMeta.risk}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Entry</span>
-                <span className="font-mono">ST15 bias + ST1 flip + EMA21 pullback + RVOL≥1.2</span>
+                <span className="font-mono">{profileMeta.entry}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Execution</span>
-                <span className="font-mono">PostOnly LIMIT · timeout 1×1m</span>
+                <span className="font-mono">{profileMeta.execution}</span>
               </div>
             </div>
           </CardContent>

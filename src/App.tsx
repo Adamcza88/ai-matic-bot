@@ -200,9 +200,13 @@ export default function App() {
       {missingServices.length > 0 && !showKeyPanel && (
         <div className="mb-6 p-4 rounded-xl border border-red-500/30 bg-red-500/10 flex items-center justify-between gap-4">
           <div>
-            <div className="font-bold text-red-400">Chybí API klíče</div>
+            <div className="font-bold text-red-400">
+              {missingServices.length === 1
+                ? "Chybí API klíč"
+                : "Chybí některé API klíče"}
+            </div>
             <div className="text-sm text-red-300/80">
-              Doplň: {missingServices.join(", ")}
+              Je potřeba doplnit: {missingServices.join(", ")}
             </div>
             {keysError && (
               <div className="text-amber-400 mt-1.5 text-xs">{keysError}</div>

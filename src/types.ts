@@ -7,7 +7,7 @@ export type Theme = "dark" | "light";
 export type Language = "en" | "cs";
 
 export interface AISettings {
-  riskMode: "ai-matic" | "ai-matic-x";
+  riskMode: "ai-matic" | "ai-matic-x" | "ai-matic-scalp";
   strictRiskAdherence: boolean;
   pauseOnHighVolatility: boolean;
   avoidLowLiquidity: boolean;

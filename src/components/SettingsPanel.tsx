@@ -45,6 +45,15 @@ const SettingsPanel: React.FC<Props> = ({
         "Halt na denní ztrátu/drawdown, dyn. sizing multiplier 1.2×",
       ],
     },
+    "ai-matic-scalp": {
+      title: "AI-Matic-Scalp",
+      description: "SMC/AMD scalper (M1/M5) se session logikou (London/NY killzones) a limit-maker exekucí.",
+      notes: [
+        "Trading hours: řízeno killzones (London/NY)",
+        "Entry: Sweep → CHoCH → FVG → PostOnly LIMIT",
+        "TP1: 1R (50/50 split) + BE, runner přes trailing SL",
+      ],
+    },
   };
   const meta = profileCopy[settings.riskMode];
 
@@ -116,9 +125,44 @@ const SettingsPanel: React.FC<Props> = ({
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
   };
 
+  const AI_MATIC_SCALP_PRESET_UI: AISettings = {
+    riskMode: "ai-matic-scalp",
+    strictRiskAdherence: true,
+    pauseOnHighVolatility: false,
+    avoidLowLiquidity: false,
+    useTrendFollowing: true,
+    smcScalpMode: true,
+    useLiquiditySweeps: false,
+    useVolatilityExpansion: false,
+    maxDailyLossPercent: 0.03,
+    maxDailyProfitPercent: 0.5,
+    maxDrawdownPercent: 0.2,
+    baseRiskPerTrade: 0.01,
+    maxPortfolioRiskPercent: 0.2,
+    maxAllocatedCapitalPercent: 1.0,
+    maxOpenPositions: 2,
+    entryStrictness: "ultra",
+    enforceSessionHours: false,
+    haltOnDailyLoss: true,
+    haltOnDrawdown: true,
+    useDynamicPositionSizing: true,
+    lockProfitsWithTrail: true,
+    requireConfirmationInAuto: false,
+    positionSizingMultiplier: 1.0,
+    customInstructions: "",
+    customStrategy: "",
+    min24hVolume: 50,
+    minProfitFactor: 1.0,
+    minWinRate: 65,
+    tradingStartHour: 0,
+    tradingEndHour: 23,
+    tradingDays: [0, 1, 2, 3, 4, 5, 6],
+  };
+
   const presets: Record<AISettings["riskMode"], AISettings> = {
     "ai-matic": AI_MATIC_PRESET_UI,
     "ai-matic-x": AI_MATIC_X_PRESET_UI,
+    "ai-matic-scalp": AI_MATIC_SCALP_PRESET_UI,
   };
 
   const applyPreset = (mode: AISettings["riskMode"]) => {
@@ -163,6 +207,16 @@ const SettingsPanel: React.FC<Props> = ({
                 }`}
               >
                 AI-Matic-X
+              </button>
+              <button
+                onClick={() => applyPreset("ai-matic-scalp")}
+                className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
+                  local.riskMode === "ai-matic-scalp"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-800 text-slate-200"
+                }`}
+              >
+                AI-Matic-Scalp
               </button>
             </div>
           </div>
