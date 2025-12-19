@@ -765,6 +765,14 @@ export const useTradingBot = (
     const lastEntryAtRef = useRef<number | null>(null);
     const entryQueueRef = useRef<Promise<void>>(Promise.resolve());
     const executionLocksRef = useRef<Set<string>>(new Set()); // Mutex for dedup
+    const positionsCacheRef = useRef<{ ts: number; data: { list: any[]; retCode?: number; retMsg?: string } }>({
+        ts: 0,
+        data: { list: [] },
+    });
+    const orderHistoryCacheRef = useRef<{ ts: number; data: { list: any[]; retCode?: number; retMsg?: string } }>({
+        ts: 0,
+        data: { list: [] },
+    });
 
     // Dynamicky uprav capital/max allocation pro testovací režim
     useEffect(() => {
@@ -1282,6 +1290,10 @@ export const useTradingBot = (
     const fetchPositionsOnce = useCallback(
         async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
             if (!authToken) return { list: [] };
+            const now = Date.now();
+            const cache = positionsCacheRef.current || { ts: 0, data: { list: [] } as any };
+            if (now - cache.ts < 2000) return cache.data;
+
             const url = new URL(`${apiBase}${apiPrefix}/positions`);
             url.searchParams.set("net", net);
             url.searchParams.set("settleCoin", "USDT");
@@ -1291,13 +1303,15 @@ export const useTradingBot = (
             }, "data");
             if (!res.ok) throw new Error(`Positions fetch failed (${res.status})`);
             const json = await res.json();
-            return {
+            const data = {
                 list: json?.data?.result?.list || json?.result?.list || json?.data?.list || [],
                 retCode: json?.data?.retCode ?? json?.retCode,
                 retMsg: json?.data?.retMsg ?? json?.retMsg,
             };
+            positionsCacheRef.current = { ts: now, data };
+            return data;
         },
-        [apiBase, apiPrefix, authToken]
+        [apiBase, apiPrefix, authToken, queuedFetch]
     );
 
     const fetchOrdersOnce = useCallback(
@@ -1323,6 +1337,10 @@ export const useTradingBot = (
     const fetchOrderHistoryOnce = useCallback(
         async (net: "testnet" | "mainnet"): Promise<{ list: any[]; retCode?: number; retMsg?: string }> => {
             if (!authToken) return { list: [] };
+            const now = Date.now();
+            const cache = orderHistoryCacheRef.current || { ts: 0, data: { list: [] } as any };
+            if (now - cache.ts < 2000) return cache.data;
+
             const url = new URL(`${apiBase}${apiPrefix}/orders`);
             url.searchParams.set("net", net);
             url.searchParams.set("settleCoin", "USDT");
@@ -1336,7 +1354,9 @@ export const useTradingBot = (
             const retCode = data?.data?.retCode ?? data?.retCode;
             const retMsg = data?.data?.retMsg ?? data?.retMsg;
             const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
-            return { list: Array.isArray(list) ? list : [], retCode, retMsg };
+            const parsed = { list: Array.isArray(list) ? list : [], retCode, retMsg };
+            orderHistoryCacheRef.current = { ts: now, data: parsed };
+            return parsed;
         },
         [apiBase, apiPrefix, authToken]
     );
@@ -1900,7 +1920,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             ltfCloseDelayMs: 1200,
             htfCloseDelayMs: 2500,
             orderStatusDelayMs: 400,
-            postCancelVerifyDelayMs: 300,
+            postCancelVerifyDelayMs: 1000,
             postFillDelayMs: 200,
             postSlVerifyDelayMs: 300,
             postTpVerifyDelayMs: 300,
@@ -2238,7 +2258,9 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             }
 
             if (p.stage === "CANCEL_VERIFY") {
-                logTiming("CANCEL_VERIFY", "post_cancel_delay");
+                if ((p.cancelAttempts ?? 0) === 0) {
+                    logTiming("CANCEL_VERIFY", "post_cancel_delay");
+                }
                 const hist = await fetchOrderHistoryOnce(net);
                 const found = hist.list.find((o: any) => {
                     const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
@@ -2757,9 +2779,11 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             const signalActive = flipped && emaOk && closeVsSt && htfProj && rvolOk && antiBreakout;
 
-            // BBO needed when signal active / pending / open pos, always bootstrap, and refresh if stale >5s to avoid drift
-            const needBbo = !st.bbo || signalActive || hasPending || hasOpenPos || isBboStale(st.bbo, now, 5000);
-            if (needBbo && isBboStale(st.bbo, now, 1500)) {
+            // BBO needed when signal active / pending / open pos; otherwise keep old snapshot to save API
+            const needFreshBbo = signalActive || hasPending || hasOpenPos;
+            const needBbo = !st.bbo || needFreshBbo;
+            const bboStaleForUse = isBboStale(st.bbo, now, needFreshBbo ? 1500 : 5000);
+            if (needBbo && bboStaleForUse) {
                 const reason = st.bbo ? "stale" : "bootstrap";
                 if (reason === "stale") {
                     const last = staleBboLogRef.current[symbol] ?? 0;

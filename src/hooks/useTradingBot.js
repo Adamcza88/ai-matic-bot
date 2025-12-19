@@ -646,6 +646,14 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const lastEntryAtRef = useRef(null);
     const entryQueueRef = useRef(Promise.resolve());
     const executionLocksRef = useRef(new Set()); // Mutex for dedup
+    const positionsCacheRef = useRef({
+        ts: 0,
+        data: { list: [] },
+    });
+    const orderHistoryCacheRef = useRef({
+        ts: 0,
+        data: { list: [] },
+    });
     // Dynamicky uprav capital/max allocation pro testovací režim
     useEffect(() => {
         const isTest = settings.entryStrictness === "test";
@@ -1124,6 +1132,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const fetchPositionsOnce = useCallback(async (net) => {
         if (!authToken)
             return { list: [] };
+        const now = Date.now();
+        const cache = positionsCacheRef.current || { ts: 0, data: { list: [] } };
+        if (now - cache.ts < 2000)
+            return cache.data;
         const url = new URL(`${apiBase}${apiPrefix}/positions`);
         url.searchParams.set("net", net);
         url.searchParams.set("settleCoin", "USDT");
@@ -1134,12 +1146,14 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         if (!res.ok)
             throw new Error(`Positions fetch failed (${res.status})`);
         const json = await res.json();
-        return {
+        const data = {
             list: json?.data?.result?.list || json?.result?.list || json?.data?.list || [],
             retCode: json?.data?.retCode ?? json?.retCode,
             retMsg: json?.data?.retMsg ?? json?.retMsg,
         };
-    }, [apiBase, apiPrefix, authToken]);
+        positionsCacheRef.current = { ts: now, data };
+        return data;
+    }, [apiBase, apiPrefix, authToken, queuedFetch]);
     const fetchOrdersOnce = useCallback(async (net) => {
         if (!authToken)
             return { list: [] };
@@ -1161,6 +1175,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const fetchOrderHistoryOnce = useCallback(async (net) => {
         if (!authToken)
             return { list: [] };
+        const now = Date.now();
+        const cache = orderHistoryCacheRef.current || { ts: 0, data: { list: [] } };
+        if (now - cache.ts < 2000)
+            return cache.data;
         const url = new URL(`${apiBase}${apiPrefix}/orders`);
         url.searchParams.set("net", net);
         url.searchParams.set("settleCoin", "USDT");
@@ -1175,7 +1193,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const retCode = data?.data?.retCode ?? data?.retCode;
         const retMsg = data?.data?.retMsg ?? data?.retMsg;
         const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
-        return { list: Array.isArray(list) ? list : [], retCode, retMsg };
+        const parsed = { list: Array.isArray(list) ? list : [], retCode, retMsg };
+        orderHistoryCacheRef.current = { ts: now, data: parsed };
+        return parsed;
     }, [apiBase, apiPrefix, authToken]);
     const fetchExecutionsOnce = useCallback(async (net, symbol) => {
         if (!authToken)
@@ -1600,7 +1620,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             ltfCloseDelayMs: 1200,
             htfCloseDelayMs: 2500,
             orderStatusDelayMs: 400,
-            postCancelVerifyDelayMs: 300,
+            postCancelVerifyDelayMs: 1000,
             postFillDelayMs: 200,
             postSlVerifyDelayMs: 300,
             postTpVerifyDelayMs: 300,
@@ -1937,7 +1957,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return false;
             }
             if (p.stage === "CANCEL_VERIFY") {
-                logTiming("CANCEL_VERIFY", "post_cancel_delay");
+                if ((p.cancelAttempts ?? 0) === 0) {
+                    logTiming("CANCEL_VERIFY", "post_cancel_delay");
+                }
                 const hist = await fetchOrderHistoryOnce(net);
                 const found = hist.list.find((o) => {
                     const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
@@ -2454,9 +2476,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (!antiBreakout)
                 gateFailures.push("Anti-breakout");
             const signalActive = flipped && emaOk && closeVsSt && htfProj && rvolOk && antiBreakout;
-            // BBO needed when signal active / pending / open pos, always bootstrap, and refresh if stale >5s to avoid drift
-            const needBbo = !st.bbo || signalActive || hasPending || hasOpenPos || isBboStale(st.bbo, now, 5000);
-            if (needBbo && isBboStale(st.bbo, now, 1500)) {
+            // BBO needed when signal active / pending / open pos; otherwise keep old snapshot to save API
+            const needFreshBbo = signalActive || hasPending || hasOpenPos;
+            const needBbo = !st.bbo || needFreshBbo;
+            const bboStaleForUse = isBboStale(st.bbo, now, needFreshBbo ? 1500 : 5000);
+            if (needBbo && bboStaleForUse) {
                 const reason = st.bbo ? "stale" : "bootstrap";
                 if (reason === "stale") {
                     const last = staleBboLogRef.current[symbol] ?? 0;
