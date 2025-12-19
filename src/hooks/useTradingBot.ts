@@ -2292,6 +2292,21 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             // Global "no burst": per-symbol throttle
             if (now < st.nextAllowedAt) return false;
 
+            const posForPending = getOpenPos(p.symbol);
+            const needsOpenPos = p.stage === "SL_SENT"
+                || p.stage === "SL_VERIFY"
+                || p.stage === "TP_SENT"
+                || p.stage === "TP_VERIFY"
+                || p.stage === "PARTIAL_EXIT"
+                || p.stage === "TRAIL_SL_UPDATE";
+            if (needsOpenPos && !posForPending) {
+                st.pending = undefined;
+                st.manage = undefined;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                addLog({ action: "SYSTEM", message: `PENDING_SKIP ${p.symbol} no open position for ${p.stage}` });
+                return true;
+            }
+
             if (p.stage === "READY_TO_PLACE") {
                 if (!canPlaceOrders) return false;
                 if (scalpSafeRef.current) return false;
