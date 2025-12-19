@@ -3970,12 +3970,47 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 smcRotationIdxRef.current++;
                 const symbol = SMC_SYMBOLS[idx];
                 const st = ensureState(symbol);
+                let gateSession = inKill;
+                let gateBboFresh = false;
+                let gateSpread = false;
+                let gateAsia = false;
+                let gateSweep = false;
+                let gateChochFvg = false;
+                let gatePostOnly = false;
+
+                const updateDiag = (signalActive: boolean, executionAllowed: boolean | string = "N/A") => {
+                    const bboAgeMs = st.bbo ? nowMs - st.bbo.ts : Infinity;
+                    setScanDiagnostics((prev) => ({
+                        ...prev,
+                        [symbol]: {
+                            symbol,
+                            lastUpdated: nowMs,
+                            signalActive,
+                            executionAllowed,
+                            bboAgeMs: Number.isFinite(bboAgeMs) ? Math.floor(bboAgeMs) : Infinity,
+                            gates: [
+                                { name: "Session", ok: gateSession },
+                                { name: "BBO fresh", ok: gateBboFresh },
+                                { name: "Spread ok", ok: gateSpread },
+                                { name: "Asia range", ok: gateAsia },
+                                { name: "Sweep", ok: gateSweep },
+                                { name: "CHoCH+FVG", ok: gateChochFvg },
+                                { name: "PostOnly", ok: gatePostOnly },
+                            ],
+                        },
+                    }));
+                };
+
+                const exitWithDiag = (signalActive = false, executionAllowed: boolean | string = "N/A") => {
+                    updateDiag(signalActive, executionAllowed);
+                    return;
+                };
 
                 // Per-symbol cooldown
-                if (nowMs < (st.cooldownUntil ?? 0)) return;
+                if (nowMs < (st.cooldownUntil ?? 0)) return exitWithDiag();
 
                 // Pending tasks first
-                if (await handlePending(st)) return;
+                if (await handlePending(st)) return exitWithDiag(false, "PENDING");
 
                 // Manage open runner (trailing + emergency)
                 const pos = getOpenPos(symbol);
@@ -3991,14 +4026,14 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                         st.cooldownUntil = nowMs + 5 * 60_000;
                         st.manage = undefined;
                         addLog({ action: "AUTO_CLOSE", message: `AI-MATIC-SCALP EMERGENCY_EXIT ${symbol} (M1 close < protectedLow)` });
-                        return;
+                        return exitWithDiag(false, "MANAGE");
                     }
                     if (dir < 0 && protectedHigh != null && lastM1?.close > protectedHigh + st.instrument.tickSize) {
                         await placeReduceOnlyMarket(symbol, "Buy", Number(pos.size ?? pos.qty ?? 0), `AMSCALP:EMER:${nowMs}`);
                         st.cooldownUntil = nowMs + 5 * 60_000;
                         st.manage = undefined;
                         addLog({ action: "AUTO_CLOSE", message: `AI-MATIC-SCALP EMERGENCY_EXIT ${symbol} (M1 close > protectedHigh)` });
-                        return;
+                        return exitWithDiag(false, "MANAGE");
                     }
 
                     // Trailing updates only if TP1 already filled (manage exists)
@@ -4019,7 +4054,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                                 await setProtection(symbol, newSl, undefined);
                                 smcLastTrailUpdateAtRef.current[symbol] = nowMs;
                                 addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL ${symbol} SL->${newSl}` });
-                                return;
+                                return exitWithDiag(false, "MANAGE");
                             }
                             smcLastTrailUpdateAtRef.current[symbol] = nowMs;
                         }
@@ -4028,37 +4063,41 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
                 // No new entries if max open positions reached
                 const openPositions = activePositionsRef.current.filter((p) => Math.abs(Number(p.size ?? p.qty ?? 0)) > 0);
-                if (openPositions.length >= CFG.maxOpenPositions) return;
-                if (nowMs < smcGlobalCooldownUntilRef.current) return;
+                if (openPositions.length >= CFG.maxOpenPositions) return exitWithDiag();
+                if (nowMs < smcGlobalCooldownUntilRef.current) return exitWithDiag();
 
                 // Basic data fetch (instrument + bbo)
                 if (!st.instrument) {
                     st.instrument = await fetchInstrument(symbol);
                     st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
-                    return;
+                    return exitWithDiag();
                 }
                 if (!st.bbo || nowMs - st.bbo.ts > CFG.maxDataAgeMs) {
                     st.bbo = await fetchBbo(symbol);
                     st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
-                    return;
+                    gateBboFresh = true;
+                    return exitWithDiag();
                 }
+                gateBboFresh = true;
                 const sp = spreadPct(st.bbo.bid, st.bbo.ask);
-                if (sp > CFG.maxSpreadPct) return;
+                gateSpread = sp <= CFG.maxSpreadPct;
+                if (!gateSpread) return exitWithDiag();
 
                 // Only scan for sweep setup in London killzone (Prague)
-                if (!inKill) return;
+                if (!inKill) return exitWithDiag();
 
                 const m15 = await fetchKlines(symbol, "15", 300);
                 const asia = computeAsiaBox(m15, now);
-                if (!asia) return;
-                if (asia.rangePct > CFG.asiaRangePctThreshold) return; // prefer standard AMD day
+                gateAsia = Boolean(asia) && asia.rangePct <= CFG.asiaRangePctThreshold;
+                if (!gateAsia) return exitWithDiag();
 
                 // Use last closed M15 candle for sweep detection
                 const lastClosedOpen = expectedOpenTime(nowMs, 15 * 60_000, 2500);
                 const m15Last = m15.find((c) => c.openTime === lastClosedOpen) ?? m15[m15.length - 2];
-                if (!m15Last) return;
+                if (!m15Last) return exitWithDiag();
                 const sw = detectSweep(m15Last, asia);
-                if (!sw) return;
+                gateSweep = Boolean(sw);
+                if (!gateSweep) return exitWithDiag();
 
                 // Decide LTF: default M1, fallback M5 if too late/noisy
                 const minsSinceSweep = (nowMs - m15Last.openTime) / 60_000;
@@ -4066,11 +4105,12 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 const ltf = await fetchKlines(symbol, entryTf, entryTf === "1" ? 240 : 240);
 
                 const proposal = buildEntryFromFvg(symbol, sw.dir, entryTf, ltf, st.instrument);
-                if (!proposal) return;
+                gateChochFvg = Boolean(proposal);
+                if (!gateChochFvg) return exitWithDiag();
 
                 // Guard post-only cross
-                if (proposal.side === "Buy" && proposal.entry >= st.bbo.ask) return;
-                if (proposal.side === "Sell" && proposal.entry <= st.bbo.bid) return;
+                gatePostOnly = proposal.side === "Buy" ? proposal.entry < st.bbo.ask : proposal.entry > st.bbo.bid;
+                if (!gatePostOnly) return exitWithDiag();
 
                 const tsSec = Math.floor(nowMs / 1000);
                 const entryLinkId = `AMSCALP_E_${symbol}_${tsSec}`;
@@ -4092,6 +4132,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 };
                 st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
                 addLog({ action: "SIGNAL", message: `AI-MATIC-SCALP SETUP ${symbol} ${proposal.side} entry=${proposal.entry} sl=${proposal.sl} tp1=${proposal.tp1} qty=${proposal.qty}` });
+                updateDiag(gateSession && gateBboFresh && gateSpread && gateAsia && gateSweep && gateChochFvg && gatePostOnly, true);
             } catch (err: any) {
                 setSystemState((p) => ({
                     ...p,
