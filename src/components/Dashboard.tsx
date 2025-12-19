@@ -322,7 +322,9 @@ export default function Dashboard({
                   const size = Number(p.size ?? p.qty ?? 0);
                   const sideLower = String(p.side ?? "").toLowerCase();
                   const isBuy = sideLower === "buy";
-                  const sl = Number(p.currentTrailingStop ?? p.sl ?? 0) || undefined;
+                  const trail = Number(p.currentTrailingStop ?? 0);
+                  const slValue = Number(p.sl ?? 0);
+                  const sl = (Number.isFinite(trail) && trail > 0 ? trail : slValue) || undefined;
                   const tp = Number(p.tp ?? 0) || undefined;
                   const upnl = Number(p.unrealizedPnl ?? 0) || 0;
 
