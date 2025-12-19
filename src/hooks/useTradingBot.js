@@ -1919,6 +1919,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     }
                     p.stage = "CANCEL_SENT";
                     p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
+                    p.cancelAttempts = 0;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     addLog({ action: "SYSTEM", message: `CANCEL ${p.symbol} id=${p.orderLinkId} reason=TIMEOUT` });
                     return true;
@@ -1956,6 +1957,25 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         addLog({ action: "SYSTEM", message: `CANCEL_OK ${p.symbol} id=${p.orderLinkId} (missing in history)` });
                     }
                     else {
+                        p.cancelAttempts = (p.cancelAttempts ?? 0) + 1;
+                        if (p.cancelAttempts === 1) {
+                            try {
+                                await cancelOrderByLinkId(p.symbol, p.orderLinkId);
+                                addLog({ action: "SYSTEM", message: `CANCEL_RESEND ${p.symbol} id=${p.orderLinkId}` });
+                            }
+                            catch (err) {
+                                if (!isCancelSafeError(err)) {
+                                    addLog({ action: "ERROR", message: `CANCEL_RESEND_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                                }
+                            }
+                        }
+                        if ((p.cancelAttempts ?? 0) >= 3) {
+                            scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
+                            st.pending = undefined;
+                            addLog({ action: "ERROR", message: `CANCEL_STUCK ${p.symbol} status=${status || "unknown"} force-clear` });
+                            st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                            return true;
+                        }
                         p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
                     }
                 }
@@ -1966,15 +1986,22 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 if (!p.fillAt || now < p.fillAt + CFG.postFillDelayMs)
                     return false;
                 logTiming("PLACE_SL", "post_fill_delay");
-                try {
-                    await setProtection(p.symbol, p.sl, undefined);
-                }
-                catch (err) {
+                const attempts = p.slSetAttempts ?? 0;
+                if (attempts >= 3) {
                     p.stage = "SAFE_CLOSE";
-                    p.taskReason = `SL_SET_FAILED:${err?.message || "unknown"}`;
+                    p.taskReason = "SL_SET_FAILED_MAX_RETRY";
                     scalpForceSafeUntilRef.current = Date.now() + 30 * 60_000; // 30m safe window
                     scalpSafeRef.current = true;
-                    addLog({ action: "ERROR", message: `SAFE_MODE triggered (SL_SET_FAILED ${p.symbol})` });
+                    addLog({ action: "ERROR", message: `SAFE_MODE triggered (SL_SET_FAILED_MAX ${p.symbol})` });
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                try {
+                    await setProtection(p.symbol, p.sl, undefined);
+                    p.slSetAttempts = attempts + 1;
+                }
+                catch (err) {
+                    p.slSetAttempts = attempts + 1;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
                 }
@@ -1997,7 +2024,18 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const ok = found && Math.abs(Number(found.stopLoss ?? 0) - p.sl) <= tol;
                 if (!ok) {
                     const age = p.fillAt ? now - p.fillAt : Infinity;
-                    if (age > 2000) {
+                    const attempts = p.slSetAttempts ?? 0;
+                    if (attempts < 3) {
+                        try {
+                            await setProtection(p.symbol, p.sl, undefined);
+                            p.slSetAttempts = attempts + 1;
+                        }
+                        catch {
+                            p.slSetAttempts = attempts + 1;
+                        }
+                        p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                    }
+                    else if (age > 2000) {
                         p.stage = "SAFE_CLOSE";
                         p.taskReason = "SL_MISSING";
                         scalpForceSafeUntilRef.current = Date.now() + 30 * 60_000; // 30m safe window

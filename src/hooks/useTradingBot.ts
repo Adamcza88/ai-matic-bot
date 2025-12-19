@@ -1662,6 +1662,7 @@ export const useTradingBot = (
         slVerifyAt?: number;
         tpVerifyAt?: number;
         cancelAttempts?: number;
+        slSetAttempts?: number;
     };
 
     type ScalpManage = {
@@ -2283,14 +2284,21 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             if (p.stage === "FILLED_NEED_SL") {
                 if (!p.fillAt || now < p.fillAt + CFG.postFillDelayMs) return false;
                 logTiming("PLACE_SL", "post_fill_delay");
-                try {
-                    await setProtection(p.symbol, p.sl, undefined);
-                } catch (err: any) {
+                const attempts = p.slSetAttempts ?? 0;
+                if (attempts >= 3) {
                     p.stage = "SAFE_CLOSE";
-                    p.taskReason = `SL_SET_FAILED:${err?.message || "unknown"}`;
+                    p.taskReason = "SL_SET_FAILED_MAX_RETRY";
                     scalpForceSafeUntilRef.current = Date.now() + 30 * 60_000; // 30m safe window
                     scalpSafeRef.current = true;
-                    addLog({ action: "ERROR", message: `SAFE_MODE triggered (SL_SET_FAILED ${p.symbol})` });
+                    addLog({ action: "ERROR", message: `SAFE_MODE triggered (SL_SET_FAILED_MAX ${p.symbol})` });
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+                try {
+                    await setProtection(p.symbol, p.sl, undefined);
+                    p.slSetAttempts = attempts + 1;
+                } catch (err: any) {
+                    p.slSetAttempts = attempts + 1;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
                 }
@@ -2314,7 +2322,16 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                 const ok = found && Math.abs(Number(found.stopLoss ?? 0) - p.sl) <= tol;
                 if (!ok) {
                     const age = p.fillAt ? now - p.fillAt : Infinity;
-                    if (age > 2000) {
+                    const attempts = p.slSetAttempts ?? 0;
+                    if (attempts < 3) {
+                        try {
+                            await setProtection(p.symbol, p.sl, undefined);
+                            p.slSetAttempts = attempts + 1;
+                        } catch {
+                            p.slSetAttempts = attempts + 1;
+                        }
+                        p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                    } else if (age > 2000) {
                         p.stage = "SAFE_CLOSE";
                         p.taskReason = "SL_MISSING";
                         scalpForceSafeUntilRef.current = Date.now() + 30 * 60_000; // 30m safe window
