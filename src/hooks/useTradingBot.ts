@@ -43,7 +43,7 @@ import {
 // SYMBOLS (Deterministic Scalp Profile 1)
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
 // SYMBOLS (AI-MATIC-SCALP)
-const SMC_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "HBARUSDT", "NEARUSDT", "AVAXUSDT"];
+const SMC_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
 const ALL_SYMBOLS = Array.from(new Set([...SYMBOLS, ...SMC_SYMBOLS]));
 
 // SIMULOVANÝ / DEFAULT KAPITÁL
@@ -742,7 +742,17 @@ export const useTradingBot = (
 
     const queuedFetch = useCallback(
         async (input: any, init?: any, kind: RequestKind = "data") => {
-            return runQueued(kind, () => fetch(input, init));
+            return runQueued(kind, async () => {
+                const controller = new AbortController();
+                const timeoutMs = kind === "order" ? 12000 : 8000;
+                const id = setTimeout(() => controller.abort(), timeoutMs);
+                try {
+                    const nextInit = { ...(init || {}), signal: controller.signal };
+                    return await fetch(input, nextInit);
+                } finally {
+                    clearTimeout(id);
+                }
+            });
         },
         [runQueued]
     );
@@ -1172,8 +1182,14 @@ export const useTradingBot = (
                                 if (Number.isFinite(entry) && entry > 0 && Number.isFinite(size) && size > 0) {
                                     const dir = String(pos.side || "").toLowerCase() === "buy" ? 1 : -1;
                                     const baseR = Math.max(entry * STOP_MIN_PCT, entry * 0.002);
-                                    const fallbackSl = dir > 0 ? entry - baseR : entry + baseR;
-                                    const fallbackTp = dir > 0 ? entry + 1.4 * baseR : entry - 1.4 * baseR;
+                                    const lastPx = currentPricesRef.current[symbol] || entry;
+                                    const buffer = Math.max(entry * STOP_MIN_PCT, entry * 0.001, 0.1);
+                                    const fallbackSl = dir > 0
+                                        ? Math.min(entry - baseR, lastPx - buffer)
+                                        : Math.max(entry + baseR, lastPx + buffer);
+                                    const fallbackTp = dir > 0
+                                        ? Math.max(entry + 1.4 * baseR, lastPx + buffer)
+                                        : Math.min(entry - 1.4 * baseR, lastPx - buffer);
                                     slRepairRef.current[symbol] = nowMs;
                                     const commit = commitProtectionRef.current;
                                     if (commit) {
@@ -1578,7 +1594,50 @@ export const useTradingBot = (
             if (!authToken) return false;
             const net = useTestnet ? "testnet" : "mainnet";
             const tolerance = Math.abs((currentPricesRef.current[symbol] ?? 0) * 0.001) || 0.5;
+            const findOpenPos = async () => {
+                let pos = activePositionsRef.current.find(
+                    (p) => p.symbol === symbol && Math.abs(Number(p.size ?? p.qty ?? 0)) > 0
+                );
+                if (pos) return pos;
+                try {
+                    const posResp = await fetchPositionsOnce(net);
+                    pos = posResp.list.find(
+                        (p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0
+                    );
+                    return pos || null;
+                } catch (err: any) {
+                    addLog({ action: "ERROR", message: `Protection precheck failed: ${err?.message || "unknown"}` });
+                    return null;
+                }
+            };
+            let safeSl = sl;
+            let safeTp = tp;
             for (let attempt = 1; attempt <= 3; attempt++) {
+                const foundPos = await findOpenPos();
+                if (!foundPos) {
+                    addLog({ action: "SYSTEM", message: `PROTECTION_WAIT ${symbol} no open position (attempt ${attempt})` });
+                    await new Promise((r) => setTimeout(r, 600));
+                    continue;
+                }
+                const lastPx = currentPricesRef.current[symbol] ?? Number(foundPos.entryPrice ?? foundPos.avgPrice ?? 0);
+                const isBuy = String(foundPos.side ?? "").toLowerCase() === "buy";
+                const minGap = Math.max((lastPx || 1) * 0.0001, 0.1);
+                if (Number.isFinite(lastPx) && lastPx > 0) {
+                    if (safeSl != null) {
+                        const invalidSl = isBuy ? safeSl >= lastPx - minGap : safeSl <= lastPx + minGap;
+                        if (invalidSl) {
+                            addLog({ action: "ERROR", message: `PROTECTION_INVALID_SL ${symbol} sl=${safeSl} last=${lastPx}` });
+                            return false;
+                        }
+                    }
+                    if (safeTp != null) {
+                        const invalidTp = isBuy ? safeTp <= lastPx + minGap : safeTp >= lastPx - minGap;
+                        if (invalidTp) {
+                            safeTp = undefined;
+                            addLog({ action: "SYSTEM", message: `PROTECTION_DROP_TP ${symbol} tp=${tp} last=${lastPx}` });
+                        }
+                    }
+                }
                 setLifecycle(tradeId, "PROTECTION_PENDING", `attempt ${attempt}`);
                 const res = await queuedFetch(`${apiBase}${apiPrefix}/protection?net=${net}`, {
                     method: "POST",
@@ -1588,10 +1647,12 @@ export const useTradingBot = (
                     },
                     body: JSON.stringify({
                         symbol,
-                        sl,
-                        tp,
+                        sl: safeSl,
+                        tp: safeTp,
                         trailingStop,
                         positionIdx: 0,
+                        slTriggerBy: "LastPrice",
+                        tpTriggerBy: "LastPrice",
                     }),
                 }, "order");
                 if (!res.ok) {
@@ -1606,8 +1667,8 @@ export const useTradingBot = (
                     const posResp = await fetchPositionsOnce(net);
                     const found = posResp.list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
                     if (found) {
-                        const tpOk = tp == null || Math.abs(Number(found.takeProfit ?? 0) - tp) <= tolerance;
-                        const slOk = sl == null || Math.abs(Number(found.stopLoss ?? 0) - sl) <= tolerance;
+                        const tpOk = safeTp == null || Math.abs(Number(found.takeProfit ?? 0) - safeTp) <= tolerance;
+                        const slOk = safeSl == null || Math.abs(Number(found.stopLoss ?? 0) - safeSl) <= tolerance;
                         const tsOk = trailingStop == null || Math.abs(Number(found.trailingStop ?? 0) - trailingStop) <= tolerance;
                         if (tpOk && slOk && tsOk) {
                             setLifecycle(tradeId, "PROTECTION_SET");
@@ -1659,7 +1720,7 @@ export const useTradingBot = (
                     const missingSl = p.sl == null || p.sl === 0;
                     const missingTp = p.tp == null || p.tp === 0;
                     const missingTrailing = p.currentTrailingStop == null || p.currentTrailingStop === 0;
-                    if ((missingSl || missingTp || missingTrailing) && p.size > 0) {
+                    if ((missingSl || missingTp) && p.size > 0) {
                         const candles = priceHistoryRef.current[p.symbol];
                         let atr = 0;
                         if (candles && candles.length > 15) {
@@ -1682,8 +1743,7 @@ export const useTradingBot = (
                                 ? Math.max(entry + 1.4 * baseR, lastPx + buffer)
                                 : Math.min(entry - 1.4 * baseR, lastPx - buffer)
                             : p.tp;
-                        const trailing = missingTrailing ? undefined : p.currentTrailingStop;
-                        const ok = await commitProtection(`recon-${p.id}`, p.symbol, fallbackSl, fallbackTp, trailing);
+                        const ok = await commitProtection(`recon-${p.id}`, p.symbol, fallbackSl, fallbackTp, undefined);
                         if (!ok) await forceClosePosition(p);
                         continue;
                     }
@@ -2271,7 +2331,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${authToken}`,
                 },
-                body: JSON.stringify({ symbol, sl, tp, positionIdx: 0 }),
+                body: JSON.stringify({ symbol, sl, tp, positionIdx: 0, slTriggerBy: "LastPrice", tpTriggerBy: "LastPrice" }),
             }, "order");
             const body = await res.json().catch(() => ({}));
             if (!res.ok || body?.ok === false) {
@@ -2510,7 +2570,32 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     return true;
                 }
                 try {
-                    await setProtection(p.symbol, p.sl, undefined);
+                    let pos = getOpenPos(p.symbol);
+                    if (!pos) {
+                        try {
+                            const posSnap = await fetchPositionsOnce(net);
+                            pos = posSnap.list.find((pp: any) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
+                        } catch {
+                            p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                            st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                            return true;
+                        }
+                        if (!pos) {
+                            p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                            st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                            return true;
+                        }
+                    }
+                    const lastPx = currentPricesRef.current[p.symbol] || pos?.entryPrice || p.limitPrice || 0;
+                    const tick = st.instrument?.tickSize ?? Math.max((lastPx || 1) * 0.0001, 0.1);
+                    const isBuy = String(pos?.side ?? p.side ?? "").toLowerCase() === "buy";
+                    let safeSl = p.sl;
+                    if (Number.isFinite(lastPx) && lastPx > 0) {
+                        if (isBuy && safeSl >= lastPx - tick) safeSl = lastPx - tick;
+                        if (!isBuy && safeSl <= lastPx + tick) safeSl = lastPx + tick;
+                    }
+                    await setProtection(p.symbol, safeSl, undefined);
+                    p.sl = safeSl;
                     p.slSetAttempts = attempts + 1;
                 } catch (err: any) {
                     p.slSetAttempts = attempts + 1;
@@ -3944,8 +4029,33 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             if (p.stage === "FILLED_NEED_SL") {
                 if (now < (p.fillAt ?? 0) + CFG.postFillDelayMs) return false;
+                const livePos = getOpenPos(p.symbol);
+                if (!livePos) {
+                    try {
+                        const pos = await fetchPositionsOnce(net);
+                        const found = pos.list.find((pp: any) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
+                        if (!found) {
+                            p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                            st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                            return true;
+                        }
+                    } catch {
+                        p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                        return true;
+                    }
+                }
                 try {
-                    await setProtection(p.symbol, p.sl, undefined);
+                    const lastPx = currentPricesRef.current[p.symbol] || p.entry || 0;
+                    const tick = st.instrument?.tickSize ?? Math.max((lastPx || 1) * 0.0001, 0.1);
+                    const isBuy = p.side === "Buy";
+                    let safeSl = p.sl;
+                    if (Number.isFinite(lastPx) && lastPx > 0) {
+                        if (isBuy && safeSl >= lastPx - tick) safeSl = lastPx - tick;
+                        if (!isBuy && safeSl <= lastPx + tick) safeSl = lastPx + tick;
+                    }
+                    await setProtection(p.symbol, safeSl, undefined);
+                    p.sl = safeSl;
                 } catch (err: any) {
                     addLog({ action: "ERROR", message: `AI-MATIC-SCALP SL_SET_FAILED ${p.symbol} ${err?.message || "unknown"}` });
                     p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
@@ -4178,12 +4288,18 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                             const newSlRaw = dir > 0 ? lastPx - dist : lastPx + dist;
                             const newSl = dir > 0 ? floorToStep(newSlRaw, st.instrument.tickSize) : ceilToStep(newSlRaw, st.instrument.tickSize);
                             const currentSl = Number(pos.sl ?? 0);
+                            const valid = dir > 0
+                                ? newSl < lastPx - st.instrument.tickSize
+                                : newSl > lastPx + st.instrument.tickSize;
                             const improves = dir > 0 ? newSl > currentSl + CFG.trailMinImproveTicks * st.instrument.tickSize : newSl < currentSl - CFG.trailMinImproveTicks * st.instrument.tickSize;
-                            if (Number.isFinite(newSl) && improves) {
+                            if (Number.isFinite(newSl) && improves && valid) {
                                 await setProtection(symbol, newSl, undefined);
                                 smcLastTrailUpdateAtRef.current[symbol] = nowMs;
                                 addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL ${symbol} SL->${newSl}` });
                                 return exitWithDiag(false, "MANAGE");
+                            }
+                            if (Number.isFinite(newSl) && !valid) {
+                                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL_SKIP ${symbol} sl=${newSl} last=${lastPx}` });
                             }
                             smcLastTrailUpdateAtRef.current[symbol] = nowMs;
                         }

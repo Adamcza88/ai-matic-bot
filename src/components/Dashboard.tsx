@@ -48,7 +48,7 @@ export default function Dashboard({
       return {
         label: "AI-MATIC-SCALP",
         subtitle: "SMC/AMD (1h/15m/5m/1m)",
-        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "HBARUSDT", "NEARUSDT", "AVAXUSDT"],
+        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
         timeframes: "HTF 1h · M15 · M5 · LTF 1m",
         session: "London/NY killzones (Prague)",
         risk: "1% equity (min 10 / cap 200) · margin 5/pos · max 2 pos",
@@ -391,7 +391,7 @@ export default function Dashboard({
                 ) : (
                   logEntries
                     .filter((l) => {
-                      if (l.action === "SIGNAL" || l.action === "ERROR") return true;
+                      if (l.action === "SIGNAL" || l.action === "ERROR" || l.action === "STATUS") return true;
                       const msg = String(l.message || "");
                       if (msg.startsWith("TIMING ")) return true;
                       if (msg.startsWith("PAUSE ") || msg.includes("SAFE_MODE")) return true;
@@ -442,44 +442,50 @@ export default function Dashboard({
                         {diag?.signalActive ? "SIGNAL" : "NO SIGNAL"}
                       </Badge>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      {gates.map((g) => (
+                    {gates.length === 0 ? (
+                      <div className="text-xs text-slate-500 italic">
+                        Žádná data z posledního scanu.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        {gates.map((g) => (
+                          <button
+                            key={g.name}
+                            type="button"
+                            onClick={() => toggleChecklist(g.name)}
+                            className="flex items-center gap-2 text-left"
+                            title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
+                          >
+                            <span className={`h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
+                            <span className={checklistEnabled[g.name] ? "text-white" : "text-slate-500"}>
+                              {g.name}
+                            </span>
+                          </button>
+                        ))}
                         <button
-                          key={g.name}
                           type="button"
-                          onClick={() => toggleChecklist(g.name)}
+                          onClick={() => toggleChecklist("Exec allowed")}
                           className="flex items-center gap-2 text-left"
                           title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
                         >
-                          <span className={`h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
-                          <span className={checklistEnabled[g.name] ? "text-white" : "text-slate-500"}>
-                            {g.name}
+                          <span className={`h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}`} />
+                          <span className={checklistEnabled["Exec allowed"] ? "text-white" : "text-slate-500"}>
+                            Exec allowed ({diag?.executionAllowed === true ? "YES" : diag?.executionAllowed === false ? "WAIT BBO" : "N/A"})
                           </span>
                         </button>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => toggleChecklist("Exec allowed")}
-                        className="flex items-center gap-2 text-left"
-                        title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
-                      >
-                        <span className={`h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}`} />
-                        <span className={checklistEnabled["Exec allowed"] ? "text-white" : "text-slate-500"}>
-                          Exec allowed ({diag?.executionAllowed === true ? "YES" : diag?.executionAllowed === false ? "WAIT BBO" : "N/A"})
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleChecklist("BBO age")}
-                        className="flex items-center gap-2 text-left"
-                        title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
-                      >
-                        <span className="h-2 w-2 rounded-full bg-slate-500" />
-                        <span className={checklistEnabled["BBO age"] ? "text-white" : "text-slate-500"}>
-                          BBO age: {diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"}
-                        </span>
-                      </button>
-                    </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleChecklist("BBO age")}
+                          className="flex items-center gap-2 text-left"
+                          title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
+                        >
+                          <span className="h-2 w-2 rounded-full bg-slate-500" />
+                          <span className={checklistEnabled["BBO age"] ? "text-white" : "text-slate-500"}>
+                            BBO age: {diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"}
+                          </span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
