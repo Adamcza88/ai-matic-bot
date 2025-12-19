@@ -1661,6 +1661,7 @@ export const useTradingBot = (
         fillAt?: number;
         slVerifyAt?: number;
         tpVerifyAt?: number;
+        cancelAttempts?: number;
     };
 
     type ScalpManage = {
@@ -2216,6 +2217,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     }
                     p.stage = "CANCEL_SENT";
                     p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
+                    p.cancelAttempts = 0;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     addLog({ action: "SYSTEM", message: `CANCEL ${p.symbol} id=${p.orderLinkId} reason=TIMEOUT` });
                     return true;
@@ -2253,6 +2255,24 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                         st.pending = undefined;
                         addLog({ action: "SYSTEM", message: `CANCEL_OK ${p.symbol} id=${p.orderLinkId} (missing in history)` });
                     } else {
+                        p.cancelAttempts = (p.cancelAttempts ?? 0) + 1;
+                        if (p.cancelAttempts === 1) {
+                            try {
+                                await cancelOrderByLinkId(p.symbol, p.orderLinkId);
+                                addLog({ action: "SYSTEM", message: `CANCEL_RESEND ${p.symbol} id=${p.orderLinkId}` });
+                            } catch (err: any) {
+                                if (!isCancelSafeError(err)) {
+                                    addLog({ action: "ERROR", message: `CANCEL_RESEND_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                                }
+                            }
+                        }
+                        if ((p.cancelAttempts ?? 0) >= 3) {
+                            scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
+                            st.pending = undefined;
+                            addLog({ action: "ERROR", message: `CANCEL_STUCK ${p.symbol} status=${status || "unknown"} force-clear` });
+                            st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                            return true;
+                        }
                         p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
                     }
                 }
