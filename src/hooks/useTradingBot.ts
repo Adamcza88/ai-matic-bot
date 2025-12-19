@@ -1993,7 +1993,7 @@ function buildDirectionalCandidate(symbol: string, candles: Candle[]): RankedSig
     const signal: PendingSignal = {
         id: `${symbol}-ema50-pullback-${Date.now()}`,
         symbol,
-        profile: "intraday-ema50",
+        profile: "intraday",
         kind: "PULLBACK",
         risk,
         createdAt: new Date().toISOString(),
