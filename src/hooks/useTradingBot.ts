@@ -4710,18 +4710,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
         void executeTrade(sig.id);
     }, [pendingSignals]);
 
-    // MOCK NEWS
-    useEffect(() => {
-        setNewsHeadlines([
-            {
-                id: "n1",
-                headline: "Volatility rising in BTCUSDT",
-                sentiment: "neutral",
-                source: "scanner",
-                time: new Date().toISOString(),
-            },
-        ]);
-    }, []);
+
 
     const addPriceAlert = (symbol: string, price: number) => {
         const alert: PriceAlert = {
