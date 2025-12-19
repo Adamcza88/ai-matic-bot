@@ -10,7 +10,8 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Activity, TrendingUp, Zap } from "lucide-react";
+import { Activity, Settings, TrendingUp, Zap } from "lucide-react";
+import SettingsPanel from "./SettingsPanel";
 
 type DashboardProps = {
   mode: TradingMode;
@@ -120,6 +121,7 @@ export default function Dashboard({
   const toggleChecklist = (name: string) => {
     setChecklistEnabled((p) => ({ ...p, [name]: !(p[name] ?? true) }));
   };
+  const [showSettings, setShowSettings] = useState(false);
 
   return (
     <div className="space-y-6">
@@ -243,10 +245,21 @@ export default function Dashboard({
         {/* === STRATEGY PROFILE === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-slate-400 flex items-center gap-2">
-              <Zap className="w-4 h-4" />
-              Strategy Profile
-            </CardTitle>
+            <div className="flex items-center justify-between gap-4">
+              <CardTitle className="text-sm font-medium text-slate-400 flex items-center gap-2">
+                <Zap className="w-4 h-4" />
+                Strategy Profile
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowSettings(true)}
+                className="text-slate-300 hover:text-white hover:bg-white/10"
+              >
+                <Settings className="w-4 h-4 mr-2" />
+                Settings
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-3 text-sm">
@@ -598,6 +611,16 @@ export default function Dashboard({
           </CardContent>
         </Card>
       </div>
+
+      {showSettings && bot.settings && (
+        <SettingsPanel
+          theme="dark"
+          lang="cs"
+          settings={bot.settings}
+          onUpdateSettings={bot.updateSettings}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   );
 }
