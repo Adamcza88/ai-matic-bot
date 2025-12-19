@@ -1463,61 +1463,79 @@ export const useTradingBot = (
             while (Date.now() - started < maxWaitMs) {
                 attempt += 1;
                 // 1) In-memory executions seen by polling loop
-                const execHit = executionEventsRef.current.find((e) => {
-                    if (e.symbol !== symbol) return false;
-                    if (orderId && e.orderId && e.orderId === orderId) return true;
-                    if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
-                    return !orderId && !orderLinkId;
-                });
-                if (execHit) return execHit;
+                try {
+                    const execHit = executionEventsRef.current.find((e) => {
+                        if (e.symbol !== symbol) return false;
+                        if (orderId && e.orderId && e.orderId === orderId) return true;
+                        if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
+                        return !orderId && !orderLinkId;
+                    });
+                    if (execHit) return execHit;
+                } catch (e) {
+                    /* ignore */
+                }
 
                 // 2) Fresh executions snapshot
-                const executionsResp = await fetchExecutionsOnce(net, symbol);
-                if (executionsResp.retCode && executionsResp.retCode !== 0) {
-                    addLog({
-                        action: "ERROR",
-                        message: `Executions retCode=${executionsResp.retCode} ${executionsResp.retMsg || ""}`,
+                try {
+                    const executionsResp = await fetchExecutionsOnce(net, symbol);
+                    if (executionsResp.retCode && executionsResp.retCode !== 0) {
+                        addLog({
+                            action: "ERROR",
+                            message: `Executions retCode=${executionsResp.retCode} ${executionsResp.retMsg || ""}`,
+                        });
+                    }
+                    const execSnapshot = executionsResp.list.find((e: any) => {
+                        if (e.symbol !== symbol) return false;
+                        if (orderId && e.orderId && e.orderId === orderId) return true;
+                        if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
+                        return !orderId && !orderLinkId;
                     });
+                    if (execSnapshot) return execSnapshot;
+                } catch (e: any) {
+                    addLog({ action: "ERROR", message: `waitForFill check 'executions' failed: ${e.message}`});
                 }
-                const execSnapshot = executionsResp.list.find((e: any) => {
-                    if (e.symbol !== symbol) return false;
-                    if (orderId && e.orderId && e.orderId === orderId) return true;
-                    if (orderLinkId && e.orderLinkId && e.orderLinkId === orderLinkId) return true;
-                    return !orderId && !orderLinkId;
-                });
-                if (execSnapshot) return execSnapshot;
 
                 // 3) Order history snapshot
-                const historyResp = await fetchOrderHistoryOnce(net);
-                if (historyResp.retCode && historyResp.retCode !== 0) {
-                    addLog({
-                        action: "ERROR",
-                        message: `Order history retCode=${historyResp.retCode} ${historyResp.retMsg || ""}`,
+                try {
+                    const historyResp = await fetchOrderHistoryOnce(net);
+                    if (historyResp.retCode && historyResp.retCode !== 0) {
+                        addLog({
+                            action: "ERROR",
+                            message: `Order history retCode=${historyResp.retCode} ${historyResp.retMsg || ""}`,
+                        });
+                    }
+                    const histMatch = historyResp.list.find((o: any) => {
+                        if (o.symbol !== symbol) return false;
+                        if (orderId && o.orderId && o.orderId === orderId) return true;
+                        if (orderLinkId && o.orderLinkId && o.orderLinkId === orderLinkId) return true;
+                        return !orderId && !orderLinkId;
                     });
-                }
-                const histMatch = historyResp.list.find((o: any) => {
-                    if (o.symbol !== symbol) return false;
-                    if (orderId && o.orderId && o.orderId === orderId) return true;
-                    if (orderLinkId && o.orderLinkId && o.orderLinkId === orderLinkId) return true;
-                    return !orderId && !orderLinkId;
-                });
-                if (histMatch) {
-                    const st = String(histMatch.orderStatus || histMatch.status || "");
-                    if (st === "Filled" || st === "PartiallyFilled") return histMatch;
-                    if (st === "Rejected") throw new Error("Order Rejected");
-                    if (st === "Cancelled") throw new Error("Order Cancelled");
+                    if (histMatch) {
+                        const st = String(histMatch.orderStatus || histMatch.status || "");
+                        if (st === "Filled" || st === "PartiallyFilled") return histMatch;
+                        if (st === "Rejected") throw new Error("Order Rejected");
+                        if (st === "Cancelled") throw new Error("Order Cancelled");
+                    }
+                } catch (e: any) {
+                    addLog({ action: "ERROR", message: `waitForFill check 'history' failed: ${e.message}`});
                 }
 
+
                 // 4) Positions snapshot (with retCode log)
-                const posResp = await fetchPositionsOnce(net);
-                if (posResp.retCode && posResp.retCode !== 0) {
-                    addLog({
-                        action: "ERROR",
-                        message: `Positions retCode=${posResp.retCode} ${posResp.retMsg || ""}`,
-                    });
+                try {
+                    const posResp = await fetchPositionsOnce(net);
+                    if (posResp.retCode && posResp.retCode !== 0) {
+                        addLog({
+                            action: "ERROR",
+                            message: `Positions retCode=${posResp.retCode} ${posResp.retMsg || ""}`,
+                        });
+                    }
+                    const found = posResp.list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
+                    if (found) return found;
+                } catch (e: any) {
+                    addLog({ action: "ERROR", message: `waitForFill check 'positions' failed: ${e.message}`});
                 }
-                const found = posResp.list.find((p: any) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
-                if (found) return found;
+
 
                 await sleep(jitter(750, 1500));
             }
@@ -3839,6 +3857,15 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
 
             if (p.stage === "CANCEL_VERIFY") {
                 if (now < p.statusCheckAt) return false;
+
+                const timeSinceCreated = now - (p.createdAt ?? now);
+                if (timeSinceCreated > 30000) { // 30 seconds timeout for cancellation
+                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP CANCEL_STUCK ${p.symbol} id=${p.entryLinkId}. Force clearing.` });
+                    st.pending = undefined;
+                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                    return true;
+                }
+
                 const hist = await fetchOrderHistoryOnce(net);
                 const found = hist.list.find((o: any) => {
                     const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
@@ -4170,6 +4197,7 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     entryTimeoutMs: proposal.entryTimeoutMs,
                     entryLinkId,
                     tp1LinkId,
+                    createdAt: nowMs,
                     statusCheckAt: nowMs + CFG.orderStatusDelayMs,
                 };
                 st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
@@ -4558,8 +4586,21 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     );
                     if (fill) {
                         setLifecycle(signalId, "ENTRY_FILLED");
-                        setLifecycle(signalId, "MANAGING");
-                        logAuditEntry("SYSTEM", symbol, "ORDER_FILL", [...gatesAudit, entryModeGate], "TRADE", "Order filled", { entry: price, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
+                        const protectionOk = await commitProtection(signalId, symbol, finalSl, finalTp);
+
+                        if (protectionOk) {
+                            setLifecycle(signalId, "MANAGING");
+                            logAuditEntry("SYSTEM", symbol, "ORDER_FILL", [...gatesAudit, entryModeGate], "TRADE", "Order filled and protected", { entry: price, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
+                        } else {
+                            addLog({ action: "ERROR", message: `Initial protection failed for ${symbol}. Forcing close.` });
+                            const posList = await fetchPositionsOnce(useTestnet ? 'testnet' : 'mainnet').then(r => r.list).catch(() => []);
+                            const pos = posList.find((p: any) => p.symbol === symbol);
+                            if (pos) {
+                                await forceClosePosition(pos);
+                            }
+                            setLifecycle(signalId, "FAILED", "Protection failed");
+                            return false;
+                        }
                         return true;
                     }
                 } catch (err: any) {
