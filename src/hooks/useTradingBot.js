@@ -1376,14 +1376,29 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 if (!Number.isFinite(oneR) || oneR <= 0)
                     continue;
                 const profit = (price - p.entryPrice) * dir;
-                // SL/TP missing -> fail-safe close or set minimal protection
-                const missingProtection = (p.sl == null || p.sl === 0) &&
-                    (p.tp == null || p.tp === 0) &&
-                    (p.currentTrailingStop == null || p.currentTrailingStop === 0);
-                if (missingProtection && p.size > 0) {
-                    const fallbackSl = dir > 0 ? p.entryPrice - oneR : p.entryPrice + oneR;
-                    const fallbackTp = dir > 0 ? p.entryPrice + 2 * oneR : p.entryPrice - 2 * oneR;
-                    const ok = await commitProtection(`recon-${p.id}`, p.symbol, fallbackSl, fallbackTp, undefined);
+                // SL/TP missing -> heal protection
+                const missingSl = p.sl == null || p.sl === 0;
+                const missingTp = p.tp == null || p.tp === 0;
+                const missingTrailing = p.currentTrailingStop == null || p.currentTrailingStop === 0;
+                if ((missingSl || missingTp || missingTrailing) && p.size > 0) {
+                    const candles = priceHistoryRef.current[p.symbol];
+                    let atr = 0;
+                    if (candles && candles.length > 15) {
+                        atr = scalpComputeAtr(candles, 14).slice(-1)[0] ?? 0;
+                    }
+                    const baseR = Math.max(p.entryPrice * STOP_MIN_PCT, atr > 0 ? atr * 0.5 : p.entryPrice * 0.002);
+                    const fallbackSl = missingSl
+                        ? dir > 0
+                            ? p.entryPrice - baseR
+                            : p.entryPrice + baseR
+                        : p.sl;
+                    const fallbackTp = missingTp
+                        ? dir > 0
+                            ? p.entryPrice + 1.4 * baseR
+                            : p.entryPrice - 1.4 * baseR
+                        : p.tp;
+                    const trailing = missingTrailing ? undefined : p.currentTrailingStop;
+                    const ok = await commitProtection(`recon-${p.id}`, p.symbol, fallbackSl, fallbackTp, trailing);
                     if (!ok)
                         await forceClosePosition(p);
                     continue;
@@ -2355,6 +2370,22 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             // Manage tasks (partial / trailing) based on current LTF close
+            if (!st.manage && st.instrument && st.ltf) {
+                const pos = getOpenPos(symbol);
+                if (pos && Number.isFinite(pos.entryPrice) && Math.abs(Number(pos.size ?? pos.qty ?? 0)) > 0) {
+                    const r = Math.abs((pos.entryPrice || 0) - (pos.sl ?? pos.entryPrice));
+                    st.manage = {
+                        symbol,
+                        side: pos.side === "buy" ? "Buy" : "Sell",
+                        entry: pos.entryPrice,
+                        qty: Number(pos.size ?? pos.qty ?? 0),
+                        oneR: r > 0 ? r : Math.abs(pos.entryPrice * STOP_MIN_PCT),
+                        partialTaken: false,
+                        maxPrice: st.ltf.last.high,
+                        minPrice: st.ltf.last.low,
+                    };
+                }
+            }
             if (st.manage && st.instrument && st.ltf) {
                 const pos = getOpenPos(symbol);
                 if (pos) {
