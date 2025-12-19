@@ -809,6 +809,7 @@ export const useTradingBot = (
     const closedPnlSeenRef = useRef<Set<string>>(new Set());
     const manualPnlResetRef = useRef<number>(0);
     const slRepairRef = useRef<Record<string, number>>({});
+    const commitProtectionRef = useRef<((tradeId: string, symbol: string, sl?: number, tp?: number, trailingStop?: number) => Promise<boolean>) | null>(null);
 
     const [portfolioState, setPortfolioState] = useState({
         totalCapital: INITIAL_CAPITAL,
@@ -1090,7 +1091,7 @@ export const useTradingBot = (
             console.error(`[fetchOrders] Error:`, err);
             setOrdersError(err?.message || "Failed to load orders");
         }
-    }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase, commitProtection]);
+    }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase]);
 
     // Pozice/PnL přímo z Bybitu – přepíší simulované activePositions
     // RECONCILE LOOP: Jednotný zdroj pravdy z backendu
@@ -1174,8 +1175,11 @@ export const useTradingBot = (
                                     const fallbackSl = dir > 0 ? entry - baseR : entry + baseR;
                                     const fallbackTp = dir > 0 ? entry + 1.4 * baseR : entry - 1.4 * baseR;
                                     slRepairRef.current[symbol] = nowMs;
-                                    void commitProtection(`recon-fix-${symbol}-${nowMs}`, symbol, fallbackSl, fallbackTp);
-                                    addLog({ action: "SYSTEM", message: `[Reconcile] Auto-fix SL/TP queued for ${symbol}` });
+                                    const commit = commitProtectionRef.current;
+                                    if (commit) {
+                                        void commit(`recon-fix-${symbol}-${nowMs}`, symbol, fallbackSl, fallbackTp);
+                                        addLog({ action: "SYSTEM", message: `[Reconcile] Auto-fix SL/TP queued for ${symbol}` });
+                                    }
                                     continue;
                                 }
                             }
@@ -1624,6 +1628,7 @@ export const useTradingBot = (
         },
         [apiBase, authToken, fetchPositionsOnce, setLifecycle, useTestnet]
     );
+    commitProtectionRef.current = commitProtection;
 
     // Reconcile smyčka: hlídá stárnutí dat a ochranu
     useEffect(() => {
