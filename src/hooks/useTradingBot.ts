@@ -1619,7 +1619,7 @@ export const useTradingBot = (
                     await new Promise((r) => setTimeout(r, 600));
                     continue;
                 }
-                const lastPx = currentPricesRef.current[symbol] ?? Number(foundPos.entryPrice ?? foundPos.avgPrice ?? 0);
+                const lastPx = currentPricesRef.current[symbol] ?? Number(foundPos.entryPrice ?? foundPos.avgEntryPrice ?? 0);
                 const isBuy = String(foundPos.side ?? "").toLowerCase() === "buy";
                 const minGap = Math.max((lastPx || 1) * 0.0001, 0.1);
                 if (Number.isFinite(lastPx) && lastPx > 0) {
