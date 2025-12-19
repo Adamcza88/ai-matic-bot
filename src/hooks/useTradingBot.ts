@@ -808,6 +808,7 @@ export const useTradingBot = (
     const activePositionsRef = useRef<ActivePosition[]>([]);
     const closedPnlSeenRef = useRef<Set<string>>(new Set());
     const manualPnlResetRef = useRef<number>(0);
+    const slRepairRef = useRef<Record<string, number>>({});
 
     const [portfolioState, setPortfolioState] = useState({
         totalCapital: INITIAL_CAPITAL,
@@ -1089,7 +1090,7 @@ export const useTradingBot = (
             console.error(`[fetchOrders] Error:`, err);
             setOrdersError(err?.message || "Failed to load orders");
         }
-    }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase]);
+    }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase, commitProtection]);
 
     // Pozice/PnL přímo z Bybitu – přepíší simulované activePositions
     // RECONCILE LOOP: Jednotný zdroj pravdy z backendu
@@ -1155,11 +1156,34 @@ export const useTradingBot = (
 
                 // 3. VISUAL INDICATORS
                 if (diffs && diffs.length > 0) {
-                    diffs.forEach((d: any) => {
+                    const nowMs = Date.now();
+                    const repairCooldownMs = 30_000;
+                    for (const d of diffs) {
+                        const msg = String(d?.message || "");
+                        const symbol = String(d?.symbol || "");
+                        const isMissingSl = d?.field === "sl" || msg.toLowerCase().includes("stop loss");
+                        if (isMissingSl && symbol) {
+                            const pos = mappedPositions.find((p) => p.symbol === symbol);
+                            const lastRepairAt = slRepairRef.current[symbol] ?? 0;
+                            if (pos && nowMs - lastRepairAt >= repairCooldownMs) {
+                                const entry = Number(pos.entryPrice ?? 0);
+                                const size = Number(pos.size ?? pos.qty ?? 0);
+                                if (Number.isFinite(entry) && entry > 0 && Number.isFinite(size) && size > 0) {
+                                    const dir = String(pos.side || "").toLowerCase() === "buy" ? 1 : -1;
+                                    const baseR = Math.max(entry * STOP_MIN_PCT, entry * 0.002);
+                                    const fallbackSl = dir > 0 ? entry - baseR : entry + baseR;
+                                    const fallbackTp = dir > 0 ? entry + 1.4 * baseR : entry - 1.4 * baseR;
+                                    slRepairRef.current[symbol] = nowMs;
+                                    void commitProtection(`recon-fix-${symbol}-${nowMs}`, symbol, fallbackSl, fallbackTp);
+                                    addLog({ action: "SYSTEM", message: `[Reconcile] Auto-fix SL/TP queued for ${symbol}` });
+                                    continue;
+                                }
+                            }
+                        }
                         if (d.severity === "HIGH") {
                             addLog({ action: "ERROR", message: `[Reconcile] ${d.message} (${d.symbol})` });
                         }
-                    });
+                    }
                 }
 
                 dataUnavailableRef.current = false;
