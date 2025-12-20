@@ -15,13 +15,26 @@ function ensureBuffer(symbol) {
 }
 // normalizace Bybit WS kline dat
 function normalizeWsKline(row) {
-    const openTime = Number(row.start ?? row.startTime ?? row[0]);
-    const open = parseFloat(row.open ?? row[1]);
-    const high = parseFloat(row.high ?? row[2]);
-    const low = parseFloat(row.low ?? row[3]);
-    const close = parseFloat(row.close ?? row[4]);
-    const volume = parseFloat(row.volume ?? row[5]);
-    return { openTime, open, high, low, close, volume };
+    if (Array.isArray(row)) {
+        return {
+            openTime: Number(row[0]),
+            open: parseFloat(row[1]),
+            high: parseFloat(row[2]),
+            low: parseFloat(row[3]),
+            close: parseFloat(row[4]),
+            volume: parseFloat(row[5]),
+        };
+    }
+    else {
+        return {
+            openTime: Number(row.start ?? row.startTime),
+            open: parseFloat(row.open),
+            high: parseFloat(row.high),
+            low: parseFloat(row.low),
+            close: parseFloat(row.close),
+            volume: parseFloat(row.volume),
+        };
+    }
 }
 export function startPriceFeed(symbols, onDecision) {
     const ws = new WebSocket(FEED_URL);

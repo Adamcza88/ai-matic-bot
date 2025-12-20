@@ -1,5 +1,6 @@
 // src/engine/ltFPullback.ts
 // LTF pullback + swing detekce pro V2 (David Paul – 3 pravidla)
+import { findLastPivotHigh, findLastPivotLow } from "./ta";
 function countBarsAgainst(candles, dir) {
     let count = 0;
     for (let i = candles.length - 1; i >= 0; i--) {
@@ -11,26 +12,6 @@ function countBarsAgainst(candles, dir) {
             break;
     }
     return count;
-}
-function findSwingPivot(candles, lookback) {
-    if (candles.length < lookback * 2 + 1)
-        return {};
-    const idx = candles.length - lookback - 1; // poslední plně uzavřený pivot
-    const pivot = candles[idx];
-    let isHigh = true;
-    let isLow = true;
-    for (let j = 1; j <= lookback; j++) {
-        if (!candles[idx - j] || !candles[idx + j])
-            return {};
-        if (candles[idx - j].high >= pivot.high || candles[idx + j].high >= pivot.high)
-            isHigh = false;
-        if (candles[idx - j].low <= pivot.low || candles[idx + j].low <= pivot.low)
-            isLow = false;
-    }
-    return {
-        high: isHigh ? pivot.high : undefined,
-        low: isLow ? pivot.low : undefined,
-    };
 }
 export function detectLtfPullback(candles, htfDirection, lookback = 2) {
     const tags = [];
@@ -44,9 +25,8 @@ export function detectLtfPullback(candles, htfDirection, lookback = 2) {
     if (barsAgainst < 3) {
         return { direction: "none", barsAgainst, valid: false, tags: ["PULLBACK_TOO_SHORT"] };
     }
-    const pivot = findSwingPivot(candles, lookback);
-    const swingHigh = pivot.high;
-    const swingLow = pivot.low;
+    const swingHigh = findLastPivotHigh(candles, lookback, lookback)?.price;
+    const swingLow = findLastPivotLow(candles, lookback, lookback)?.price;
     const hasSwing = htfDirection === "bull" ? swingLow != null : htfDirection === "bear" ? swingHigh != null : false;
     if (!hasSwing) {
         tags.push("SWING_MISSING");

@@ -1,55 +1,15 @@
-function ema(values, period) {
-    if (!values.length)
-        return 0;
-    const k = 2 / (period + 1);
-    let e = values[0];
-    for (let i = 1; i < values.length; i++) {
-        e = values[i] * k + e * (1 - k);
-    }
-    return e;
-}
-function findPivotsHigh(candles, lookback) {
-    const pivots = [];
-    for (let i = lookback; i < candles.length - lookback; i++) {
-        const h = candles[i].high;
-        let isHigh = true;
-        for (let j = 1; j <= lookback; j++) {
-            if (candles[i - j].high >= h || candles[i + j].high >= h) {
-                isHigh = false;
-                break;
-            }
-        }
-        if (isHigh)
-            pivots.push({ idx: i, price: h });
-    }
-    return pivots;
-}
-function findPivotsLow(candles, lookback) {
-    const pivots = [];
-    for (let i = lookback; i < candles.length - lookback; i++) {
-        const l = candles[i].low;
-        let isLow = true;
-        for (let j = 1; j <= lookback; j++) {
-            if (candles[i - j].low <= l || candles[i + j].low <= l) {
-                isLow = false;
-                break;
-            }
-        }
-        if (isLow)
-            pivots.push({ idx: i, price: l });
-    }
-    return pivots;
-}
+import { computeEma, findPivotsHigh, findPivotsLow } from "./ta";
 export function evaluateHTFTrend(candles, lookback = 2) {
     const tags = [];
-    if (!candles || candles.length < Math.max(lookback * 2 + 2, 50)) {
+    if (!candles || candles.length < Math.max(lookback * 2 + 2, 200)) {
         return { direction: "none", ema200: 0, close: 0, tags: ["INSUFFICIENT_DATA"] };
     }
     const closes = candles.map((c) => c.close);
-    const ema200 = ema(closes, 200);
+    const ema200Arr = computeEma(closes, 200);
+    const ema200 = ema200Arr[ema200Arr.length - 1];
     const lastClose = closes[closes.length - 1];
-    const highs = findPivotsHigh(candles, lookback);
-    const lows = findPivotsLow(candles, lookback);
+    const highs = findPivotsHigh(candles, lookback, lookback);
+    const lows = findPivotsLow(candles, lookback, lookback);
     const lastHigh = highs[highs.length - 1];
     const prevHigh = highs[highs.length - 2];
     const lastLow = lows[lows.length - 1];

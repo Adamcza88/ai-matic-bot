@@ -4,6 +4,15 @@ export enum Trend {
   Range = "range", // Formerly Neutral
 }
 
+interface Exchange {
+  fetchOHLCV(
+    symbol: string,
+    timeframe: string,
+    since: undefined,
+    limit: number,
+  ): Promise<number[][]>;
+}
+
 /**
  * Helper: position sizing based on balance, risk %, and SL distance.
  * Updated to be Fee & Slippage Aware.
@@ -371,9 +380,9 @@ export class TradingBot {
   // History of OHLCV by timeframe
   private history: Record<string, DataFrame>;
   // Exchange client interface (optional)
-  private exchange?: any;
+  private exchange?: Exchange;
 
-  constructor(config: Partial<BotConfig> = {}, exchange?: any) {
+  constructor(config: Partial<BotConfig> = {}, exchange?: Exchange) {
     this.config = applyProfileOverrides({ ...defaultConfig, ...config });
     this.state = State.Scan;
     this.position = null;
@@ -412,7 +421,7 @@ export class TradingBot {
       undefined,
       limit,
     );
-    const result: DataFrame = ohlcv.map((c: any[]) => ({
+    const result: DataFrame = ohlcv.map((c: number[]) => ({
       openTime: Number(c[0]),
       open: c[1],
       high: c[2],
@@ -497,7 +506,12 @@ export class TradingBot {
     return currentAtr > avgAtr * 2.5;
   }
 
-  private enforceMinimumStop(entry: number, stop: number, side: "long" | "short", atr: number): number {
+  private enforceMinimumStop(
+    entry: number,
+    stop: number,
+    side: "long" | "short",
+    atr: number,
+  ): number {
     const minDistance = Math.max(this.config.minStopPercent * entry, atr);
     const currentDistance = Math.abs(entry - stop);
     if (currentDistance >= minDistance) return stop;
@@ -603,11 +617,6 @@ export class TradingBot {
     if (!this.position) return;
     const currentPrice = lt[lt.length - 1].close;
     this.updateWaterMarks(currentPrice);
-    const highs = lt.map((c) => c.high);
-    const lows = lt.map((c) => c.low);
-    const closes = lt.map((c) => c.close);
-    const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
-    const atr = atrArray[atrArray.length - 1];
     const rMultiple = this.position.slDistance > 0
       ? (this.position.side === "long"
         ? (currentPrice - this.position.entryPrice) / this.position.slDistance
@@ -1162,7 +1171,6 @@ export class TradingBot {
       return out;
     };
     const ema20 = ema(20);
-    const ema50 = ema(50);
     const momentumLen = strictness === "base" ? 3 : 2;
     const lastN = closes.slice(-momentumLen);
     const diffs = lastN.slice(1).map((v, i) => v - lastN[i]);
@@ -1244,8 +1252,6 @@ export class TradingBot {
     // Estimate bars passed (assuming base timeframe approx)
     // Roughly check if duration > X minutes
     // Let's rely on candle counts if we had them linked, but time diff is robust.
-    const TIME_STOP_MS = 60 * 60 * 1000; // 1 hour example (should be config driven)
-    const MIN_PROFIT_R = 0.5;
 
     // If held for 12 bars (approx 1h on 5m chart) and profit < 0.5R => Exit
     // We'll calculate current PnL R
@@ -1384,10 +1390,6 @@ export function evaluateStrategyForSymbol(
     position &&
     position.opened !== prevOpened
   ) {
-    const slDistance =
-      position.side === "long"
-        ? position.entryPrice - position.stopLoss
-        : position.stopLoss - position.entryPrice;
     signal = {
       id: `${symbol}-${Date.now()}`,
       symbol,

@@ -19,7 +19,7 @@ const HistoryAnalytics = ({ closedPositions = [], theme = "dark", }) => {
     const labelColor = isDark ? "text-gray-400" : "text-gray-500";
     const valueColor = isDark ? "text-white" : "text-gray-900";
     const subColor = isDark ? "text-gray-500" : "text-gray-400";
-    const StatCard = ({ label, value, subValue, color }) => (_jsxs("div", { className: `${cardBg} rounded p-3 border flex flex-col items-center justify-center`, children: [_jsx("span", { className: `text-xs ${labelColor} uppercase tracking-wider`, children: label }), _jsx("span", { className: `text-lg font-bold mt-1 ${color || valueColor}`, children: value }), subValue && (_jsx("span", { className: `text-xs ${subColor}`, children: subValue }))] }));
+    const StatCard = ({ label, value, subValue, color, }) => (_jsxs("div", { className: `${cardBg} rounded p-3 border flex flex-col items-center justify-center`, children: [_jsx("span", { className: `text-xs ${labelColor} uppercase tracking-wider`, children: label }), _jsx("span", { className: `text-lg font-bold mt-1 ${color || valueColor}`, children: value }), subValue && (_jsx("span", { className: `text-xs ${subColor}`, children: subValue }))] }));
     const green = isDark ? "text-green-400" : "text-green-600";
     const red = isDark ? "text-red-400" : "text-red-600";
     const yellow = isDark ? "text-yellow-400" : "text-yellow-600";

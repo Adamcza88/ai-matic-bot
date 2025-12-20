@@ -1,6 +1,8 @@
-import { Ohlcv, computeAtr, computeEma, findLastPivotHigh, findLastPivotLow } from "./ta";
+import { computeAtr, computeEma, findLastPivotHigh, findLastPivotLow } from "./ta";
+import type { Ohlcv } from "./ta";
 
-export { Ohlcv, computeEma, findLastPivotHigh, findLastPivotLow };
+export { computeEma, findLastPivotHigh, findLastPivotLow };
+export type { Ohlcv };
 
 export function computeSma(values: number[], period: number): number[] {
   if (!values.length) return [];

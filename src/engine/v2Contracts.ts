@@ -57,7 +57,7 @@ export type RiskSnapshotV2 = {
   stopDistancePct: number;
 };
 
-const isFiniteNumber = (v: any) => typeof v === "number" && Number.isFinite(v);
+const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 export function createSignalV2(input: Partial<SignalV2>): SignalV2 {
   if (!input.symbol) throw new Error("symbol required");

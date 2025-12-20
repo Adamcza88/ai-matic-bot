@@ -465,11 +465,6 @@ export class TradingBot {
             return;
         const currentPrice = lt[lt.length - 1].close;
         this.updateWaterMarks(currentPrice);
-        const highs = lt.map((c) => c.high);
-        const lows = lt.map((c) => c.low);
-        const closes = lt.map((c) => c.close);
-        const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
-        const atr = atrArray[atrArray.length - 1];
         const rMultiple = this.position.slDistance > 0
             ? (this.position.side === "long"
                 ? (currentPrice - this.position.entryPrice) / this.position.slDistance
@@ -1014,7 +1009,6 @@ export class TradingBot {
             return out;
         };
         const ema20 = ema(20);
-        const ema50 = ema(50);
         const momentumLen = strictness === "base" ? 3 : 2;
         const lastN = closes.slice(-momentumLen);
         const diffs = lastN.slice(1).map((v, i) => v - lastN[i]);
@@ -1090,8 +1084,6 @@ export class TradingBot {
         // Estimate bars passed (assuming base timeframe approx)
         // Roughly check if duration > X minutes
         // Let's rely on candle counts if we had them linked, but time diff is robust.
-        const TIME_STOP_MS = 60 * 60 * 1000; // 1 hour example (should be config driven)
-        const MIN_PROFIT_R = 0.5;
         // If held for 12 bars (approx 1h on 5m chart) and profit < 0.5R => Exit
         // We'll calculate current PnL R
         const currentPrice = lt[lt.length - 1].close;
@@ -1198,9 +1190,6 @@ export function evaluateStrategyForSymbol(symbol, candles, config = {}) {
         bot.getState() === State.Manage &&
         position &&
         position.opened !== prevOpened) {
-        const slDistance = position.side === "long"
-            ? position.entryPrice - position.stopLoss
-            : position.stopLoss - position.entryPrice;
         signal = {
             id: `${symbol}-${Date.now()}`,
             symbol,

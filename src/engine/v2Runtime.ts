@@ -13,7 +13,7 @@ type RuntimeConfig = {
   minQty: number;
 };
 
-type RuntimeLog = { ts: string; event: string; data?: any };
+type RuntimeLog = { ts: string; event: string; data?: Record<string, unknown> };
 
 type Position = {
   symbol: string;
@@ -40,7 +40,7 @@ export class V2Runtime {
 
   constructor(private cfg: RuntimeConfig) {}
 
-  private log(event: string, data?: any) {
+  private log(event: string, data?: Record<string, unknown>) {
     this.logs.unshift({ ts: new Date().toISOString(), event, data });
     this.logs = this.logs.slice(0, 200);
   }

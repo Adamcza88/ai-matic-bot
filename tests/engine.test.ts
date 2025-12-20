@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { normalizeQty, computeRisk, computeQty, computePositionSize, TradingBot, State, Trend } from '../src/engine/botEngine.js';
+import { normalizeQty, computeRisk, computeQty, computePositionSize, TradingBot } from '../src/engine/botEngine.js';
 
 test("C1: Engine - normalizeQty", () => {
     assert.strictEqual(normalizeQty(1.23456, 0.001), 1.234);

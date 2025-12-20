@@ -44,7 +44,17 @@ const HistoryAnalytics: React.FC<HistoryAnalyticsProps> = ({
   const valueColor = isDark ? "text-white" : "text-gray-900";
   const subColor = isDark ? "text-gray-500" : "text-gray-400";
 
-  const StatCard = ({ label, value, subValue, color }: any) => (
+  const StatCard = ({
+    label,
+    value,
+    subValue,
+    color,
+  }: {
+    label: string;
+    value: string | number;
+    subValue?: string;
+    color?: string;
+  }) => (
     <div
       className={`${cardBg} rounded p-3 border flex flex-col items-center justify-center`}
     >

@@ -4,6 +4,15 @@ import { V2Runtime } from "./v2Runtime";
 import { createRiskSnapshotV2, createSignalV2, OrderPlanV2 } from "./v2Contracts";
 import { placeLimitWithProtection, BybitClient } from "./bybitAdapterV2";
 
+export type ExtendedOrderPlanV2 = OrderPlanV2 & {
+  tp?: number;
+  trailing?: {
+    activate: number;
+    level: number;
+    step: number;
+  };
+};
+
 export type PriceBook = {
   bestBid: number;
   bestAsk: number;
@@ -130,12 +139,12 @@ export class Profile2Engine {
       maxPositions: 2,
     });
 
-    const plan = this.runtime.requestPlace(signal, snapshot, "taker", stop);
+    const plan = this.runtime.requestPlace(signal, snapshot, "taker", stop) as ExtendedOrderPlanV2;
     // attach TP/Trailing info for caller
     const r = Math.abs(entryPrice - stop);
     const trailCfg = { activate: trail.trigger, level: trail.level, step: 0.1 * r };
-    (plan as any).tp = tp;
-    (plan as any).trailing = trailCfg;
+    plan.tp = tp;
+    plan.trailing = trailCfg;
 
     // Execute via adapter
     await placeLimitWithProtection({

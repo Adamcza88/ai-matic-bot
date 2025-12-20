@@ -3,8 +3,19 @@
 
 export type OrderSide = "Buy" | "Sell";
 
+export interface CreateOrderPayload {
+  symbol: string;
+  side: OrderSide;
+  qty: number;
+  price: number;
+  orderType: "Limit";
+  timeInForce: "GTC" | "IOC" | "FOK";
+  orderLinkId: string;
+  reduceOnly: boolean;
+}
+
 export interface BybitClient {
-  createOrder(payload: any): Promise<{ ok: boolean; orderId?: string; error?: string }>;
+  createOrder(payload: CreateOrderPayload): Promise<{ ok: boolean; orderId?: string; error?: string }>;
   cancelOrder(orderId: string): Promise<{ ok: boolean; error?: string }>;
   waitForFill(
     orderId: string,
@@ -51,7 +62,7 @@ export async function placeLimitWithProtection(input: PlaceOrderInput): Promise<
     idempotencyKey = `v2-${Date.now()}`,
   } = input;
 
-  const payload = {
+  const payload: CreateOrderPayload = {
     symbol,
     side,
     qty,
