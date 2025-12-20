@@ -1785,7 +1785,7 @@ export const useTradingBot = (
             postSlVerifyDelayMs: 300,
             postTpVerifyDelayMs: 300,
             spreadMaxPct: 0.0008, // 0.08%
-            lowAtrMinPct: 0.0005, // 0.05%
+            lowAtrMinPct: 0, // disabled: allow entries even in low ATR
             rvolMin: 1.2,
             stHtf: { atr: 10, mult: 3.0 },
             stLtf: { atr: 10, mult: 2.0 },
