@@ -61,13 +61,7 @@ const PortfolioRiskPanel: React.FC<Props> = ({
 
         <div>
           <span className="text-gray-500">Drawdown:</span>{" "}
-          <span
-            className={
-              portfolioState.currentDrawdown >= portfolioState.maxDrawdown
-                ? "text-red-500"
-                : "text-yellow-400"
-            }
-          >
+          <span className="text-yellow-400">
             {(portfolioState.currentDrawdown * 100).toFixed(1)}%
           </span>
         </div>

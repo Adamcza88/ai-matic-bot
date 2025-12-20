@@ -77,8 +77,6 @@ function applyProfileOverrides(cfg) {
         maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
         maxPortfolioRiskPercent: Math.max(Math.min(cfg.maxPortfolioRiskPercent, 0.12), 0.08),
         maxOpenPositions: 1,
-        maxDailyLossPercent: Math.max(Math.min(cfg.maxDailyLossPercent, 0.12), 0.08),
-        maxDrawdownPercent: Math.max(cfg.maxDrawdownPercent, 0.3),
         enforceSessionHours: false,
         trailingActivationR: 1,
         minStopPercent: Math.min(cfg.minStopPercent, 0.0012),
@@ -117,9 +115,6 @@ export const defaultConfig = {
     breakevenBufferAtr: 0.2,
     lookbackZones: 50,
     cooldownBars: 1,
-    maxDailyLossPercent: 0.12,
-    maxDailyProfitPercent: 0.5,
-    maxDrawdownPercent: 0.38,
     maxPortfolioRiskPercent: 0.15,
     maxRiskPerTradeCap: 0.07,
     tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
@@ -516,14 +511,6 @@ export class TradingBot {
     riskHalted() {
         if (this.config.entryStrictness === "test")
             return false;
-        const lossLimit = -this.config.accountBalance * this.config.maxDailyLossPercent;
-        const profitLimit = this.config.accountBalance * this.config.maxDailyProfitPercent;
-        if (this.dailyPnl <= lossLimit)
-            return true;
-        if (this.dailyPnl >= profitLimit)
-            return true;
-        if (this.currentDrawdown >= this.config.maxDrawdownPercent)
-            return true;
         return false;
     }
     /**

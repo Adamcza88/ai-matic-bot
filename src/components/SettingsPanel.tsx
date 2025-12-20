@@ -33,7 +33,7 @@ const SettingsPanel: React.FC<Props> = ({
       notes: [
         "Trading hours: On (0–23 SEČ/SELČ)",
         "Limit: max 2 pozice současně",
-        "Halt na denní ztrátu a drawdown, trailing profit lock",
+        "Trailing profit lock",
       ],
     },
     "ai-matic-x": {
@@ -42,7 +42,7 @@ const SettingsPanel: React.FC<Props> = ({
       notes: [
         "Trading hours: Off",
         "Limit: max 2 pozice současně",
-        "Halt na denní ztrátu/drawdown, dyn. sizing multiplier 1.2×",
+        "Dyn. sizing multiplier 1.0×",
       ],
     },
     "ai-matic-scalp": {
@@ -65,10 +65,6 @@ const SettingsPanel: React.FC<Props> = ({
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    useVolatilityExpansion: true,
-    maxDailyLossPercent: 0.07,
-    maxDailyProfitPercent: 0.5,
-    maxDrawdownPercent: 0.2,
     baseRiskPerTrade: 0.02,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -99,10 +95,6 @@ const SettingsPanel: React.FC<Props> = ({
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    useVolatilityExpansion: true,
-    maxDailyLossPercent: 0.1,
-    maxDailyProfitPercent: 1.0,
-    maxDrawdownPercent: 0.2,
     baseRiskPerTrade: 0.02,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -114,11 +106,11 @@ const SettingsPanel: React.FC<Props> = ({
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     requireConfirmationInAuto: false,
-    positionSizingMultiplier: 1.2,
+    positionSizingMultiplier: 1.0,
     customInstructions: "",
     customStrategy: "",
     min24hVolume: 50,
-    minProfitFactor: 1.1,
+    minProfitFactor: 0,
     minWinRate: 65,
     tradingStartHour: 0,
     tradingEndHour: 23,
@@ -133,10 +125,6 @@ const SettingsPanel: React.FC<Props> = ({
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    useVolatilityExpansion: false,
-    maxDailyLossPercent: 0.03,
-    maxDailyProfitPercent: 0.5,
-    maxDrawdownPercent: 0.2,
     baseRiskPerTrade: 0.01,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -251,22 +239,12 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           </div>
 
-          <div className="grid gap-4">
-            <div className="grid gap-2">
-              <label className="text-sm font-medium leading-none">
-                Max Drawdown %
-              </label>
-              <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
-                {(local.maxDrawdownPercent * 100).toFixed(2)}%
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <label className="text-sm font-medium leading-none">
-                Max Positions
-              </label>
-              <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
-                {local.maxOpenPositions}
-              </div>
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none">
+              Max Positions
+            </label>
+            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              {local.maxOpenPositions}
             </div>
           </div>
 
@@ -280,7 +258,7 @@ const SettingsPanel: React.FC<Props> = ({
           </ul>
           <div className="text-xs text-slate-500">
             Parametry: Hours {local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`} • Max positions{" "}
-            {local.maxOpenPositions} • Max DD {(local.maxDrawdownPercent * 100).toFixed(2)}%
+            {local.maxOpenPositions}
           </div>
         </div>
       </div>

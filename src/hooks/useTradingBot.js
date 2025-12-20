@@ -59,10 +59,6 @@ const AI_MATIC_PRESET = {
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    useVolatilityExpansion: true,
-    maxDailyLossPercent: 0.07,
-    maxDailyProfitPercent: 0.5,
-    maxDrawdownPercent: 0.7,
     baseRiskPerTrade: 0,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -92,10 +88,6 @@ const AI_MATIC_X_PRESET = {
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    useVolatilityExpansion: true,
-    maxDailyLossPercent: 0.1,
-    maxDailyProfitPercent: 1.0,
-    maxDrawdownPercent: 0.7,
     baseRiskPerTrade: 0,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -107,11 +99,11 @@ const AI_MATIC_X_PRESET = {
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     requireConfirmationInAuto: false,
-    positionSizingMultiplier: 1.2,
+    positionSizingMultiplier: 1.0,
     customInstructions: "",
     customStrategy: "",
     min24hVolume: 50,
-    minProfitFactor: 1.1,
+    minProfitFactor: 0,
     minWinRate: 65,
     tradingStartHour: 0,
     tradingEndHour: 23,
@@ -125,10 +117,6 @@ const AI_MATIC_SCALP_PRESET = {
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    useVolatilityExpansion: false,
-    maxDailyLossPercent: 0.03,
-    maxDailyProfitPercent: 0.5,
-    maxDrawdownPercent: 0.7,
     baseRiskPerTrade: 0,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -704,11 +692,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         allocatedCapital: 0,
         maxAllocatedCapital: INITIAL_CAPITAL * INITIAL_RISK_SETTINGS.maxAllocatedCapitalPercent,
         dailyPnl: 0,
-        maxDailyLoss: INITIAL_CAPITAL * INITIAL_RISK_SETTINGS.maxDailyLossPercent,
-        maxDailyProfit: INITIAL_CAPITAL * INITIAL_RISK_SETTINGS.maxDailyProfitPercent,
         peakCapital: INITIAL_CAPITAL,
         currentDrawdown: 0,
-        maxDrawdown: INITIAL_RISK_SETTINGS.maxDrawdownPercent,
         openPositions: 0,
         maxOpenPositions: INITIAL_RISK_SETTINGS.maxOpenPositions,
     });
@@ -736,18 +721,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 totalCapital,
                 maxAllocatedCapital: maxAlloc,
                 allocatedCapital: Math.min(prev.allocatedCapital, maxAlloc),
-                maxDailyLoss: totalCapital * settings.maxDailyLossPercent,
-                maxDailyProfit: totalCapital * settings.maxDailyProfitPercent,
-                maxDrawdown: settings.maxDrawdownPercent,
                 maxOpenPositions: settings.maxOpenPositions,
             };
         });
     }, [
         settings.entryStrictness,
         settings.maxAllocatedCapitalPercent,
-        settings.maxDailyLossPercent,
-        settings.maxDailyProfitPercent,
-        settings.maxDrawdownPercent,
         settings.maxOpenPositions,
     ]);
     // Přepočet denního PnL podle otevřených pozic (unrealized)
@@ -773,7 +752,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         dailyPnl: 0,
                         currentDrawdown: 0,
                         peakCapital: baseCapital,
-                        maxDrawdown: settingsRef.current.maxDrawdownPercent,
                     };
                 });
                 closedPnlSeenRef.current = new Set();
@@ -4603,9 +4581,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 maxOpenPositions: normalized.maxOpenPositions,
                 maxAllocatedCapital: maxAlloc,
                 allocatedCapital: Math.min(p.allocatedCapital, maxAlloc),
-                maxDailyLoss: p.totalCapital * normalized.maxDailyLossPercent,
-                maxDailyProfit: p.totalCapital * normalized.maxDailyProfitPercent,
-                maxDrawdown: normalized.maxDrawdownPercent,
             };
         });
     };

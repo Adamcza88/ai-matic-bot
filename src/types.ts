@@ -14,16 +14,12 @@ export interface AISettings {
   useTrendFollowing: boolean;
   smcScalpMode: boolean;
   useLiquiditySweeps: boolean;
-  useVolatilityExpansion: boolean;
   entryStrictness: "base" | "relaxed" | "ultra" | "test";
   enforceSessionHours: boolean;
   haltOnDailyLoss: boolean;
   haltOnDrawdown: boolean;
   useDynamicPositionSizing: boolean;
   lockProfitsWithTrail: boolean;
-  maxDailyLossPercent: number;
-  maxDailyProfitPercent: number;
-  maxDrawdownPercent: number;
   baseRiskPerTrade: number;
   maxAllocatedCapitalPercent: number;
   maxPortfolioRiskPercent: number;
@@ -144,15 +140,12 @@ export type PortfolioState = {
   totalEquity: number;        // Was totalCapital? Unifying.
   availableBalance: number;   // New
   dailyPnl: number;
-  maxDailyLoss: number;
-  maxDrawdown: number;
   openPositions: number;
 
   // Legacy fields kept for compatibility until full migration
   totalCapital?: number;
   allocatedCapital?: number;
   maxAllocatedCapital?: number;
-  maxDailyProfit?: number;
   peakCapital?: number;
   currentDrawdown?: number;
   maxOpenPositions?: number;
