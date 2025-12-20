@@ -28,8 +28,8 @@ import {
 import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
 import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory, persistEntryHistory } from "../lib/entryHistory";
 import { addPnlRecord, loadPnlHistory, AssetPnlMap, clearPnlHistory } from "../lib/pnlHistory";
+import { computeAtr as scalpComputeAtr } from "../engine/ta";
 import {
-    computeAtr as scalpComputeAtr,
     computeEma as scalpComputeEma,
     computeSma as scalpComputeSma,
     computeSuperTrend,
@@ -3192,7 +3192,11 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             const slBuf = Math.max(st.instrument.tickSize, CFG.slBufferAtrFrac * st.ltf.atr14);
             const pivotLow = findLastPivotLow(st.ltf.candles as any, 3, 3);
             const pivotHigh = findLastPivotHigh(st.ltf.candles as any, 3, 3);
-            let sl = isLong ? (pivotLow != null ? pivotLow - slBuf : st.ltf.stLine - slBuf) : (pivotHigh != null ? pivotHigh + slBuf : st.ltf.stLine + slBuf);
+            const pivotLowPrice = pivotLow?.price;
+            const pivotHighPrice = pivotHigh?.price;
+            let sl = isLong
+                ? (pivotLowPrice != null ? pivotLowPrice - slBuf : st.ltf.stLine - slBuf)
+                : (pivotHighPrice != null ? pivotHighPrice + slBuf : st.ltf.stLine + slBuf);
             sl = roundToTick(sl, st.instrument.tickSize);
             if (isLong && sl >= limit) sl = roundToTick(st.ltf.stLine - slBuf, st.instrument.tickSize);
             if (!isLong && sl <= limit) sl = roundToTick(st.ltf.stLine + slBuf, st.instrument.tickSize);
@@ -3819,12 +3823,14 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             if (!Number.isFinite(price) || price <= 0) return null;
             const pivotLow = findLastPivotLow(ltfCandles as any, 3, 3);
             const pivotHigh = findLastPivotHigh(ltfCandles as any, 3, 3);
+            const pivotLowPrice = pivotLow?.price;
+            const pivotHighPrice = pivotHigh?.price;
 
             // Minimal CHoCH gate (deterministic): last close must break last confirmed pivot against the sweep direction.
             if (side === "LONG") {
-                if (pivotHigh == null || last.close <= pivotHigh + instrument.tickSize) return null;
+                if (pivotHighPrice == null || last.close <= pivotHighPrice + instrument.tickSize) return null;
             } else {
-                if (pivotLow == null || last.close >= pivotLow - instrument.tickSize) return null;
+                if (pivotLowPrice == null || last.close >= pivotLowPrice - instrument.tickSize) return null;
             }
 
             const fvg = findImmediateFvg(ltfCandles.slice(-3), side);
@@ -3841,8 +3847,8 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
             const buffer = Math.max(instrument.tickSize, CFG.slBufferStdK * Math.max(0, atr));
             let slRaw =
                 side === "LONG"
-                    ? (pivotLow != null ? pivotLow - buffer : entryRaw - buffer)
-                    : (pivotHigh != null ? pivotHigh + buffer : entryRaw + buffer);
+                    ? (pivotLowPrice != null ? pivotLowPrice - buffer : entryRaw - buffer)
+                    : (pivotHighPrice != null ? pivotHighPrice + buffer : entryRaw + buffer);
 
             // Directional rounding (entry post-only maker; SL conservative)
             const entry = side === "LONG" ? floorToStep(entryRaw, instrument.tickSize) : ceilToStep(entryRaw, instrument.tickSize);
@@ -4260,14 +4266,14 @@ function buildBotEngineCandidate(symbol: string, candles: Candle[]): RankedSigna
                     const dir = String(pos.side).toLowerCase() === "buy" ? 1 : -1;
                     const protectedLow = findLastPivotLow(m1 as any, 3, 3);
                     const protectedHigh = findLastPivotHigh(m1 as any, 3, 3);
-                    if (dir > 0 && protectedLow != null && lastM1?.close < protectedLow - st.instrument.tickSize) {
+                    if (dir > 0 && protectedLow != null && lastM1?.close < protectedLow.price - st.instrument.tickSize) {
                         await placeReduceOnlyMarket(symbol, "Sell", Number(pos.size ?? pos.qty ?? 0), `AMSCALP:EMER:${nowMs}`);
                         st.cooldownUntil = nowMs + 5 * 60_000;
                         st.manage = undefined;
                         addLog({ action: "AUTO_CLOSE", message: `AI-MATIC-SCALP EMERGENCY_EXIT ${symbol} (M1 close < protectedLow)` });
                         return exitWithDiag(false, "MANAGE");
                     }
-                    if (dir < 0 && protectedHigh != null && lastM1?.close > protectedHigh + st.instrument.tickSize) {
+                    if (dir < 0 && protectedHigh != null && lastM1?.close > protectedHigh.price + st.instrument.tickSize) {
                         await placeReduceOnlyMarket(symbol, "Buy", Number(pos.size ?? pos.qty ?? 0), `AMSCALP:EMER:${nowMs}`);
                         st.cooldownUntil = nowMs + 5 * 60_000;
                         st.manage = undefined;

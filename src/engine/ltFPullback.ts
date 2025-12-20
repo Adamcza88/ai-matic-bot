@@ -2,8 +2,9 @@
 // LTF pullback + swing detekce pro V2 (David Paul – 3 pravidla)
 
 import { TrendDirection, TradeDirection } from "./v2Contracts";
+import { Ohlcv, findLastPivotHigh, findLastPivotLow } from "./ta";
 
-export type Candle = { open: number; high: number; low: number; close: number };
+export type Candle = Ohlcv;
 
 export type PullbackResult = {
   direction: TradeDirection;
@@ -22,23 +23,6 @@ function countBarsAgainst(candles: Candle[], dir: TrendDirection): number {
     if (isAgainst) count += 1; else break;
   }
   return count;
-}
-
-function findSwingPivot(candles: Candle[], lookback: number): { high?: number; low?: number } {
-  if (candles.length < lookback * 2 + 1) return {};
-  const idx = candles.length - lookback - 1; // poslední plně uzavřený pivot
-  const pivot = candles[idx];
-  let isHigh = true;
-  let isLow = true;
-  for (let j = 1; j <= lookback; j++) {
-    if (!candles[idx - j] || !candles[idx + j]) return {};
-    if (candles[idx - j].high >= pivot.high || candles[idx + j].high >= pivot.high) isHigh = false;
-    if (candles[idx - j].low <= pivot.low || candles[idx + j].low <= pivot.low) isLow = false;
-  }
-  return {
-    high: isHigh ? pivot.high : undefined,
-    low: isLow ? pivot.low : undefined,
-  };
 }
 
 export function detectLtfPullback(
@@ -60,9 +44,8 @@ export function detectLtfPullback(
     return { direction: "none", barsAgainst, valid: false, tags: ["PULLBACK_TOO_SHORT"] };
   }
 
-  const pivot = findSwingPivot(candles, lookback);
-  const swingHigh = pivot.high;
-  const swingLow = pivot.low;
+  const swingHigh = findLastPivotHigh(candles, lookback, lookback)?.price;
+  const swingLow = findLastPivotLow(candles, lookback, lookback)?.price;
 
   const hasSwing = htfDirection === "bull" ? swingLow != null : htfDirection === "bear" ? swingHigh != null : false;
   if (!hasSwing) {

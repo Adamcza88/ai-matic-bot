@@ -55,7 +55,9 @@ test("detectSituationalEdges triggers Friday<Thursday edge", () => {
         { openTime: baseTs + 3 * day, high: 103, low: 100 },
         { openTime: baseTs + 4 * day, high: 102.5, low: 99.5 }, // Fri lower high
     ];
-    const res = detectSituationalEdges(daily, 101);
+    // Rule is checked on the next Monday
+    const currentDate = new Date(baseTs + 7 * day);
+    const res = detectSituationalEdges(daily, 101, currentDate);
     assert.ok(res, "Expected situational edge for Friday lower high");
     assert.equal(res.intent.side, "sell");
     assert.equal(res.intent.tp, 99.5);
@@ -69,7 +71,9 @@ test("detectSituationalEdges triggers Wednesday<Monday edge", () => {
         { openTime: baseTs + day, high: 104.5, low: 102 },
         { openTime: baseTs + 2 * day, high: 103.5, low: 101 }, // Wed lower high vs Mon
     ];
-    const res = detectSituationalEdges(daily, 103);
+    // Rule is checked on Thursday
+    const currentDate = new Date(baseTs + 3 * day);
+    const res = detectSituationalEdges(daily, 103, currentDate);
     assert.ok(res, "Expected situational edge for Wednesday lower high vs Monday");
     assert.equal(res.intent.tp, 101);
 });
@@ -82,7 +86,9 @@ test("detectSituationalEdges triggers inverse Friday low edge for long", () => {
         { openTime: baseTs + 3 * day, high: 105, low: 100 }, // Thu
         { openTime: baseTs + 4 * day, high: 106, low: 101.5 }, // Fri higher low + higher high (avoid short trigger)
     ];
-    const res = detectSituationalEdges(daily, 102);
+    // Rule is checked on the next Monday
+    const currentDate = new Date(baseTs + 7 * day);
+    const res = detectSituationalEdges(daily, 102, currentDate);
     assert.ok(res, "Expected long situational edge for higher Friday low");
     assert.equal(res.intent.side, "buy");
     assert.ok(res.intent.tp > res.intent.entry);

@@ -121,68 +121,78 @@ function lastMatchingDay(
 
 export function detectSituationalEdges(
     daily: { openTime: number; high: number; low: number; close?: number }[],
-    currentPrice: number
+    currentPrice: number,
+    currentDate: Date
 ): SituationalSignal | null {
     if (!Array.isArray(daily) || daily.length < 3) return null;
+
+    const currentDay = currentDate.getUTCDay(); // Sunday = 0, Monday = 1, etc.
+
     const days: DayOHLC[] = daily.map((d) => ({
         time: d.openTime,
         high: d.high,
         low: d.low,
     }));
 
-    const friday = lastMatchingDay(days, 5);
-    const thursday =
-        friday && friday.idx > 0
-            ? { idx: friday.idx - 1, day: days[friday.idx - 1] }
-            : null;
+    // Rule 1: Friday-Thursday setup, traded on Monday
+    if (currentDay === 1) { // Monday
+        const friday = lastMatchingDay(days, 5);
+        const thursday =
+            friday && friday.idx > 0
+                ? { idx: friday.idx - 1, day: days[friday.idx - 1] }
+                : null;
 
-    if (friday && thursday) {
-        if (friday.day.high < thursday.day.high && currentPrice > friday.day.low) {
-            const sl = Math.max(friday.day.high, thursday.day.high);
-            return {
-                intent: { side: "sell", entry: currentPrice, sl, tp: friday.day.low },
-                message: "Situational edge: Friday High < Thursday High → target Friday Low on Monday",
-            };
-        }
-
-        if (friday.day.low > thursday.day.low && currentPrice < friday.day.high) {
-            const sl = Math.min(friday.day.low, thursday.day.low);
-            return {
-                intent: { side: "buy", entry: currentPrice, sl, tp: friday.day.high },
-                message: "Situational edge: Friday Low > Thursday Low → target Friday High on Monday",
-            };
-        }
-    }
-
-    const wednesday = lastMatchingDay(days, 3);
-    let monday: { idx: number; day: DayOHLC } | null = null;
-    if (wednesday) {
-        for (let i = wednesday.idx - 1; i >= 0; i--) {
-            const dow = new Date(days[i].time).getUTCDay();
-            if (dow === 1) {
-                monday = { idx: i, day: days[i] };
-                break;
+        if (friday && thursday) {
+            if (friday.day.high < thursday.day.high && currentPrice > friday.day.low) {
+                const sl = Math.max(friday.day.high, thursday.day.high);
+                return {
+                    intent: { side: "sell", entry: currentPrice, sl, tp: friday.day.low },
+                    message: "Situational edge: Friday High < Thursday High → target Friday Low on Monday",
+                };
             }
-            // stop if we passed further back than a week
-            if (wednesday.idx - i > 6) break;
+
+            if (friday.day.low > thursday.day.low && currentPrice < friday.day.high) {
+                const sl = Math.min(friday.day.low, thursday.day.low);
+                return {
+                    intent: { side: "buy", entry: currentPrice, sl, tp: friday.day.high },
+                    message: "Situational edge: Friday Low > Thursday Low → target Friday High on Monday",
+                };
+            }
         }
     }
 
-    if (wednesday && monday) {
-        if (wednesday.day.high < monday.day.high && currentPrice > wednesday.day.low) {
-            const sl = Math.max(wednesday.day.high, monday.day.high);
-            return {
-                intent: { side: "sell", entry: currentPrice, sl, tp: wednesday.day.low },
-                message: "Situational edge: Wednesday High < Monday High → target Wednesday Low on Thursday",
-            };
+    // Rule 2: Wednesday-Monday setup, traded on Thursday
+    if (currentDay === 4) { // Thursday
+        const wednesday = lastMatchingDay(days, 3);
+        let monday: { idx: number; day: DayOHLC } | null = null;
+        if (wednesday) {
+            for (let i = wednesday.idx - 1; i >= 0; i--) {
+                const dow = new Date(days[i].time).getUTCDay();
+                if (dow === 1) {
+                    monday = { idx: i, day: days[i] };
+                    break;
+                }
+                // stop if we passed further back than a week
+                if (wednesday.idx - i > 6) break;
+            }
         }
 
-        if (wednesday.day.low > monday.day.low && currentPrice < wednesday.day.high) {
-            const sl = Math.min(wednesday.day.low, monday.day.low);
-            return {
-                intent: { side: "buy", entry: currentPrice, sl, tp: wednesday.day.high },
-                message: "Situational edge: Wednesday Low > Monday Low → target Wednesday High on Thursday",
-            };
+        if (wednesday && monday) {
+            if (wednesday.day.high < monday.day.high && currentPrice > wednesday.day.low) {
+                const sl = Math.max(wednesday.day.high, monday.day.high);
+                return {
+                    intent: { side: "sell", entry: currentPrice, sl, tp: wednesday.day.low },
+                    message: "Situational edge: Wednesday High < Monday High → target Wednesday Low on Thursday",
+                };
+            }
+
+            if (wednesday.day.low > monday.day.low && currentPrice < wednesday.day.high) {
+                const sl = Math.min(wednesday.day.low, monday.day.low);
+                return {
+                    intent: { side: "buy", entry: currentPrice, sl, tp: wednesday.day.high },
+                    message: "Situational edge: Wednesday Low > Monday Low → target Wednesday High on Thursday",
+                };
+            }
         }
     }
 

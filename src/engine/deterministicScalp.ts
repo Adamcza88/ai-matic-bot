@@ -1,23 +1,6 @@
-export type Ohlcv = {
-  openTime: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-};
+import { Ohlcv, computeAtr, computeEma, findLastPivotHigh, findLastPivotLow } from "./ta";
 
-export function computeEma(values: number[], period: number): number[] {
-  if (!values.length) return [];
-  const k = 2 / (period + 1);
-  const out: number[] = [];
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
-    if (i === 0) out.push(v);
-    else out.push(v * k + out[i - 1] * (1 - k));
-  }
-  return out;
-}
+export { Ohlcv, computeEma, findLastPivotHigh, findLastPivotLow };
 
 export function computeSma(values: number[], period: number): number[] {
   if (!values.length) return [];
@@ -28,29 +11,6 @@ export function computeSma(values: number[], period: number): number[] {
     if (i >= period) sum -= values[i - period];
     const denom = Math.min(period, i + 1);
     out[i] = sum / Math.max(1, denom);
-  }
-  return out;
-}
-
-export function computeAtr(candles: Ohlcv[], period: number): number[] {
-  if (!candles.length) return [];
-  const out: number[] = new Array(candles.length).fill(0);
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i];
-    const prev = candles[i - 1];
-    const tr = prev
-      ? Math.max(
-          c.high - c.low,
-          Math.abs(c.high - prev.close),
-          Math.abs(c.low - prev.close)
-        )
-      : c.high - c.low;
-    if (i === 0) {
-      out[i] = tr;
-    } else {
-      // Wilder smoothing
-      out[i] = (out[i - 1] * (period - 1) + tr) / period;
-    }
   }
   return out;
 }
@@ -112,60 +72,6 @@ export function computeSuperTrend(
   }
 
   return { dir, line, upper, lower, atr };
-}
-
-export function findLastPivotLow(
-  candles: Ohlcv[],
-  left = 3,
-  right = 3
-): number | null {
-  if (candles.length < left + right + 1) return null;
-  for (let i = candles.length - right - 1; i >= left; i--) {
-    const pivot = candles[i].low;
-    let ok = true;
-    for (let j = 1; j <= left; j++) {
-      if (candles[i - j].low <= pivot) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-    for (let j = 1; j <= right; j++) {
-      if (candles[i + j].low <= pivot) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) return pivot;
-  }
-  return null;
-}
-
-export function findLastPivotHigh(
-  candles: Ohlcv[],
-  left = 3,
-  right = 3
-): number | null {
-  if (candles.length < left + right + 1) return null;
-  for (let i = candles.length - right - 1; i >= left; i--) {
-    const pivot = candles[i].high;
-    let ok = true;
-    for (let j = 1; j <= left; j++) {
-      if (candles[i - j].high >= pivot) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-    for (let j = 1; j <= right; j++) {
-      if (candles[i + j].high >= pivot) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) return pivot;
-  }
-  return null;
 }
 
 export function roundDownToStep(value: number, step: number): number {
