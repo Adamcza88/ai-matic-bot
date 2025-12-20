@@ -1687,6 +1687,7 @@ export const useTradingBot = (
     const scalpActiveSymbolRef = useRef<string | null>(null);
     const scalpSymbolLockUntilRef = useRef(0);
     const staleBboLogRef = useRef<Record<string, number>>({});
+    const scalpRejectLogRef = useRef<Record<string, number>>({});
     const scalpForceSafeUntilRef = useRef(0);
     const scalpSafeRef = useRef(false);
     const scalpGlobalCooldownUntilRef = useRef(0);
@@ -2375,6 +2376,13 @@ export const useTradingBot = (
                     message: `TIMING ${kind} ${symbol} delay=${ts - plannedAt}ms reason=${reason || "-"}`,
                 });
             };
+            const logScalpReject = (sym: string, reason: string) => {
+                const nowTs = Date.now();
+                const last = scalpRejectLogRef.current[sym] ?? 0;
+                if (nowTs - last < 2000) return;
+                scalpRejectLogRef.current[sym] = nowTs;
+                addLog({ action: "REJECT", message: `SCALP ${sym} ${reason}` });
+            };
 
             // Global active-symbol lock: if jiný symbol je v PLACE/MANAGE/EXIT, čekáme.
             const engaged = Boolean(st.pending || st.manage);
@@ -2764,6 +2772,13 @@ export const useTradingBot = (
             }
 
             if (!executionAllowed) {
+                if (signalActive) {
+                    if (!canPlaceOrders) {
+                        logScalpReject(symbol, "BLOCKED auto mode off or missing auth token");
+                    } else if (bboStale) {
+                        logScalpReject(symbol, `WAIT_BBO age=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`);
+                    }
+                }
                 if (signalActive && bboAgeMs > 10_000) {
                     st.pausedUntil = now + 5_000;
                     st.pausedReason = "PAUSED_DATA_STALE";
@@ -2777,12 +2792,14 @@ export const useTradingBot = (
             // Execution guardrails (spread/ATR)
             const sp = spreadPct(st.bbo.bid, st.bbo.ask);
             if (sp > CFG.spreadMaxPct) {
+                logScalpReject(symbol, `SPREAD ${(sp * 100).toFixed(3)}% > ${(CFG.spreadMaxPct * 100).toFixed(3)}%`);
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
             const atrPct = st.ltf.atr14 > 0 ? st.ltf.atr14 / Math.max(1e-8, st.ltf.last.close) : 0;
             if (atrPct < CFG.lowAtrMinPct) {
+                logScalpReject(symbol, `LOW_ATR ${(atrPct * 100).toFixed(3)}% < ${(CFG.lowAtrMinPct * 100).toFixed(3)}%`);
                 st.pausedUntil = now + 30 * 60 * 1000;
                 st.pausedReason = "STOP_LOW_ATR";
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
@@ -2837,17 +2854,20 @@ export const useTradingBot = (
             const openRisk = computeOpenRiskUsd();
             const riskTarget = Math.min(4, Math.max(0, 8 - openRisk));
             if (riskTarget <= 0) {
+                logScalpReject(symbol, `RISK_BUDGET openRisk=${openRisk.toFixed(2)} >= 8`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
             const qtyRaw = riskTarget / (oneR * Math.max(1e-8, st.instrument.contractValue));
             const qty = roundDownToStep(qtyRaw, st.instrument.stepSize);
             if (!Number.isFinite(qty) || qty < st.instrument.minQty) {
+                logScalpReject(symbol, `QTY_TOO_SMALL qty=${Number.isFinite(qty) ? qty.toFixed(6) : "NaN"} min=${st.instrument.minQty}`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
             const reservedRiskUsd = oneR * qty * st.instrument.contractValue;
             if (reservedRiskUsd > 4 + 1e-6 || openRisk + reservedRiskUsd > 8 + 1e-6) {
+                logScalpReject(symbol, `RISK_CAP reserved=${reservedRiskUsd.toFixed(3)} open=${openRisk.toFixed(3)}`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
@@ -2856,6 +2876,7 @@ export const useTradingBot = (
                 return Math.abs(Number(p.size ?? p.qty ?? 0)) > 0;
             }).length;
             if (openCount >= 2) {
+                logScalpReject(symbol, `MAX_POSITIONS ${openCount} >= 2`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
@@ -2899,6 +2920,8 @@ export const useTradingBot = (
                     statusCheckAt: now + CFG.orderStatusDelayMs,
                     timeoutAt: now + 60_000,
                 };
+            } else {
+                logScalpReject(symbol, "BLOCKED auto mode off or missing auth token");
             }
             st.nextAllowedAt = now + CFG.symbolFetchGapMs;
             const stillEngaged = Boolean(st.pending || st.manage);
