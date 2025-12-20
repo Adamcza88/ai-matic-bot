@@ -1723,6 +1723,13 @@ export const useTradingBot = (
         };
         setLogEntries((prev) => [log, ...prev].slice(0, 50));
     }
+    const logScalpReject = (symbol: string, reason: string) => {
+        const nowTs = Date.now();
+        const last = scalpRejectLogRef.current[symbol] ?? 0;
+        if (nowTs - last < 2000) return;
+        scalpRejectLogRef.current[symbol] = nowTs;
+        addLog({ action: "REJECT", message: `SCALP ${symbol} ${reason}` });
+    };
 
     type AuditDecision = "TRADE" | "DENY" | "STOP" | "RETRY";
     function logAuditEntry(
@@ -1990,8 +1997,19 @@ export const useTradingBot = (
 
         const computeOpenRiskUsd = () => openRiskUsd(activePositionsRef.current) + scalpReservedRiskUsdRef.current;
 
-        const buildId = (symbol: string, side: "Buy" | "Sell", htfBar: number, ltfBar: number) =>
-            `${symbol}:${side}:${htfBar}:${ltfBar}`;
+        const hashScalpId = (input: string) => {
+            let hash = 0;
+            for (let i = 0; i < input.length; i += 1) {
+                hash = (hash * 31 + input.charCodeAt(i)) | 0;
+            }
+            return Math.abs(hash).toString(36);
+        };
+        const buildId = (symbol: string, side: "Buy" | "Sell", htfBar: number, ltfBar: number) => {
+            const raw = `${symbol}:${side}:${htfBar}:${ltfBar}`;
+            if (raw.length <= 36) return raw;
+            const short = `${symbol}:${side}:${hashScalpId(raw)}`;
+            return short.slice(0, 36);
+        };
 
         const handlePending = async (st: ScalpSymbolState, plannedAt: number, logTiming: (kind: string, reason?: string) => void): Promise<boolean> => {
             const p = st.pending;
@@ -2017,10 +2035,22 @@ export const useTradingBot = (
             }
 
             if (p.stage === "READY_TO_PLACE") {
-                if (!canPlaceOrders) return false;
-                if (scalpSafeRef.current) return false;
-                if (now < scalpGlobalCooldownUntilRef.current) return false;
-                if (st.htf && now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) return false;
+                if (!canPlaceOrders) {
+                    logScalpReject(p.symbol, "BLOCKED auto mode off or missing auth token");
+                    return false;
+                }
+                if (scalpSafeRef.current) {
+                    logScalpReject(p.symbol, "SAFE_MODE");
+                    return false;
+                }
+                if (now < scalpGlobalCooldownUntilRef.current) {
+                    logScalpReject(p.symbol, "GLOBAL_COOLDOWN");
+                    return false;
+                }
+                if (st.htf && now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) {
+                    logScalpReject(p.symbol, "HTF_BLOCK");
+                    return false;
+                }
 
                 // Refresh BBO just before place to keep it fresh
                 if (isBboStale(st.bbo, now, 1500)) {
@@ -2376,13 +2406,6 @@ export const useTradingBot = (
                     message: `TIMING ${kind} ${symbol} delay=${ts - plannedAt}ms reason=${reason || "-"}`,
                 });
             };
-            const logScalpReject = (sym: string, reason: string) => {
-                const nowTs = Date.now();
-                const last = scalpRejectLogRef.current[sym] ?? 0;
-                if (nowTs - last < 2000) return;
-                scalpRejectLogRef.current[sym] = nowTs;
-                addLog({ action: "REJECT", message: `SCALP ${sym} ${reason}` });
-            };
 
             // Global active-symbol lock: if jiný symbol je v PLACE/MANAGE/EXIT, čekáme.
             const engaged = Boolean(st.pending || st.manage);
@@ -2409,7 +2432,14 @@ export const useTradingBot = (
                     if (did) return true;
                 }
             }
-            if (paused || scalpSafeRef.current) return false;
+            if (paused) {
+                logScalpReject(symbol, `PAUSED ${st.pausedReason || "UNKNOWN"}`);
+                return false;
+            }
+            if (scalpSafeRef.current) {
+                logScalpReject(symbol, "SAFE_MODE");
+                return false;
+            }
 
             // If position closed on exchange, clear manage state
             if (st.manage && !getOpenPos(symbol)) {
@@ -2790,6 +2820,10 @@ export const useTradingBot = (
             }
 
             // Execution guardrails (spread/ATR)
+            if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) {
+                logScalpReject(symbol, "HTF_BLOCK");
+                return false;
+            }
             const sp = spreadPct(st.bbo.bid, st.bbo.ask);
             if (sp > CFG.spreadMaxPct) {
                 logScalpReject(symbol, `SPREAD ${(sp * 100).toFixed(3)}% > ${(CFG.spreadMaxPct * 100).toFixed(3)}%`);
