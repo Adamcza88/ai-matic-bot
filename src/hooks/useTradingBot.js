@@ -1980,6 +1980,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     timeInForce: "PostOnly",
                     reduceOnly: false,
                     orderLinkId: p.orderLinkId,
+                    leverage: leverageFor(p.symbol),
                 }),
             }, "order");
             const body = await res.json().catch(() => ({}));
@@ -4354,6 +4355,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             // Calculate metrics (re-use logic or trust intent)
             const clientOrderId = signalId.substring(0, 36);
             if (isAutoMode) {
+                const orderLeverage = Math.max(1, Math.min(MAX_LEVERAGE_ALLOWED, computedLeverage));
                 const payload = {
                     symbol,
                     side: side === "buy" ? "Buy" : "Sell",
@@ -4367,6 +4369,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     tp: takeProfitValue,
                     trailingStop: undefined,
                     trailingActivePrice: undefined,
+                    leverage: orderLeverage,
                 };
                 const submitOrder = async () => {
                     try {

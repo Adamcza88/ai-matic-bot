@@ -147,6 +147,42 @@ export function signOnly(payload, creds) {
   };
 }
 
+export async function setLeverage({ symbol, leverage, buyLeverage, sellLeverage }, creds, useTestnet = true) {
+  ensureConfigured(creds);
+  if (!symbol) {
+    throw new Error("Missing symbol for leverage");
+  }
+  const lev = Number(leverage);
+  const buyLev = Number.isFinite(Number(buyLeverage)) ? Number(buyLeverage) : lev;
+  const sellLev = Number.isFinite(Number(sellLeverage)) ? Number(sellLeverage) : lev;
+  if (!Number.isFinite(buyLev) || !Number.isFinite(sellLev)) {
+    throw new Error("Invalid leverage value");
+  }
+  const rawBody = {
+    category: "linear",
+    symbol,
+    buyLeverage: String(buyLev),
+    sellLeverage: String(sellLev),
+  };
+  const body = cleanObject(rawBody);
+  const ts = Date.now().toString();
+  const recvWindow = "5000";
+  const bodyStr = JSON.stringify(body);
+  const payload = ts + creds.apiKey + recvWindow + bodyStr;
+  const signature = sign(payload, creds.apiSecret);
+  const res = await withRetry(() => axios.post(`${resolveBase(useTestnet)}/v5/position/set-leverage`, body, {
+    headers: {
+      "X-BAPI-API-KEY": creds.apiKey,
+      "X-BAPI-SIGN": signature,
+      "X-BAPI-SIGN-TYPE": "2",
+      "X-BAPI-TIMESTAMP": ts,
+      "X-BAPI-RECV-WINDOW": recvWindow,
+      "Content-Type": "application/json",
+    },
+  }));
+  return res.data;
+}
+
 export async function createDemoOrder(order, creds, useTestnet = true) {
   ensureConfigured(creds);
 
@@ -155,6 +191,16 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   // Attempt to estimate price for Min Notional check
   const estimatedPrice = order.price ? Number(order.price) : 0;
   const safeQty = await normalizeQty(order.symbol, order.qty, estimatedPrice, useTestnet);
+
+  if (Number.isFinite(Number(order.leverage)) && Number(order.leverage) > 0) {
+    try {
+      const lev = Math.max(1, Math.min(100, Number(order.leverage)));
+      await setLeverage({ symbol: order.symbol, leverage: lev }, creds, useTestnet);
+    } catch (err) {
+      const msg = err?.response?.data || err?.message || "Unknown leverage error";
+      console.error("[Bybit] setLeverage failed:", msg);
+    }
+  }
 
   // === 1) CREATE ORDER ===
   const rawBody = {

@@ -76,6 +76,7 @@ export default async function handler(req, res) {
       orderType,
       timeInForce,
       reduceOnly,
+      leverage,
     } = req.body || {};
 
     const normalizedSide =
@@ -110,6 +111,7 @@ export default async function handler(req, res) {
       timeInForce,
       reduceOnly,
       category: "linear",
+      leverage: leverage != null ? Number(leverage) : undefined,
     };
 
     const result = await createDemoOrder(
