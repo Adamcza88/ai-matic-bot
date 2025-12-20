@@ -458,10 +458,14 @@ export const useTradingBot = (
     useEffect(() => {
     }, [useTestnet, apiPrefix]);
     const { httpBase } = useNetworkConfig(useTestnet);
-    const envBase = (import.meta as ImportMeta & { env?: ViteEnv }).env?.VITE_API_BASE;
+    const envBase = (import.meta as ImportMeta & { env?: ViteEnv }).env?.VITE_API_BASE ?? "";
     const inferredBase =
         typeof window !== "undefined" ? window.location.origin : "";
-    const apiBase = (envBase || inferredBase || "").replace(/\/$/, "");
+    const isLocalEnvBase = /^(https?:\/\/)?(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?/i.test(envBase.trim());
+    const runtimeHost = typeof window !== "undefined" ? window.location.hostname : "";
+    const isRuntimeLocal = ["localhost", "127.0.0.1", "0.0.0.0"].includes(runtimeHost);
+    const resolvedBase = !envBase || (isLocalEnvBase && !isRuntimeLocal) ? inferredBase : envBase;
+    const apiBase = (resolvedBase || "").replace(/\/$/, "");
 
     type RequestKind = "data" | "order";
     const requestQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -820,14 +824,9 @@ export const useTradingBot = (
             if (useTestnet) setOrdersError("Missing auth token");
             return;
         }
-        // Pokud není definován explicitní backend, nezkoušej fetchovat – předejdeme 404 na statickém hostu
-        const baseProvided = Boolean(envBase);
-        const sameOrigin =
-            typeof window !== "undefined" &&
-            inferredBase === window.location.origin;
-        if (!baseProvided && sameOrigin) {
+        if (!apiBase) {
             setTestnetOrders([]);
-            setOrdersError("Orders API unavailable: configure VITE_API_BASE to point to backend");
+            setOrdersError("Orders API unavailable: missing API base");
             return;
         }
         try {
