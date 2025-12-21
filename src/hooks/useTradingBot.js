@@ -10,10 +10,10 @@ import { computeEma as scalpComputeEma, computeSma as scalpComputeSma, computeSu
 // SYMBOLS (Deterministic Scalp Profile 1)
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
 // SYMBOLS (AI-MATIC-SCALP)
-const SMC_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+const SMC_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 const ALL_SYMBOLS = Array.from(new Set([...SYMBOLS, ...SMC_SYMBOLS]));
 // SIMULOVANÝ / DEFAULT KAPITÁL
-const INITIAL_CAPITAL = 100; // Unified Trading balance snapshot
+const INITIAL_CAPITAL = 70; // Unified Trading balance snapshot
 const MAX_SINGLE_POSITION_VALUE = Number.POSITIVE_INFINITY; // notional cap disabled (use margin caps instead)
 const MIN_ENTRY_SPACING_MS = 3000;
 const MAX_TEST_PENDING = 4;
@@ -24,8 +24,8 @@ const LEVERAGE = {
     SOLUSDT: 100,
     ADAUSDT: 75,
 };
-const MIN_MARGIN_USD = 5;
-const MAX_MARGIN_USD = 10;
+const MIN_MARGIN_USD = 4;
+const MAX_MARGIN_USD = 8;
 const TARGET_NOTIONAL = {
     BTCUSDT: 500, // odpovídá ~5 USDT margin při 100x
     ETHUSDT: 500,
@@ -33,10 +33,10 @@ const TARGET_NOTIONAL = {
     ADAUSDT: 350, // odpovídá screenshotu při 75x
 };
 const QTY_LIMITS = {
-    BTCUSDT: { min: 0.005, max: 0.005 },
-    ETHUSDT: { min: 0.15, max: 0.15 },
-    SOLUSDT: { min: 3.5, max: 3.5 },
-    ADAUSDT: { min: 858, max: 858 },
+    BTCUSDT: { min: 0, max: 0.005 },
+    ETHUSDT: { min: 0, max: 0.15 },
+    SOLUSDT: { min: 0, max: 3.5 },
+    ADAUSDT: { min: 0, max: 858 },
 };
 const ACCOUNT_BALANCE_USD = 100;
 const RISK_PER_TRADE_USD = 4;
@@ -45,10 +45,10 @@ const MAX_ACTIVE_TRADES = 2;
 const STOP_MIN_PCT = 0.0015; // 0.15 %
 const MAX_LEVERAGE_ALLOWED = 100;
 const MIN_NOTIONAL_USD = {
-    BTCUSDT: 5,
-    ETHUSDT: 5,
-    SOLUSDT: 5,
-    ADAUSDT: 5,
+    BTCUSDT: 4,
+    ETHUSDT: 4,
+    SOLUSDT: 4,
+    ADAUSDT: 4,
 };
 // RISK / STRATEGY
 const AI_MATIC_PRESET = {
@@ -215,6 +215,7 @@ const clampQtyForSymbol = (symbol, qty) => {
         return qty;
     return Math.min(limits.max, Math.max(limits.min, qty));
 };
+const maxQtyForSymbol = (symbol) => QTY_LIMITS[symbol]?.max ?? Number.POSITIVE_INFINITY;
 const leverageFor = (symbol) => LEVERAGE[symbol] ?? 1;
 const marginFor = (symbol, entry, size) => (entry * size) / Math.max(1, leverageFor(symbol));
 const asNum = (x) => {
@@ -2040,6 +2041,28 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             return body;
         };
         const getOpenPos = (symbol) => activePositionsRef.current.find((p) => p.symbol === symbol && Math.abs(Number(p.size ?? p.qty ?? 0)) > 0);
+        const getActiveSymbolStats = () => {
+            const sizes = {};
+            const symbols = new Set();
+            for (const p of activePositionsRef.current) {
+                const sym = p.symbol;
+                if (!ALL_SYMBOLS.includes(sym))
+                    continue;
+                const size = Math.abs(Number(p.size ?? p.qty ?? 0));
+                if (!Number.isFinite(size) || size <= 0)
+                    continue;
+                symbols.add(sym);
+                sizes[sym] = (sizes[sym] || 0) + size;
+            }
+            return { symbols, sizes, count: symbols.size };
+        };
+        const isSymbolAtMaxQty = (symbol, sizes) => {
+            const maxQty = maxQtyForSymbol(symbol);
+            if (!Number.isFinite(maxQty))
+                return false;
+            return (sizes[symbol] || 0) >= maxQty - 1e-8;
+        };
+        const hasMaxedPositions = (stats) => stats.count >= 2 && Array.from(stats.symbols).every((sym) => isSymbolAtMaxQty(sym, stats.sizes));
         const computeOpenRiskUsd = () => openRiskUsd(activePositionsRef.current) + scalpReservedRiskUsdRef.current;
         const hashScalpId = (input) => {
             let hash = 0;
@@ -2427,6 +2450,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     await setProtection(p.symbol, newSl, undefined);
                 }
                 catch (err) {
+                    const msg = String(err?.message || "").toLowerCase();
+                    if (msg.includes("not modified") || msg.includes("no change")) {
+                        st.pending = undefined;
+                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                        addLog({ action: "SYSTEM", message: `TRAIL_NOOP ${p.symbol} sl=${newSl}` });
+                        return true;
+                    }
                     addLog({ action: "ERROR", message: `TRAIL_FAILED ${p.symbol} ${err?.message || "unknown"}` });
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
@@ -2457,8 +2487,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     message: `TIMING ${kind} ${symbol} delay=${ts - plannedAt}ms reason=${reason || "-"}`,
                 });
             };
-            // Global active-symbol lock: if jiný symbol je v PLACE/MANAGE/EXIT, čekáme.
-            const engaged = Boolean(st.pending || st.manage);
+            const activeStats = getActiveSymbolStats();
+            const maxedPortfolio = hasMaxedPositions(activeStats);
+            // Global active-symbol lock: only lock while a pending entry/exit is in progress.
+            const engaged = Boolean(st.pending);
             const locked = scalpActiveSymbolRef.current;
             if (locked && locked !== symbol) {
                 if (engaged || now < scalpSymbolLockUntilRef.current)
@@ -2489,6 +2521,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             if (scalpSafeRef.current) {
                 logScalpReject(symbol, "SAFE_MODE");
+                return false;
+            }
+            if (maxedPortfolio && !activeStats.symbols.has(symbol)) {
                 return false;
             }
             // If position closed on exchange, clear manage state
@@ -2926,23 +2961,31 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             const qtyRaw = riskTarget / (oneR * Math.max(1e-8, st.instrument.contractValue));
-            const qty = roundDownToStep(qtyRaw, st.instrument.stepSize);
-            if (!Number.isFinite(qty) || qty < st.instrument.minQty) {
-                logScalpReject(symbol, `QTY_TOO_SMALL qty=${Number.isFinite(qty) ? qty.toFixed(6) : "NaN"} min=${st.instrument.minQty}`);
+            const qtyStep = roundDownToStep(qtyRaw, st.instrument.stepSize);
+            const maxQty = maxQtyForSymbol(symbol);
+            const currentQty = activeStats.sizes[symbol] || 0;
+            const remainingQty = Number.isFinite(maxQty) ? Math.max(0, maxQty - currentQty) : Number.POSITIVE_INFINITY;
+            if (Number.isFinite(maxQty) && remainingQty <= 0) {
+                logScalpReject(symbol, `MAX_QTY size=${currentQty.toFixed(6)} >= ${maxQty}`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
-            const reservedRiskUsd = oneR * qty * st.instrument.contractValue;
+            const maxQtyStep = Number.isFinite(remainingQty)
+                ? roundDownToStep(remainingQty, st.instrument.stepSize)
+                : qtyStep;
+            const finalQty = Math.min(qtyStep, maxQtyStep);
+            if (!Number.isFinite(finalQty) || finalQty < st.instrument.minQty) {
+                logScalpReject(symbol, `QTY_TOO_SMALL qty=${Number.isFinite(finalQty) ? finalQty.toFixed(6) : "NaN"} min=${st.instrument.minQty}`);
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+            const reservedRiskUsd = oneR * finalQty * st.instrument.contractValue;
             if (reservedRiskUsd > 4 + 1e-6 || openRisk + reservedRiskUsd > 8 + 1e-6) {
                 logScalpReject(symbol, `RISK_CAP reserved=${reservedRiskUsd.toFixed(3)} open=${openRisk.toFixed(3)}`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
-            const openCount = activePositionsRef.current.filter((p) => {
-                if (!SYMBOLS.includes(p.symbol))
-                    return false;
-                return Math.abs(Number(p.size ?? p.qty ?? 0)) > 0;
-            }).length;
+            const openCount = activeStats.count;
             if (openCount >= 2) {
                 logScalpReject(symbol, `MAX_POSITIONS ${openCount} >= 2`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2963,7 +3006,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 { name: "PULLBACK", result: "PASS" },
                 { name: "RVOL", result: "PASS" },
             ];
-            logAuditEntry("SIGNAL", symbol, "SCAN", gates, canPlaceOrders ? "TRADE" : "DENY", "SCALP_SIGNAL", { entry: limit, sl, tp }, { notional: limit * qty, leverage: leverageFor(symbol) });
+            logAuditEntry("SIGNAL", symbol, "SCAN", gates, canPlaceOrders ? "TRADE" : "DENY", "SCALP_SIGNAL", { entry: limit, sl, tp }, { notional: limit * finalQty, leverage: leverageFor(symbol) });
             st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
             if (canPlaceOrders) {
                 // Reserve risk only for actual pending entry orders
@@ -2974,7 +3017,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     symbol,
                     side,
                     limitPrice: limit,
-                    qty,
+                    qty: finalQty,
                     sl,
                     tp,
                     oneR,
@@ -2990,7 +3033,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 logScalpReject(symbol, "BLOCKED auto mode off or missing auth token");
             }
             st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-            const stillEngaged = Boolean(st.pending || st.manage);
+            const stillEngaged = Boolean(st.pending);
             if (!stillEngaged && scalpActiveSymbolRef.current === symbol && now >= scalpSymbolLockUntilRef.current) {
                 scalpActiveSymbolRef.current = null;
             }
@@ -3193,9 +3236,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const MAX_STRATEGY_QTY = {
             BTCUSDT: 0.005,
             ETHUSDT: 0.15,
-            SOLUSDT: 3.6,
+            SOLUSDT: 3.5,
             XRPUSDT: 185,
-            ADAUSDT: 950,
+            ADAUSDT: 858,
             HBARUSDT: 3190,
             NEARUSDT: 155,
             AVAXUSDT: 20,
@@ -3336,6 +3379,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     timeInForce: tif,
                     reduceOnly,
                     orderLinkId,
+                    leverage: leverageForSmc(symbol),
                 }),
             }, "order");
             const body = await res.json().catch(() => ({}));
@@ -3520,7 +3564,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const distal = c1.low;
             return { proximal, distal, size: distal - proximal };
         };
-        const buildEntryFromFvg = (symbol, side, entryTf, ltfCandles, instrument) => {
+        const buildEntryFromFvg = (symbol, side, entryTf, ltfCandles, instrument, currentSize) => {
             const last = ltfCandles[ltfCandles.length - 1];
             const price = last?.close ?? 0;
             if (!Number.isFinite(price) || price <= 0)
@@ -3569,7 +3613,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return null;
             const qtyRiskRaw = riskBudget() / lUnit;
             const qtyCapRaw = (CFG.maxMarginPerPosUsdt * leverageForSmc(symbol) * CFG.marginSafety) / entry;
-            const qtyRaw = Math.min(qtyRiskRaw, qtyCapRaw, maxStrategyQtyFor(symbol));
+            const maxQty = maxStrategyQtyFor(symbol);
+            const remainingQty = Number.isFinite(maxQty) ? Math.max(0, maxQty - Math.abs(currentSize || 0)) : Number.POSITIVE_INFINITY;
+            if (Number.isFinite(maxQty) && remainingQty <= 0)
+                return null;
+            const qtyRaw = Math.min(qtyRiskRaw, qtyCapRaw, remainingQty);
             const qty = floorToStep(qtyRaw, instrument.stepSize);
             const minNotional = instrument.minNotional > 0 ? instrument.minNotional : 5;
             if (qty < instrument.minQty)
@@ -3587,6 +3635,28 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             return { symbol, side: sideBybit, entry, sl, tp1, qty, entryTf, entryTimeoutMs };
         };
         const getOpenPos = (symbol) => activePositionsRef.current.find((p) => p.symbol === symbol && Math.abs(Number(p.size ?? p.qty ?? 0)) > 0);
+        const getActiveSymbolStats = () => {
+            const sizes = {};
+            const symbols = new Set();
+            for (const p of activePositionsRef.current) {
+                const sym = p.symbol;
+                if (!ALL_SYMBOLS.includes(sym))
+                    continue;
+                const size = Math.abs(Number(p.size ?? p.qty ?? 0));
+                if (!Number.isFinite(size) || size <= 0)
+                    continue;
+                symbols.add(sym);
+                sizes[sym] = (sizes[sym] || 0) + size;
+            }
+            return { symbols, sizes, count: symbols.size };
+        };
+        const isSymbolAtMaxQty = (symbol, sizes) => {
+            const maxQty = maxStrategyQtyFor(symbol);
+            if (!Number.isFinite(maxQty))
+                return false;
+            return (sizes[symbol] || 0) >= maxQty - 1e-8;
+        };
+        const hasMaxedPositions = (stats) => stats.count >= 2 && Array.from(stats.symbols).every((sym) => isSymbolAtMaxQty(sym, stats.sizes));
         const resetIfNewDay = () => {
             const now = new Date();
             const dayKeyUtc = now.toISOString().slice(0, 10);
@@ -3919,6 +3989,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 smcRotationIdxRef.current++;
                 const symbol = SMC_SYMBOLS[idx];
                 const st = ensureState(symbol);
+                const activeStats = getActiveSymbolStats();
+                const maxedPortfolio = hasMaxedPositions(activeStats);
+                const isSymbolActive = activeStats.symbols.has(symbol);
                 let gateSession = inKill;
                 let gateBboFresh = false;
                 let gateSpread = false;
@@ -3999,9 +4072,20 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                                 : newSl > lastPx + st.instrument.tickSize;
                             const improves = dir > 0 ? newSl > currentSl + CFG.trailMinImproveTicks * st.instrument.tickSize : newSl < currentSl - CFG.trailMinImproveTicks * st.instrument.tickSize;
                             if (Number.isFinite(newSl) && improves && valid) {
-                                await setProtection(symbol, newSl, undefined);
+                                try {
+                                    await setProtection(symbol, newSl, undefined);
+                                    addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL ${symbol} SL->${newSl}` });
+                                }
+                                catch (err) {
+                                    const msg = String(err?.message || "").toLowerCase();
+                                    if (msg.includes("not modified") || msg.includes("no change")) {
+                                        addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL_NOOP ${symbol} SL->${newSl}` });
+                                    }
+                                    else {
+                                        addLog({ action: "ERROR", message: `AI-MATIC-SCALP TRAIL_FAILED ${symbol} ${err?.message || "unknown"}` });
+                                    }
+                                }
                                 smcLastTrailUpdateAtRef.current[symbol] = nowMs;
-                                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL ${symbol} SL->${newSl}` });
                                 return exitWithDiag(false, "MANAGE");
                             }
                             if (Number.isFinite(newSl) && !valid) {
@@ -4011,9 +4095,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         }
                     }
                 }
+                if (maxedPortfolio && !isSymbolActive)
+                    return exitWithDiag(false, "MAXED_PORTFOLIO");
                 // No new entries if max open positions reached
-                const openPositions = activePositionsRef.current.filter((p) => Math.abs(Number(p.size ?? p.qty ?? 0)) > 0);
-                if (openPositions.length >= CFG.maxOpenPositions)
+                if (activeStats.count >= CFG.maxOpenPositions)
                     return exitWithDiag();
                 if (nowMs < smcGlobalCooldownUntilRef.current)
                     return exitWithDiag();
@@ -4055,7 +4140,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const minsSinceSweep = (nowMs - m15Last.openTime) / 60_000;
                 const entryTf = minsSinceSweep <= CFG.chochDeadlineMinPrimary ? CFG.entryTfPrimary : CFG.entryTfFallback;
                 const ltf = await fetchKlines(symbol, entryTf, entryTf === "1" ? 240 : 240);
-                const proposal = buildEntryFromFvg(symbol, sw.dir, entryTf, ltf, st.instrument);
+                const proposal = buildEntryFromFvg(symbol, sw.dir, entryTf, ltf, st.instrument, activeStats.sizes[symbol] || 0);
                 gateChochFvg = Boolean(proposal);
                 if (!gateChochFvg)
                     return exitWithDiag();
@@ -4196,7 +4281,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             signal.intent.entry ??
             (Number.isFinite(lastPrice) ? lastPrice : NaN));
         const maxOpen = settingsRef.current.maxOpenPositions ?? 2;
-        const activeCount = activePositionsRef.current.length;
+        const activeCount = new Set(activePositionsRef.current
+            .filter((p) => Math.abs(Number(p.size ?? p.qty ?? 0)) > 0)
+            .map((p) => p.symbol)).size;
         if (activeCount >= maxOpen || activeCount >= MAX_ACTIVE_TRADES) {
             const reason = `Max open positions reached (${activeCount})`;
             addLog({ action: "REJECT", message: `Skip ${symbol}: ${reason}` });
