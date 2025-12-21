@@ -46,6 +46,9 @@ const PARTIAL_EXIT_MIN_R = 1.2;
 const PARTIAL_EXIT_FRACTION = 0.4;
 const SCALE_IN_MIN_R = 0.8;
 const SCALE_IN_MARGIN_FRACTION = 0.5;
+const MIN_NET_PROFIT_USD = 1.0;
+const SCALE_IN_MAX_MISSING_GATES = 2;
+const TRAIL_MIN_RETRACE_PCT = 0.004;
 const MIN_NOTIONAL_USD = {
     BTCUSDT: 5,
     ETHUSDT: 5,
@@ -1420,6 +1423,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 if (!Number.isFinite(oneR) || oneR <= 0)
                     continue;
                 const profit = (price - p.entryPrice) * dir;
+                const size = Math.abs(Number(p.size ?? p.qty ?? 0));
+                const feeEstimate = (Math.abs(p.entryPrice || 0) + Math.abs(price || 0)) * size * TAKER_FEE;
+                const netProfitUsd = profit * size - feeEstimate;
                 // SL/TP missing -> heal protection
                 const missingSl = p.sl == null || p.sl === 0;
                 const missingTp = p.tp == null || p.tp === 0;
@@ -1476,27 +1482,29 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 // Trailing rules: +1R -> SL = BE+fees; +1.5R -> SL = entry + 0.5R*dir; +2R -> SL = entry + 1R*dir
                 const feeShift = p.entryPrice * TAKER_FEE * 2;
                 let newSl = null;
-                if (profit >= oneR) {
-                    newSl = p.entryPrice + dir * feeShift;
-                }
-                if (profit >= 1.5 * oneR) {
-                    newSl = p.entryPrice + dir * (0.5 * oneR);
-                }
-                if (profit >= 2 * oneR) {
-                    newSl = p.entryPrice + dir * oneR;
-                    const swings = priceHistoryRef.current[p.symbol];
-                    const swingLevel = dir > 0 ? findRecentHigherLow(swings) : findRecentLowerHigh(swings);
-                    if (swingLevel != null) {
-                        const buffer = p.entryPrice * STOP_MIN_PCT;
-                        const swingStop = dir > 0 ? swingLevel - buffer : swingLevel + buffer;
-                        if (dir > 0) {
-                            if (swingStop > (p.sl ?? -Infinity)) {
-                                newSl = Math.max(newSl ?? swingStop, swingStop);
+                if (size > 0 && netProfitUsd >= MIN_NET_PROFIT_USD) {
+                    if (profit >= oneR) {
+                        newSl = p.entryPrice + dir * feeShift;
+                    }
+                    if (profit >= 1.5 * oneR) {
+                        newSl = p.entryPrice + dir * (0.5 * oneR);
+                    }
+                    if (profit >= 2 * oneR) {
+                        newSl = p.entryPrice + dir * oneR;
+                        const swings = priceHistoryRef.current[p.symbol];
+                        const swingLevel = dir > 0 ? findRecentHigherLow(swings) : findRecentLowerHigh(swings);
+                        if (swingLevel != null) {
+                            const buffer = p.entryPrice * STOP_MIN_PCT;
+                            const swingStop = dir > 0 ? swingLevel - buffer : swingLevel + buffer;
+                            if (dir > 0) {
+                                if (swingStop > (p.sl ?? -Infinity)) {
+                                    newSl = Math.max(newSl ?? swingStop, swingStop);
+                                }
                             }
-                        }
-                        else {
-                            if (swingStop < (p.sl ?? Infinity)) {
-                                newSl = Math.min(newSl ?? swingStop, swingStop);
+                            else {
+                                if (swingStop < (p.sl ?? Infinity)) {
+                                    newSl = Math.min(newSl ?? swingStop, swingStop);
+                                }
                             }
                         }
                     }
@@ -1524,13 +1532,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const diag = scanDiagnosticsRef.current[p.symbol];
                 const gateTotal = diag?.gates?.length ?? 0;
                 const gateOk = diag?.gates?.filter((g) => g.ok).length ?? 0;
-                const modeKey = settingsRef.current.riskMode;
-                const gateTarget = modeKey === "ai-matic-scalp" ? 6 : modeKey === "ai-matic-x" ? 7 : 8;
-                const requiredGates = gateTotal > 0 ? Math.min(gateTarget, gateTotal) : gateTarget;
+                const requiredGates = gateTotal > 0
+                    ? Math.max(0, gateTotal - SCALE_IN_MAX_MISSING_GATES)
+                    : Number.POSITIVE_INFINITY;
                 const gatesSatisfied = gateTotal > 0 && gateOk >= requiredGates;
                 if (trendOk && gatesSatisfied && profitR >= Math.max(SCALE_IN_MIN_R, minNetR) && !scaleInRef.current[p.symbol]) {
                     if (modeRef.current === TradingMode.AUTO_ON) {
-                        const size = Math.abs(Number(p.size ?? p.qty ?? 0));
                         const maxQty = maxQtyForSymbol(p.symbol);
                         const remaining = Number.isFinite(maxQty) ? Math.max(0, maxQty - size) : Number.POSITIVE_INFINITY;
                         const step = qtyStepForSymbol(p.symbol);
@@ -1566,10 +1573,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     }
                 }
 
-                if (!trendOk && profitR >= Math.max(PARTIAL_EXIT_MIN_R, minNetR)) {
+                if (!trendOk &&
+                    profitR >= Math.max(PARTIAL_EXIT_MIN_R, minNetR) &&
+                    netProfitUsd >= MIN_NET_PROFIT_USD) {
                     const lastPartialAt = partialExitRef.current[p.symbol] ?? 0;
                     if (lastPartialAt === 0) {
-                        const size = Math.abs(Number(p.size ?? p.qty ?? 0));
                         const step = qtyStepForSymbol(p.symbol);
                         const closeQty = roundDownToStep(size * PARTIAL_EXIT_FRACTION, step);
                         if (Number.isFinite(closeQty) && closeQty >= step) {
@@ -1725,8 +1733,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             antiBreakoutRangeAtr: 1.5,
             antiBreakoutBodyFrac: 0.8,
             tpR: 1.4,
-            partialAtR: 1.0,
-            partialFrac: 0.5,
+            partialAtR: 1.2,
+            partialFrac: 0.4,
             trailActivateR: 0.8,
             trailRetraceR: 0.4,
             maxRecentIdWindowMs: 5 * 60 * 1000,
@@ -2590,8 +2598,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     st.manage.minPrice = Math.min(st.manage.minPrice, lo);
                     const profit = (px - st.manage.entry) * dir;
                     const r = st.manage.oneR || Math.abs(st.manage.entry - (pos.sl ?? st.manage.entry));
+                    const qtyAbs = Math.abs(st.manage.qty);
+                    const feeEstimate = (Math.abs(st.manage.entry) + Math.abs(px)) * qtyAbs * TAKER_FEE;
+                    const netProfitUsd = profit * qtyAbs - feeEstimate;
                     if (r > 0) {
-                        if (!st.manage.partialTaken && profit >= CFG.partialAtR * r) {
+                        if (!st.manage.partialTaken &&
+                            profit >= CFG.partialAtR * r &&
+                            netProfitUsd >= MIN_NET_PROFIT_USD) {
                             const closeQtyRaw = st.manage.qty * CFG.partialFrac;
                             const closeQty = roundDownToStep(closeQtyRaw, st.instrument.stepSize);
                             if (closeQty >= st.instrument.minQty) {
@@ -2617,11 +2630,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                                 return true;
                             }
                         }
-                        if (profit >= CFG.trailActivateR * r) {
+                        if (profit >= CFG.trailActivateR * r && netProfitUsd >= MIN_NET_PROFIT_USD) {
                             const currentSl = Number(pos.sl ?? 0) || 0;
+                            const minRetrace = Math.abs(px) * TRAIL_MIN_RETRACE_PCT;
+                            const retrace = Math.max(CFG.trailRetraceR * r, minRetrace);
                             const newSlRaw = st.manage.side === "Buy"
-                                ? st.manage.maxPrice - CFG.trailRetraceR * r
-                                : st.manage.minPrice + CFG.trailRetraceR * r;
+                                ? st.manage.maxPrice - retrace
+                                : st.manage.minPrice + retrace;
                             const newSl = roundToTick(newSlRaw, st.instrument.tickSize);
                             const improves = st.manage.side === "Buy" ? newSl > currentSl : newSl < currentSl;
                             if (Number.isFinite(newSl) && improves) {
