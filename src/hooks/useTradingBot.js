@@ -49,6 +49,21 @@ const SCALE_IN_MARGIN_FRACTION = 0.5;
 const MIN_NET_PROFIT_USD = 1.0;
 const SCALE_IN_MAX_MISSING_GATES = 2;
 const TRAIL_MIN_RETRACE_PCT = 0.004;
+const normalizeTp = (tp) => {
+    const val = Number(tp ?? 0);
+    return Number.isFinite(val) && val > 0 ? val : undefined;
+};
+const resolveTrailTp = (dir, price, tp, oneR) => {
+    const baseTp = normalizeTp(tp);
+    if (!baseTp)
+        return { tp: undefined, bumped: false };
+    const priceOk = dir > 0 ? price < baseTp : price > baseTp;
+    if (priceOk)
+        return { tp: baseTp, bumped: false };
+    const bump = Math.max(TP_EXTEND_STEP_R * oneR, Math.abs(price) * 0.002);
+    const nextTp = dir > 0 ? price + bump : price - bump;
+    return { tp: nextTp, bumped: true };
+};
 const MIN_NOTIONAL_USD = {
     BTCUSDT: 5,
     ETHUSDT: 5,
@@ -1510,10 +1525,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     }
                 }
                 if (newSl != null && Number.isFinite(newSl) && ((dir > 0 && newSl > (p.sl || 0)) || (dir < 0 && newSl < (p.sl || Infinity)))) {
-                    const ok = await commitProtection(`trail-${p.id}`, p.symbol, newSl, p.tp, undefined);
+                    const { tp: trailTp } = resolveTrailTp(dir, price, p.tp, oneR);
+                    const nextTp = trailTp ?? normalizeTp(p.tp);
+                    const ok = await commitProtection(`trail-${p.id}`, p.symbol, newSl, nextTp, undefined);
                     if (ok) {
                         const current = protectionTargetsRef.current[p.symbol] ?? {};
-                        protectionTargetsRef.current[p.symbol] = { ...current, sl: newSl };
+                        protectionTargetsRef.current[p.symbol] = { ...current, sl: newSl, tp: nextTp ?? current.tp };
                         protectionVerifyRef.current[p.symbol] = now;
                         addLog({ action: "SYSTEM", message: `Trail rule applied ${p.symbol} profit ${profit.toFixed(4)} new SL ${newSl.toFixed(4)}` });
                     }
@@ -2325,6 +2342,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     st.pending = undefined;
                     return false;
                 }
+                const nextTp = normalizeTp(p.tp);
                 const pos = posForPending;
                 if (pos) {
                     const lastPx = currentPricesRef.current[p.symbol] || pos.entryPrice || 0;
@@ -2339,7 +2357,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     }
                 }
                 try {
-                    await setProtection(p.symbol, newSl, undefined);
+                    await setProtection(p.symbol, newSl, nextTp);
                 }
                 catch (err) {
                     const msg = getErrorMessage(err).toLowerCase();
@@ -2355,6 +2373,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 }
                 st.pending = undefined;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                if (Number.isFinite(nextTp)) {
+                    const current = protectionTargetsRef.current[p.symbol] ?? {};
+                    protectionTargetsRef.current[p.symbol] = { ...current, sl: newSl, tp: nextTp ?? current.tp };
+                    protectionVerifyRef.current[p.symbol] = now;
+                }
+                else {
+                    const current = protectionTargetsRef.current[p.symbol] ?? {};
+                    protectionTargetsRef.current[p.symbol] = { ...current, sl: newSl };
+                    protectionVerifyRef.current[p.symbol] = now;
+                }
                 addLog({ action: "SYSTEM", message: `TRAIL ${p.symbol} newSL=${newSl}` });
                 return true;
             }
@@ -2640,6 +2668,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             const newSl = roundToTick(newSlRaw, st.instrument.tickSize);
                             const improves = st.manage.side === "Buy" ? newSl > currentSl : newSl < currentSl;
                             if (Number.isFinite(newSl) && improves) {
+                                const { tp: trailTp } = resolveTrailTp(dir, px, pos.tp, r);
+                                const nextTp = trailTp ?? normalizeTp(pos.tp) ?? 0;
                                 st.pending = {
                                     stage: "TRAIL_SL_UPDATE",
                                     orderLinkId: `trail:${symbol}:${expected1}`,
@@ -2649,7 +2679,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                                     qty: st.manage.qty,
                                     newSl,
                                     sl: 0,
-                                    tp: 0,
+                                    tp: nextTp,
                                     oneR: r,
                                     reservedRiskUsd: 0,
                                     htfBarOpenTime: st.htf?.barOpenTime ?? 0,
