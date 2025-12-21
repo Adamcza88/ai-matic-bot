@@ -38,13 +38,12 @@ const MAX_TOTAL_RISK_USD = 8;
 const MAX_ACTIVE_TRADES = 2;
 const STOP_MIN_PCT = 0.0015; // 0.15 %
 const MAX_LEVERAGE_ALLOWED = 100;
-const PROTECTION_POST_FILL_DELAY_MS = 1200;
+const PROTECTION_POST_FILL_DELAY_MS = 2000;
 const PROTECTION_VERIFY_COOLDOWN_MS = 15000;
 const TP_EXTEND_MIN_R = 1.4;
 const TP_EXTEND_STEP_R = 0.5;
-const LONG_HOLD_PARTIAL_AFTER_MS = 30 * 60_000;
-const LONG_HOLD_PARTIAL_MIN_R = 1.2;
-const LONG_HOLD_PARTIAL_FRACTION = 0.25;
+const PARTIAL_EXIT_MIN_R = 1.2;
+const PARTIAL_EXIT_FRACTION = 0.4;
 const MIN_NOTIONAL_USD = {
     BTCUSDT: 5,
     ETHUSDT: 5,
@@ -1407,10 +1406,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         }
                     }
                 }
-                // AI-MATIC-SCALP manages its own trailing rules; don't apply legacy trailing heuristics.
-                if (settingsRef.current.riskMode === "ai-matic-scalp") {
-                    continue;
-                }
                 // Trailing rules: +1R -> SL = BE+fees; +1.5R -> SL = entry + 0.5R*dir; +2R -> SL = entry + 1R*dir
                 const feeShift = p.entryPrice * TAKER_FEE * 2;
                 let newSl = null;
@@ -1458,6 +1453,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     ? (dir > 0 ? lastCandle.close > ema21 : lastCandle.close < ema21)
                     : false;
                 const profitR = profit / oneR;
+                const minNetR = Math.max(0.25, (feeShift * 1.5) / oneR);
 
                 if (trendOk && Number.isFinite(p.tp) && profitR >= TP_EXTEND_MIN_R) {
                     const lastShiftR = tpExtendRef.current[p.symbol] ?? 0;
@@ -1477,21 +1473,31 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     }
                 }
 
-                if (trendOk && Number.isFinite(p.entryPrice)) {
-                    const openedAtMs = Date.parse(p.openedAt || p.timestamp || "");
-                    if (Number.isFinite(openedAtMs) && openedAtMs > 0) {
-                        const heldMs = now - openedAtMs;
-                        const lastPartialAt = partialExitRef.current[p.symbol] ?? 0;
-                        if (heldMs >= LONG_HOLD_PARTIAL_AFTER_MS && profitR >= LONG_HOLD_PARTIAL_MIN_R && lastPartialAt === 0) {
-                            const size = Math.abs(Number(p.size ?? p.qty ?? 0));
-                            const step = qtyStepForSymbol(p.symbol);
-                            const closeQty = roundDownToStep(size * LONG_HOLD_PARTIAL_FRACTION, step);
-                            if (Number.isFinite(closeQty) && closeQty >= step) {
-                                const exitSide = dir > 0 ? "Sell" : "Buy";
-                                const ok = await placeReduceOnlyMarket(p.symbol, exitSide, closeQty, "LONG_HOLD_TREND");
-                                if (ok) {
-                                    partialExitRef.current[p.symbol] = now;
-                                    addLog({ action: "SYSTEM", message: `PARTIAL_MARGIN ${p.symbol} qty=${closeQty} held=${Math.round(heldMs / 60000)}m` });
+                if (!trendOk && profitR >= Math.max(PARTIAL_EXIT_MIN_R, minNetR)) {
+                    const lastPartialAt = partialExitRef.current[p.symbol] ?? 0;
+                    if (lastPartialAt === 0) {
+                        const size = Math.abs(Number(p.size ?? p.qty ?? 0));
+                        const step = qtyStepForSymbol(p.symbol);
+                        const closeQty = roundDownToStep(size * PARTIAL_EXIT_FRACTION, step);
+                        if (Number.isFinite(closeQty) && closeQty >= step) {
+                            const exitSide = dir > 0 ? "Sell" : "Buy";
+                            const ok = await placeReduceOnlyMarket(p.symbol, exitSide, closeQty, "STRUCTURE_WEAK");
+                            if (ok) {
+                                partialExitRef.current[p.symbol] = now;
+                                addLog({ action: "SYSTEM", message: `PARTIAL_STRUCT ${p.symbol} qty=${closeQty} profitR=${profitR.toFixed(2)}` });
+                                const entry = Number(p.entryPrice ?? 0);
+                                if (Number.isFinite(entry) && entry > 0) {
+                                    const desiredSl = entry + dir * feeShift;
+                                    const improves = dir > 0 ? desiredSl > (p.sl ?? -Infinity) : desiredSl < (p.sl ?? Infinity);
+                                    if (Number.isFinite(desiredSl) && improves) {
+                                        const slOk = await commitProtection(`partial-sl-${p.id}`, p.symbol, desiredSl, p.tp, undefined);
+                                        if (slOk) {
+                                            const current = protectionTargetsRef.current[p.symbol] ?? {};
+                                            protectionTargetsRef.current[p.symbol] = { ...current, sl: desiredSl };
+                                            protectionVerifyRef.current[p.symbol] = now;
+                                            addLog({ action: "SYSTEM", message: `SL_TO_ENTRY ${p.symbol} sl=${desiredSl.toFixed(4)}` });
+                                        }
+                                    }
                                 }
                             }
                         }
