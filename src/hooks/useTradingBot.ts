@@ -762,10 +762,20 @@ export const useTradingBot = (
                 }, "data");
                 if (!res.ok) return;
                 const json = await res.json();
+                type UnifiedWalletEntry = {
+                    coin?: unknown;
+                    totalEquity?: number | string;
+                    totalWalletBalance?: number | string;
+                    totalMarginBalance?: number | string;
+                    totalAvailableBalance?: number | string;
+                    totalInitialMargin?: number | string;
+                    totalPositionIM?: number | string;
+                    totalOrderIM?: number | string;
+                };
                 const list = Array.isArray(json?.data?.list)
-                    ? (json.data.list as { coin?: unknown; totalEquity?: number | string }[])
+                    ? (json.data.list as UnifiedWalletEntry[])
                     : Array.isArray(json?.list)
-                        ? (json.list as { coin?: unknown; totalEquity?: number | string }[])
+                        ? (json.list as UnifiedWalletEntry[])
                         : [];
                 const first = list[0];
                 const coins = Array.isArray(first?.coin) ? (first.coin as CoinBalance[]) : [];
