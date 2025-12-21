@@ -148,6 +148,8 @@ const TP_EXTEND_MIN_R = 1.4;
 const TP_EXTEND_STEP_R = 0.5;
 const PARTIAL_EXIT_MIN_R = 1.2;
 const PARTIAL_EXIT_FRACTION = 0.4;
+const SCALE_IN_MIN_R = 0.8;
+const SCALE_IN_MARGIN_FRACTION = 0.5;
 const MIN_NOTIONAL_USD: Record<string, number> = {
     BTCUSDT: 5,
     ETHUSDT: 5,
@@ -610,6 +612,14 @@ export const useTradingBot = (
         bboAgeMs: number;
         gates: { name: string; ok: boolean }[];
     }>>({});
+    const scanDiagnosticsRef = useRef<Record<string, {
+        symbol: string;
+        lastUpdated: number;
+        signalActive: boolean;
+        executionAllowed: boolean | string;
+        bboAgeMs: number;
+        gates: { name: string; ok: boolean }[];
+    }>>({});
     const [walletEquity, setWalletEquity] = useState<number | null>(null);
     const [settings, setSettings] = useState<AISettings>(() => {
         if (typeof window !== "undefined") {
@@ -633,6 +643,7 @@ export const useTradingBot = (
     const protectionVerifyRef = useRef<Record<string, number>>({});
     const tpExtendRef = useRef<Record<string, number>>({});
     const partialExitRef = useRef<Record<string, number>>({});
+    const scaleInRef = useRef<Record<string, boolean>>({});
     const commitProtectionRef = useRef<((tradeId: string, symbol: string, sl?: number, tp?: number, trailingStop?: number) => Promise<boolean>) | null>(null);
 
     const [portfolioState, setPortfolioState] = useState({
@@ -836,6 +847,10 @@ export const useTradingBot = (
     }, [activePositions]);
 
     useEffect(() => {
+        scanDiagnosticsRef.current = scanDiagnostics;
+    }, [scanDiagnostics]);
+
+    useEffect(() => {
         const activeSymbols = new Set(activePositions.map((p) => p.symbol));
         for (const sym of Object.keys(protectionTargetsRef.current)) {
             if (!activeSymbols.has(sym)) {
@@ -843,6 +858,7 @@ export const useTradingBot = (
                 delete protectionVerifyRef.current[sym];
                 delete tpExtendRef.current[sym];
                 delete partialExitRef.current[sym];
+                delete scaleInRef.current[sym];
             }
         }
     }, [activePositions]);
@@ -1250,6 +1266,47 @@ export const useTradingBot = (
                 addLog({
                     action: "ERROR",
                     message: `Partial close failed ${symbol}: ${getErrorMessage(err) || "unknown"}`,
+                });
+                return false;
+            }
+        },
+        [apiBase, apiPrefix, authToken, queuedFetch, useTestnet]
+    );
+
+    const placeAddMarket = useCallback(
+        async (symbol: string, side: "Buy" | "Sell", qty: number, reason: string) => {
+            if (!authToken) return false;
+            try {
+                const res = await queuedFetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${authToken}`,
+                    },
+                    body: JSON.stringify({
+                        symbol,
+                        side,
+                        qty,
+                        orderType: "Market",
+                        timeInForce: "IOC",
+                        reduceOnly: false,
+                        orderLinkId: `scalein-${symbol}-${Date.now()}`,
+                        leverage: leverageFor(symbol),
+                    }),
+                }, "order");
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok || body?.ok === false) {
+                    throw new Error(body?.error || `Scale-in failed (${res.status})`);
+                }
+                const rc = body?.data?.retCode ?? body?.retCode;
+                if (rc && rc !== 0) {
+                    throw new Error(body?.data?.retMsg || body?.retMsg || "Scale-in rejected");
+                }
+                return true;
+            } catch (err) {
+                addLog({
+                    action: "ERROR",
+                    message: `Scale-in failed ${symbol}: ${getErrorMessage(err) || "unknown"}`,
                 });
                 return false;
             }
@@ -1674,6 +1731,34 @@ export const useTradingBot = (
                     const profitR = profit / oneR;
                     const minNetR = Math.max(0.25, (feeShift * 1.5) / oneR);
 
+                    const diag = scanDiagnosticsRef.current[p.symbol];
+                    const gateTotal = diag?.gates?.length ?? 0;
+                    const gateOk = diag?.gates?.filter((g) => g.ok).length ?? 0;
+                    const modeKey = settingsRef.current.riskMode;
+                    const gateTarget = modeKey === "ai-matic-scalp" ? 6 : modeKey === "ai-matic-x" ? 7 : 8;
+                    const requiredGates = gateTotal > 0 ? Math.min(gateTarget, gateTotal) : gateTarget;
+                    const gatesSatisfied = gateTotal > 0 && gateOk >= requiredGates;
+
+                    if (trendOk && gatesSatisfied && profitR >= Math.max(SCALE_IN_MIN_R, minNetR) && !scaleInRef.current[p.symbol]) {
+                        if (modeRef.current === TradingMode.AUTO_ON) {
+                            const size = Math.abs(Number(p.size ?? p.qty ?? 0));
+                            const maxQty = maxQtyForSymbol(p.symbol);
+                            const remaining = Number.isFinite(maxQty) ? Math.max(0, maxQty - size) : Number.POSITIVE_INFINITY;
+                            const step = qtyStepForSymbol(p.symbol);
+                            const addQtyRaw = size * SCALE_IN_MARGIN_FRACTION;
+                            const addQty = roundDownToStep(Math.min(addQtyRaw, remaining), step);
+                            if (Number.isFinite(addQty) && addQty >= step) {
+                                const side = dir > 0 ? "Buy" : "Sell";
+                                const ok = await placeAddMarket(p.symbol, side, addQty, "TREND_OK");
+                                if (ok) {
+                                    scaleInRef.current[p.symbol] = true;
+                                    protectionVerifyRef.current[p.symbol] = 0;
+                                    addLog({ action: "SYSTEM", message: `SCALE_IN ${p.symbol} qty=${addQty} gates=${gateOk}/${gateTotal} profile=${settingsRef.current.riskMode}` });
+                                }
+                            }
+                        }
+                    }
+
                     if (trendOk && Number.isFinite(p.tp) && profitR >= TP_EXTEND_MIN_R) {
                         const lastShiftR = tpExtendRef.current[p.symbol] ?? 0;
                         if (profitR >= lastShiftR + TP_EXTEND_STEP_R) {
@@ -1733,7 +1818,7 @@ export const useTradingBot = (
             cancel = true;
             clearInterval(id);
         };
-    }, [authToken, commitProtection, forceClosePosition, placeReduceOnlyMarket]);
+    }, [authToken, commitProtection, forceClosePosition, placeReduceOnlyMarket, placeAddMarket]);
 
     const [aiModelState] = useState({
         version: "1.0.0-real-strategy",
