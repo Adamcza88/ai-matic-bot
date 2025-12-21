@@ -18,7 +18,7 @@ import {
 import { Candle } from "@/engine/botEngine";
 import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
 import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory, persistEntryHistory } from "../lib/entryHistory";
-import { addPnlRecord, AssetPnlMap, clearPnlHistory } from "../lib/pnlHistory";
+import { addPnlRecord, AssetPnlMap, clearPnlHistory, loadPnlHistory } from "../lib/pnlHistory";
 import { computeAtr as scalpComputeAtr } from "../engine/ta";
 import {
     computeEma as scalpComputeEma,
@@ -588,7 +588,7 @@ export const useTradingBot = (
     const [testnetOrders, setTestnetOrders] = useState<TestnetOrder[]>([]);
     const [testnetTrades, setTestnetTrades] = useState<TestnetTrade[]>([]);
     const [ordersError, setOrdersError] = useState<string | null>(null);
-    const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap>({});
+    const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap>(() => loadPnlHistory());
     const [scanDiagnostics, setScanDiagnostics] = useState<Record<string, {
         symbol: string;
         lastUpdated: number;
@@ -678,8 +678,26 @@ export const useTradingBot = (
     useEffect(() => {
         const checkReset = () => {
             const today = new Date().toISOString().split("T")[0];
+            if (!lastResetDayRef.current) {
+                lastResetDayRef.current = today;
+                try {
+                    if (typeof localStorage !== "undefined") {
+                        localStorage.setItem("ai-matic:last-reset-day", today);
+                    }
+                } catch {
+                    // ignore storage errors
+                }
+                return;
+            }
             if (lastResetDayRef.current !== today) {
                 lastResetDayRef.current = today;
+                try {
+                    if (typeof localStorage !== "undefined") {
+                        localStorage.setItem("ai-matic:last-reset-day", today);
+                    }
+                } catch {
+                    // ignore storage errors
+                }
                 realizedPnlRef.current = 0;
                 manualPnlResetRef.current = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
                 setPortfolioState((prev) => {
@@ -776,8 +794,6 @@ export const useTradingBot = (
         realizedPnlRef.current = 0;
         manualPnlResetRef.current = Date.now();
         setPortfolioState((prev) => ({ ...prev, dailyPnl: 0 }));
-        clearPnlHistory();
-        setAssetPnlHistory({});
         closedPnlSeenRef.current = new Set();
     }, []);
 
@@ -1703,7 +1719,14 @@ export const useTradingBot = (
     const walletEquityRef = useRef(walletEquity);
     walletEquityRef.current = walletEquity;
     const realizedPnlRef = useRef(0);
-    const lastResetDayRef = useRef<string | null>(null);
+    const initialResetDay = (() => {
+        try {
+            return typeof localStorage === "undefined" ? null : localStorage.getItem("ai-matic:last-reset-day");
+        } catch {
+            return null;
+        }
+    })();
+    const lastResetDayRef = useRef<string | null>(initialResetDay);
 
     const lifecycleRef = useRef<Map<string, string>>(new Map());
     const dataUnavailableRef = useRef<boolean>(false);

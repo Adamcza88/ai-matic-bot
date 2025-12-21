@@ -1,10 +1,9 @@
 // hooks/useTradingBot.ts
 import { useState, useEffect, useRef, useCallback } from "react";
 import { TradingMode, } from "../types";
-import { evaluateStrategyForSymbol } from "@/engine/botEngine";
 import { getApiBase, useNetworkConfig } from "../engine/networkConfig";
 import { addEntryToHistory, loadEntryHistory, removeEntryFromHistory, persistEntryHistory } from "../lib/entryHistory";
-import { addPnlRecord, clearPnlHistory } from "../lib/pnlHistory";
+import { addPnlRecord, clearPnlHistory, loadPnlHistory } from "../lib/pnlHistory";
 import { computeAtr as scalpComputeAtr } from "../engine/ta";
 import { computeEma as scalpComputeEma, computeSma as scalpComputeSma, computeSuperTrend, findLastPivotHigh, findLastPivotLow, roundDownToStep, roundToTick, } from "../engine/deterministicScalp";
 // SYMBOLS (Deterministic Scalp Profile 1)
@@ -13,24 +12,13 @@ const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
 const SMC_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 const ALL_SYMBOLS = Array.from(new Set([...SYMBOLS, ...SMC_SYMBOLS]));
 // SIMULOVANÝ / DEFAULT KAPITÁL
-const INITIAL_CAPITAL = 70; // Unified Trading balance snapshot
-const MAX_SINGLE_POSITION_VALUE = Number.POSITIVE_INFINITY; // notional cap disabled (use margin caps instead)
+const INITIAL_CAPITAL = 100; // Unified Trading balance snapshot
 const MIN_ENTRY_SPACING_MS = 3000;
-const MAX_TEST_PENDING = 4;
-const KEEPALIVE_SIGNAL_INTERVAL_MS = 12000;
 const LEVERAGE = {
     BTCUSDT: 100,
     ETHUSDT: 100,
     SOLUSDT: 100,
     ADAUSDT: 75,
-};
-const MIN_MARGIN_USD = 4;
-const MAX_MARGIN_USD = 8;
-const TARGET_NOTIONAL = {
-    BTCUSDT: 500, // odpovídá ~5 USDT margin při 100x
-    ETHUSDT: 500,
-    SOLUSDT: 500,
-    ADAUSDT: 350, // odpovídá screenshotu při 75x
 };
 const QTY_LIMITS = {
     BTCUSDT: { min: 0, max: 0.005 },
@@ -45,10 +33,10 @@ const MAX_ACTIVE_TRADES = 2;
 const STOP_MIN_PCT = 0.0015; // 0.15 %
 const MAX_LEVERAGE_ALLOWED = 100;
 const MIN_NOTIONAL_USD = {
-    BTCUSDT: 4,
-    ETHUSDT: 4,
-    SOLUSDT: 4,
-    ADAUSDT: 4,
+    BTCUSDT: 5,
+    ETHUSDT: 5,
+    SOLUSDT: 5,
+    ADAUSDT: 5,
 };
 // RISK / STRATEGY
 const AI_MATIC_PRESET = {
@@ -167,36 +155,27 @@ function persistSettings(s) {
         // ignore storage errors
     }
 }
-// UTILS
 function parseKlines(list) {
     if (!Array.isArray(list))
         return [];
-    return list
+    const parsed = list
         .map((row) => {
+        if (!Array.isArray(row) || row.length < 6)
+            return null;
         const [ts, open, high, low, close, volume] = row;
-        return {
-            openTime: Number(ts),
-            open: parseFloat(open),
-            high: parseFloat(high),
-            low: parseFloat(low),
-            close: parseFloat(close),
-            volume: parseFloat(volume),
+        const openTime = Number(ts);
+        const candle = {
+            openTime,
+            open: parseFloat(String(open)),
+            high: parseFloat(String(high)),
+            low: parseFloat(String(low)),
+            close: parseFloat(String(close)),
+            volume: parseFloat(String(volume)),
         };
+        return Number.isFinite(candle.openTime) ? candle : null;
     })
-        .sort((a, b) => a.openTime - b.openTime);
-}
-function withinSession(settings, now) {
-    if (settings.entryStrictness === "test")
-        return true;
-    if (!settings.enforceSessionHours)
-        return true;
-    const day = now.getDay();
-    const hour = now.getHours();
-    if (!settings.tradingDays.includes(day))
-        return false;
-    if (hour < settings.tradingStartHour || hour > settings.tradingEndHour)
-        return false;
-    return true;
+        .filter((c) => Boolean(c));
+    return parsed.sort((a, b) => a.openTime - b.openTime);
 }
 function snapshotSettings(settings) {
     return {
@@ -218,96 +197,10 @@ const clampQtyForSymbol = (symbol, qty) => {
 const maxQtyForSymbol = (symbol) => QTY_LIMITS[symbol]?.max ?? Number.POSITIVE_INFINITY;
 const leverageFor = (symbol) => LEVERAGE[symbol] ?? 1;
 const marginFor = (symbol, entry, size) => (entry * size) / Math.max(1, leverageFor(symbol));
-const asNum = (x) => {
-    const n = Number(x);
-    return Number.isFinite(n) ? n : 0;
-};
+const getErrorMessage = (err) => err instanceof Error ? err.message : String(err);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const jitter = (min, max) => Math.floor(min + Math.random() * Math.max(0, max - min));
 const TAKER_FEE = 0.0006; // orientační taker fee (0.06%)
-const MIN_TP_BUFFER_PCT = 0.0003; // 0.03 % buffer
-function feeRoundTrip(notional, openRate = TAKER_FEE, closeRate = TAKER_FEE) {
-    return notional * (openRate + closeRate);
-}
-function ensureMinTpDistance(entry, sl, tp, size) {
-    if (!Number.isFinite(entry) || !Number.isFinite(tp) || size <= 0)
-        return tp;
-    const notional = entry * size;
-    const minDistance = feeRoundTrip(notional) / size + entry * MIN_TP_BUFFER_PCT;
-    const dir = tp >= entry ? 1 : -1;
-    const proposedDistance = Math.abs(tp - entry);
-    if (proposedDistance >= minDistance)
-        return tp;
-    return entry + dir * minDistance;
-}
-function uuidLite() {
-    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-        return crypto.randomUUID();
-    }
-    return `aim-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-}
-// Coach detection (Base 'n Break / Wedge Pop approximation)
-function computeAtrFromHistory(candles, period = 20) {
-    if (!candles || candles.length < 2)
-        return 0;
-    const highs = candles.map((c) => c.high);
-    const lows = candles.map((c) => c.low);
-    const closes = candles.map((c) => c.close);
-    const trs = [];
-    for (let i = 1; i < closes.length; i++) {
-        const hl = highs[i] - lows[i];
-        const hc = Math.abs(highs[i] - closes[i - 1]);
-        const lc = Math.abs(lows[i] - closes[i - 1]);
-        trs.push(Math.max(hl, hc, lc));
-    }
-    if (!trs.length)
-        return 0;
-    const slice = trs.slice(-period);
-    const sum = slice.reduce((a, b) => a + b, 0);
-    return sum / slice.length;
-}
-function calculateChandelierStop(candles, direction, period = 22, multiplier = 3) {
-    if (candles.length < period) {
-        return 0;
-    }
-    const recentCandles = candles.slice(-period);
-    const atr = computeAtrFromHistory(recentCandles, period);
-    if (direction === 'buy') {
-        const highestHigh = Math.max(...recentCandles.map(c => c.high));
-        return highestHigh - atr * multiplier;
-    }
-    else { // 'sell'
-        const lowestLow = Math.min(...recentCandles.map(c => c.low));
-        return lowestLow + atr * multiplier;
-    }
-}
-function computeAtrPair(candles) {
-    const atrShort = computeAtrFromHistory(candles, 14);
-    const atrLong = computeAtrFromHistory(candles, 50) || atrShort || 1;
-    return { atrShort, atrLong };
-}
-function computeEma(candles, period) {
-    if (!candles || candles.length === 0)
-        return 0;
-    const k = 2 / (period + 1);
-    let ema = candles[0].close;
-    for (let i = 1; i < candles.length; i++) {
-        ema = candles[i].close * k + ema * (1 - k);
-    }
-    return ema;
-}
-function scoreVol(atrPct) {
-    // Prefer 0.2 % – 0.8 % intraday volatility, decay outside.
-    const idealMin = 0.002;
-    const idealMax = 0.008;
-    if (atrPct <= 0)
-        return 0;
-    if (atrPct < idealMin)
-        return atrPct / idealMin; // up to 1
-    if (atrPct > idealMax)
-        return Math.max(0, 1 - (atrPct - idealMax) / idealMax);
-    return 1.2; // slight bonus inside sweet spot
-}
 // === Market Structure Helpers ===
 function isSwingHigh(candles, idx, n = 2) {
     const hi = candles[idx]?.high ?? 0;
@@ -333,128 +226,6 @@ function isSwingLow(candles, idx, n = 2) {
     }
     return true;
 }
-function findLastSwingBreak(candles, bias, n = 2) {
-    for (let i = candles.length - (n + 2); i >= n; i--) {
-        if (bias === "bullish" && isSwingHigh(candles, i, n)) {
-            const level = candles[i].high;
-            const afterClose = candles.slice(i + 1).find((c) => c.close > level);
-            if (afterClose)
-                return { level, idx: i };
-        }
-        if (bias === "bearish" && isSwingLow(candles, i, n)) {
-            const level = candles[i].low;
-            const afterClose = candles.slice(i + 1).find((c) => c.close < level);
-            if (afterClose)
-                return { level, idx: i };
-        }
-    }
-    return null;
-}
-function netRrr(entry, sl, tp, feePct) {
-    if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(tp))
-        return 0;
-    const risk = Math.abs(entry - sl) + entry * feePct * 2;
-    const reward = Math.abs(tp - entry) - entry * feePct * 2;
-    if (risk <= 0)
-        return 0;
-    return reward / risk;
-}
-function buildZone(candles, bosIdx, direction) {
-    for (let i = bosIdx - 1; i >= Math.max(0, bosIdx - 10); i--) {
-        const c = candles[i];
-        if (!c)
-            continue;
-        const isOpposite = direction === "buy" ? c.close < c.open : c.close > c.open;
-        if (isOpposite) {
-            const high = Math.max(c.open, c.close);
-            const low = Math.min(c.open, c.close);
-            return { zoneHigh: high, zoneLow: low };
-        }
-    }
-    return null;
-}
-function evaluateMarketStructure(c4h, c1h, c15, c5, symbol) {
-    const res = evaluateMarketStructureWithReason(c4h, c1h, c15, c5, symbol);
-    return res.structure;
-}
-function evaluateMarketStructureWithReason(c4h, c1h, c15, c5, symbol) {
-    const gates = [];
-    const bias4h = (() => {
-        const bosUp = findLastSwingBreak(c4h, "bullish");
-        const bosDn = findLastSwingBreak(c4h, "bearish");
-        if (bosUp && (!bosDn || bosUp.idx > bosDn.idx))
-            return "bullish";
-        if (bosDn && (!bosUp || bosDn.idx > bosUp.idx))
-            return "bearish";
-        return null;
-    })();
-    if (!bias4h)
-        return { structure: null, reason: "HTF_BIAS" };
-    gates.push("HTF_BIAS_OK");
-    const bias1h = (() => {
-        const bosUp = findLastSwingBreak(c1h, "bullish");
-        const bosDn = findLastSwingBreak(c1h, "bearish");
-        if (bosUp && (!bosDn || bosUp.idx > bosDn.idx))
-            return "bullish";
-        if (bosDn && (!bosUp || bosDn.idx > bosUp.idx))
-            return "bearish";
-        return null;
-    })();
-    if (bias1h !== bias4h)
-        return { structure: null, reason: "HTF_CONFIRM" };
-    gates.push("HTF_CONFIRM_OK");
-    const choch15 = (() => {
-        const bosUp = findLastSwingBreak(c15, "bullish");
-        const bosDn = findLastSwingBreak(c15, "bearish");
-        if (bias4h === "bullish" && bosUp)
-            return "bullish";
-        if (bias4h === "bearish" && bosDn)
-            return "bearish";
-        return null;
-    })();
-    if (!choch15)
-        return { structure: null, reason: "LTF_CHOCH" };
-    gates.push("LTF_CHOCH_OK");
-    const bos5 = findLastSwingBreak(c5, bias4h);
-    if (!bos5)
-        return { structure: null, reason: "LTF_BOS" };
-    gates.push("LTF_BOS_OK");
-    const dir = bias4h === "bullish" ? "buy" : "sell";
-    const zone = buildZone(c5, bos5.idx, dir);
-    if (!zone)
-        return { structure: null, reason: "ZONE" };
-    gates.push("ZONE_DEFINED_OK");
-    const lastClose = c5[c5.length - 1]?.close;
-    if (!Number.isFinite(lastClose))
-        return { structure: null, reason: "PRICE" };
-    const inZone = lastClose >= Math.min(zone.zoneLow, zone.zoneHigh) &&
-        lastClose <= Math.max(zone.zoneLow, zone.zoneHigh);
-    if (!inZone)
-        return { structure: null, reason: "RETEST" };
-    gates.push("RETEST_OK");
-    const entry = lastClose;
-    const buffer = Math.max(entry * STOP_MIN_PCT, entry * 0.0005);
-    const sl = dir === "buy" ? zone.zoneLow - buffer : zone.zoneHigh + buffer;
-    const r = Math.abs(entry - sl);
-    const tp1 = dir === "buy" ? entry + 1.5 * r : entry - 1.5 * r;
-    const tp2 = dir === "buy" ? entry + 2 * r : entry - 2 * r;
-    const netR = netRrr(entry, sl, tp1, TAKER_FEE);
-    return {
-        structure: {
-            bias: bias4h,
-            zoneHigh: zone.zoneHigh,
-            zoneLow: zone.zoneLow,
-            entry,
-            sl,
-            tp1,
-            tp2,
-            netRrr: netR,
-            direction: dir,
-            gates,
-        },
-        reason: netR >= 1.5 ? "OK" : "NET_RRR",
-    };
-}
 function findRecentHigherLow(candles, lookback = 60) {
     if (!candles || candles.length < 5)
         return null;
@@ -475,11 +246,6 @@ function findRecentLowerHigh(candles, lookback = 60) {
     }
     return null;
 }
-const computePositionRisk = (p) => {
-    const stop = p.currentTrailingStop ?? p.sl ?? p.entryPrice;
-    const distance = Math.max(0, Math.abs(p.entryPrice - stop));
-    return distance * p.size;
-};
 const minNotionalFor = (symbol) => MIN_NOTIONAL_USD[symbol] ?? 5;
 const openRiskUsd = (positions) => {
     return positions.reduce((sum, p) => {
@@ -491,7 +257,7 @@ const openRiskUsd = (positions) => {
         return sum + Math.abs(p.entryPrice - p.sl) * size;
     }, 0);
 };
-function computePositionSizing(symbol, entry, sl, useTestnet) {
+function computePositionSizing(symbol, entry, sl) {
     if (!Number.isFinite(entry) || !Number.isFinite(sl) || entry <= 0) {
         return { ok: false, reason: "Invalid entry/SL" };
     }
@@ -655,22 +421,19 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         pendingSignalsRef.current = [];
     }, [authToken, useTestnet]);
     const [activePositions, setActivePositions] = useState([]);
-    const [closedPositions, _setClosedPositions] = useState([]);
+    const [closedPositions] = useState([]);
     const [pendingSignals, setPendingSignals] = useState([]);
     const pendingSignalsRef = useRef([]);
     const [currentPrices, setCurrentPrices] = useState({});
     const currentPricesRef = useRef({});
-    const [portfolioHistory, _setPortfolioHistory] = useState([]);
-    const [newsHeadlines, setNewsHeadlines] = useState([]);
+    const [portfolioHistory] = useState([]);
+    const [newsHeadlines] = useState([]);
     const [priceAlerts, setPriceAlerts] = useState([]);
     const [entryHistory, setEntryHistory] = useState([]);
     const [testnetOrders, setTestnetOrders] = useState([]);
     const [testnetTrades, setTestnetTrades] = useState([]);
     const [ordersError, setOrdersError] = useState(null);
-    const [mainnetOrders, setMainnetOrders] = useState([]);
-    const [mainnetTrades, setMainnetTrades] = useState([]);
-    const [mainnetError, setMainnetError] = useState(null);
-    const [assetPnlHistory, setAssetPnlHistory] = useState({});
+    const [assetPnlHistory, setAssetPnlHistory] = useState(() => loadPnlHistory());
     const [scanDiagnostics, setScanDiagnostics] = useState({});
     const [walletEquity, setWalletEquity] = useState(null);
     const [settings, setSettings] = useState(() => {
@@ -745,8 +508,28 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     useEffect(() => {
         const checkReset = () => {
             const today = new Date().toISOString().split("T")[0];
+            if (!lastResetDayRef.current) {
+                lastResetDayRef.current = today;
+                try {
+                    if (typeof localStorage !== "undefined") {
+                        localStorage.setItem("ai-matic:last-reset-day", today);
+                    }
+                }
+                catch {
+                    // ignore storage errors
+                }
+                return;
+            }
             if (lastResetDayRef.current !== today) {
                 lastResetDayRef.current = today;
+                try {
+                    if (typeof localStorage !== "undefined") {
+                        localStorage.setItem("ai-matic:last-reset-day", today);
+                    }
+                }
+                catch {
+                    // ignore storage errors
+                }
                 realizedPnlRef.current = 0;
                 manualPnlResetRef.current = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
                 setPortfolioState((prev) => {
@@ -783,12 +566,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 if (!res.ok)
                     return;
                 const json = await res.json();
-                const list = json?.data?.list ?? json?.list ?? [];
-                const first = list?.[0] ?? {};
-                const coins = Array.isArray(first.coin) ? first.coin : [];
+                const list = Array.isArray(json?.data?.list)
+                    ? json.data.list
+                    : Array.isArray(json?.list)
+                        ? json.list
+                        : [];
+                const first = list[0];
+                const coins = Array.isArray(first?.coin) ? first.coin : [];
                 const pickCoin = coins.find((c) => c.coin === "USDT") || coins.find((c) => c.coin === "USD");
                 const coinBalance = pickCoin ? Number(pickCoin.walletBalance ?? pickCoin.equity) : null;
-                const equity = Number(first.totalEquity) ||
+                const equity = Number(first?.totalEquity ?? 0) ||
                     coinBalance ||
                     Number(json?.data?.totalEquity) ||
                     null;
@@ -835,8 +622,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         realizedPnlRef.current = 0;
         manualPnlResetRef.current = Date.now();
         setPortfolioState((prev) => ({ ...prev, dailyPnl: 0 }));
-        clearPnlHistory();
-        setAssetPnlHistory({});
         closedPnlSeenRef.current = new Set();
     }, []);
     // Keep only top-2 highest-risk pending signals to focus on nejpravděpodobnější obchody
@@ -911,31 +696,28 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 data?.list /* legacy root */ ||
                 data?.result?.list /* legacy root bybit */ ||
                 [];
-            const mapped = Array.isArray(list)
-                ? list.map((o) => {
-                    const toIso = (ts) => {
-                        const n = Number(ts);
-                        return Number.isFinite(n) && n > 0
-                            ? new Date(n).toISOString()
-                            : new Date().toISOString();
-                    };
-                    return {
-                        orderId: o.orderId || o.orderLinkId || o.id || `${Date.now()}`,
-                        symbol: o.symbol || "",
-                        side: o.side || "Buy",
-                        qty: Number(o.qty ?? o.cumExecQty ?? 0),
-                        price: o.price != null ? Number(o.price) : o.avgPrice != null ? Number(o.avgPrice) : null,
-                        status: o.orderStatus || o.status || "unknown",
-                        createdTime: toIso(o.createdTime ?? o.created_at ?? Date.now()),
-                    };
-                })
-                : [];
+            const items = Array.isArray(list) ? list : [];
+            const toIso = (ts) => {
+                const n = Number(ts);
+                return Number.isFinite(n) && n > 0
+                    ? new Date(n).toISOString()
+                    : new Date().toISOString();
+            };
+            const mapped = items.map((o) => ({
+                orderId: String(o.orderId || o.orderLinkId || o.id || Date.now()),
+                symbol: o.symbol || "",
+                side: o.side === "Sell" ? "Sell" : "Buy",
+                qty: Number(o.qty ?? o.cumExecQty ?? 0),
+                price: o.price != null ? Number(o.price) : o.avgPrice != null ? Number(o.avgPrice) : null,
+                status: o.orderStatus || o.status || "unknown",
+                createdTime: toIso(o.createdTime ?? o.created_at ?? Date.now()),
+            }));
             // For now, we store everything in "testnetOrders" state variable which is actually just "orders"
             setTestnetOrders(mapped);
         }
         catch (err) {
             console.error(`[fetchOrders] Error:`, err);
-            setOrdersError(err?.message || "Failed to load orders");
+            setOrdersError(getErrorMessage(err) || "Failed to load orders");
         }
     }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase]);
     // Pozice/PnL přímo z Bybitu – přepíší simulované activePositions
@@ -983,21 +765,22 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 // 2. SYNC ORDERS
                 const mappedOrders = Array.isArray(orders)
                     ? orders.map((o) => ({
-                        orderId: o.orderId,
-                        symbol: o.symbol,
-                        side: o.side,
-                        qty: Number(o.qty),
-                        price: o.price ? Number(o.price) : null,
-                        status: o.orderStatus,
-                        createdTime: new Date(Number(o.createdTime)).toISOString(),
+                        orderId: String(o.orderId || o.orderLinkId || Date.now()),
+                        symbol: o.symbol || "",
+                        side: o.side === "Sell" ? "Sell" : "Buy",
+                        qty: Number(o.qty ?? 0),
+                        price: o.price != null ? Number(o.price) : null,
+                        status: o.orderStatus || o.status || "unknown",
+                        createdTime: new Date(Number(o.createdTime ?? Date.now())).toISOString(),
                     }))
                     : [];
                 setTestnetOrders(mappedOrders);
                 // 3. VISUAL INDICATORS
-                if (diffs && diffs.length > 0) {
+                const diffList = Array.isArray(diffs) ? diffs : [];
+                if (diffList.length > 0) {
                     const nowMs = Date.now();
                     const repairCooldownMs = 30_000;
-                    for (const d of diffs) {
+                    for (const d of diffList) {
                         const msg = String(d?.message || "");
                         const symbol = String(d?.symbol || "");
                         const isMissingSl = d?.field === "sl" || msg.toLowerCase().includes("stop loss");
@@ -1029,7 +812,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             }
                         }
                         if (d.severity === "HIGH") {
-                            addLog({ action: "ERROR", message: `[Reconcile] ${d.message} (${d.symbol})` });
+                            addLog({ action: "ERROR", message: `[Reconcile] ${String(d.message || "")} (${symbol})` });
                         }
                     }
                 }
@@ -1067,7 +850,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             : [];
                         // Filtruj striktně na dnešní den podle UTC, aby se do denního PnL nedostaly staré záznamy
                         const filtered = records.filter((rec) => rec.tsMs >= startTime && rec.tsMs <= endTime);
-                        const filteredRecords = filtered.map(({ tsMs, ...rest }) => rest);
+                        const filteredRecords = filtered.map((rec) => ({
+                            symbol: rec.symbol,
+                            pnl: rec.pnl,
+                            timestamp: rec.timestamp,
+                            note: rec.note,
+                        }));
                         setAssetPnlHistory((prev) => {
                             const next = { ...prev };
                             const seen = closedPnlSeenRef.current;
@@ -1105,8 +893,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     return;
                 console.error("Reconcile error:", err);
                 dataUnavailableRef.current = true;
-                setSystemState((prev) => ({ ...prev, bybitStatus: "Error", latency: 0, lastError: err?.message || "reconcile error" }));
-                logAuditEntry("ERROR", "MULTI", "DATA_FEED", [{ name: "API", result: "FAIL" }], "STOP", err?.message || "Reconcile API failed", {});
+                const message = getErrorMessage(err) || "reconcile error";
+                setSystemState((prev) => ({ ...prev, bybitStatus: "Error", latency: 0, lastError: message }));
+                logAuditEntry("ERROR", "MULTI", "DATA_FEED", [{ name: "API", result: "FAIL" }], "STOP", message, {});
             }
         };
         const intervalId = setInterval(fetchReconcile, useTestnet ? 5000 : 3000);
@@ -1136,27 +925,26 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const data = await res.json();
             const list = data?.data?.list || data?.list || data?.result?.list || [];
             const allowed = new Set(ALL_SYMBOLS);
-            const mapped = Array.isArray(list)
-                ? list
-                    .filter((t) => allowed.has(t.symbol))
-                    .map((t) => {
-                    const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
-                    return {
-                        id: t.execId || t.tradeId || `${Date.now()}`,
-                        symbol: t.symbol || "",
-                        side: t.side || "Buy",
-                        price: Number(t.execPrice ?? t.price ?? 0),
-                        qty: Number(t.execQty ?? t.qty ?? 0),
-                        value: Number(t.execValue ?? t.value ?? 0),
-                        fee: Number(t.execFee ?? t.fee ?? 0),
-                        time: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
-                    };
-                })
-                : [];
+            const items = Array.isArray(list) ? list : [];
+            const mapped = items
+                .filter((t) => allowed.has(t.symbol || ""))
+                .map((t) => {
+                const ts = Number(t.execTime ?? t.transactTime ?? t.createdTime ?? Date.now());
+                return {
+                    id: String(t.execId || t.tradeId || Date.now()),
+                    symbol: t.symbol || "",
+                    side: t.side === "Sell" ? "Sell" : "Buy",
+                    price: Number(t.execPrice ?? t.price ?? 0),
+                    qty: Number(t.execQty ?? t.qty ?? 0),
+                    value: Number(t.execValue ?? t.value ?? 0),
+                    fee: Number(t.execFee ?? t.fee ?? 0),
+                    time: Number.isFinite(ts) ? new Date(ts).toISOString() : new Date().toISOString(),
+                };
+            });
             setTestnetTrades(mapped);
         }
         catch (err) {
-            setOrdersError((prev) => prev || err?.message || "Failed to load trades");
+            setOrdersError((prev) => prev || getErrorMessage(err) || "Failed to load trades");
         }
     }, [authToken, useTestnet, apiBase, apiPrefix, envBase, inferredBase]);
     // Orders are now synced via reconcile loop above (server-side strict sync)
@@ -1168,8 +956,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         }, 5000);
         return () => clearInterval(id);
     }, [fetchTrades]);
-    // Keep refreshTestnetOrders pointing to fetchOrders for UI compatibility
-    const refreshTestnetOrders = fetchOrders;
     const setLifecycle = (tradeId, status, note) => {
         lifecycleRef.current.set(tradeId, status);
         addLog({
@@ -1205,7 +991,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         catch (err) {
             addLog({
                 action: "ERROR",
-                message: `Force close failed: ${err?.message || "unknown"}`,
+                message: `Force close failed: ${getErrorMessage(err) || "unknown"}`,
             });
         }
     }, [apiBase, authToken, useTestnet]);
@@ -1213,7 +999,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         if (!authToken)
             return { list: [] };
         const now = Date.now();
-        const cache = positionsCacheRef.current || { ts: 0, data: { list: [] } };
+        const cache = positionsCacheRef.current;
         if (now - cache.ts < 2000)
             return cache.data;
         const url = new URL(`${apiBase}${apiPrefix}/positions`);
@@ -1227,36 +1013,20 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             throw new Error(`Positions fetch failed (${res.status})`);
         const json = await res.json();
         const data = {
-            list: json?.data?.result?.list || json?.result?.list || json?.data?.list || [],
+            list: Array.isArray(json?.data?.result?.list || json?.result?.list || json?.data?.list)
+                ? (json.data?.result?.list || json?.result?.list || json?.data?.list)
+                : [],
             retCode: json?.data?.retCode ?? json?.retCode,
             retMsg: json?.data?.retMsg ?? json?.retMsg,
         };
         positionsCacheRef.current = { ts: now, data };
         return data;
     }, [apiBase, apiPrefix, authToken, queuedFetch]);
-    const fetchOrdersOnce = useCallback(async (net) => {
-        if (!authToken)
-            return { list: [] };
-        const url = new URL(`${apiBase}${apiPrefix}/orders`);
-        url.searchParams.set("net", net);
-        url.searchParams.set("settleCoin", "USDT");
-        url.searchParams.set("category", "linear");
-        const res = await queuedFetch(url.toString(), {
-            headers: { Authorization: `Bearer ${authToken}` },
-        }, "data");
-        if (!res.ok)
-            throw new Error(`Orders fetch failed (${res.status})`);
-        const data = await res.json();
-        const retCode = data?.data?.retCode ?? data?.retCode;
-        const retMsg = data?.data?.retMsg ?? data?.retMsg;
-        const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
-        return { list: Array.isArray(list) ? list : [], retCode, retMsg };
-    }, [apiBase, apiPrefix, authToken]);
     const fetchOrderHistoryOnce = useCallback(async (net) => {
         if (!authToken)
             return { list: [] };
         const now = Date.now();
-        const cache = orderHistoryCacheRef.current || { ts: 0, data: { list: [] } };
+        const cache = orderHistoryCacheRef.current;
         if (now - cache.ts < 2000)
             return cache.data;
         const url = new URL(`${apiBase}${apiPrefix}/orders`);
@@ -1273,7 +1043,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const retCode = data?.data?.retCode ?? data?.retCode;
         const retMsg = data?.data?.retMsg ?? data?.retMsg;
         const list = data?.data?.result?.list || data?.result?.list || data?.data?.list || [];
-        const parsed = { list: Array.isArray(list) ? list : [], retCode, retMsg };
+        const parsed = {
+            list: Array.isArray(list) ? list : [],
+            retCode,
+            retMsg,
+        };
         orderHistoryCacheRef.current = { ts: now, data: parsed };
         return parsed;
     }, [apiBase, apiPrefix, authToken]);
@@ -1301,9 +1075,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const waitForFill = useCallback(async (tradeId, symbol, orderId, orderLinkId, maxWaitMs = 90000) => {
         const net = useTestnet ? "testnet" : "mainnet";
         const started = Date.now();
-        let attempt = 0;
         while (Date.now() - started < maxWaitMs) {
-            attempt += 1;
             // 1) In-memory executions seen by polling loop
             try {
                 const execHit = executionEventsRef.current.find((e) => {
@@ -1318,7 +1090,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 if (execHit)
                     return execHit;
             }
-            catch (e) {
+            catch {
                 /* ignore */
             }
             // 2) Fresh executions snapshot
@@ -1342,8 +1114,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 if (execSnapshot)
                     return execSnapshot;
             }
-            catch (e) {
-                addLog({ action: "ERROR", message: `waitForFill check 'executions' failed: ${e.message}` });
+            catch (err) {
+                addLog({ action: "ERROR", message: `waitForFill check 'executions' failed: ${getErrorMessage(err)}` });
             }
             // 3) Order history snapshot
             try {
@@ -1373,8 +1145,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         throw new Error("Order Cancelled");
                 }
             }
-            catch (e) {
-                addLog({ action: "ERROR", message: `waitForFill check 'history' failed: ${e.message}` });
+            catch (err) {
+                addLog({ action: "ERROR", message: `waitForFill check 'history' failed: ${getErrorMessage(err)}` });
             }
             // 4) Positions snapshot (with retCode log)
             try {
@@ -1389,8 +1161,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 if (found)
                     return found;
             }
-            catch (e) {
-                addLog({ action: "ERROR", message: `waitForFill check 'positions' failed: ${e.message}` });
+            catch (err) {
+                addLog({ action: "ERROR", message: `waitForFill check 'positions' failed: ${getErrorMessage(err)}` });
             }
             await sleep(jitter(750, 1500));
         }
@@ -1412,11 +1184,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return pos || null;
             }
             catch (err) {
-                addLog({ action: "ERROR", message: `Protection precheck failed: ${err?.message || "unknown"}` });
+                addLog({ action: "ERROR", message: `Protection precheck failed: ${getErrorMessage(err) || "unknown"}` });
                 return null;
             }
         };
-        let safeSl = sl;
+        const safeSl = sl;
         let safeTp = tp;
         for (let attempt = 1; attempt <= 3; attempt++) {
             const foundPos = await findOpenPos();
@@ -1483,7 +1255,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 }
             }
             catch (err) {
-                addLog({ action: "ERROR", message: `Protection verify failed: ${err?.message || "unknown"}` });
+                addLog({ action: "ERROR", message: `Protection verify failed: ${getErrorMessage(err) || "unknown"}` });
             }
             await new Promise((r) => setTimeout(r, 800));
         }
@@ -1523,7 +1295,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 // SL/TP missing -> heal protection
                 const missingSl = p.sl == null || p.sl === 0;
                 const missingTp = p.tp == null || p.tp === 0;
-                const missingTrailing = p.currentTrailingStop == null || p.currentTrailingStop === 0;
                 if ((missingSl || missingTp) && p.size > 0) {
                     const candles = priceHistoryRef.current[p.symbol];
                     let atr = 0;
@@ -1598,7 +1369,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             clearInterval(id);
         };
     }, [authToken, commitProtection, forceClosePosition]);
-    const [aiModelState, _setAiModelState] = useState({
+    const [aiModelState] = useState({
         version: "1.0.0-real-strategy",
         lastRetrain: new Date(Date.now() - 7 * 24 * 3600 * 1000)
             .toISOString()
@@ -1621,12 +1392,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const scalpForceSafeUntilRef = useRef(0);
     const scalpSafeRef = useRef(false);
     const scalpGlobalCooldownUntilRef = useRef(0);
-    // ========== AI-MATIC-SCALP (SMC/AMD) runtime refs ==========
-    const smcStateRef = useRef({});
-    const smcBusyRef = useRef(false);
-    const smcRotationIdxRef = useRef(0);
-    const smcGlobalCooldownUntilRef = useRef(0);
-    const smcLastTrailUpdateAtRef = useRef({});
     const modeRef = useRef(mode);
     modeRef.current = mode;
     const settingsRef = useRef(settings);
@@ -1636,10 +1401,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const walletEquityRef = useRef(walletEquity);
     walletEquityRef.current = walletEquity;
     const realizedPnlRef = useRef(0);
-    const lastResetDayRef = useRef(null);
+    const initialResetDay = (() => {
+        try {
+            return typeof localStorage === "undefined" ? null : localStorage.getItem("ai-matic:last-reset-day");
+        }
+        catch {
+            return null;
+        }
+    })();
+    const lastResetDayRef = useRef(initialResetDay);
     const lifecycleRef = useRef(new Map());
-    const lastTestSignalAtRef = useRef(null);
-    const lastKeepaliveAtRef = useRef(null);
     const dataUnavailableRef = useRef(false);
     const winStreakRef = useRef(0);
     const lossStreakRef = useRef(0);
@@ -1671,11 +1442,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             message: `[${state}] ${decision} ${symbol} ${reason} | gates ${gateMsg} | prices e:${prices.entry?.toFixed?.(4) ?? "-"} sl:${prices.sl?.toFixed?.(4) ?? "-"} tp:${prices.tp?.toFixed?.(4) ?? "-"} | size ${sizing?.notional?.toFixed?.(2) ?? "-"} lev ${sizing?.leverage?.toFixed?.(2) ?? "-"} | netRRR ${netRrr != null ? netRrr.toFixed(2) : "-"}`,
         });
     }
-    const shouldAllowMarketEntry = (spreadPct, depthOk, momentumOk) => {
-        if (spreadPct <= 0.0005 && depthOk && momentumOk)
-            return true; // 0.05 %
-        return false;
-    };
     const registerOutcome = (pnl) => {
         const win = pnl > 0;
         if (win) {
@@ -1688,127 +1454,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         }
         rollingOutcomesRef.current = [...rollingOutcomesRef.current.slice(-9), win];
     };
-    const getVolatilityMultiplier = (symbol) => {
-        const hist = priceHistoryRef.current[symbol] || [];
-        if (!hist.length)
-            return 1;
-        const { atrShort, atrLong } = computeAtrPair(hist);
-        if (!atrShort || !atrLong)
-            return 1;
-        const ratio = atrLong / Math.max(atrShort, 1e-8);
-        return Math.min(4, Math.max(0.5, ratio * 0.8));
-    };
-    function buildDirectionalCandidate(symbol, candles) {
-        if (!candles || candles.length < 50)
-            return null; // Need enough for 50 EMA and Chandelier
-        const price = candles[candles.length - 1]?.close;
-        if (!Number.isFinite(price) || price <= 0)
-            return null;
-        const emaSlow = computeEma(candles, 50);
-        let side = null;
-        const lastCandle = candles[candles.length - 1];
-        const prevCandle = candles[candles.length - 2];
-        // Long condition: price above 50 EMA, with two consecutive red candles for a pullback
-        if (price > emaSlow &&
-            lastCandle.close < lastCandle.open &&
-            prevCandle.close < prevCandle.open) {
-            side = "buy";
-        }
-        // Short condition: price below 50 EMA, with two consecutive green candles for a pullback
-        if (price < emaSlow &&
-            lastCandle.close > lastCandle.open &&
-            prevCandle.close > prevCandle.open) {
-            side = "sell";
-        }
-        if (!side)
-            return null;
-        // Invalidation: breakout candle size is significantly larger than the average.
-        // I will check the candle before the two pullback candles.
-        const breakoutCandle = candles[candles.length - 3];
-        if (breakoutCandle) {
-            const avgCandleSize = computeAtrFromHistory(candles.slice(-20, -3), 17); // ATR of 17 candles before the pullback
-            if (avgCandleSize > 0) {
-                const breakoutCandleSize = Math.abs(breakoutCandle.high - breakoutCandle.low);
-                if (breakoutCandleSize > avgCandleSize * 3) { // 3x larger is "significant"
-                    return null; // Invalidate trade
-                }
-            }
-        }
-        const sl = calculateChandelierStop(candles, side, 22, 3);
-        if (sl === 0)
-            return null; // Not enough data
-        // Invalidation: pullback breaks below the EMA
-        if (side === 'buy' && Math.min(lastCandle.low, prevCandle.low) < emaSlow) {
-            return null;
-        }
-        // Invalidation: pullback breaks above the EMA
-        if (side === 'sell' && Math.max(lastCandle.high, prevCandle.high) > emaSlow) {
-            return null;
-        }
-        const slDistance = Math.abs(price - sl);
-        if (slDistance < price * STOP_MIN_PCT)
-            return null; // Stop too tight
-        const tpDistance = slDistance * 1.5; // Targeting 1.5R profit
-        const tp = side === "buy" ? price + tpDistance : price - tpDistance;
-        const { atrShort } = computeAtrPair(candles);
-        const atrPct = atrShort > 0 ? atrShort / price : 0;
-        const volScore = scoreVol(atrPct);
-        const score = volScore; // Simplified score for now
-        const risk = Math.min(0.95, Math.max(0.5, netRrrWithFees(price, sl, tp, TAKER_FEE) / 2));
-        const reason = `${symbol} ${side.toUpperCase()} | 50 EMA + 2-bar pullback | Chandelier SL`;
-        const signal = {
-            id: `${symbol}-ema50-pullback-${Date.now()}`,
-            symbol,
-            profile: "intraday",
-            kind: "PULLBACK",
-            risk,
-            createdAt: new Date().toISOString(),
-            intent: {
-                side,
-                entry: price,
-                sl,
-                tp,
-                symbol,
-                qty: 0,
-            },
-            message: reason,
-        };
-        return { signal, score, reason };
-    }
-    function buildBotEngineCandidate(symbol, candles) {
-        // Leverage původní TradingBot engine (ATR/ADX trend + state machine)
-        // Používáme default config, lze doplnit overrides podle UI settings.
-        const decision = evaluateStrategyForSymbol(symbol, candles, {});
-        const sig = decision?.signal;
-        if (!sig || !sig.intent)
-            return null;
-        const entry = Number(sig.intent.entry);
-        const sl = Number(sig.intent.sl);
-        const tp = Number(sig.intent.tp);
-        if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(tp))
-            return null;
-        const net = netRrrWithFees(entry, sl, tp, TAKER_FEE);
-        if (net < 1)
-            return null;
-        const pending = {
-            id: `${symbol}-be-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
-            symbol,
-            profile: "trend",
-            kind: "OTHER",
-            risk: Math.min(0.95, Math.max(0.5, net / 2)),
-            createdAt: new Date().toISOString(),
-            intent: {
-                side: sig.intent.side || (sig.intent.side === "buy" ? "buy" : "sell"),
-                entry,
-                sl,
-                tp,
-                symbol,
-                qty: 0,
-            },
-            message: `BOT_ENGINE ${symbol} netRRR ${net.toFixed(2)}`,
-        };
-        return { signal: pending, score: net, reason: pending.message };
-    }
     // ========== DETERMINISTIC SCALP (Profile 1) ==========
     useEffect(() => {
         if (mode === TradingMode.OFF) {
@@ -1879,7 +1524,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             return nowMs - bbo.ts > staleMs;
         };
         const isCancelSafeError = (err) => {
-            const msg = String(err?.message || "").toLowerCase();
+            const msg = getErrorMessage(err).toLowerCase();
             return msg.includes("order not exists") || msg.includes("too late");
         };
         const ensureSymbolState = (symbol) => {
@@ -2133,7 +1778,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
                     st.pending = undefined;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    addLog({ action: "ERROR", message: `PLACE_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                    addLog({ action: "ERROR", message: `PLACE_FAILED ${p.symbol} ${getErrorMessage(err) || "unknown"}` });
                     return true; // no retry
                 }
                 p.stage = "PLACED";
@@ -2252,7 +1897,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             }
                             catch (err) {
                                 if (!isCancelSafeError(err)) {
-                                    addLog({ action: "ERROR", message: `CANCEL_RESEND_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                                    addLog({ action: "ERROR", message: `CANCEL_RESEND_FAILED ${p.symbol} ${getErrorMessage(err) || "unknown"}` });
                                 }
                             }
                         }
@@ -2301,7 +1946,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             return true;
                         }
                     }
-                    const lastPx = currentPricesRef.current[p.symbol] || pos?.entryPrice || p.limitPrice || 0;
+                    const lastPxRaw = currentPricesRef.current[p.symbol] || pos?.entryPrice || p.limitPrice || 0;
+                    const lastPx = Number(lastPxRaw);
                     const tick = st.instrument?.tickSize ?? Math.max((lastPx || 1) * 0.0001, 0.1);
                     const isBuy = String(pos?.side ?? p.side ?? "").toLowerCase() === "buy";
                     let safeSl = p.sl;
@@ -2315,7 +1961,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     p.sl = safeSl;
                     p.slSetAttempts = attempts + 1;
                 }
-                catch (err) {
+                catch {
                     p.slSetAttempts = attempts + 1;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
@@ -2373,7 +2019,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     await setProtection(p.symbol, undefined, p.tp);
                 }
                 catch (err) {
-                    addLog({ action: "ERROR", message: `TP_SET_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                    addLog({ action: "ERROR", message: `TP_SET_FAILED ${p.symbol} ${getErrorMessage(err) || "unknown"}` });
                     p.tpVerifyAt = now + CFG.postTpVerifyDelayMs;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
@@ -2414,7 +2060,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     await placeReduceOnlyMarket(p.symbol, exitSide, closeQty);
                 }
                 catch (err) {
-                    addLog({ action: "ERROR", message: `PARTIAL_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                    addLog({ action: "ERROR", message: `PARTIAL_FAILED ${p.symbol} ${getErrorMessage(err) || "unknown"}` });
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
                 }
@@ -2450,14 +2096,14 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     await setProtection(p.symbol, newSl, undefined);
                 }
                 catch (err) {
-                    const msg = String(err?.message || "").toLowerCase();
+                    const msg = getErrorMessage(err).toLowerCase();
                     if (msg.includes("not modified") || msg.includes("no change")) {
                         st.pending = undefined;
                         st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                         addLog({ action: "SYSTEM", message: `TRAIL_NOOP ${p.symbol} sl=${newSl}` });
                         return true;
                     }
-                    addLog({ action: "ERROR", message: `TRAIL_FAILED ${p.symbol} ${err?.message || "unknown"}` });
+                    addLog({ action: "ERROR", message: `TRAIL_FAILED ${p.symbol} ${getErrorMessage(err) || "unknown"}` });
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
                 }
@@ -2487,9 +2133,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     message: `TIMING ${kind} ${symbol} delay=${ts - plannedAt}ms reason=${reason || "-"}`,
                 });
             };
-            const activeStats = getActiveSymbolStats();
-            const maxedPortfolio = hasMaxedPositions(activeStats);
-            // Global active-symbol lock: only lock while a pending entry/exit is in progress.
+            // Global active-symbol lock: only lock while pending entry/exit is in progress.
             const engaged = Boolean(st.pending);
             const locked = scalpActiveSymbolRef.current;
             if (locked && locked !== symbol) {
@@ -2506,6 +2150,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (now < st.nextAllowedAt)
                 return false;
             const paused = now < st.pausedUntil;
+            const activeStats = getActiveSymbolStats();
+            const maxedPortfolio = hasMaxedPositions(activeStats);
             if (st.pending) {
                 const allowManage = paused ? st.pending.stage !== "READY_TO_PLACE" : true;
                 const allowSafe = scalpSafeRef.current ? st.pending.stage !== "READY_TO_PLACE" : true;
@@ -2665,7 +2311,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 setSystemState((p) => ({ ...p, bybitStatus: "Connected", lastError: null }));
                 st.ltf = {
                     barOpenTime: expected1,
-                    candles: candles,
+                    candles,
                     stDir,
                     prevStDir,
                     stLine,
@@ -2673,7 +2319,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     atr14,
                     smaVol20: volSma20,
                     rvol,
-                    last: last,
+                    last,
                 };
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
@@ -3133,11 +2779,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 await processSymbol(target, tickStarted);
             }
             catch (err) {
+                const message = getErrorMessage(err) || "scalp tick error";
                 setSystemState((p) => ({
                     ...p,
                     bybitStatus: "Error",
-                    lastError: err?.message || "scalp tick error",
-                    recentErrors: [err?.message || "scalp tick error", ...p.recentErrors].slice(0, 10),
+                    lastError: message,
+                    recentErrors: [message, ...p.recentErrors].slice(0, 10),
                 }));
             }
             finally {
@@ -3152,1043 +2799,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         };
     }, [mode, settings.riskMode, useTestnet, httpBase, authToken, apiBase, apiPrefix, queuedFetch, fetchOrderHistoryOnce, fetchPositionsOnce, forceClosePosition]);
     // ========== AI-MATIC-SCALP (SMC/AMD) ==========
-    useEffect(() => {
-        if (mode === TradingMode.OFF)
-            return;
-        if (settings.riskMode !== "ai-matic-scalp")
-            return;
-        let cancel = false;
-        const CFG = {
-            tickMs: 650,
-            symbolFetchGapMs: 450,
-            orderStatusDelayMs: 600,
-            postFillDelayMs: 250,
-            postSlVerifyDelayMs: 400,
-            maxDataAgeMs: 2500,
-            maxSpreadPct: 0.0012,
-            // Sessions (Europe/Prague)
-            asiaStartH: 2,
-            asiaEndH: 6,
-            londonKillStartH: 8,
-            londonKillEndH: 11,
-            nyKillStartH: 14,
-            nyKillEndH: 17,
-            // Asia/AMD thresholds
-            asiaRangePctThreshold: 0.36,
-            sweepMinPct: 0.045,
-            sweepMaxPct: 0.18,
-            // Entry
-            entryTfPrimary: "1",
-            entryTfFallback: "5",
-            chochDeadlineMinPrimary: 10,
-            m1NoiseSwitchMin: 15,
-            fvgSizePctLarge: 0.07,
-            entryTimeoutM1Bars: 15,
-            entryTimeoutM5Bars: 12,
-            // SL/ATR buffers
-            atrPeriod: 14,
-            slBufferStdK: 1.0,
-            // Risk & margin caps
-            riskPerTradePct: 0.01,
-            minRiskUsdt: 10,
-            riskCapUsdt: 200,
-            maxMarginPerPosUsdt: 5,
-            marginSafety: 0.95,
-            maxOpenPositions: 2,
-            globalEntryCooldownMs: 300_000,
-            // TP1 + runner
-            tp1R: 1.0,
-            splitTp1Frac: 0.5,
-            // Trailing stop (client-side via SL updates)
-            trailUpdateMs: 60_000,
-            trailPhase1Ms: 15 * 60_000,
-            trailPhase2Ms: 60 * 60_000,
-            trailMultPhase1: 1.5,
-            trailMultPhase2: 3.0,
-            trailMinImproveTicks: 2,
-            // Daily stop
-            dailyLossPct: 0.03,
-        };
-        const net = useTestnet ? "testnet" : "mainnet";
-        const canPlaceOrders = mode === TradingMode.AUTO_ON && Boolean(authToken);
-        const LEVERAGE_SMC = {
-            BTCUSDT: 100,
-            ETHUSDT: 100,
-            SOLUSDT: 100,
-            XRPUSDT: 100,
-            ADAUSDT: 75,
-            HBARUSDT: 75,
-            NEARUSDT: 75,
-            AVAXUSDT: 75,
-        };
-        const SLIPPAGE_PCT = {
-            BTCUSDT: 0.0002,
-            ETHUSDT: 0.0002,
-            SOLUSDT: 0.0005,
-            XRPUSDT: 0.0005,
-            ADAUSDT: 0.0005,
-            HBARUSDT: 0.0015,
-            NEARUSDT: 0.0015,
-            AVAXUSDT: 0.0015,
-        };
-        const MAKER_FEE = 0.0002;
-        const TAKER_FEE_SMC = 0.00055; // worst-case (round-turn uses taker)
-        const MAX_STRATEGY_QTY = {
-            BTCUSDT: 0.005,
-            ETHUSDT: 0.15,
-            SOLUSDT: 3.5,
-            XRPUSDT: 185,
-            ADAUSDT: 858,
-            HBARUSDT: 3190,
-            NEARUSDT: 155,
-            AVAXUSDT: 20,
-        };
-        const tzParts = (d, timeZone) => {
-            const fmt = new Intl.DateTimeFormat("en-GB", {
-                timeZone,
-                year: "numeric",
-                month: "2-digit",
-                day: "2-digit",
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-                hour12: false,
-            });
-            const parts = fmt.formatToParts(d);
-            const get = (t) => Number(parts.find((p) => p.type === t)?.value ?? 0);
-            const year = get("year");
-            const month = get("month");
-            const day = get("day");
-            const hour = get("hour");
-            const minute = get("minute");
-            const second = get("second");
-            const dayKey = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-            return { year, month, day, hour, minute, second, dayKey };
-        };
-        const inWindow = (h, m, startH, startM, endH, endM) => {
-            const t = h * 60 + m;
-            const a = startH * 60 + startM;
-            const b = endH * 60 + endM;
-            return t >= a && t < b;
-        };
-        const floorToStep = (x, step) => {
-            if (!Number.isFinite(x) || !Number.isFinite(step) || step <= 0)
-                return 0;
-            const k = Math.round(1 / step);
-            return Math.floor(x * k) / k;
-        };
-        const ceilToStep = (x, step) => {
-            if (!Number.isFinite(x) || !Number.isFinite(step) || step <= 0)
-                return 0;
-            const k = Math.round(1 / step);
-            return Math.ceil(x * k) / k;
-        };
-        const spreadPct = (bid, ask) => {
-            const mid = (bid + ask) / 2;
-            if (!Number.isFinite(mid) || mid <= 0)
-                return Infinity;
-            return (ask - bid) / mid;
-        };
-        const equityNow = () => {
-            const v = Number(walletEquityRef.current ?? portfolioStateRef.current.totalCapital ?? 0);
-            return Number.isFinite(v) && v > 0 ? v : ACCOUNT_BALANCE_USD;
-        };
-        const riskBudget = () => {
-            const raw = equityNow() * CFG.riskPerTradePct;
-            return Math.max(CFG.minRiskUsdt, Math.min(raw, CFG.riskCapUsdt));
-        };
-        const leverageForSmc = (symbol) => LEVERAGE_SMC[symbol] ?? 50;
-        const slipFor = (symbol) => SLIPPAGE_PCT[symbol] ?? 0.001;
-        const maxStrategyQtyFor = (symbol) => MAX_STRATEGY_QTY[symbol] ?? Number.POSITIVE_INFINITY;
-        const expectedOpenTime = (nowMs, tfMs, delayMs) => Math.floor((nowMs - delayMs) / tfMs) * tfMs;
-        const fetchInstrument = async (symbol) => {
-            const url = `${httpBase}/v5/market/instruments-info?category=linear&symbol=${symbol}`;
-            const res = await queuedFetch(url, undefined, "data");
-            const json = await res.json();
-            if (json.retCode !== 0)
-                throw new Error(json.retMsg);
-            const item = json?.result?.list?.[0];
-            if (!item)
-                throw new Error(`Instrument not found for ${symbol}`);
-            return {
-                tickSize: Number(item.priceFilter?.tickSize ?? 0),
-                stepSize: Number(item.lotSizeFilter?.qtyStep ?? 0),
-                minQty: Number(item.lotSizeFilter?.minOrderQty ?? 0),
-                minNotional: Number(item.lotSizeFilter?.minNotionalValue ?? 0),
-                maxQty: Number(item.lotSizeFilter?.maxOrderQty ?? Number.POSITIVE_INFINITY),
-                contractValue: Number(item.contractSize ?? 1),
-            };
-        };
-        const fetchBbo = async (symbol) => {
-            const url = `${httpBase}/v5/market/tickers?category=linear&symbol=${symbol}`;
-            const res = await queuedFetch(url, undefined, "data");
-            const json = await res.json();
-            if (json.retCode !== 0)
-                throw new Error(json.retMsg);
-            const item = json?.result?.list?.[0];
-            const bid = Number(item?.bid1Price ?? 0);
-            const ask = Number(item?.ask1Price ?? 0);
-            if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0) {
-                throw new Error(`Invalid BBO for ${symbol}`);
-            }
-            return { bid, ask, ts: Date.now() };
-        };
-        const fetchKlines = async (symbol, interval, limit) => {
-            const url = `${httpBase}/v5/market/kline?category=linear&symbol=${symbol}&interval=${interval}&limit=${limit}`;
-            const res = await queuedFetch(url, undefined, "data");
-            const json = await res.json();
-            if (json.retCode !== 0)
-                throw new Error(json.retMsg);
-            return parseKlines(json.result?.list ?? []);
-        };
-        const cancelOrderByLinkId = async (symbol, orderLinkId) => {
-            if (!authToken)
-                return;
-            const res = await queuedFetch(`${apiBase}${apiPrefix}/cancel?net=${net}`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${authToken}`,
-                },
-                body: JSON.stringify({ symbol, orderLinkId }),
-            }, "order");
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok || body?.ok === false) {
-                throw new Error(body?.error || `Cancel failed (${res.status})`);
-            }
-            const rc = body?.data?.retCode ?? body?.retCode;
-            if (rc && rc !== 0)
-                throw new Error(body?.data?.retMsg || body?.retMsg || "Cancel rejected");
-            return body;
-        };
-        const placeLimit = async (symbol, side, qty, price, orderLinkId, reduceOnly = false, tif = "PostOnly") => {
-            if (!authToken)
-                throw new Error("Missing auth token for live trading");
-            const res = await queuedFetch(`${apiBase}${apiPrefix}/order?net=${net}`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${authToken}`,
-                },
-                body: JSON.stringify({
-                    symbol,
-                    side,
-                    qty,
-                    orderType: "Limit",
-                    price,
-                    timeInForce: tif,
-                    reduceOnly,
-                    orderLinkId,
-                    leverage: leverageForSmc(symbol),
-                }),
-            }, "order");
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok || body?.ok === false) {
-                throw new Error(body?.error || `Order failed (${res.status})`);
-            }
-            const rc = body?.data?.retCode ?? body?.retCode;
-            if (rc && rc !== 0)
-                throw new Error(body?.data?.retMsg || body?.retMsg || "Order rejected");
-            return body;
-        };
-        const placeReduceOnlyMarket = async (symbol, side, qty, orderLinkId) => {
-            if (!authToken)
-                return null;
-            const res = await queuedFetch(`${apiBase}${apiPrefix}/order?net=${net}`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${authToken}`,
-                },
-                body: JSON.stringify({
-                    symbol,
-                    side,
-                    qty,
-                    orderType: "Market",
-                    timeInForce: "IOC",
-                    reduceOnly: true,
-                    orderLinkId,
-                }),
-            }, "order");
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok || body?.ok === false) {
-                throw new Error(body?.error || `Market close failed (${res.status})`);
-            }
-            const rc = body?.data?.retCode ?? body?.retCode;
-            if (rc && rc !== 0)
-                throw new Error(body?.data?.retMsg || body?.retMsg || "Market close rejected");
-            return body;
-        };
-        const setProtection = async (symbol, sl, tp) => {
-            if (!authToken)
-                return null;
-            const res = await queuedFetch(`${apiBase}${apiPrefix}/protection?net=${net}`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${authToken}`,
-                },
-                body: JSON.stringify({ symbol, sl, tp, positionIdx: 0, slTriggerBy: "LastPrice", tpTriggerBy: "LastPrice" }),
-            }, "order");
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok || body?.ok === false) {
-                throw new Error(body?.error || `Protection failed (${res.status})`);
-            }
-            const rc = body?.data?.retCode ?? body?.retCode;
-            if (rc && rc !== 0)
-                throw new Error(body?.data?.retMsg || body?.retMsg || "Protection rejected");
-            return body;
-        };
-        const panicClose = async (reason) => {
-            if (!authToken)
-                return;
-            addLog({ action: "RISK_HALT", message: `AI-MATIC-SCALP PANIC: ${reason}` });
-            // Cancel known open orders for our symbols
-            try {
-                const ord = await fetchOrdersOnce(net);
-                const list = ord.list || [];
-                for (const o of list) {
-                    if (!SMC_SYMBOLS.includes(String(o.symbol)))
-                        continue;
-                    const orderId = o.orderId || o.orderID;
-                    const orderLinkId = o.orderLinkId || o.orderLinkID;
-                    try {
-                        await queuedFetch(`${apiBase}${apiPrefix}/cancel?net=${net}`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
-                            body: JSON.stringify({ symbol: o.symbol, orderId, orderLinkId }),
-                        }, "order");
-                    }
-                    catch {
-                        // ignore best-effort cancels
-                    }
-                }
-            }
-            catch {
-                // ignore
-            }
-            // Close positions for our symbols
-            try {
-                const pos = await fetchPositionsOnce(net);
-                for (const p of pos.list || []) {
-                    const sym = String(p.symbol || "");
-                    if (!SMC_SYMBOLS.includes(sym))
-                        continue;
-                    const size = Math.abs(Number(p.size ?? 0));
-                    if (!Number.isFinite(size) || size <= 0)
-                        continue;
-                    const side = String(p.side || "").toLowerCase() === "buy" ? "Sell" : "Buy";
-                    try {
-                        await placeReduceOnlyMarket(sym, side, size, `AMSCALP:PANIC:${Date.now()}`);
-                    }
-                    catch {
-                        // ignore, best effort
-                    }
-                }
-            }
-            catch {
-                // ignore
-            }
-        };
-        const ensureState = (symbol) => {
-            const map = smcStateRef.current;
-            if (!map[symbol]) {
-                map[symbol] = {
-                    symbol,
-                    nextAllowedAt: 0,
-                    cooldownUntil: 0,
-                };
-            }
-            return map[symbol];
-        };
-        SMC_SYMBOLS.forEach(ensureState);
-        const computeAsiaBox = (m15, now) => {
-            const tz = "Europe/Prague";
-            const { dayKey: dayKeyNow } = tzParts(now, tz);
-            const inAsia = (ts) => {
-                const p = tzParts(new Date(ts), tz);
-                if (p.dayKey !== dayKeyNow)
-                    return false;
-                return inWindow(p.hour, p.minute, CFG.asiaStartH, 0, CFG.asiaEndH, 0);
-            };
-            let hi = -Infinity;
-            let lo = Infinity;
-            for (const c of m15) {
-                if (!inAsia(c.openTime))
-                    continue;
-                hi = Math.max(hi, c.high);
-                lo = Math.min(lo, c.low);
-            }
-            if (!Number.isFinite(hi) || !Number.isFinite(lo) || lo <= 0 || hi <= 0 || hi <= lo)
-                return null;
-            const rangePct = ((hi - lo) / lo) * 100;
-            return { dayKey: dayKeyNow, high: hi, low: lo, rangePct };
-        };
-        const detectSweep = (m15Last, asia) => {
-            const sweepHigh = m15Last.high > asia.high;
-            const sweepLow = m15Last.low < asia.low;
-            if (!sweepHigh && !sweepLow)
-                return null;
-            if (sweepHigh) {
-                const pct = ((m15Last.high - asia.high) / asia.high) * 100;
-                if (pct < CFG.sweepMinPct || pct > CFG.sweepMaxPct)
-                    return null;
-                const closeBackIn = m15Last.close < asia.high;
-                if (!closeBackIn)
-                    return null;
-                return { dir: "SHORT", pct };
-            }
-            const pct = ((asia.low - m15Last.low) / asia.low) * 100;
-            if (pct < CFG.sweepMinPct || pct > CFG.sweepMaxPct)
-                return null;
-            const closeBackIn = m15Last.close > asia.low;
-            if (!closeBackIn)
-                return null;
-            return { dir: "LONG", pct };
-        };
-        const findImmediateFvg = (candles, side) => {
-            if (candles.length < 3)
-                return null;
-            const c1 = candles[candles.length - 3];
-            const c3 = candles[candles.length - 1];
-            if (side === "LONG") {
-                if (c1.high >= c3.low)
-                    return null;
-                const proximal = c3.low;
-                const distal = c1.high;
-                return { proximal, distal, size: proximal - distal };
-            }
-            if (c1.low <= c3.high)
-                return null;
-            const proximal = c3.high;
-            const distal = c1.low;
-            return { proximal, distal, size: distal - proximal };
-        };
-        const buildEntryFromFvg = (symbol, side, entryTf, ltfCandles, instrument, currentSize) => {
-            const last = ltfCandles[ltfCandles.length - 1];
-            const price = last?.close ?? 0;
-            if (!Number.isFinite(price) || price <= 0)
-                return null;
-            const pivotLow = findLastPivotLow(ltfCandles, 3, 3);
-            const pivotHigh = findLastPivotHigh(ltfCandles, 3, 3);
-            const pivotLowPrice = pivotLow?.price;
-            const pivotHighPrice = pivotHigh?.price;
-            // Minimal CHoCH gate (deterministic): last close must break last confirmed pivot against the sweep direction.
-            if (side === "LONG") {
-                if (pivotHighPrice == null || last.close <= pivotHighPrice + instrument.tickSize)
-                    return null;
-            }
-            else {
-                if (pivotLowPrice == null || last.close >= pivotLowPrice - instrument.tickSize)
-                    return null;
-            }
-            const fvg = findImmediateFvg(ltfCandles.slice(-3), side);
-            if (!fvg)
-                return null;
-            const fvgSizePct = (Math.abs(fvg.size) / Math.max(price, 1e-8)) * 100;
-            let entryRaw = fvg.proximal;
-            if (fvgSizePct > CFG.fvgSizePctLarge) {
-                entryRaw = (fvg.proximal + fvg.distal) / 2;
-            }
-            // SL from swing on same TF, buffered by ATR
-            const atr = scalpComputeAtr(ltfCandles, CFG.atrPeriod).slice(-1)[0] ?? 0;
-            const buffer = Math.max(instrument.tickSize, CFG.slBufferStdK * Math.max(0, atr));
-            let slRaw = side === "LONG"
-                ? (pivotLowPrice != null ? pivotLowPrice - buffer : entryRaw - buffer)
-                : (pivotHighPrice != null ? pivotHighPrice + buffer : entryRaw + buffer);
-            // Directional rounding (entry post-only maker; SL conservative)
-            const entry = side === "LONG" ? floorToStep(entryRaw, instrument.tickSize) : ceilToStep(entryRaw, instrument.tickSize);
-            const sl = side === "LONG" ? floorToStep(slRaw, instrument.tickSize) : ceilToStep(slRaw, instrument.tickSize);
-            if (!Number.isFinite(entry) || !Number.isFinite(sl) || entry <= 0)
-                return null;
-            if (side === "LONG" && sl >= entry)
-                return null;
-            if (side === "SHORT" && sl <= entry)
-                return null;
-            // Risk sizing (worst-case fees+slip on entry and SL)
-            const fees = TAKER_FEE_SMC;
-            const slip = slipFor(symbol);
-            const lUnit = Math.abs(entry - sl) + (entry + sl) * fees + (entry + sl) * slip;
-            if (!Number.isFinite(lUnit) || lUnit <= 0)
-                return null;
-            const qtyRiskRaw = riskBudget() / lUnit;
-            const qtyCapRaw = (CFG.maxMarginPerPosUsdt * leverageForSmc(symbol) * CFG.marginSafety) / entry;
-            const maxQty = maxStrategyQtyFor(symbol);
-            const remainingQty = Number.isFinite(maxQty) ? Math.max(0, maxQty - Math.abs(currentSize || 0)) : Number.POSITIVE_INFINITY;
-            if (Number.isFinite(maxQty) && remainingQty <= 0)
-                return null;
-            const qtyRaw = Math.min(qtyRiskRaw, qtyCapRaw, remainingQty);
-            const qty = floorToStep(qtyRaw, instrument.stepSize);
-            const minNotional = instrument.minNotional > 0 ? instrument.minNotional : 5;
-            if (qty < instrument.minQty)
-                return null;
-            if (qty > instrument.maxQty)
-                return null;
-            if (qty * entry < minNotional)
-                return null;
-            const sideBybit = side === "LONG" ? "Buy" : "Sell";
-            const r = Math.abs(entry - sl);
-            const tp1Raw = side === "LONG" ? entry + CFG.tp1R * r : entry - CFG.tp1R * r;
-            const tp1 = side === "LONG" ? ceilToStep(tp1Raw, instrument.tickSize) : floorToStep(tp1Raw, instrument.tickSize);
-            const entryBars = entryTf === "1" ? CFG.entryTimeoutM1Bars : CFG.entryTimeoutM5Bars;
-            const entryTimeoutMs = entryBars * (entryTf === "1" ? 60_000 : 5 * 60_000);
-            return { symbol, side: sideBybit, entry, sl, tp1, qty, entryTf, entryTimeoutMs };
-        };
-        const getOpenPos = (symbol) => activePositionsRef.current.find((p) => p.symbol === symbol && Math.abs(Number(p.size ?? p.qty ?? 0)) > 0);
-        const getActiveSymbolStats = () => {
-            const sizes = {};
-            const symbols = new Set();
-            for (const p of activePositionsRef.current) {
-                const sym = p.symbol;
-                if (!ALL_SYMBOLS.includes(sym))
-                    continue;
-                const size = Math.abs(Number(p.size ?? p.qty ?? 0));
-                if (!Number.isFinite(size) || size <= 0)
-                    continue;
-                symbols.add(sym);
-                sizes[sym] = (sizes[sym] || 0) + size;
-            }
-            return { symbols, sizes, count: symbols.size };
-        };
-        const isSymbolAtMaxQty = (symbol, sizes) => {
-            const maxQty = maxStrategyQtyFor(symbol);
-            if (!Number.isFinite(maxQty))
-                return false;
-            return (sizes[symbol] || 0) >= maxQty - 1e-8;
-        };
-        const hasMaxedPositions = (stats) => stats.count >= 2 && Array.from(stats.symbols).every((sym) => isSymbolAtMaxQty(sym, stats.sizes));
-        const resetIfNewDay = () => {
-            const now = new Date();
-            const dayKeyUtc = now.toISOString().slice(0, 10);
-            const global = smcStateRef.current;
-            if (global.__dayKeyUtc !== dayKeyUtc) {
-                global.__dayKeyUtc = dayKeyUtc;
-                global.__startEquity = equityNow();
-                global.__sleepUntil = 0;
-                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP: new UTC day ${dayKeyUtc}, startEquity=${global.__startEquity.toFixed(2)}` });
-            }
-        };
-        const maybeDailyStop = async () => {
-            const global = smcStateRef.current;
-            const startEq = Number(global.__startEquity ?? 0);
-            if (!Number.isFinite(startEq) || startEq <= 0)
-                return;
-            const dd = startEq - equityNow();
-            const limit = startEq * CFG.dailyLossPct;
-            if (dd >= limit && !(global.__sleepUntil > Date.now())) {
-                global.__sleepUntil = Date.now() + (24 * 60 * 60_000); // safety; next reset will clear
-                await panicClose(`Daily loss ${dd.toFixed(2)} >= ${limit.toFixed(2)}`);
-            }
-        };
-        const handlePending = async (st) => {
-            const p = st.pending;
-            if (!p)
-                return false;
-            const now = Date.now();
-            if (now < st.nextAllowedAt)
-                return false;
-            if (p.stage === "READY_TO_PLACE") {
-                if (!canPlaceOrders)
-                    return false;
-                if (now < smcGlobalCooldownUntilRef.current)
-                    return false;
-                if (smcStateRef.current.__sleepUntil > now)
-                    return false;
-                try {
-                    await placeLimit(p.symbol, p.side, p.qty, p.entry, p.entryLinkId, false, "PostOnly");
-                }
-                catch (err) {
-                    st.pending = undefined;
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP PLACE_FAILED ${p.symbol} ${err?.message || "unknown"}` });
-                    return true;
-                }
-                p.stage = "PLACED";
-                p.statusCheckAt = now + CFG.orderStatusDelayMs;
-                p.timeoutAt = now + p.entryTimeoutMs;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP PLACE ${p.symbol} ${p.side} entry=${p.entry} qty=${p.qty} id=${p.entryLinkId}` });
-                return true;
-            }
-            if (p.stage === "PLACED") {
-                if (now < p.statusCheckAt)
-                    return false;
-                if (now >= p.timeoutAt) {
-                    p.stage = "CANCEL_SENT";
-                    p.cancelAttempts = 0;
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                // Missed move invalidation (1R)
-                const lastPx = currentPricesRef.current[p.symbol] ?? p.entry;
-                const dir = p.side === "Buy" ? 1 : -1;
-                const r = Math.abs(p.entry - p.sl);
-                const tp1Trigger = p.entry + dir * r;
-                if ((dir > 0 && lastPx >= tp1Trigger) || (dir < 0 && lastPx <= tp1Trigger)) {
-                    p.stage = "CANCEL_SENT";
-                    p.cancelAttempts = 0;
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                const hist = await fetchOrderHistoryOnce(net);
-                const found = hist.list.find((o) => {
-                    const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
-                    return o.symbol === p.symbol && link === p.entryLinkId;
-                });
-                if (found) {
-                    const status = found.orderStatus || found.order_status || found.status;
-                    const avg = Number(found.avgPrice ?? found.avg_price ?? found.price ?? p.entry);
-                    if (status === "Filled" || status === "PartiallyFilled") {
-                        const entryFill = Number.isFinite(avg) && avg > 0 ? avg : p.entry;
-                        p.filledEntry = entryFill;
-                        p.stage = "FILLED_NEED_SL";
-                        p.fillAt = now;
-                        smcGlobalCooldownUntilRef.current = now + CFG.globalEntryCooldownMs;
-                        addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP FILL ${p.symbol} avg=${entryFill}` });
-                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                        return true;
-                    }
-                    if (status === "Cancelled" || status === "Rejected") {
-                        st.pending = undefined;
-                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                        return true;
-                    }
-                }
-                p.statusCheckAt = now + CFG.orderStatusDelayMs;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            if (p.stage === "CANCEL_SENT") {
-                const attempts = p.cancelAttempts ?? 0;
-                if (attempts >= 3) {
-                    st.pending = undefined;
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                try {
-                    await cancelOrderByLinkId(p.symbol, p.entryLinkId);
-                }
-                catch {
-                    // ignore and verify
-                }
-                p.cancelAttempts = attempts + 1;
-                p.stage = "CANCEL_VERIFY";
-                p.statusCheckAt = now + CFG.orderStatusDelayMs;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            if (p.stage === "CANCEL_VERIFY") {
-                if (now < p.statusCheckAt)
-                    return false;
-                const timeSinceCreated = now - (p.createdAt ?? now);
-                if (timeSinceCreated > 30000) { // 30 seconds timeout for cancellation
-                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP CANCEL_STUCK ${p.symbol} id=${p.entryLinkId}. Force clearing.` });
-                    st.pending = undefined;
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                const hist = await fetchOrderHistoryOnce(net);
-                const found = hist.list.find((o) => {
-                    const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
-                    return o.symbol === p.symbol && link === p.entryLinkId;
-                });
-                const status = found?.orderStatus || found?.order_status || found?.status;
-                if (status === "Cancelled" || status === "Rejected") {
-                    st.pending = undefined;
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                p.stage = "CANCEL_SENT";
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            if (p.stage === "FILLED_NEED_SL") {
-                if (now < (p.fillAt ?? 0) + CFG.postFillDelayMs)
-                    return false;
-                const livePos = getOpenPos(p.symbol);
-                if (!livePos) {
-                    try {
-                        const pos = await fetchPositionsOnce(net);
-                        const found = pos.list.find((pp) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
-                        if (!found) {
-                            p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
-                            st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                            return true;
-                        }
-                    }
-                    catch {
-                        p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
-                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                        return true;
-                    }
-                }
-                try {
-                    const lastPx = currentPricesRef.current[p.symbol] || p.entry || 0;
-                    const tick = st.instrument?.tickSize ?? Math.max((lastPx || 1) * 0.0001, 0.1);
-                    const isBuy = p.side === "Buy";
-                    let safeSl = p.sl;
-                    if (Number.isFinite(lastPx) && lastPx > 0) {
-                        if (isBuy && safeSl >= lastPx - tick)
-                            safeSl = lastPx - tick;
-                        if (!isBuy && safeSl <= lastPx + tick)
-                            safeSl = lastPx + tick;
-                    }
-                    await setProtection(p.symbol, safeSl, undefined);
-                    p.sl = safeSl;
-                }
-                catch (err) {
-                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP SL_SET_FAILED ${p.symbol} ${err?.message || "unknown"}` });
-                    p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                p.stage = "SL_VERIFY";
-                p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            if (p.stage === "SL_VERIFY") {
-                if (!p.slVerifyAt || now < p.slVerifyAt)
-                    return false;
-                const pos = await fetchPositionsOnce(net);
-                const found = pos.list.find((pp) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
-                const tol = Math.abs((currentPricesRef.current[p.symbol] ?? p.entry) * 0.001) || 0.5;
-                const ok = found && Math.abs(Number(found.stopLoss ?? 0) - p.sl) <= tol;
-                if (!ok) {
-                    const attempts = p.slSetAttempts ?? 0;
-                    if (attempts < 3) {
-                        p.slSetAttempts = attempts + 1;
-                        p.stage = "FILLED_NEED_SL";
-                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                        return true;
-                    }
-                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP SL_MISSING -> SAFE_CLOSE ${p.symbol}` });
-                    p.stage = "SAFE_CLOSE";
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                p.stage = "TP1_PLACE";
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            if (p.stage === "TP1_PLACE") {
-                if (!canPlaceOrders)
-                    return false;
-                const instrument = st.instrument;
-                if (!instrument)
-                    return false;
-                const tp1QtyRaw = p.qty * CFG.splitTp1Frac;
-                let tp1Qty = floorToStep(tp1QtyRaw, instrument.stepSize);
-                let runnerQty = p.qty - tp1Qty;
-                if (tp1Qty < instrument.minQty || runnerQty < instrument.minQty) {
-                    tp1Qty = p.qty;
-                    runnerQty = 0;
-                }
-                p.tp1Qty = tp1Qty;
-                p.runnerQty = runnerQty;
-                const exitSide = p.side === "Buy" ? "Sell" : "Buy";
-                try {
-                    await placeLimit(p.symbol, exitSide, tp1Qty, p.tp1, p.tp1LinkId, true, "GTC");
-                }
-                catch (err) {
-                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP TP1_PLACE_FAILED ${p.symbol} ${err?.message || "unknown"}` });
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                p.stage = "TP1_WAIT";
-                p.statusCheckAt = now + CFG.orderStatusDelayMs;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            if (p.stage === "TP1_WAIT") {
-                if (now < p.statusCheckAt)
-                    return false;
-                const hist = await fetchOrderHistoryOnce(net);
-                const found = hist.list.find((o) => {
-                    const link = o.orderLinkId || o.orderLinkID || o.clientOrderId;
-                    return o.symbol === p.symbol && link === p.tp1LinkId;
-                });
-                const status = found?.orderStatus || found?.order_status || found?.status;
-                if (status === "Filled") {
-                    p.tp1FilledAt = now;
-                    p.stage = "BE_SET";
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                p.statusCheckAt = now + CFG.orderStatusDelayMs;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            if (p.stage === "BE_SET") {
-                const instrument = st.instrument;
-                if (!instrument)
-                    return false;
-                const be = p.side === "Buy" ? floorToStep(p.entry, instrument.tickSize) : ceilToStep(p.entry, instrument.tickSize);
-                try {
-                    await setProtection(p.symbol, be, undefined);
-                }
-                catch (err) {
-                    addLog({ action: "ERROR", message: `AI-MATIC-SCALP BE_SET_FAILED ${p.symbol} ${err?.message || "unknown"}` });
-                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                    return true;
-                }
-                st.manage = {
-                    symbol: p.symbol,
-                    side: p.side,
-                    entry: p.entry,
-                    qty: p.qty,
-                    runnerQty: p.runnerQty ?? 0,
-                    tp1At: p.tp1FilledAt ?? now,
-                };
-                st.pending = undefined;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TP1_FILLED ${p.symbol} -> BE + runner=${(p.runnerQty ?? 0).toFixed(8)}` });
-                return true;
-            }
-            if (p.stage === "SAFE_CLOSE") {
-                const pos = getOpenPos(p.symbol);
-                if (!pos) {
-                    st.pending = undefined;
-                    return true;
-                }
-                const closeSide = String(pos.side).toLowerCase() === "buy" ? "Sell" : "Buy";
-                const qty = Number(pos.size ?? pos.qty ?? 0);
-                try {
-                    await placeReduceOnlyMarket(p.symbol, closeSide, qty, `AMSCALP:SAFE:${Date.now()}`);
-                }
-                catch {
-                    // ignore
-                }
-                st.pending = undefined;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            return false;
-        };
-        const tick = async () => {
-            if (cancel)
-                return;
-            if (smcBusyRef.current)
-                return;
-            smcBusyRef.current = true;
-            try {
-                resetIfNewDay();
-                await maybeDailyStop();
-                // Global SLEEP
-                const global = smcStateRef.current;
-                if (global.__sleepUntil > Date.now())
-                    return;
-                const nowMs = Date.now();
-                const now = new Date(nowMs);
-                const prg = tzParts(now, "Europe/Prague");
-                const inLondonKill = inWindow(prg.hour, prg.minute, CFG.londonKillStartH, 0, CFG.londonKillEndH, 0);
-                const inNyKill = inWindow(prg.hour, prg.minute, CFG.nyKillStartH, 0, CFG.nyKillEndH, 0);
-                const inKill = inLondonKill || inNyKill;
-                // Rotate symbols to spread API load
-                const idx = smcRotationIdxRef.current % SMC_SYMBOLS.length;
-                smcRotationIdxRef.current++;
-                const symbol = SMC_SYMBOLS[idx];
-                const st = ensureState(symbol);
-                const activeStats = getActiveSymbolStats();
-                const maxedPortfolio = hasMaxedPositions(activeStats);
-                const isSymbolActive = activeStats.symbols.has(symbol);
-                let gateSession = inKill;
-                let gateBboFresh = false;
-                let gateSpread = false;
-                let gateAsia = false;
-                let gateSweep = false;
-                let gateChochFvg = false;
-                let gatePostOnly = false;
-                const updateDiag = (signalActive, executionAllowed = "N/A") => {
-                    const bboAgeMs = st.bbo ? nowMs - st.bbo.ts : Infinity;
-                    setScanDiagnostics((prev) => ({
-                        ...prev,
-                        [symbol]: {
-                            symbol,
-                            lastUpdated: nowMs,
-                            signalActive,
-                            executionAllowed,
-                            bboAgeMs: Number.isFinite(bboAgeMs) ? Math.floor(bboAgeMs) : Infinity,
-                            gates: [
-                                { name: "Session", ok: gateSession },
-                                { name: "BBO fresh", ok: gateBboFresh },
-                                { name: "Spread ok", ok: gateSpread },
-                                { name: "Asia range", ok: gateAsia },
-                                { name: "Sweep", ok: gateSweep },
-                                { name: "CHoCH+FVG", ok: gateChochFvg },
-                                { name: "PostOnly", ok: gatePostOnly },
-                            ],
-                        },
-                    }));
-                };
-                const exitWithDiag = (signalActive = false, executionAllowed = "N/A") => {
-                    updateDiag(signalActive, executionAllowed);
-                    return;
-                };
-                // Per-symbol cooldown
-                if (nowMs < (st.cooldownUntil ?? 0))
-                    return exitWithDiag();
-                // Pending tasks first
-                if (await handlePending(st))
-                    return exitWithDiag(false, "PENDING");
-                // Manage open runner (trailing + emergency)
-                const pos = getOpenPos(symbol);
-                if (pos && st.instrument) {
-                    // Emergency structural invalidation (simple: close beyond last pivot against us on M1)
-                    const m1 = await fetchKlines(symbol, "1", 120);
-                    const lastM1 = m1[m1.length - 1];
-                    const dir = String(pos.side).toLowerCase() === "buy" ? 1 : -1;
-                    const protectedLow = findLastPivotLow(m1, 3, 3);
-                    const protectedHigh = findLastPivotHigh(m1, 3, 3);
-                    if (dir > 0 && protectedLow != null && lastM1?.close < protectedLow.price - st.instrument.tickSize) {
-                        await placeReduceOnlyMarket(symbol, "Sell", Number(pos.size ?? pos.qty ?? 0), `AMSCALP:EMER:${nowMs}`);
-                        st.cooldownUntil = nowMs + 5 * 60_000;
-                        st.manage = undefined;
-                        addLog({ action: "AUTO_CLOSE", message: `AI-MATIC-SCALP EMERGENCY_EXIT ${symbol} (M1 close < protectedLow)` });
-                        return exitWithDiag(false, "MANAGE");
-                    }
-                    if (dir < 0 && protectedHigh != null && lastM1?.close > protectedHigh.price + st.instrument.tickSize) {
-                        await placeReduceOnlyMarket(symbol, "Buy", Number(pos.size ?? pos.qty ?? 0), `AMSCALP:EMER:${nowMs}`);
-                        st.cooldownUntil = nowMs + 5 * 60_000;
-                        st.manage = undefined;
-                        addLog({ action: "AUTO_CLOSE", message: `AI-MATIC-SCALP EMERGENCY_EXIT ${symbol} (M1 close > protectedHigh)` });
-                        return exitWithDiag(false, "MANAGE");
-                    }
-                    // Trailing updates only if TP1 already filled (manage exists)
-                    if (st.manage?.tp1At && st.manage.runnerQty > 0) {
-                        const lastTrailAt = smcLastTrailUpdateAtRef.current[symbol] ?? 0;
-                        if (nowMs - lastTrailAt >= CFG.trailUpdateMs) {
-                            const m5 = await fetchKlines(symbol, "5", 200);
-                            const atr5 = scalpComputeAtr(m5, CFG.atrPeriod).slice(-1)[0] ?? 0;
-                            const sinceTp1 = nowMs - st.manage.tp1At;
-                            const mult = sinceTp1 >= CFG.trailPhase2Ms ? CFG.trailMultPhase2 : CFG.trailMultPhase1;
-                            const dist = Math.max(atr5 * mult, st.instrument.tickSize * 2);
-                            const lastPx = currentPricesRef.current[symbol] ?? Number(pos.entryPrice ?? pos.avgEntryPrice ?? 0);
-                            const newSlRaw = dir > 0 ? lastPx - dist : lastPx + dist;
-                            const newSl = dir > 0 ? floorToStep(newSlRaw, st.instrument.tickSize) : ceilToStep(newSlRaw, st.instrument.tickSize);
-                            const currentSl = Number(pos.sl ?? 0);
-                            const valid = dir > 0
-                                ? newSl < lastPx - st.instrument.tickSize
-                                : newSl > lastPx + st.instrument.tickSize;
-                            const improves = dir > 0 ? newSl > currentSl + CFG.trailMinImproveTicks * st.instrument.tickSize : newSl < currentSl - CFG.trailMinImproveTicks * st.instrument.tickSize;
-                            if (Number.isFinite(newSl) && improves && valid) {
-                                try {
-                                    await setProtection(symbol, newSl, undefined);
-                                    addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL ${symbol} SL->${newSl}` });
-                                }
-                                catch (err) {
-                                    const msg = String(err?.message || "").toLowerCase();
-                                    if (msg.includes("not modified") || msg.includes("no change")) {
-                                        addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL_NOOP ${symbol} SL->${newSl}` });
-                                    }
-                                    else {
-                                        addLog({ action: "ERROR", message: `AI-MATIC-SCALP TRAIL_FAILED ${symbol} ${err?.message || "unknown"}` });
-                                    }
-                                }
-                                smcLastTrailUpdateAtRef.current[symbol] = nowMs;
-                                return exitWithDiag(false, "MANAGE");
-                            }
-                            if (Number.isFinite(newSl) && !valid) {
-                                addLog({ action: "SYSTEM", message: `AI-MATIC-SCALP TRAIL_SKIP ${symbol} sl=${newSl} last=${lastPx}` });
-                            }
-                            smcLastTrailUpdateAtRef.current[symbol] = nowMs;
-                        }
-                    }
-                }
-                if (maxedPortfolio && !isSymbolActive)
-                    return exitWithDiag(false, "MAXED_PORTFOLIO");
-                // No new entries if max open positions reached
-                if (activeStats.count >= CFG.maxOpenPositions)
-                    return exitWithDiag();
-                if (nowMs < smcGlobalCooldownUntilRef.current)
-                    return exitWithDiag();
-                // Basic data fetch (instrument + bbo)
-                if (!st.instrument) {
-                    st.instrument = await fetchInstrument(symbol);
-                    st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
-                    return exitWithDiag();
-                }
-                if (!st.bbo || nowMs - st.bbo.ts > CFG.maxDataAgeMs) {
-                    st.bbo = await fetchBbo(symbol);
-                    st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
-                    gateBboFresh = true;
-                    return exitWithDiag();
-                }
-                gateBboFresh = true;
-                const sp = spreadPct(st.bbo.bid, st.bbo.ask);
-                gateSpread = sp <= CFG.maxSpreadPct;
-                if (!gateSpread)
-                    return exitWithDiag();
-                // Only scan for sweep setup in London killzone (Prague)
-                if (!inKill)
-                    return exitWithDiag();
-                const m15 = await fetchKlines(symbol, "15", 300);
-                const asia = computeAsiaBox(m15, now);
-                gateAsia = Boolean(asia) && asia.rangePct <= CFG.asiaRangePctThreshold;
-                if (!gateAsia)
-                    return exitWithDiag();
-                // Use last closed M15 candle for sweep detection
-                const lastClosedOpen = expectedOpenTime(nowMs, 15 * 60_000, 2500);
-                const m15Last = m15.find((c) => c.openTime === lastClosedOpen) ?? m15[m15.length - 2];
-                if (!m15Last)
-                    return exitWithDiag();
-                const sw = detectSweep(m15Last, asia);
-                gateSweep = Boolean(sw);
-                if (!gateSweep)
-                    return exitWithDiag();
-                // Decide LTF: default M1, fallback M5 if too late/noisy
-                const minsSinceSweep = (nowMs - m15Last.openTime) / 60_000;
-                const entryTf = minsSinceSweep <= CFG.chochDeadlineMinPrimary ? CFG.entryTfPrimary : CFG.entryTfFallback;
-                const ltf = await fetchKlines(symbol, entryTf, entryTf === "1" ? 240 : 240);
-                const proposal = buildEntryFromFvg(symbol, sw.dir, entryTf, ltf, st.instrument, activeStats.sizes[symbol] || 0);
-                gateChochFvg = Boolean(proposal);
-                if (!gateChochFvg)
-                    return exitWithDiag();
-                // Guard post-only cross
-                gatePostOnly = proposal.side === "Buy" ? proposal.entry < st.bbo.ask : proposal.entry > st.bbo.bid;
-                if (!gatePostOnly)
-                    return exitWithDiag();
-                const tsSec = Math.floor(nowMs / 1000);
-                const entryLinkId = `AMSCALP_E_${symbol}_${tsSec}`;
-                const tp1LinkId = `AMSCALP_T1_${symbol}_${tsSec}`;
-                st.pending = {
-                    stage: "READY_TO_PLACE",
-                    symbol,
-                    side: proposal.side,
-                    entry: proposal.entry,
-                    sl: proposal.sl,
-                    tp1: proposal.tp1,
-                    qty: proposal.qty,
-                    entryTf,
-                    entryTimeoutMs: proposal.entryTimeoutMs,
-                    entryLinkId,
-                    tp1LinkId,
-                    createdAt: nowMs,
-                    statusCheckAt: nowMs + CFG.orderStatusDelayMs,
-                };
-                st.nextAllowedAt = nowMs + CFG.symbolFetchGapMs;
-                addLog({ action: "SIGNAL", message: `AI-MATIC-SCALP SETUP ${symbol} ${proposal.side} entry=${proposal.entry} sl=${proposal.sl} tp1=${proposal.tp1} qty=${proposal.qty}` });
-                updateDiag(gateSession && gateBboFresh && gateSpread && gateAsia && gateSweep && gateChochFvg && gatePostOnly, true);
-            }
-            catch (err) {
-                setSystemState((p) => ({
-                    ...p,
-                    bybitStatus: "Error",
-                    lastError: err?.message || "smc tick error",
-                    recentErrors: [err?.message || "smc tick error", ...p.recentErrors].slice(0, 10),
-                }));
-            }
-            finally {
-                smcBusyRef.current = false;
-            }
-        };
-        const id = setInterval(() => void tick(), CFG.tickMs);
-        void tick();
-        return () => {
-            cancel = true;
-            clearInterval(id);
-        };
-    }, [mode, settings.riskMode, useTestnet, httpBase, authToken, apiBase, apiPrefix, queuedFetch, fetchOrdersOnce, fetchOrderHistoryOnce, fetchPositionsOnce]);
     // Executions polling (pro rychlejší fill detection)
     useEffect(() => {
         if (!authToken)
@@ -4213,7 +2823,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const allowedSymbols = new Set(ALL_SYMBOLS);
                 const nowMs = Date.now();
                 const freshMs = 5 * 60 * 1000; // show only last 5 minutes
-                list.forEach((e) => {
+                const items = Array.isArray(list) ? list : [];
+                items.forEach((e) => {
                     const id = e.execId || e.tradeId;
                     if (!id || seen.has(id))
                         return;
@@ -4275,7 +2886,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             return false;
         }
         const { symbol, side } = signal.intent;
-        const { sl, tp, qty, trailingStopDistance, price: intentPrice, triggerPrice: intentTrigger } = signal.intent;
+        const { sl, tp, price: intentPrice, triggerPrice: intentTrigger } = signal.intent;
         const lastPrice = currentPricesRef.current[symbol];
         const entryPrice = Number(intentPrice ??
             signal.intent.entry ??
@@ -4291,7 +2902,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }
-        const hasEntry = Number.isFinite(entryPrice);
         const isBuy = side === "buy" || side === "Buy";
         const safeEntry = Number.isFinite(entryPrice) ? entryPrice : Number.isFinite(lastPrice) ? lastPrice : 0;
         // Block duplicate entries for symbols with open positions
@@ -4328,16 +2938,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }
-        const profile = signal.profile && (signal.profile === "scalp" ||
-            signal.profile === "intraday" ||
-            signal.profile === "swing" ||
-            signal.profile === "trend" ||
-            signal.profile === "coach")
-            ? signal.profile
-            : "intraday";
-        const kind = signal.kind || "BREAKOUT";
         const rDist = Math.abs(safeEntry - finalSl);
-        const tp1 = isBuy ? safeEntry + 1.5 * rDist : safeEntry - 1.5 * rDist;
         const tp2 = isBuy ? safeEntry + 2 * rDist : safeEntry - 2 * rDist;
         const stopLossValue = Number(finalSl ?? safeEntry ?? 0);
         const takeProfitValue = tp2;
@@ -4351,7 +2952,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             return false;
         }
         // Risk engine sizing
-        const sizing = computePositionSizing(symbol, safeEntry, finalSl, useTestnet);
+        const sizing = computePositionSizing(symbol, safeEntry, finalSl);
         if (sizing.ok === false) {
             const reason = sizing.reason;
             logAuditEntry("REJECT", symbol, "RISK_ENGINE", [...gatesAudit, { name: "SIZING", result: "FAIL" }], "DENY", reason, { entry: safeEntry, sl: stopLossValue, tp: takeProfitValue });
@@ -4485,8 +3086,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             null;
                         return { ok: true, status, orderId, body };
                     }
-                    catch (e) {
-                        return { ok: false, status: 0, error: e?.message || "Order exception" };
+                    catch (err) {
+                        return { ok: false, status: 0, error: getErrorMessage(err) || "Order exception" };
                     }
                 };
                 const placeOrderWithRetry = async (maxRetry) => {
@@ -4498,28 +3099,26 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         if (res.ok)
                             return res;
                         last = res;
-                        const retryable = res.status === 0 || res.status >= 500 || res.status === 429;
-                        logAuditEntry("ERROR", symbol, "ORDER_SUBMIT", [...gatesAudit, entryModeGate], retryable && attempt <= maxRetry ? "RETRY" : "STOP", res.error || "Order failed", { entry: price, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
-                        if (!retryable || attempt > maxRetry)
-                            break;
-                        await sleep(800 * attempt);
+                        if (!res.ok) {
+                            const retryable = res.status === 0 || res.status >= 500 || res.status === 429;
+                            logAuditEntry("ERROR", symbol, "ORDER_SUBMIT", [...gatesAudit, entryModeGate], retryable && attempt <= maxRetry ? "RETRY" : "STOP", res.error || "Order failed", { entry: price, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
+                            if (!retryable || attempt > maxRetry)
+                                break;
+                            await sleep(800 * attempt);
+                        }
                     }
                     return last;
                 };
                 const submit = await placeOrderWithRetry(1);
-                if (!submit?.ok) {
-                    const msg = submit?.error || "Order failed";
+                if (!submit || !submit.ok) {
+                    const msg = submit && submit.error ? submit.error : "Order failed";
                     addLog({ action: "ERROR", message: msg });
                     setLifecycle(signalId, "FAILED", msg);
                     setSystemState((prev) => ({ ...prev, lastError: msg, bybitStatus: "Error" }));
                     return false;
                 }
                 logAuditEntry("SYSTEM", symbol, "ORDER_SUBMIT", [...gatesAudit, entryModeGate], "TRADE", "Order placed", { entry: price, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
-                const orderId = submit?.orderId ||
-                    submit?.body?.result?.orderId ||
-                    submit?.body?.data?.result?.orderId ||
-                    submit?.body?.data?.orderId ||
-                    null;
+                const orderId = submit.orderId || null;
                 try {
                     const fill = await waitForFill(signalId, symbol, orderId, clientOrderId, useTestnet ? 45000 : 90000);
                     if (fill) {
@@ -4531,7 +3130,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         }
                         else {
                             addLog({ action: "ERROR", message: `Initial protection failed for ${symbol}. Forcing close.` });
-                            const posList = await fetchPositionsOnce(useTestnet ? 'testnet' : 'mainnet').then(r => r.list).catch(() => []);
+                            const posList = await fetchPositionsOnce(useTestnet ? "testnet" : "mainnet").then((r) => r.list).catch(() => []);
                             const pos = posList.find((p) => p.symbol === symbol);
                             if (pos) {
                                 await forceClosePosition(pos);
@@ -4543,12 +3142,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     }
                 }
                 catch (err) {
+                    const message = getErrorMessage(err);
                     addLog({
                         action: "ERROR",
-                        message: `Fill not confirmed: ${err?.message || "unknown"}`,
+                        message: `Fill not confirmed: ${message || "unknown"}`,
                     });
-                    setLifecycle(signalId, "FAILED", err?.message || "fill failed");
-                    logAuditEntry("ERROR", symbol, "ORDER_FILL", [...gatesAudit, entryModeGate], "STOP", err?.message || "Fill failed", { entry: price, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
+                    setLifecycle(signalId, "FAILED", message || "fill failed");
+                    logAuditEntry("ERROR", symbol, "ORDER_FILL", [...gatesAudit, entryModeGate], "STOP", message || "Fill failed", { entry: price, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
                     return false;
                 }
                 return false;
@@ -4598,9 +3198,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
         }
         catch (err) {
+            const message = getErrorMessage(err);
             console.error("Trade exception", err);
-            setLifecycle(signalId, "FAILED", err.message);
-            addLog({ action: "ERROR", message: `Trade exception: ${err.message}` });
+            setLifecycle(signalId, "FAILED", message);
+            addLog({ action: "ERROR", message: `Trade exception: ${message}` });
             return false;
         }
         finally {
