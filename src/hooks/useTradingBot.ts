@@ -130,12 +130,25 @@ const QTY_LIMITS: Record<string, { min: number; max: number }> = {
     SOLUSDT: { min: 0, max: 3.5 },
     ADAUSDT: { min: 0, max: 858 },
 };
+const QTY_STEPS: Record<string, number> = {
+    BTCUSDT: 0.001,
+    ETHUSDT: 0.01,
+    SOLUSDT: 0.1,
+    ADAUSDT: 1,
+};
 const ACCOUNT_BALANCE_USD = 100;
 const RISK_PER_TRADE_USD = 4;
 const MAX_TOTAL_RISK_USD = 8;
 const MAX_ACTIVE_TRADES = 2;
 const STOP_MIN_PCT = 0.0015; // 0.15 %
 const MAX_LEVERAGE_ALLOWED = 100;
+const PROTECTION_POST_FILL_DELAY_MS = 1200;
+const PROTECTION_VERIFY_COOLDOWN_MS = 15000;
+const TP_EXTEND_MIN_R = 1.4;
+const TP_EXTEND_STEP_R = 0.5;
+const LONG_HOLD_PARTIAL_AFTER_MS = 30 * 60_000;
+const LONG_HOLD_PARTIAL_MIN_R = 1.2;
+const LONG_HOLD_PARTIAL_FRACTION = 0.25;
 const MIN_NOTIONAL_USD: Record<string, number> = {
     BTCUSDT: 5,
     ETHUSDT: 5,
@@ -308,6 +321,7 @@ const clampQtyForSymbol = (symbol: string, qty: number) => {
 };
 
 const maxQtyForSymbol = (symbol: string) => QTY_LIMITS[symbol]?.max ?? Number.POSITIVE_INFINITY;
+const qtyStepForSymbol = (symbol: string) => QTY_STEPS[symbol] ?? 0.001;
 
 const leverageFor = (symbol: string) => LEVERAGE[symbol] ?? 1;
 const marginFor = (symbol: string, entry: number, size: number) =>
@@ -616,6 +630,10 @@ export const useTradingBot = (
     const closedPnlSeenRef = useRef<Set<string>>(new Set());
     const manualPnlResetRef = useRef<number>(0);
     const slRepairRef = useRef<Record<string, number>>({});
+    const protectionTargetsRef = useRef<Record<string, { sl?: number; tp?: number; trailingStop?: number }>>({});
+    const protectionVerifyRef = useRef<Record<string, number>>({});
+    const tpExtendRef = useRef<Record<string, number>>({});
+    const partialExitRef = useRef<Record<string, number>>({});
     const commitProtectionRef = useRef<((tradeId: string, symbol: string, sl?: number, tp?: number, trailingStop?: number) => Promise<boolean>) | null>(null);
 
     const [portfolioState, setPortfolioState] = useState({
@@ -816,6 +834,18 @@ export const useTradingBot = (
 
     useEffect(() => {
         activePositionsRef.current = activePositions;
+    }, [activePositions]);
+
+    useEffect(() => {
+        const activeSymbols = new Set(activePositions.map((p) => p.symbol));
+        for (const sym of Object.keys(protectionTargetsRef.current)) {
+            if (!activeSymbols.has(sym)) {
+                delete protectionTargetsRef.current[sym];
+                delete protectionVerifyRef.current[sym];
+                delete tpExtendRef.current[sym];
+                delete partialExitRef.current[sym];
+            }
+        }
     }, [activePositions]);
 
     // Periodický status log každé 3 minuty (plus okamžitě na start)
@@ -1193,6 +1223,41 @@ export const useTradingBot = (
         [apiBase, authToken, useTestnet]
     );
 
+    const placeReduceOnlyMarket = useCallback(
+        async (symbol: string, side: "Buy" | "Sell", qty: number, reason: string) => {
+            if (!authToken) return false;
+            try {
+                await queuedFetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${authToken}`,
+                    },
+                    body: JSON.stringify({
+                        symbol,
+                        side,
+                        qty,
+                        orderType: "Market",
+                        timeInForce: "IOC",
+                        reduceOnly: true,
+                    }),
+                }, "order");
+                addLog({
+                    action: "AUTO_CLOSE",
+                    message: `Partial reduce-only close ${symbol} qty=${qty} reason=${reason}`,
+                });
+                return true;
+            } catch (err) {
+                addLog({
+                    action: "ERROR",
+                    message: `Partial close failed ${symbol}: ${getErrorMessage(err) || "unknown"}`,
+                });
+                return false;
+            }
+        },
+        [apiBase, apiPrefix, authToken, queuedFetch, useTestnet]
+    );
+
     const fetchPositionsOnce = useCallback(
         async (net: "testnet" | "mainnet"): Promise<BybitListResponse<BybitPosition>> => {
             if (!authToken) return { list: [] };
@@ -1526,8 +1591,40 @@ export const useTradingBot = (
                                 : Math.min(entry - 1.4 * baseR, lastPx - buffer)
                             : p.tp;
                         const ok = await commitProtection(`recon-${p.id}`, p.symbol, fallbackSl, fallbackTp, undefined);
-                        if (!ok) await forceClosePosition(p);
+                        if (ok) {
+                            protectionTargetsRef.current[p.symbol] = { sl: fallbackSl, tp: fallbackTp };
+                            protectionVerifyRef.current[p.symbol] = now;
+                        } else {
+                            await forceClosePosition(p);
+                        }
                         continue;
+                    }
+
+                    const expectedProtection = protectionTargetsRef.current[p.symbol];
+                    if (expectedProtection) {
+                        const lastVerifyAt = protectionVerifyRef.current[p.symbol] ?? 0;
+                        if (now - lastVerifyAt >= PROTECTION_VERIFY_COOLDOWN_MS) {
+                            const tol = Math.abs((price || p.entryPrice) * 0.001) || 0.5;
+                            const slMismatch = expectedProtection.sl != null &&
+                                Math.abs((p.sl ?? 0) - expectedProtection.sl) > tol;
+                            const tpMismatch = expectedProtection.tp != null &&
+                                Math.abs((p.tp ?? 0) - expectedProtection.tp) > tol;
+                            const tsMismatch = expectedProtection.trailingStop != null &&
+                                Math.abs((p.trailingStop ?? 0) - expectedProtection.trailingStop) > tol;
+                            if (slMismatch || tpMismatch || tsMismatch) {
+                                protectionVerifyRef.current[p.symbol] = now;
+                                const ok = await commitProtection(
+                                    `verify-${p.id}`,
+                                    p.symbol,
+                                    expectedProtection.sl ?? p.sl,
+                                    expectedProtection.tp ?? p.tp,
+                                    expectedProtection.trailingStop ?? p.trailingStop
+                                );
+                                if (ok) {
+                                    addLog({ action: "SYSTEM", message: `PROTECTION_SYNC ${p.symbol} verified` });
+                                }
+                            }
+                        }
                     }
 
                     // AI-MATIC-SCALP manages its own trailing rules; don't apply legacy trailing heuristics.
@@ -1565,7 +1662,59 @@ export const useTradingBot = (
                     if (newSl != null && Number.isFinite(newSl) && ((dir > 0 && newSl > (p.sl || 0)) || (dir < 0 && newSl < (p.sl || Infinity)))) {
                         const ok = await commitProtection(`trail-${p.id}`, p.symbol, newSl, p.tp, undefined);
                         if (ok) {
+                            const current = protectionTargetsRef.current[p.symbol] ?? {};
+                            protectionTargetsRef.current[p.symbol] = { ...current, sl: newSl };
+                            protectionVerifyRef.current[p.symbol] = now;
                             addLog({ action: "SYSTEM", message: `Trail rule applied ${p.symbol} profit ${profit.toFixed(4)} new SL ${newSl.toFixed(4)}` });
+                        }
+                    }
+
+                    const candles = priceHistoryRef.current[p.symbol];
+                    const lastCandle = candles?.[candles.length - 1];
+                    const ema21 = candles && candles.length >= 21
+                        ? scalpComputeEma(candles.map((c) => c.close), 21).slice(-1)[0]
+                        : null;
+                    const trendOk = lastCandle && Number.isFinite(ema21)
+                        ? (dir > 0 ? lastCandle.close > (ema21 as number) : lastCandle.close < (ema21 as number))
+                        : false;
+                    const profitR = profit / oneR;
+
+                    if (trendOk && Number.isFinite(p.tp) && profitR >= TP_EXTEND_MIN_R) {
+                        const lastShiftR = tpExtendRef.current[p.symbol] ?? 0;
+                        if (profitR >= lastShiftR + TP_EXTEND_STEP_R) {
+                            const newTp = (p.tp as number) + dir * TP_EXTEND_STEP_R * oneR;
+                            const safeTp = dir > 0 ? newTp > (p.tp as number) && newTp > price + oneR * 0.1 : newTp < (p.tp as number) && newTp < price - oneR * 0.1;
+                            if (safeTp) {
+                                const ok = await commitProtection(`tp-extend-${p.id}`, p.symbol, p.sl, newTp, undefined);
+                                if (ok) {
+                                    const current = protectionTargetsRef.current[p.symbol] ?? {};
+                                    protectionTargetsRef.current[p.symbol] = { ...current, tp: newTp };
+                                    protectionVerifyRef.current[p.symbol] = now;
+                                    tpExtendRef.current[p.symbol] = profitR;
+                                    addLog({ action: "SYSTEM", message: `TP_EXTEND ${p.symbol} newTP=${newTp.toFixed(4)} profitR=${profitR.toFixed(2)}` });
+                                }
+                            }
+                        }
+                    }
+
+                    if (trendOk && Number.isFinite(p.entryPrice)) {
+                        const openedAtMs = Date.parse(p.openedAt || p.timestamp || "");
+                        if (Number.isFinite(openedAtMs) && openedAtMs > 0) {
+                            const heldMs = now - openedAtMs;
+                            const lastPartialAt = partialExitRef.current[p.symbol] ?? 0;
+                            if (heldMs >= LONG_HOLD_PARTIAL_AFTER_MS && profitR >= LONG_HOLD_PARTIAL_MIN_R && lastPartialAt === 0) {
+                                const size = Math.abs(Number(p.size ?? p.qty ?? 0));
+                                const step = qtyStepForSymbol(p.symbol);
+                                const closeQty = roundDownToStep(size * LONG_HOLD_PARTIAL_FRACTION, step);
+                                if (Number.isFinite(closeQty) && closeQty >= step) {
+                                    const exitSide = dir > 0 ? "Sell" : "Buy";
+                                    const ok = await placeReduceOnlyMarket(p.symbol, exitSide, closeQty, "LONG_HOLD_TREND");
+                                    if (ok) {
+                                        partialExitRef.current[p.symbol] = now;
+                                        addLog({ action: "SYSTEM", message: `PARTIAL_MARGIN ${p.symbol} qty=${closeQty} held=${Math.round(heldMs / 60000)}m` });
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1579,7 +1728,7 @@ export const useTradingBot = (
             cancel = true;
             clearInterval(id);
         };
-    }, [authToken, commitProtection, forceClosePosition]);
+    }, [authToken, commitProtection, forceClosePosition, placeReduceOnlyMarket]);
 
     const [aiModelState] = useState({
         version: "1.0.0-real-strategy",
@@ -3506,9 +3655,12 @@ export const useTradingBot = (
                     );
                     if (fill) {
                         setLifecycle(signalId, "ENTRY_FILLED");
+                        protectionTargetsRef.current[symbol] = { sl: finalSl, tp: finalTp };
+                        await sleep(PROTECTION_POST_FILL_DELAY_MS);
                         const protectionOk = await commitProtection(signalId, symbol, finalSl, finalTp);
 
                         if (protectionOk) {
+                            protectionVerifyRef.current[symbol] = Date.now();
                             setLifecycle(signalId, "MANAGING");
                             logAuditEntry("SYSTEM", symbol, "ORDER_FILL", [...gatesAudit, entryModeGate], "TRADE", "Order filled and protected", { entry: price, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
                         } else {
