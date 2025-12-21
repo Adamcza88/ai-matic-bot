@@ -501,7 +501,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     useEffect(() => {
         const isTest = settings.entryStrictness === "test";
         setPortfolioState((prev) => {
-            const baseCapital = INITIAL_CAPITAL;
+            const baseCapital = walletEquity ?? prev.totalCapital ?? INITIAL_CAPITAL;
             const totalCapital = isTest ? prev.totalCapital || baseCapital : baseCapital;
             const pctCap = totalCapital * settings.maxAllocatedCapitalPercent;
             const maxAlloc = isTest ? Math.min(1000000, pctCap) : pctCap;
@@ -509,7 +509,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 ...prev,
                 totalCapital,
                 maxAllocatedCapital: maxAlloc,
-                allocatedCapital: Math.min(prev.allocatedCapital, maxAlloc),
+                allocatedCapital: isTest ? Math.min(prev.allocatedCapital, maxAlloc) : prev.allocatedCapital,
                 maxOpenPositions: settings.maxOpenPositions,
             };
         });
@@ -517,6 +517,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         settings.entryStrictness,
         settings.maxAllocatedCapitalPercent,
         settings.maxOpenPositions,
+        walletEquity,
     ]);
     // Přepočet denního PnL podle otevřených pozic (unrealized)
     useEffect(() => {
@@ -596,14 +597,33 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const coins = Array.isArray(first?.coin) ? first.coin : [];
                 const pickCoin = coins.find((c) => c.coin === "USDT") || coins.find((c) => c.coin === "USD");
                 const coinBalance = pickCoin ? Number(pickCoin.walletBalance ?? pickCoin.equity) : null;
-                const equity = Number(first?.totalEquity ?? 0) ||
-                    coinBalance ||
-                    Number(json?.data?.totalEquity) ||
-                    null;
+                const totalEquityRaw = Number(first?.totalEquity ?? first?.totalWalletBalance ?? first?.totalMarginBalance ?? 0);
+                const totalAvailable = Number(first?.totalAvailableBalance ?? 0);
+                const totalInitialMargin = Number(first?.totalInitialMargin ?? 0);
+                const totalPositionIM = Number(first?.totalPositionIM ?? 0);
+                const totalOrderIM = Number(first?.totalOrderIM ?? 0);
+                const equityFallback = Number(json?.data?.totalEquity ?? json?.totalEquity ?? 0);
+                const equity = Number.isFinite(totalEquityRaw) && totalEquityRaw > 0
+                    ? totalEquityRaw
+                    : Number.isFinite(coinBalance ?? NaN) && coinBalance > 0
+                        ? coinBalance
+                        : Number.isFinite(equityFallback) && equityFallback > 0
+                            ? equityFallback
+                            : null;
+                const marginUsed = Number.isFinite(totalInitialMargin) && totalInitialMargin > 0
+                    ? totalInitialMargin
+                    : (Number.isFinite(totalPositionIM) && totalPositionIM > 0) || (Number.isFinite(totalOrderIM) && totalOrderIM > 0)
+                        ? Math.max(0, (Number.isFinite(totalPositionIM) ? totalPositionIM : 0) + (Number.isFinite(totalOrderIM) ? totalOrderIM : 0))
+                        : null;
+                const allocated = equity != null && Number.isFinite(totalAvailable) && totalAvailable > 0
+                    ? Math.max(0, equity - totalAvailable)
+                    : marginUsed;
                 if (equity != null && !cancel) {
                     setPortfolioState((prev) => ({
                         ...prev,
                         totalCapital: equity,
+                        allocatedCapital: Number.isFinite(allocated ?? NaN) ? allocated : prev.allocatedCapital,
+                        maxAllocatedCapital: equity * (settingsRef.current.maxAllocatedCapitalPercent || 1),
                         peakCapital: Math.max(prev.peakCapital, equity),
                     }));
                     setWalletEquity(equity);
