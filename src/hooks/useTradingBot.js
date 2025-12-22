@@ -74,6 +74,26 @@ const MIN_NOTIONAL_USD = {
     SOLUSDT: 5,
     ADAUSDT: 5,
 };
+const HARD_SPREAD_BPS = {
+    BTCUSDT: 8,
+    ETHUSDT: 10,
+    SOLUSDT: 14,
+    ADAUSDT: 18,
+};
+const MIN_ATR_PCT = {
+    BTCUSDT: 0.0006,
+    ETHUSDT: 0.0007,
+    SOLUSDT: 0.001,
+    ADAUSDT: 0.0012,
+};
+const SLOPE_MIN_PCT = {
+    BTCUSDT: 0.0002,
+    ETHUSDT: 0.00025,
+    SOLUSDT: 0.00035,
+    ADAUSDT: 0.0004,
+};
+const QUALITY_SCORE_LOW = 60;
+const QUALITY_SCORE_HIGH = 75;
 // RISK / STRATEGY
 const AI_MATIC_PRESET = {
     riskMode: "ai-matic",
@@ -1769,6 +1789,59 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return Infinity;
             return (ask - bid) / mid;
         };
+        const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+        const hardSpreadBpsFor = (symbol) => HARD_SPREAD_BPS[symbol] ?? 12;
+        const minAtrPctFor = (symbol) => MIN_ATR_PCT[symbol] ?? 0.0008;
+        const slopeMinPctFor = (symbol) => SLOPE_MIN_PCT[symbol] ?? 0.00025;
+        const spreadBps = (bid, ask) => spreadPct(bid, ask) * 10000;
+        const shouldBlockEntry = (symbol, ctx) => {
+            const hardSpread = hardSpreadBpsFor(symbol);
+            if (ctx.bboAgeMs > 800)
+                return { blocked: true, reason: `BBO_AGE ${Math.round(ctx.bboAgeMs)}ms` };
+            if (ctx.spreadBps > hardSpread)
+                return { blocked: true, reason: `SPREAD ${ctx.spreadBps.toFixed(1)}bps>${hardSpread}` };
+            if (ctx.atr > 0 && ctx.range > 2.5 * ctx.atr)
+                return { blocked: true, reason: "IMPULSE_CANDLE" };
+            const minAtr = minAtrPctFor(symbol);
+            const slopeMin = slopeMinPctFor(symbol);
+            if (ctx.atrPct < minAtr && ctx.emaSlopeAbs < slopeMin) {
+                return {
+                    blocked: true,
+                    reason: `CHOP atr=${(ctx.atrPct * 100).toFixed(3)}% slope=${(ctx.emaSlopeAbs * 100).toFixed(3)}%`,
+                };
+            }
+            return { blocked: false, reason: "" };
+        };
+        const qualityScoreFor = (symbol, ctx) => {
+            const hardSpread = hardSpreadBpsFor(symbol);
+            const softSpread = Math.max(1, Math.round(hardSpread * 0.7));
+            const minAtr = minAtrPctFor(symbol);
+            const slopeMin = slopeMinPctFor(symbol);
+            let score = 100;
+            if (ctx.bboAgeMs > 400) {
+                const penalty = clamp(((ctx.bboAgeMs - 400) / 400) * 20, 0, 20);
+                score -= penalty;
+            }
+            if (ctx.spreadBps > softSpread) {
+                const span = Math.max(1, hardSpread - softSpread);
+                const penalty = clamp(((ctx.spreadBps - softSpread) / span) * 30, 0, 30);
+                score -= penalty;
+            }
+            const atrSoft = minAtr * 1.6;
+            if (ctx.atrPct < atrSoft) {
+                const penalty = clamp(((atrSoft - ctx.atrPct) / Math.max(1e-8, atrSoft)) * 25, 0, 25);
+                score -= penalty;
+            }
+            const slopeSoft = slopeMin * 1.6;
+            if (ctx.emaSlopeAbs < slopeSoft) {
+                const penalty = clamp(((slopeSoft - ctx.emaSlopeAbs) / Math.max(1e-8, slopeSoft)) * 15, 0, 15);
+                score -= penalty;
+            }
+            if (ctx.atr > 0 && ctx.range > 2.0 * ctx.atr) {
+                score -= 10;
+            }
+            return clamp(Math.round(score), 0, 100);
+        };
         const isGateEnabled = (name) => {
             try {
                 if (typeof localStorage === "undefined")
@@ -2089,7 +2162,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 p.statusCheckAt = now + CFG.orderStatusDelayMs;
                 // "1 closed 1m candle" timeout aligned to bar close + delay
                 const nextBarClose = Math.floor(now / 60_000) * 60_000 + 60_000;
-                p.timeoutAt = nextBarClose + CFG.ltfCloseDelayMs;
+                p.timeoutAt = nextBarClose + CFG.ltfCloseDelayMs + (p.extraTimeoutMs ?? 0);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 addLog({ action: "SYSTEM", message: `PLACE ${p.symbol} ${p.side} limit=${p.limitPrice} qty=${p.qty} id=${p.orderLinkId}` });
                 return true;
@@ -2618,7 +2691,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 st.ltfConfirm = undefined;
                 // Indicators
                 const closes = candles.map((c) => c.close);
-                const ema21 = scalpComputeEma(closes, CFG.emaPeriod).slice(-1)[0] ?? last.close;
+                const emaSeries = scalpComputeEma(closes, CFG.emaPeriod);
+                const ema21 = emaSeries.slice(-1)[0] ?? last.close;
+                const emaPrev = emaSeries.length > 1 ? emaSeries[emaSeries.length - 2] : ema21;
+                const emaSlopeAbs = Number.isFinite(emaPrev) && Math.abs(emaPrev) > 0
+                    ? Math.abs(ema21 - emaPrev) / Math.abs(emaPrev)
+                    : 0;
                 const atr14 = scalpComputeAtr(candles, CFG.atrPeriod).slice(-1)[0] ?? 0;
                 const volSma20 = scalpComputeSma(candles.map((c) => c.volume), 20).slice(-1)[0] ?? last.volume;
                 const rvol = volSma20 > 0 ? last.volume / volSma20 : 0;
@@ -2641,6 +2719,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     prevStDir,
                     stLine,
                     ema21,
+                    emaSlopeAbs,
                     atr14,
                     smaVol20: volSma20,
                     rvol,
@@ -2820,7 +2899,21 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const bboAgeMs = st.bbo ? now - st.bbo.ts : Infinity;
             const bboStale = isBboStale(st.bbo, now, 1500);
             const executionAllowed = signalActive ? !bboStale : true;
-            const gateDetails = `flip=${flippedRaw}/${flipped} ema=${closeToEma || touched}/${emaOk} closeSt=${closeVsStRaw}/${closeVsSt} htfLine=${htfProjRaw}/${htfProj} rvol=${rvolRaw}/${rvolOk} breakout=${antiBreakoutRaw}/${antiBreakout} bboFresh=${!bboStale}`;
+            const spBps = st.bbo ? spreadBps(st.bbo.bid, st.bbo.ask) : Infinity;
+            const atrPct = st.ltf.atr14 > 0 ? st.ltf.atr14 / Math.max(1e-8, st.ltf.last.close) : 0;
+            const emaSlopeAbs = st.ltf.emaSlopeAbs ?? 0;
+            const qualityCtx = {
+                bboAgeMs,
+                spreadBps: spBps,
+                atrPct,
+                emaSlopeAbs,
+                range,
+                atr: st.ltf.atr14,
+            };
+            const qualityScore = qualityScoreFor(symbol, qualityCtx);
+            const qualityTier = qualityScore < QUALITY_SCORE_LOW ? "LOW" : qualityScore > QUALITY_SCORE_HIGH ? "HIGH" : "MID";
+            const hardGate = shouldBlockEntry(symbol, qualityCtx);
+            const gateDetails = `flip=${flippedRaw}/${flipped} ema=${closeToEma || touched}/${emaOk} closeSt=${closeVsStRaw}/${closeVsSt} htfLine=${htfProjRaw}/${htfProj} rvol=${rvolRaw}/${rvolOk} breakout=${antiBreakoutRaw}/${antiBreakout} bboFresh=${!bboStale} q=${qualityScore}`;
             addLog({
                 action: "SIGNAL",
                 message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms | fail=[${gateFailures.join(",") || "none"}] | gates raw/gated: ${gateDetails}`,
@@ -2834,6 +2927,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     signalActive,
                     executionAllowed: signalActive ? executionAllowed : "N/A",
                     bboAgeMs: Number.isFinite(bboAgeMs) ? Math.floor(bboAgeMs) : Infinity,
+                    spreadBps: Number.isFinite(spBps) ? Number(spBps.toFixed(2)) : Infinity,
+                    atrPct,
+                    emaSlopeAbs,
+                    qualityScore,
+                    qualityTier,
+                    hardBlock: hardGate.blocked ? hardGate.reason : undefined,
                     gates: [
                         { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
                         { name: "ST flip", ok: flipped },
@@ -2869,26 +2968,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
+            if (hardGate.blocked) {
+                logScalpReject(symbol, `QUALITY_HARD ${hardGate.reason}`);
+                st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             // Execution guardrails (spread/ATR)
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) {
                 logScalpReject(symbol, "HTF_BLOCK");
                 return false;
-            }
-            const sp = spreadPct(st.bbo.bid, st.bbo.ask);
-            if (sp > CFG.spreadMaxPct) {
-                logScalpReject(symbol, `SPREAD ${(sp * 100).toFixed(3)}% > ${(CFG.spreadMaxPct * 100).toFixed(3)}%`);
-                st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
-            }
-            const atrPct = st.ltf.atr14 > 0 ? st.ltf.atr14 / Math.max(1e-8, st.ltf.last.close) : 0;
-            if (atrPct < CFG.lowAtrMinPct) {
-                logScalpReject(symbol, `LOW_ATR ${(atrPct * 100).toFixed(3)}% < ${(CFG.lowAtrMinPct * 100).toFixed(3)}%`);
-                st.pausedUntil = now + 30 * 60 * 1000;
-                st.pausedReason = "STOP_LOW_ATR";
-                st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
             }
             // Build limit price (maker-first)
             const offset = Math.max(2 * st.instrument.tickSize, CFG.offsetAtrFrac * st.ltf.atr14);
@@ -2934,7 +3023,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const tp = roundToTick(isLong ? limit + CFG.tpR * oneR : limit - CFG.tpR * oneR, st.instrument.tickSize);
             // Risk sizing (4/8 USDT) with reservation
             const openRisk = computeOpenRiskUsd();
-            const riskTarget = Math.min(4, Math.max(0, 8 - openRisk));
+            const riskMultiplier = qualityScore < QUALITY_SCORE_LOW ? 0.5 : 1;
+            const riskTarget = Math.min(4 * riskMultiplier, Math.max(0, 8 - openRisk));
             if (riskTarget <= 0) {
                 logScalpReject(symbol, `RISK_BUDGET openRisk=${openRisk.toFixed(2)} >= 8`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -2988,6 +3078,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             ];
             logAuditEntry("SIGNAL", symbol, "SCAN", gates, canPlaceOrders ? "TRADE" : "DENY", "SCALP_SIGNAL", { entry: limit, sl, tp }, { notional: limit * finalQty, leverage: leverageFor(symbol) });
             st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
+            const extraTimeoutMs = qualityScore > QUALITY_SCORE_HIGH ? 30000 : 0;
             if (canPlaceOrders) {
                 // Reserve risk only for actual pending entry orders
                 scalpReservedRiskUsdRef.current += reservedRiskUsd;
@@ -3002,11 +3093,14 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     tp,
                     oneR,
                     reservedRiskUsd,
+                    qualityScore,
+                    qualityTier,
+                    extraTimeoutMs,
                     htfBarOpenTime: st.htf.barOpenTime,
                     ltfBarOpenTime: st.ltf.barOpenTime,
                     createdAt: now,
                     statusCheckAt: now + CFG.orderStatusDelayMs,
-                    timeoutAt: now + 60_000,
+                    timeoutAt: now + 60_000 + extraTimeoutMs,
                 };
             }
             else {
