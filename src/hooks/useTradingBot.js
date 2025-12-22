@@ -1799,13 +1799,26 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         };
         setLogEntries((prev) => [log, ...prev].slice(0, 50));
     }
-    const logScalpReject = (symbol, reason) => {
+    const logScalpReject = (symbol, reason, metrics) => {
         const nowTs = Date.now();
         const last = scalpRejectLogRef.current[symbol] ?? 0;
         if (nowTs - last < 2000)
             return;
         scalpRejectLogRef.current[symbol] = nowTs;
-        addLog({ action: "REJECT", message: `SCALP ${symbol} ${reason}` });
+        const code = metrics?.reasonCode ?? reason;
+        const detail = metrics?.reasonCode && metrics.reasonCode !== reason ? ` detail=${reason}` : "";
+        const spread = Number.isFinite(metrics?.spreadBps) ? metrics?.spreadBps?.toFixed(1) : "-";
+        const atrPct = Number.isFinite(metrics?.atrPct) ? `${((metrics?.atrPct ?? 0) * 100).toFixed(3)}%` : "-";
+        const slopeNorm = Number.isFinite(metrics?.emaSlopeNorm) ? metrics?.emaSlopeNorm?.toFixed(4) : "-";
+        const distEma = Number.isFinite(metrics?.distToEmaAtr) ? metrics?.distToEmaAtr?.toFixed(2) : "-";
+        const mae = Number.isFinite(metrics?.mae) ? metrics?.mae?.toFixed(4) : "-";
+        const mfe = Number.isFinite(metrics?.mfe) ? metrics?.mfe?.toFixed(4) : "-";
+        const tFill = Number.isFinite(metrics?.timeToFillMs) ? `${Math.round(metrics?.timeToFillMs ?? 0)}ms` : "-";
+        const tSl = Number.isFinite(metrics?.timeToSlConfirmMs) ? `${Math.round(metrics?.timeToSlConfirmMs ?? 0)}ms` : "-";
+        addLog({
+            action: "REJECT",
+            message: `SCALP ${symbol} ${code}${detail} | spreadBps=${spread} atrPct=${atrPct} emaSlopeNorm=${slopeNorm} distEmaATR=${distEma} | mae=${mae} mfe=${mfe} tFill=${tFill} tSL=${tSl}`,
+        });
     };
     const recordTrade = (symbol, id) => {
         if (!symbol)
@@ -1949,20 +1962,21 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const shouldBlockEntry = (symbol, ctx) => {
             const hardSpread = hardSpreadBpsFor(symbol);
             if (ctx.bboAgeMs > 800)
-                return { blocked: true, reason: `BBO_AGE ${Math.round(ctx.bboAgeMs)}ms` };
+                return { blocked: true, reason: `BBO_AGE ${Math.round(ctx.bboAgeMs)}ms`, code: "BBO_STALE" };
             if (ctx.spreadBps > hardSpread)
-                return { blocked: true, reason: `SPREAD ${ctx.spreadBps.toFixed(1)}bps>${hardSpread}` };
+                return { blocked: true, reason: `SPREAD ${ctx.spreadBps.toFixed(1)}bps>${hardSpread}`, code: "SPREAD_HARD" };
             if (ctx.atr > 0 && ctx.range > 2.5 * ctx.atr)
-                return { blocked: true, reason: "IMPULSE_CANDLE" };
+                return { blocked: true, reason: "IMPULSE_CANDLE", code: "IMPULSE" };
             const minAtr = minAtrPctFor(symbol);
             const slopeMin = slopeMinPctFor(symbol);
             if (ctx.atrPct < minAtr && ctx.emaSlopeAbs < slopeMin) {
                 return {
                     blocked: true,
                     reason: `CHOP atr=${(ctx.atrPct * 100).toFixed(3)}% slope=${(ctx.emaSlopeAbs * 100).toFixed(3)}%`,
+                    code: "RANGE_LOW_ATR",
                 };
             }
-            return { blocked: false, reason: "" };
+            return { blocked: false, reason: "", code: "" };
         };
         const qualityScoreFor = (symbol, ctx) => {
             const hardSpread = hardSpreadBpsFor(symbol);
@@ -3248,6 +3262,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 range,
                 atr: st.ltf.atr14,
             };
+            const emaSlopeNorm = st.htf?.emaSlopeNorm ?? 0;
+            const rejectMetricsBase = {
+                spreadBps: spBps,
+                atrPct,
+                emaSlopeNorm,
+            };
             const qualityScore = qualityScoreFor(symbol, qualityCtx);
             const qualityTier = qualityScore < quota.qualityLowThreshold ? "LOW" : qualityScore > QUALITY_SCORE_HIGH ? "HIGH" : "MID";
             const hardGate = shouldBlockEntry(symbol, qualityCtx);
@@ -3294,7 +3314,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         logScalpReject(symbol, "BLOCKED auto mode off or missing auth token");
                     }
                     else if (bboStale) {
-                        logScalpReject(symbol, `WAIT_BBO age=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`);
+                        logScalpReject(symbol, `BBO age=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms`, { ...rejectMetricsBase, reasonCode: "BBO_STALE" });
                     }
                 }
                 if (signalActive && bboAgeMs > 10_000) {
@@ -3307,14 +3327,14 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             if (hardGate.blocked) {
-                logScalpReject(symbol, `QUALITY_HARD ${hardGate.reason}`);
+                logScalpReject(symbol, hardGate.reason, { ...rejectMetricsBase, reasonCode: hardGate.code });
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
             // Execution guardrails (spread/ATR)
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) {
-                logScalpReject(symbol, "HTF_BLOCK");
+                logScalpReject(symbol, "HTF_BLOCK", rejectMetricsBase);
                 return false;
             }
             // Build limit price (maker-first)
@@ -3335,8 +3355,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const lateEntry = Number.isFinite(ema20) &&
                 st.ltf.atr14 > 0 &&
                 Math.abs(limit - ema20) > 0.6 * st.ltf.atr14;
+            const distToEmaAtr = st.ltf.atr14 > 0 && Number.isFinite(ema20)
+                ? Math.abs(limit - ema20) / st.ltf.atr14
+                : undefined;
             if (lateEntry) {
-                logScalpReject(symbol, `LATE_ENTRY dist=${Math.abs(limit - ema20).toFixed(4)} atr=${st.ltf.atr14.toFixed(4)}`);
+                logScalpReject(symbol, `LATE_ENTRY dist=${Math.abs(limit - ema20).toFixed(4)} atr=${st.ltf.atr14.toFixed(4)}`, { ...rejectMetricsBase, distToEmaAtr, reasonCode: "LATE_ENTRY" });
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
@@ -3381,7 +3404,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const bucketMultiplier = betaBucketSameSide ? 0.5 : 1;
             const riskTarget = Math.min(regimeRiskUsd * riskMultiplier * bucketMultiplier, Math.max(0, 8 - openRisk));
             if (riskTarget <= 0) {
-                logScalpReject(symbol, `RISK_BUDGET openRisk=${openRisk.toFixed(2)} >= 8`);
+                logScalpReject(symbol, `RISK_BUDGET openRisk=${openRisk.toFixed(2)} >= 8`, { ...rejectMetricsBase, distToEmaAtr });
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
@@ -3391,7 +3414,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const currentQty = activeStats.sizes[symbol] || 0;
             const remainingQty = Number.isFinite(maxQty) ? Math.max(0, maxQty - currentQty) : Number.POSITIVE_INFINITY;
             if (Number.isFinite(maxQty) && remainingQty <= 0) {
-                logScalpReject(symbol, `MAX_QTY size=${currentQty.toFixed(6)} >= ${maxQty}`);
+                logScalpReject(symbol, `MAX_QTY size=${currentQty.toFixed(6)} >= ${maxQty}`, { ...rejectMetricsBase, distToEmaAtr });
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
@@ -3400,19 +3423,19 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 : qtyStep;
             const finalQty = Math.min(qtyStep, maxQtyStep);
             if (!Number.isFinite(finalQty) || finalQty < st.instrument.minQty) {
-                logScalpReject(symbol, `QTY_TOO_SMALL qty=${Number.isFinite(finalQty) ? finalQty.toFixed(6) : "NaN"} min=${st.instrument.minQty}`);
+                logScalpReject(symbol, `QTY_TOO_SMALL qty=${Number.isFinite(finalQty) ? finalQty.toFixed(6) : "NaN"} min=${st.instrument.minQty}`, { ...rejectMetricsBase, distToEmaAtr });
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
             const reservedRiskUsd = oneR * finalQty * st.instrument.contractValue;
             if (reservedRiskUsd > 4 + 1e-6 || openRisk + reservedRiskUsd > 8 + 1e-6) {
-                logScalpReject(symbol, `RISK_CAP reserved=${reservedRiskUsd.toFixed(3)} open=${openRisk.toFixed(3)}`);
+                logScalpReject(symbol, `RISK_CAP reserved=${reservedRiskUsd.toFixed(3)} open=${openRisk.toFixed(3)}`, { ...rejectMetricsBase, distToEmaAtr });
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
             const openCount = activeStats.count;
             if (openCount >= 2) {
-                logScalpReject(symbol, `MAX_POSITIONS ${openCount} >= 2`);
+                logScalpReject(symbol, `MAX_POSITIONS ${openCount} >= 2`, { ...rejectMetricsBase, distToEmaAtr });
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
