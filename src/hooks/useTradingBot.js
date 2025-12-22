@@ -60,6 +60,8 @@ const SL_RETRY_BACKOFF_MS = 350;
 const SAFE_SYMBOL_HOLD_MS = 8 * 60_000;
 const LOSS_STREAK_SYMBOL_COOLDOWN_MS = 45 * 60_000;
 const LOSS_STREAK_RISK_USD = 2;
+const RANGE_RISK_USD = 2;
+const RANGE_TIMEOUT_MULT = 0.7;
 const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const ENTRY_REPRICE_AFTER_MS = 1200;
 const SYMBOL_COOLDOWN_MS = 15_000;
@@ -75,7 +77,12 @@ const ENTRY_MAX_DRIFT_BPS = {
     SOLUSDT: 10,
     ADAUSDT: 10,
 };
-const entryTimeoutMsFor = (symbol) => ENTRY_TIMEOUT_MS[symbol] ?? 4500;
+const entryTimeoutMsFor = (symbol, isRange = false) => {
+    const base = ENTRY_TIMEOUT_MS[symbol] ?? 4500;
+    if (!isRange)
+        return base;
+    return Math.max(1200, Math.floor(base * RANGE_TIMEOUT_MULT));
+};
 const entryMaxDriftBpsFor = (symbol) => ENTRY_MAX_DRIFT_BPS[symbol] ?? 8;
 const normalizeTp = (tp) => {
     const val = Number(tp ?? 0);
@@ -2267,7 +2274,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 p.placedAt = now;
                 p.repriceCount = p.repriceCount ?? 0;
                 p.statusCheckAt = now + CFG.orderStatusDelayMs;
-                p.timeoutAt = now + entryTimeoutMsFor(p.symbol);
+                const entryTimeoutMs = p.entryTimeoutMs ?? entryTimeoutMsFor(p.symbol, st.htf?.regime === "RANGE");
+                p.timeoutAt = now + entryTimeoutMs;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 addLog({ action: "SYSTEM", message: `PLACE ${p.symbol} ${p.side} limit=${p.limitPrice} qty=${p.qty} id=${p.orderLinkId}` });
                 return true;
@@ -2815,16 +2823,15 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const emaPrev = emaSeries.length > 1 ? emaSeries[emaSeries.length - 2] : ema200;
                 const atr14 = scalpComputeAtr(candles, CFG.atrPeriod).slice(-1)[0] ?? 0;
                 const emaSlopeNorm = atr14 > 0 ? (ema200 - emaPrev) / atr14 : 0;
+                const regime = Math.abs(emaSlopeNorm) > CFG.htfSlopeMinNorm ? "TREND" : "RANGE";
                 let bias = "NONE";
-                if (last.close > ema200 && emaSlopeNorm > CFG.htfSlopeMinNorm) {
-                    bias = "LONG";
-                }
-                else if (last.close < ema200 && emaSlopeNorm < -CFG.htfSlopeMinNorm) {
-                    bias = "SHORT";
+                if (Number.isFinite(ema200) && Number.isFinite(last.close)) {
+                    bias = last.close >= ema200 ? "LONG" : "SHORT";
                 }
                 st.htf = {
                     barOpenTime: expected15,
                     bias,
+                    regime,
                     ema200,
                     emaSlopeNorm,
                     atr14,
@@ -3115,6 +3122,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return false;
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs)
                 return false;
+            const isRange = st.htf.regime === "RANGE";
             const hasPending = Boolean(st.pending);
             const hasOpenPos = Boolean(getOpenPos(symbol));
             const isLong = st.htf.bias === "LONG";
@@ -3191,6 +3199,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     spreadBps: Number.isFinite(spBps) ? Number(spBps.toFixed(2)) : Infinity,
                     atrPct,
                     emaSlopeAbs,
+                    regime: isRange ? "RANGE" : "TREND",
                     qualityScore,
                     qualityTier,
                     hardBlock: hardGate.blocked ? hardGate.reason : undefined,
@@ -3293,11 +3302,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const openRisk = computeOpenRiskUsd();
             const riskMultiplier = qualityScore < QUALITY_SCORE_LOW ? 0.5 : 1;
             const baseRiskUsd = riskCutActiveRef.current ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD;
+            const regimeRiskUsd = isRange ? Math.min(baseRiskUsd, RANGE_RISK_USD) : baseRiskUsd;
             const normalizeSide = (value) => (String(value).toLowerCase() === "buy" ? "Buy" : "Sell");
             const betaBucketSameSide = BETA_BUCKET.has(symbol) &&
                 activePositionsRef.current.some((p) => BETA_BUCKET.has(p.symbol) && normalizeSide(p.side) === side);
             const bucketMultiplier = betaBucketSameSide ? 0.5 : 1;
-            const riskTarget = Math.min(baseRiskUsd * riskMultiplier * bucketMultiplier, Math.max(0, 8 - openRisk));
+            const riskTarget = Math.min(regimeRiskUsd * riskMultiplier * bucketMultiplier, Math.max(0, 8 - openRisk));
             if (riskTarget <= 0) {
                 logScalpReject(symbol, `RISK_BUDGET openRisk=${openRisk.toFixed(2)} >= 8`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -3353,6 +3363,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (canPlaceOrders) {
                 // Reserve risk only for actual pending entry orders
                 scalpReservedRiskUsdRef.current += reservedRiskUsd;
+                const entryTimeoutMs = entryTimeoutMsFor(symbol, isRange);
                 st.pending = {
                     stage: "READY_TO_PLACE",
                     orderLinkId: id,
@@ -3367,11 +3378,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     qualityScore,
                     qualityTier,
                     extraTimeoutMs,
+                    entryTimeoutMs,
                     htfBarOpenTime: st.htf.barOpenTime,
                     ltfBarOpenTime: st.ltf.barOpenTime,
                     createdAt: now,
                     statusCheckAt: now + CFG.orderStatusDelayMs,
-                    timeoutAt: now + entryTimeoutMsFor(symbol),
+                    timeoutAt: now + entryTimeoutMs,
                 };
             }
             else {
