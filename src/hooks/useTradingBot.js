@@ -62,7 +62,19 @@ const LOSS_STREAK_SYMBOL_COOLDOWN_MS = 45 * 60_000;
 const LOSS_STREAK_RISK_USD = 2;
 const RANGE_RISK_USD = 2;
 const RANGE_TIMEOUT_MULT = 0.7;
+const ENTRY_TF_BASE_MS = 3 * 60_000;
+const ENTRY_TF_BOOST_MS = 60_000;
+const QUOTA_LOOKBACK_MS = 3 * 60 * 60_000;
+const QUOTA_BEHIND_PCT = 0.4;
+const QUOTA_BOOST_MS = 90 * 60_000;
+const QUALITY_SCORE_SOFT_BOOST = 55;
 const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
+const TARGET_TRADES_PER_DAY = {
+    BTCUSDT: 6,
+    ETHUSDT: 6,
+    SOLUSDT: 8,
+    ADAUSDT: 4,
+};
 const ENTRY_REPRICE_AFTER_MS = 1200;
 const SYMBOL_COOLDOWN_MS = 15_000;
 const ENTRY_TIMEOUT_MS = {
@@ -540,6 +552,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         recentErrors: [],
     });
     const activePositionsRef = useRef([]);
+    const tradeCountsRef = useRef({});
+    const tradeCountSeenRef = useRef(new Set());
+    const tradeQuotaBoostRef = useRef({});
     const closedPnlSeenRef = useRef(new Set());
     const manualPnlResetRef = useRef(0);
     const slRepairRef = useRef({});
@@ -644,6 +659,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 winStreakRef.current = 0;
                 lossStreakRef.current = 0;
                 riskCutActiveRef.current = false;
+                tradeCountsRef.current = {};
+                tradeCountSeenRef.current = new Set();
+                tradeQuotaBoostRef.current = {};
                 clearPnlHistory();
                 setAssetPnlHistory({});
             }
@@ -1789,6 +1807,49 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         scalpRejectLogRef.current[symbol] = nowTs;
         addLog({ action: "REJECT", message: `SCALP ${symbol} ${reason}` });
     };
+    const recordTrade = (symbol, id) => {
+        if (!symbol)
+            return;
+        const now = Date.now();
+        const key = id ? `${symbol}:${id}` : `${symbol}:${now}`;
+        const seen = tradeCountSeenRef.current;
+        if (seen.has(key))
+            return;
+        seen.add(key);
+        const list = tradeCountsRef.current[symbol] ?? [];
+        const next = [...list, now].filter((ts) => now - ts <= 24 * 60 * 60_000);
+        tradeCountsRef.current[symbol] = next;
+        if (seen.size > 2000) {
+            tradeCountSeenRef.current = new Set(Array.from(seen).slice(-1500));
+        }
+    };
+    const countTrades = (symbol, windowMs, now) => {
+        const list = tradeCountsRef.current[symbol] ?? [];
+        return list.filter((ts) => now - ts <= windowMs).length;
+    };
+    const getQuotaState = (symbol, now) => {
+        const target = TARGET_TRADES_PER_DAY[symbol] ?? 0;
+        const expected = target * (QUOTA_LOOKBACK_MS / (24 * 60 * 60_000));
+        const actual = countTrades(symbol, QUOTA_LOOKBACK_MS, now);
+        const behind = expected > 0 && actual < expected * (1 - QUOTA_BEHIND_PCT);
+        let boostUntil = tradeQuotaBoostRef.current[symbol] ?? 0;
+        if (behind && now >= boostUntil) {
+            boostUntil = now + QUOTA_BOOST_MS;
+            tradeQuotaBoostRef.current[symbol] = boostUntil;
+            addLog({
+                action: "SYSTEM",
+                message: `QUOTA_BOOST ${symbol} actual=${actual} expected=${expected.toFixed(1)} window=3h`,
+            });
+        }
+        const boosted = now < boostUntil;
+        return {
+            boosted,
+            qualityLowThreshold: boosted ? QUALITY_SCORE_SOFT_BOOST : QUALITY_SCORE_LOW,
+            entryTfMs: boosted ? ENTRY_TF_BOOST_MS : ENTRY_TF_BASE_MS,
+            actual3h: actual,
+            expected3h: expected,
+        };
+    };
     function logAuditEntry(action, symbol, state, gates, decision, reason, prices, sizing, netRrr) {
         const gateMsg = gates.map((g) => `${g.name}:${g.result}`).join("|");
         addLog({
@@ -2295,6 +2356,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     if (status === "Filled" || status === "PartiallyFilled") {
                         scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
                         p.reservedRiskUsd = 0;
+                        recordTrade(p.symbol, p.orderLinkId);
                         const entry = Number.isFinite(avg) && avg > 0 ? avg : p.limitPrice;
                         const dir = p.side === "Buy" ? 1 : -1;
                         const oneR = Math.abs(entry - p.sl);
@@ -3123,6 +3185,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs)
                 return false;
             const isRange = st.htf.regime === "RANGE";
+            const quota = getQuotaState(symbol, now);
+            const entryTfMs = quota.entryTfMs;
+            if (entryTfMs > 60_000 && st.ltf.barOpenTime % entryTfMs !== 0) {
+                st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
             const hasPending = Boolean(st.pending);
             const hasOpenPos = Boolean(getOpenPos(symbol));
             const isLong = st.htf.bias === "LONG";
@@ -3180,7 +3249,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 atr: st.ltf.atr14,
             };
             const qualityScore = qualityScoreFor(symbol, qualityCtx);
-            const qualityTier = qualityScore < QUALITY_SCORE_LOW ? "LOW" : qualityScore > QUALITY_SCORE_HIGH ? "HIGH" : "MID";
+            const qualityTier = qualityScore < quota.qualityLowThreshold ? "LOW" : qualityScore > QUALITY_SCORE_HIGH ? "HIGH" : "MID";
             const hardGate = shouldBlockEntry(symbol, qualityCtx);
             const gateDetails = `pullback=${pullbackRaw}/${pullback} micro=${microBreakRaw}/${microBreak} bboFresh=${!bboStale} q=${qualityScore}`;
             addLog({
@@ -3201,6 +3270,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     emaSlopeAbs,
                     regime: isRange ? "RANGE" : "TREND",
                     qualityScore,
+                    quotaBoost: quota.boosted,
+                    tradeCount3h: quota.actual3h,
+                    tradeTarget3h: quota.expected3h,
                     qualityTier,
                     hardBlock: hardGate.blocked ? hardGate.reason : undefined,
                     gates: [
@@ -3300,7 +3372,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const side = isLong ? "Buy" : "Sell";
             // Risk sizing (4/8 USDT) with reservation
             const openRisk = computeOpenRiskUsd();
-            const riskMultiplier = qualityScore < QUALITY_SCORE_LOW ? 0.5 : 1;
+            const riskMultiplier = qualityScore < quota.qualityLowThreshold ? 0.5 : 1;
             const baseRiskUsd = riskCutActiveRef.current ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD;
             const regimeRiskUsd = isRange ? Math.min(baseRiskUsd, RANGE_RISK_USD) : baseRiskUsd;
             const normalizeSide = (value) => (String(value).toLowerCase() === "buy" ? "Buy" : "Sell");
@@ -3355,7 +3427,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 { name: "HTF_TREND", result: "PASS" },
                 { name: "EMA_PULLBACK", result: "PASS" },
                 { name: "MICRO_BREAK", result: "PASS" },
-                { name: "QUALITY_SCORE", result: qualityScore < QUALITY_SCORE_LOW ? "FAIL" : "PASS" },
+                { name: "QUALITY_SCORE", result: qualityScore < quota.qualityLowThreshold ? "FAIL" : "PASS" },
             ];
             logAuditEntry("SIGNAL", symbol, "SCAN", gates, canPlaceOrders ? "TRADE" : "DENY", "SCALP_SIGNAL", { entry: limit, sl, tp }, { notional: limit * finalQty, leverage: leverageFor(symbol) });
             st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
@@ -3845,6 +3917,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         if (protectionOk) {
                             protectionVerifyRef.current[symbol] = Date.now();
                             setLifecycle(signalId, "MANAGING");
+                            recordTrade(symbol, clientOrderId || orderId || signalId);
                             logAuditEntry("SYSTEM", symbol, "ORDER_FILL", [...gatesAudit, entryModeGate], "TRADE", "Order filled and protected", { entry: price, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
                         }
                         else {
@@ -3909,6 +3982,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 });
                 setLifecycle(signalId, "ENTRY_FILLED", "Simulated");
                 setLifecycle(signalId, "MANAGING", "Simulated");
+                recordTrade(symbol, signalId);
                 return true;
             }
             else {
