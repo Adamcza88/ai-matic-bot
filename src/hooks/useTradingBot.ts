@@ -153,6 +153,10 @@ const SCALE_IN_MARGIN_FRACTION = 0.5;
 const MIN_NET_PROFIT_USD = 1.0;
 const SCALE_IN_MAX_MISSING_GATES = 2;
 const TRAIL_MIN_RETRACE_PCT = 0.004;
+const SL_SLA_MS = 2000;
+const SL_MAX_ATTEMPTS = 3;
+const SL_RETRY_BACKOFF_MS = 350;
+const SAFE_SYMBOL_HOLD_MS = 8 * 60_000;
 const normalizeTp = (tp?: number | null) => {
     const val = Number(tp ?? 0);
     return Number.isFinite(val) && val > 0 ? val : undefined;
@@ -1958,6 +1962,7 @@ export const useTradingBot = (
         tpVerifyAt?: number;
         cancelAttempts?: number;
         slSetAttempts?: number;
+        slLastError?: string;
     };
 
     type ScalpManage = {
@@ -1986,6 +1991,8 @@ export const useTradingBot = (
         pausedUntil: number;
         pausedReason?: string;
         cooldownUntil: number;
+        safeUntil?: number;
+        safeReason?: string;
     };
 
     const scalpStateRef = useRef<Record<string, ScalpSymbolState>>({});
@@ -2155,6 +2162,29 @@ export const useTradingBot = (
             return msg.includes("order not exists") || msg.includes("too late");
         };
 
+        const classifySafeDiag = (msg?: string) => {
+            if (!msg) return "UNKNOWN";
+            const lower = msg.toLowerCase();
+            if (lower.includes("auth") || lower.includes("token") || lower.includes("permission")) return "AUTH";
+            if (lower.includes("rate") || lower.includes("limit")) return "RATE_LIMIT";
+            if (lower.includes("position") || lower.includes("not found") || lower.includes("no position")) return "POSITION_MISMATCH";
+            if (lower.includes("fetch") || lower.includes("timeout") || lower.includes("endpoint") || lower.includes("network") || lower.includes("503")) return "ENDPOINT";
+            return "UNKNOWN";
+        };
+
+        const setSymbolSafe = (symbol: string, reason: string, diag?: string) => {
+            const st = ensureSymbolState(symbol);
+            const until = Date.now() + SAFE_SYMBOL_HOLD_MS;
+            st.safeUntil = until;
+            st.safeReason = reason;
+            st.pausedUntil = Math.max(st.pausedUntil, until);
+            st.pausedReason = `SAFE_${reason}`;
+            addLog({
+                action: "ERROR",
+                message: `SAFE_MODE ${symbol} reason=${reason}${diag ? ` diag=${diag}` : ""}`,
+            });
+        };
+
         const ensureSymbolState = (symbol: string) => {
             const map = scalpStateRef.current;
             if (!map[symbol]) {
@@ -2163,6 +2193,7 @@ export const useTradingBot = (
                     nextAllowedAt: 0,
                     pausedUntil: 0,
                     cooldownUntil: 0,
+                    safeUntil: 0,
                 };
             }
             return map[symbol];
@@ -2371,6 +2402,16 @@ export const useTradingBot = (
                 addLog({ action: "SYSTEM", message: `PENDING_SKIP ${p.symbol} no open position for ${p.stage}` });
                 return true;
             }
+            const slSlaBreached = p.fillAt != null &&
+                now - p.fillAt > SL_SLA_MS &&
+                (p.stage === "FILLED_NEED_SL" || p.stage === "SL_SENT" || p.stage === "SL_VERIFY");
+            if (slSlaBreached) {
+                p.stage = "SAFE_CLOSE";
+                p.taskReason = "SL_SLA_EXPIRED";
+                setSymbolSafe(p.symbol, "SL_SLA_EXPIRED", classifySafeDiag(p.slLastError));
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
 
             if (p.stage === "READY_TO_PLACE") {
                 if (!canPlaceOrders) {
@@ -2543,14 +2584,13 @@ export const useTradingBot = (
 
             if (p.stage === "FILLED_NEED_SL") {
                 if (!p.fillAt || now < p.fillAt + CFG.postFillDelayMs) return false;
+                if (p.slVerifyAt && now < p.slVerifyAt) return false;
                 logTiming("PLACE_SL", "post_fill_delay");
                 const attempts = p.slSetAttempts ?? 0;
-                if (attempts >= 3) {
+                if (attempts >= SL_MAX_ATTEMPTS) {
                     p.stage = "SAFE_CLOSE";
                     p.taskReason = "SL_SET_FAILED_MAX_RETRY";
-                    scalpForceSafeUntilRef.current = Date.now() + 30 * 60_000; // 30m safe window
-                    scalpSafeRef.current = true;
-                    addLog({ action: "ERROR", message: `SAFE_MODE triggered (SL_SET_FAILED_MAX ${p.symbol})` });
+                    setSymbolSafe(p.symbol, "SL_SET_FAILED_MAX_RETRY", classifySafeDiag(p.slLastError));
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
                 }
@@ -2561,12 +2601,14 @@ export const useTradingBot = (
                             const posSnap = await fetchPositionsOnce(net);
                             pos = posSnap.list.find((pp) => pp.symbol === p.symbol && Math.abs(Number(pp.size ?? 0)) > 0);
                         } catch {
-                            p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                            p.slLastError = "POSITION_MISMATCH";
+                            p.slVerifyAt = now + SL_RETRY_BACKOFF_MS;
                             st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                             return true;
                         }
                         if (!pos) {
-                            p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                            p.slLastError = "POSITION_MISMATCH";
+                            p.slVerifyAt = now + SL_RETRY_BACKOFF_MS;
                             st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                             return true;
                         }
@@ -2583,8 +2625,11 @@ export const useTradingBot = (
                     await setProtection(p.symbol, safeSl, undefined);
                     p.sl = safeSl;
                     p.slSetAttempts = attempts + 1;
-                } catch {
+                    p.slLastError = undefined;
+                } catch (err) {
+                    p.slLastError = getErrorMessage(err) || "SL_SET_FAILED";
                     p.slSetAttempts = attempts + 1;
+                    p.slVerifyAt = now + SL_RETRY_BACKOFF_MS;
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
                 }
@@ -2609,22 +2654,27 @@ export const useTradingBot = (
                 if (!ok) {
                     const age = p.fillAt ? now - p.fillAt : Infinity;
                     const attempts = p.slSetAttempts ?? 0;
-                    if (attempts < 3) {
+                    if (!found) {
+                        p.slLastError = "POSITION_MISMATCH";
+                    }
+                    if (age > SL_SLA_MS) {
+                        p.stage = "SAFE_CLOSE";
+                        p.taskReason = "SL_SLA_EXPIRED";
+                        setSymbolSafe(p.symbol, "SL_SLA_EXPIRED", classifySafeDiag(p.slLastError));
+                    } else if (attempts < SL_MAX_ATTEMPTS) {
                         try {
                             await setProtection(p.symbol, p.sl, undefined);
                             p.slSetAttempts = attempts + 1;
-                        } catch {
+                            p.slLastError = undefined;
+                        } catch (err) {
+                            p.slLastError = getErrorMessage(err) || "SL_SET_FAILED";
                             p.slSetAttempts = attempts + 1;
                         }
-                        p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
-                    } else if (age > 2000) {
-                        p.stage = "SAFE_CLOSE";
-                        p.taskReason = "SL_MISSING";
-                        scalpForceSafeUntilRef.current = Date.now() + 30 * 60_000; // 30m safe window
-                        scalpSafeRef.current = true;
-                        addLog({ action: "ERROR", message: `SAFE_MODE triggered (SL missing ${p.symbol})` });
+                        p.slVerifyAt = now + SL_RETRY_BACKOFF_MS;
                     } else {
-                        p.slVerifyAt = now + CFG.postSlVerifyDelayMs;
+                        p.stage = "SAFE_CLOSE";
+                        p.taskReason = "SL_SET_FAILED_MAX_RETRY";
+                        setSymbolSafe(p.symbol, "SL_SET_FAILED_MAX_RETRY", classifySafeDiag(p.slLastError));
                     }
                 } else {
                     p.stage = "TP_SENT";
