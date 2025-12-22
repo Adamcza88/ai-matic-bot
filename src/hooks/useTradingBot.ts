@@ -3461,11 +3461,11 @@ export const useTradingBot = (
             }
             scalpRecentIdsRef.current.set(id, now);
 
-            const gates = [
-                { name: "HTF_TREND", result: "PASS" as const },
-                { name: "EMA_PULLBACK", result: "PASS" as const },
-                { name: "MICRO_BREAK", result: "PASS" as const },
-                { name: "QUALITY_SCORE", result: qualityScore < QUALITY_SCORE_LOW ? "FAIL" : "PASS" as const },
+            const gates: { name: string; result: "PASS" | "FAIL" }[] = [
+                { name: "HTF_TREND", result: "PASS" },
+                { name: "EMA_PULLBACK", result: "PASS" },
+                { name: "MICRO_BREAK", result: "PASS" },
+                { name: "QUALITY_SCORE", result: qualityScore < QUALITY_SCORE_LOW ? "FAIL" : "PASS" },
             ];
             logAuditEntry("SIGNAL", symbol, "SCAN", gates, canPlaceOrders ? "TRADE" : "DENY", "SCALP_SIGNAL", { entry: limit, sl, tp }, { notional: limit * finalQty, leverage: leverageFor(symbol) });
 
