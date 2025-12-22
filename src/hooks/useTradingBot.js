@@ -1764,9 +1764,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             spreadMaxPct: 0.0008, // 0.08%
             lowAtrMinPct: 0, // disabled: allow entries even in low ATR
             rvolMin: 1.2,
-            stHtf: { atr: 10, mult: 3.0 },
             stLtf: { atr: 10, mult: 2.0 },
-            emaPeriod: 21,
+            emaPeriod: 20,
+            htfEmaPeriod: 200,
+            htfSlopeMinNorm: 0.03,
             atrPeriod: 14,
             touchBandAtrFrac: 0.1,
             offsetAtrFrac: 0.05,
@@ -2590,7 +2591,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     ? st.htfConfirm
                     : { expectedOpenTime: expected15, stage: 0, attempts: 0 };
                 logTiming("FETCH_HTF", st.htfConfirm ? "retry_confirm" : undefined);
-                const candles = await fetchKlines(symbol, "15", 60);
+                const candles = await fetchKlines(symbol, "15", 240);
                 const last = candles[candles.length - 1];
                 if (!last || last.openTime !== expected15) {
                     conf.attempts += 1;
@@ -2617,30 +2618,28 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     return true;
                 }
                 st.htfConfirm = undefined;
-                const stSeries = computeSuperTrend(candles, CFG.stHtf.atr, CFG.stHtf.mult);
-                const dir = stSeries.dir[stSeries.dir.length - 1];
-                const line = stSeries.line[stSeries.line.length - 1];
-                const bias = dir === "UP" ? "LONG" : "SHORT";
-                const prevDir = st.htf?.stDir;
-                const flipped = prevDir && prevDir !== dir;
-                // Flip handling: block entries for next 15m candle and cancel pending entries/signals
-                const blockedUntil = flipped ? expected15 + htfMs : (st.htf?.blockedUntilBarOpenTime ?? 0);
-                st.htf = { barOpenTime: expected15, stDir: dir, stLine: line, bias, blockedUntilBarOpenTime: blockedUntil };
-                if (flipped) {
-                    addLog({ action: "SYSTEM", message: `HTF_FLIP ${symbol} ${prevDir}→${dir} blockUntil=${new Date(blockedUntil).toISOString()}` });
-                    logTiming("HTF_FLIP", "cancel_pending");
-                    if (st.pending?.stage === "PLACED") {
-                        st.pending.timeoutAt = now;
-                        st.pending.taskReason = "HTF_FLIP";
-                    }
-                    else if (st.pending) {
-                        scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (st.pending.reservedRiskUsd || 0));
-                        st.pending = undefined;
-                    }
-                    // clear any manage state; do not open new entries until block lifts
-                    st.manage = undefined;
-                    setPendingSignals((prev) => prev.filter((s) => s.symbol !== symbol));
+                const closes = candles.map((c) => c.close);
+                const emaSeries = scalpComputeEma(closes, CFG.htfEmaPeriod);
+                const ema200 = emaSeries.slice(-1)[0] ?? last.close;
+                const emaPrev = emaSeries.length > 1 ? emaSeries[emaSeries.length - 2] : ema200;
+                const atr14 = scalpComputeAtr(candles, CFG.atrPeriod).slice(-1)[0] ?? 0;
+                const emaSlopeNorm = atr14 > 0 ? (ema200 - emaPrev) / atr14 : 0;
+                let bias = "NONE";
+                if (last.close > ema200 && emaSlopeNorm > CFG.htfSlopeMinNorm) {
+                    bias = "LONG";
                 }
+                else if (last.close < ema200 && emaSlopeNorm < -CFG.htfSlopeMinNorm) {
+                    bias = "SHORT";
+                }
+                st.htf = {
+                    barOpenTime: expected15,
+                    bias,
+                    ema200,
+                    emaSlopeNorm,
+                    atr14,
+                    close: last.close,
+                    blockedUntilBarOpenTime: 0,
+                };
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
@@ -2692,10 +2691,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 // Indicators
                 const closes = candles.map((c) => c.close);
                 const emaSeries = scalpComputeEma(closes, CFG.emaPeriod);
-                const ema21 = emaSeries.slice(-1)[0] ?? last.close;
-                const emaPrev = emaSeries.length > 1 ? emaSeries[emaSeries.length - 2] : ema21;
+                const ema20 = emaSeries.slice(-1)[0] ?? last.close;
+                const emaPrev = emaSeries.length > 1 ? emaSeries[emaSeries.length - 2] : ema20;
                 const emaSlopeAbs = Number.isFinite(emaPrev) && Math.abs(emaPrev) > 0
-                    ? Math.abs(ema21 - emaPrev) / Math.abs(emaPrev)
+                    ? Math.abs(ema20 - emaPrev) / Math.abs(emaPrev)
                     : 0;
                 const atr14 = scalpComputeAtr(candles, CFG.atrPeriod).slice(-1)[0] ?? 0;
                 const volSma20 = scalpComputeSma(candles.map((c) => c.volume), 20).slice(-1)[0] ?? last.volume;
@@ -2718,7 +2717,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     stDir,
                     prevStDir,
                     stLine,
-                    ema21,
+                    ema20,
                     emaSlopeAbs,
                     atr14,
                     smaVol20: volSma20,
@@ -2842,39 +2841,24 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const hasPending = Boolean(st.pending);
             const hasOpenPos = Boolean(getOpenPos(symbol));
             const isLong = st.htf.bias === "LONG";
-            const wantsDir = isLong ? "UP" : "DOWN";
             // Signal purely z OHLCV/indikátorů
-            const flippedRaw = st.ltf.prevStDir !== st.ltf.stDir && st.ltf.stDir === wantsDir;
-            const touchBand = Math.max(2 * st.instrument.tickSize, CFG.touchBandAtrFrac * st.ltf.atr14);
-            const closeToEma = Math.abs(st.ltf.last.close - st.ltf.ema21) <= touchBand;
-            const touched = isLong ? st.ltf.last.low <= st.ltf.ema21 + touchBand : st.ltf.last.high >= st.ltf.ema21 - touchBand;
-            const closeVsStRaw = isLong ? st.ltf.last.close > st.ltf.stLine : st.ltf.last.close < st.ltf.stLine;
-            const htfProjRaw = isLong ? st.ltf.last.close > st.htf.stLine : st.ltf.last.close < st.htf.stLine;
-            const rvolRaw = st.ltf.rvol >= CFG.rvolMin;
+            const prev = st.ltf.candles[st.ltf.candles.length - 2];
+            if (!prev) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+            const pullbackRaw = isLong ? st.ltf.last.low <= st.ltf.ema20 : st.ltf.last.high >= st.ltf.ema20;
+            const microBreakRaw = isLong ? st.ltf.last.close > prev.high : st.ltf.last.close < prev.low;
             const range = st.ltf.last.high - st.ltf.last.low;
-            const body = Math.abs(st.ltf.last.close - st.ltf.last.open);
-            const antiBreakoutRaw = !(range >= CFG.antiBreakoutRangeAtr * st.ltf.atr14) && !(range > 0 && body >= CFG.antiBreakoutBodyFrac * range);
             // Apply UI toggles: disabled gate = auto-pass
-            const flipped = isGateEnabled("ST flip") ? flippedRaw : true;
-            const emaOk = isGateEnabled("EMA pullback") ? closeToEma || touched : true;
-            const closeVsSt = isGateEnabled("Close vs ST") ? closeVsStRaw : true;
-            const htfProj = isGateEnabled("HTF line projection") ? htfProjRaw : true;
-            const rvolOk = isGateEnabled("RVOL ≥ 1.2") ? rvolRaw : true;
-            const antiBreakout = isGateEnabled("Anti-breakout") ? antiBreakoutRaw : true;
+            const pullback = isGateEnabled("EMA pullback") ? pullbackRaw : true;
+            const microBreak = isGateEnabled("Micro break") ? microBreakRaw : true;
             const gateFailures = [];
-            if (!flipped)
-                gateFailures.push("ST flip");
-            if (!emaOk)
+            if (!pullback)
                 gateFailures.push("EMA pullback");
-            if (!closeVsSt)
-                gateFailures.push("Close vs ST");
-            if (!htfProj)
-                gateFailures.push("HTF line");
-            if (!rvolOk)
-                gateFailures.push("RVOL");
-            if (!antiBreakout)
-                gateFailures.push("Anti-breakout");
-            const signalActive = flipped && emaOk && closeVsSt && htfProj && rvolOk && antiBreakout;
+            if (!microBreak)
+                gateFailures.push("Micro break");
+            const signalActive = pullback && microBreak;
             // BBO needed when signal active / pending / open pos; otherwise keep old snapshot to save API
             const needFreshBbo = signalActive || hasPending || hasOpenPos;
             const needBbo = !st.bbo || needFreshBbo;
@@ -2913,7 +2897,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const qualityScore = qualityScoreFor(symbol, qualityCtx);
             const qualityTier = qualityScore < QUALITY_SCORE_LOW ? "LOW" : qualityScore > QUALITY_SCORE_HIGH ? "HIGH" : "MID";
             const hardGate = shouldBlockEntry(symbol, qualityCtx);
-            const gateDetails = `flip=${flippedRaw}/${flipped} ema=${closeToEma || touched}/${emaOk} closeSt=${closeVsStRaw}/${closeVsSt} htfLine=${htfProjRaw}/${htfProj} rvol=${rvolRaw}/${rvolOk} breakout=${antiBreakoutRaw}/${antiBreakout} bboFresh=${!bboStale} q=${qualityScore}`;
+            const gateDetails = `pullback=${pullbackRaw}/${pullback} micro=${microBreakRaw}/${microBreak} bboFresh=${!bboStale} q=${qualityScore}`;
             addLog({
                 action: "SIGNAL",
                 message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms | fail=[${gateFailures.join(",") || "none"}] | gates raw/gated: ${gateDetails}`,
@@ -2935,12 +2919,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     hardBlock: hardGate.blocked ? hardGate.reason : undefined,
                     gates: [
                         { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
-                        { name: "ST flip", ok: flipped },
-                        { name: "EMA pullback", ok: closeToEma || touched },
-                        { name: "Close vs ST", ok: closeVsSt },
-                        { name: "HTF line projection", ok: htfProj },
-                        { name: "RVOL ≥ 1.2", ok: rvolOk },
-                        { name: "Anti-breakout", ok: antiBreakout },
+                        { name: "EMA pullback", ok: pullback },
+                        { name: "Micro break", ok: microBreak },
                         { name: "BBO fresh", ok: !bboStale },
                     ],
                 },
@@ -2990,6 +2970,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             if (!isLong && limit <= st.bbo.bid) {
+                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                return true;
+            }
+            const ema20 = st.ltf.ema20;
+            const lateEntry = Number.isFinite(ema20) &&
+                st.ltf.atr14 > 0 &&
+                Math.abs(limit - ema20) > 0.6 * st.ltf.atr14;
+            if (lateEntry) {
+                logScalpReject(symbol, `LATE_ENTRY dist=${Math.abs(limit - ema20).toFixed(4)} atr=${st.ltf.atr14.toFixed(4)}`);
+                st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
@@ -3070,11 +3060,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             scalpRecentIdsRef.current.set(id, now);
             const gates = [
-                { name: "SPREAD", result: "PASS" },
-                { name: "HTF_BIAS", result: "PASS" },
-                { name: "LTF_FLIP", result: "PASS" },
-                { name: "PULLBACK", result: "PASS" },
-                { name: "RVOL", result: "PASS" },
+                { name: "HTF_TREND", result: "PASS" },
+                { name: "EMA_PULLBACK", result: "PASS" },
+                { name: "MICRO_BREAK", result: "PASS" },
+                { name: "QUALITY_SCORE", result: qualityScore < QUALITY_SCORE_LOW ? "FAIL" : "PASS" },
             ];
             logAuditEntry("SIGNAL", symbol, "SCAN", gates, canPlaceOrders ? "TRADE" : "DENY", "SCALP_SIGNAL", { entry: limit, sl, tp }, { notional: limit * finalQty, leverage: leverageFor(symbol) });
             st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
