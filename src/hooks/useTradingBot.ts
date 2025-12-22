@@ -157,6 +157,22 @@ const SL_SLA_MS = 2000;
 const SL_MAX_ATTEMPTS = 3;
 const SL_RETRY_BACKOFF_MS = 350;
 const SAFE_SYMBOL_HOLD_MS = 8 * 60_000;
+const ENTRY_REPRICE_AFTER_MS = 1200;
+const SYMBOL_COOLDOWN_MS = 15_000;
+const ENTRY_TIMEOUT_MS: Record<string, number> = {
+    BTCUSDT: 4000,
+    ETHUSDT: 4000,
+    SOLUSDT: 5500,
+    ADAUSDT: 5500,
+};
+const ENTRY_MAX_DRIFT_BPS: Record<string, number> = {
+    BTCUSDT: 6,
+    ETHUSDT: 8,
+    SOLUSDT: 10,
+    ADAUSDT: 10,
+};
+const entryTimeoutMsFor = (symbol: string) => ENTRY_TIMEOUT_MS[symbol] ?? 4500;
+const entryMaxDriftBpsFor = (symbol: string) => ENTRY_MAX_DRIFT_BPS[symbol] ?? 8;
 const normalizeTp = (tp?: number | null) => {
     const val = Number(tp ?? 0);
     return Number.isFinite(val) && val > 0 ? val : undefined;
@@ -1998,6 +2014,9 @@ export const useTradingBot = (
         htfBarOpenTime: number;
         ltfBarOpenTime: number;
         createdAt: number;
+        placedAt?: number;
+        repriceCount?: number;
+        lastRepriceAt?: number;
         statusCheckAt: number;
         timeoutAt: number;
         cancelVerifyAt?: number;
@@ -2466,19 +2485,37 @@ export const useTradingBot = (
 
         const computeOpenRiskUsd = () => openRiskUsd(activePositionsRef.current) + scalpReservedRiskUsdRef.current;
 
-        const hashScalpId = (input: string) => {
-            let hash = 0;
-            for (let i = 0; i < input.length; i += 1) {
-                hash = (hash * 31 + input.charCodeAt(i)) | 0;
-            }
-            return Math.abs(hash).toString(36);
-        };
-        const buildId = (symbol: string, side: "Buy" | "Sell", htfBar: number, ltfBar: number) => {
-            const raw = `${symbol}:${side}:${htfBar}:${ltfBar}`;
-            if (raw.length <= 36) return raw;
-            const short = `${symbol}:${side}:${hashScalpId(raw)}`;
-            return short.slice(0, 36);
-        };
+    const hashScalpId = (input: string) => {
+        let hash = 0;
+        for (let i = 0; i < input.length; i += 1) {
+            hash = (hash * 31 + input.charCodeAt(i)) | 0;
+        }
+        return Math.abs(hash).toString(36);
+    };
+    const buildId = (symbol: string, side: "Buy" | "Sell", htfBar: number, ltfBar: number) => {
+        const raw = `${symbol}:${side}:${htfBar}:${ltfBar}`;
+        if (raw.length <= 36) return raw;
+        const short = `${symbol}:${side}:${hashScalpId(raw)}`;
+        return short.slice(0, 36);
+    };
+    const buildRepriceId = (base: string, attempt: number) => {
+        const suffix = `-R${attempt}`;
+        const next = `${base}${suffix}`;
+        return next.length <= 36 ? next : next.slice(0, 36);
+    };
+    const computeEntryLimit = (st: ScalpSymbolState, side: "Buy" | "Sell") => {
+        if (!st.instrument || !st.bbo) return null;
+        const tick = st.instrument.tickSize;
+        const atr = st.ltf?.atr14 ?? 0;
+        const offset = Math.max(2 * tick, CFG.offsetAtrFrac * atr);
+        const raw = side === "Buy"
+            ? Math.min(st.bbo.ask - tick, st.bbo.bid + offset)
+            : Math.max(st.bbo.bid + tick, st.bbo.ask - offset);
+        const limit = roundToTick(raw, tick);
+        if (side === "Buy" && limit >= st.bbo.ask) return null;
+        if (side === "Sell" && limit <= st.bbo.bid) return null;
+        return limit;
+    };
 
         const handlePending = async (st: ScalpSymbolState, plannedAt: number, logTiming: (kind: string, reason?: string) => void): Promise<boolean> => {
             const p = st.pending;
@@ -2551,10 +2588,10 @@ export const useTradingBot = (
                     return true; // no retry
                 }
                 p.stage = "PLACED";
+                p.placedAt = now;
+                p.repriceCount = p.repriceCount ?? 0;
                 p.statusCheckAt = now + CFG.orderStatusDelayMs;
-                // "1 closed 1m candle" timeout aligned to bar close + delay
-                const nextBarClose = Math.floor(now / 60_000) * 60_000 + 60_000;
-                p.timeoutAt = nextBarClose + CFG.ltfCloseDelayMs + (p.extraTimeoutMs ?? 0);
+                p.timeoutAt = now + entryTimeoutMsFor(p.symbol);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 addLog({ action: "SYSTEM", message: `PLACE ${p.symbol} ${p.side} limit=${p.limitPrice} qty=${p.qty} id=${p.orderLinkId}` });
                 return true;
@@ -2603,6 +2640,81 @@ export const useTradingBot = (
                     }
                 }
 
+                const canReprice = p.stage === "PLACED" &&
+                    (p.repriceCount ?? 0) < 1 &&
+                    p.placedAt != null &&
+                    now >= p.placedAt + ENTRY_REPRICE_AFTER_MS &&
+                    now < p.timeoutAt;
+                if (canReprice && found) {
+                    const status = found.orderStatus || found.order_status || found.status;
+                    const isFilled = status === "Filled" || status === "PartiallyFilled";
+                    const isFinal = status === "Cancelled" || status === "Rejected";
+                    if (!isFilled && !isFinal) {
+                        if (isBboStale(st.bbo, now, 1500)) {
+                            logTiming("FETCH_BBO", "reprice");
+                            const bbo = await fetchBbo(p.symbol);
+                            st.bbo = bbo;
+                        }
+                        const nextLimit = computeEntryLimit(st, p.side);
+                        if (nextLimit != null && Number.isFinite(nextLimit) && st.instrument) {
+                            const worse = p.side === "Buy" ? nextLimit > p.limitPrice : nextLimit < p.limitPrice;
+                            const driftBps = worse
+                                ? Math.abs(nextLimit - p.limitPrice) / Math.max(1e-8, p.limitPrice) * 10_000
+                                : 0;
+                            const maxDrift = entryMaxDriftBpsFor(p.symbol);
+                            if (worse && driftBps > maxDrift) {
+                                logTiming("CANCEL_SEND", "drift");
+                                try {
+                                    await cancelOrderByLinkId(p.symbol, p.orderLinkId);
+                                } catch (err) {
+                                    if (!isCancelSafeError(err)) {
+                                        throw err;
+                                    }
+                                }
+                                p.stage = "CANCEL_SENT";
+                                p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
+                                p.cancelAttempts = 0;
+                                st.cooldownUntil = Math.max(st.cooldownUntil, now + SYMBOL_COOLDOWN_MS);
+                                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                addLog({ action: "SYSTEM", message: `CANCEL ${p.symbol} id=${p.orderLinkId} reason=DRIFT_${driftBps.toFixed(1)}bps` });
+                                return true;
+                            }
+                            if (Math.abs(nextLimit - p.limitPrice) >= st.instrument.tickSize) {
+                                logTiming("CANCEL_SEND", "reprice");
+                                try {
+                                    await cancelOrderByLinkId(p.symbol, p.orderLinkId);
+                                } catch (err) {
+                                    if (isCancelSafeError(err)) {
+                                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                        return true;
+                                    }
+                                    throw err;
+                                }
+                                const attempt = (p.repriceCount ?? 0) + 1;
+                                const nextId = buildRepriceId(p.orderLinkId, attempt);
+                                p.orderLinkId = nextId;
+                                p.limitPrice = nextLimit;
+                                p.repriceCount = attempt;
+                                p.lastRepriceAt = now;
+                                logTiming("PLACE_LIMIT", "reprice");
+                                try {
+                                    await placeLimit(p);
+                                } catch (err) {
+                                    scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (p.reservedRiskUsd || 0));
+                                    st.pending = undefined;
+                                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                    addLog({ action: "ERROR", message: `REPRICE_FAILED ${p.symbol} ${getErrorMessage(err) || "unknown"}` });
+                                    return true;
+                                }
+                                p.statusCheckAt = now + CFG.orderStatusDelayMs;
+                                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                addLog({ action: "SYSTEM", message: `REPRICE ${p.symbol} limit=${p.limitPrice} id=${p.orderLinkId}` });
+                                return true;
+                            }
+                        }
+                    }
+                }
+
                 // If still open and 1m bar done → cancel
                 if (p.stage === "PLACED" && now >= p.timeoutAt) {
                     logTiming("CANCEL_SEND", "timeout");
@@ -2618,6 +2730,7 @@ export const useTradingBot = (
                     p.stage = "CANCEL_SENT";
                     p.cancelVerifyAt = now + CFG.postCancelVerifyDelayMs;
                     p.cancelAttempts = 0;
+                    st.cooldownUntil = Math.max(st.cooldownUntil, now + SYMBOL_COOLDOWN_MS);
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     addLog({ action: "SYSTEM", message: `CANCEL ${p.symbol} id=${p.orderLinkId} reason=TIMEOUT` });
                     return true;
@@ -3225,6 +3338,10 @@ export const useTradingBot = (
             if (st.ltfLastScanBarOpenTime === st.ltf.barOpenTime) return false;
             if (scalpSafeRef.current) return false;
             if (now < scalpGlobalCooldownUntilRef.current) return false;
+            if (now < st.cooldownUntil) {
+                logScalpReject(symbol, `COOLDOWN ${(st.cooldownUntil - now) / 1000}s`);
+                return false;
+            }
             const biasOk = isGateEnabled("HTF bias") ? st.htf.bias !== "NONE" : true;
             if (!biasOk) return false;
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) return false;
@@ -3492,7 +3609,7 @@ export const useTradingBot = (
                     ltfBarOpenTime: st.ltf.barOpenTime,
                     createdAt: now,
                     statusCheckAt: now + CFG.orderStatusDelayMs,
-                    timeoutAt: now + 60_000 + extraTimeoutMs,
+                    timeoutAt: now + entryTimeoutMsFor(symbol),
                 };
             } else {
                 logScalpReject(symbol, "BLOCKED auto mode off or missing auth token");
