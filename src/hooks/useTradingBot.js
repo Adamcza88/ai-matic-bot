@@ -40,10 +40,15 @@ const STOP_MIN_PCT = 0.0015; // 0.15 %
 const MAX_LEVERAGE_ALLOWED = 100;
 const PROTECTION_POST_FILL_DELAY_MS = 2000;
 const PROTECTION_VERIFY_COOLDOWN_MS = 15000;
-const TP_EXTEND_MIN_R = 1.4;
+const TP_EXTEND_MIN_R = 1.6;
 const TP_EXTEND_STEP_R = 0.5;
-const PARTIAL_EXIT_MIN_R = 1.2;
-const PARTIAL_EXIT_FRACTION = 0.4;
+const PARTIAL_EXIT_MIN_R = 0.8;
+const PARTIAL_EXIT_FRACTION = 0.5;
+const BE_TRIGGER_R = 0.35;
+const TP2_R = 1.6;
+const TIME_STOP_MIN_R = 0.15;
+const TIME_STOP_BARS_1M = 10;
+const TIME_STOP_BARS_3M = 6;
 const SCALE_IN_MIN_R = 0.8;
 const SCALE_IN_MARGIN_FRACTION = 0.5;
 const MIN_NET_PROFIT_USD = 1.0;
@@ -535,6 +540,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const protectionVerifyRef = useRef({});
     const tpExtendRef = useRef({});
     const partialExitRef = useRef({});
+    const timeStopRef = useRef({});
+    const manageBarRef = useRef({});
     const scaleInRef = useRef({});
     const commitProtectionRef = useRef(null);
     const [portfolioState, setPortfolioState] = useState({
@@ -759,6 +766,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 delete protectionVerifyRef.current[sym];
                 delete tpExtendRef.current[sym];
                 delete partialExitRef.current[sym];
+                delete timeStopRef.current[sym];
+                delete manageBarRef.current[sym];
                 delete scaleInRef.current[sym];
             }
         });
@@ -1538,58 +1547,88 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         }
                     }
                 }
-                // Trailing rules: +1R -> SL = BE+fees; +1.5R -> SL = entry + 0.5R*dir; +2R -> SL = entry + 1R*dir
+                const candles = priceHistoryRef.current[p.symbol];
+                const lastCandle = candles?.[candles.length - 1];
+                const prevCandle = candles?.[candles.length - 2];
+                const barOpenTime = lastCandle?.openTime;
+                const newClosedBar = barOpenTime != null && manageBarRef.current[p.symbol] !== barOpenTime;
+                if (newClosedBar && barOpenTime != null) {
+                    manageBarRef.current[p.symbol] = barOpenTime;
+                }
+
                 const feeShift = p.entryPrice * TAKER_FEE * 2;
-                let newSl = null;
-                if (size > 0 && netProfitUsd >= MIN_NET_PROFIT_USD) {
-                    if (profit >= oneR) {
-                        newSl = p.entryPrice + dir * feeShift;
-                    }
-                    if (profit >= 1.5 * oneR) {
-                        newSl = p.entryPrice + dir * (0.5 * oneR);
-                    }
-                    if (profit >= 2 * oneR) {
-                        newSl = p.entryPrice + dir * oneR;
-                        const swings = priceHistoryRef.current[p.symbol];
-                        const swingLevel = dir > 0 ? findRecentHigherLow(swings) : findRecentLowerHigh(swings);
-                        if (swingLevel != null) {
-                            const buffer = p.entryPrice * STOP_MIN_PCT;
-                            const swingStop = dir > 0 ? swingLevel - buffer : swingLevel + buffer;
-                            if (dir > 0) {
-                                if (swingStop > (p.sl ?? -Infinity)) {
-                                    newSl = Math.max(newSl ?? swingStop, swingStop);
-                                }
-                            }
-                            else {
-                                if (swingStop < (p.sl ?? Infinity)) {
-                                    newSl = Math.min(newSl ?? swingStop, swingStop);
+                const profitR = profit / oneR;
+                const minNetR = Math.max(0.25, (feeShift * 1.5) / oneR);
+
+                let timeStopTriggered = false;
+                if (newClosedBar && lastCandle && !timeStopRef.current[p.symbol]) {
+                    const entryMsRaw = Date.parse(p.openedAt || p.timestamp || "");
+                    if (Number.isFinite(entryMsRaw)) {
+                        const interval = prevCandle ? Math.max(60_000, lastCandle.openTime - prevCandle.openTime) : 60_000;
+                        const barsNeeded = interval >= 170_000 ? TIME_STOP_BARS_3M : TIME_STOP_BARS_1M;
+                        const barsElapsed = Math.floor((lastCandle.openTime - entryMsRaw) / interval);
+                        if (barsElapsed >= barsNeeded && profitR < TIME_STOP_MIN_R) {
+                            const step = qtyStepForSymbol(p.symbol);
+                            const closeQty = roundDownToStep(size, step);
+                            if (Number.isFinite(closeQty) && closeQty >= step) {
+                                const exitSide = dir > 0 ? "Sell" : "Buy";
+                                const ok = await placeReduceOnlyMarket(p.symbol, exitSide, closeQty, "TIME_STOP");
+                                if (ok) {
+                                    timeStopRef.current[p.symbol] = now;
+                                    addLog({ action: "SYSTEM", message: `TIME_STOP ${p.symbol} bars=${barsElapsed} profitR=${profitR.toFixed(2)}` });
+                                    timeStopTriggered = true;
                                 }
                             }
                         }
                     }
                 }
+                if (timeStopTriggered) {
+                    continue;
+                }
+
+                let newSl = null;
+                if (size > 0 && profitR >= BE_TRIGGER_R) {
+                    newSl = p.entryPrice + dir * feeShift;
+                }
+                if (newClosedBar && size > 0 && netProfitUsd >= MIN_NET_PROFIT_USD && profitR >= TP2_R) {
+                    if (candles && candles.length >= 20) {
+                        const stSeries = computeSuperTrend(candles, 10, 2.0);
+                        const stLine = stSeries.line[stSeries.line.length - 1];
+                        const atr = scalpComputeAtr(candles, 14).slice(-1)[0] ?? 0;
+                        if (Number.isFinite(stLine)) {
+                            const buffer = Math.max(p.entryPrice * STOP_MIN_PCT, atr * 0.2);
+                            const trailSl = dir > 0 ? stLine - buffer : stLine + buffer;
+                            if (Number.isFinite(trailSl)) {
+                                newSl = newSl == null
+                                    ? trailSl
+                                    : dir > 0
+                                        ? Math.max(newSl, trailSl)
+                                        : Math.min(newSl, trailSl);
+                            }
+                        }
+                    }
+                }
                 if (newSl != null && Number.isFinite(newSl) && ((dir > 0 && newSl > (p.sl || 0)) || (dir < 0 && newSl < (p.sl || Infinity)))) {
-                    const { tp: trailTp } = resolveTrailTp(dir, price, p.tp, oneR);
-                    const nextTp = trailTp ?? normalizeTp(p.tp);
+                    const existingTp = normalizeTp(p.tp);
+                    const tp2 = p.entryPrice + dir * TP2_R * oneR;
+                    const nextTp = existingTp
+                        ? (dir > 0 ? Math.max(existingTp, tp2) : Math.min(existingTp, tp2))
+                        : tp2;
                     const ok = await commitProtection(`trail-${p.id}`, p.symbol, newSl, nextTp, undefined);
                     if (ok) {
                         const current = protectionTargetsRef.current[p.symbol] ?? {};
                         protectionTargetsRef.current[p.symbol] = { ...current, sl: newSl, tp: nextTp ?? current.tp };
                         protectionVerifyRef.current[p.symbol] = now;
-                        addLog({ action: "SYSTEM", message: `Trail rule applied ${p.symbol} profit ${profit.toFixed(4)} new SL ${newSl.toFixed(4)}` });
+                        addLog({ action: "SYSTEM", message: `MANAGE ${p.symbol} profitR=${profitR.toFixed(2)} newSL=${newSl.toFixed(4)}` });
                     }
                 }
 
-                const candles = priceHistoryRef.current[p.symbol];
-                const lastCandle = candles?.[candles.length - 1];
                 const ema21 = candles && candles.length >= 21
                     ? scalpComputeEma(candles.map((c) => c.close), 21).slice(-1)[0]
                     : null;
                 const trendOk = lastCandle && Number.isFinite(ema21)
                     ? (dir > 0 ? lastCandle.close > ema21 : lastCandle.close < ema21)
                     : false;
-                const profitR = profit / oneR;
-                const minNetR = Math.max(0.25, (feeShift * 1.5) / oneR);
                 const diag = scanDiagnosticsRef.current[p.symbol];
                 const gateTotal = diag?.gates?.length ?? 0;
                 const gateOk = diag?.gates?.filter((g) => g.ok).length ?? 0;
@@ -1634,8 +1673,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     }
                 }
 
-                if (!trendOk &&
-                    profitR >= Math.max(PARTIAL_EXIT_MIN_R, minNetR) &&
+                if (profitR >= Math.max(PARTIAL_EXIT_MIN_R, minNetR) &&
                     netProfitUsd >= MIN_NET_PROFIT_USD) {
                     const lastPartialAt = partialExitRef.current[p.symbol] ?? 0;
                     if (lastPartialAt === 0) {
@@ -1643,10 +1681,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         const closeQty = roundDownToStep(size * PARTIAL_EXIT_FRACTION, step);
                         if (Number.isFinite(closeQty) && closeQty >= step) {
                             const exitSide = dir > 0 ? "Sell" : "Buy";
-                            const ok = await placeReduceOnlyMarket(p.symbol, exitSide, closeQty, "STRUCTURE_WEAK");
+                            const ok = await placeReduceOnlyMarket(p.symbol, exitSide, closeQty, "TP1");
                             if (ok) {
                                 partialExitRef.current[p.symbol] = now;
-                                addLog({ action: "SYSTEM", message: `PARTIAL_STRUCT ${p.symbol} qty=${closeQty} profitR=${profitR.toFixed(2)}` });
+                                addLog({ action: "SYSTEM", message: `TP1 ${p.symbol} qty=${closeQty} profitR=${profitR.toFixed(2)}` });
                                 const entry = Number(p.entryPrice ?? 0);
                                 if (Number.isFinite(entry) && entry > 0) {
                                     const desiredSl = entry + dir * feeShift;
@@ -1819,10 +1857,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             slBufferAtrFrac: 0.02,
             antiBreakoutRangeAtr: 1.5,
             antiBreakoutBodyFrac: 0.8,
-            tpR: 1.4,
-            partialAtR: 1.2,
-            partialFrac: 0.4,
-            trailActivateR: 0.8,
+            tpR: 1.6,
+            partialAtR: 0.8,
+            partialFrac: 0.5,
+            trailActivateR: 1.6,
             trailRetraceR: 0.4,
             maxRecentIdWindowMs: 5 * 60 * 1000,
         };
@@ -2266,6 +2304,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             qty: p.qty,
                             oneR,
                             partialTaken: false,
+                            beMoved: false,
+                            timeStopDone: false,
+                            entryBarOpenTime: p.ltfBarOpenTime,
+                            lastBarOpenTime: p.ltfBarOpenTime,
                             maxPrice: entry,
                             minPrice: entry,
                         };
@@ -2596,11 +2638,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
                 }
-                if (st.manage)
+                if (st.manage && p.taskReason === "TP1")
                     st.manage.partialTaken = true;
                 st.pending = undefined;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                addLog({ action: "SYSTEM", message: `PARTIAL ${p.symbol} qty=${closeQty}` });
+                const label = p.taskReason === "TIME_STOP"
+                    ? "TIME_STOP"
+                    : p.taskReason === "TP1"
+                        ? "TP1"
+                        : "PARTIAL";
+                addLog({ action: "SYSTEM", message: `${label} ${p.symbol} qty=${closeQty}` });
                 return true;
             }
             if (p.stage === "TRAIL_SL_UPDATE") {
@@ -2876,6 +2923,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const pos = getOpenPos(symbol);
                 if (pos && Number.isFinite(pos.entryPrice) && Math.abs(Number(pos.size ?? pos.qty ?? 0)) > 0) {
                     const r = Math.abs((pos.entryPrice || 0) - (pos.sl ?? pos.entryPrice));
+                    const openedAtMs = Date.parse(pos.openedAt ?? pos.timestamp ?? "");
+                    const entryBarOpenTime = Number.isFinite(openedAtMs)
+                        ? Math.floor(openedAtMs / 60_000) * 60_000
+                        : st.ltf.barOpenTime;
                     st.manage = {
                         symbol,
                         side: pos.side === "buy" ? "Buy" : "Sell",
@@ -2883,6 +2934,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         qty: Number(pos.size ?? pos.qty ?? 0),
                         oneR: r > 0 ? r : Math.abs(pos.entryPrice * STOP_MIN_PCT),
                         partialTaken: false,
+                        beMoved: false,
+                        timeStopDone: false,
+                        entryBarOpenTime,
+                        lastBarOpenTime: st.ltf.barOpenTime,
                         maxPrice: st.ltf.last.high,
                         minPrice: st.ltf.last.low,
                     };
@@ -2902,7 +2957,72 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     const qtyAbs = Math.abs(st.manage.qty);
                     const feeEstimate = (Math.abs(st.manage.entry) + Math.abs(px)) * qtyAbs * TAKER_FEE;
                     const netProfitUsd = profit * qtyAbs - feeEstimate;
-                    if (r > 0) {
+                    if (r > 0 && !st.pending) {
+                        const newBar = st.manage.lastBarOpenTime !== st.ltf.barOpenTime;
+                        if (newBar)
+                            st.manage.lastBarOpenTime = st.ltf.barOpenTime;
+                        const profitR = profit / r;
+                        const feeShift = st.manage.entry * TAKER_FEE * 2;
+                        if (newBar && !st.manage.timeStopDone) {
+                            const barsElapsed = Math.floor((st.ltf.barOpenTime - st.manage.entryBarOpenTime) / 60_000);
+                            if (barsElapsed >= TIME_STOP_BARS_1M && profitR < TIME_STOP_MIN_R) {
+                                const closeQtyRaw = Math.abs(st.manage.qty);
+                                const closeQty = roundDownToStep(closeQtyRaw, st.instrument.stepSize);
+                                if (closeQty >= st.instrument.minQty) {
+                                    st.manage.timeStopDone = true;
+                                    st.pending = {
+                                        stage: "PARTIAL_EXIT",
+                                        orderLinkId: `timestop:${symbol}:${expected1}`,
+                                        symbol,
+                                        side: st.manage.side,
+                                        limitPrice: 0,
+                                        qty: st.manage.qty,
+                                        closeQty,
+                                        sl: 0,
+                                        tp: 0,
+                                        oneR: r,
+                                        reservedRiskUsd: 0,
+                                        taskReason: "TIME_STOP",
+                                        htfBarOpenTime: st.htf?.barOpenTime ?? 0,
+                                        ltfBarOpenTime: st.ltf.barOpenTime,
+                                        createdAt: now,
+                                        statusCheckAt: now,
+                                        timeoutAt: now,
+                                    };
+                                    st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                    return true;
+                                }
+                            }
+                        }
+                        if (newBar && !st.manage.beMoved && profitR >= BE_TRIGGER_R) {
+                            const currentSl = Number(pos.sl ?? 0) || 0;
+                            const desiredSl = st.manage.entry + dir * feeShift;
+                            const improves = st.manage.side === "Buy" ? desiredSl > currentSl : desiredSl < currentSl;
+                            if (Number.isFinite(desiredSl) && improves) {
+                                st.manage.beMoved = true;
+                                st.pending = {
+                                    stage: "TRAIL_SL_UPDATE",
+                                    orderLinkId: `be:${symbol}:${expected1}`,
+                                    symbol,
+                                    side: st.manage.side,
+                                    limitPrice: 0,
+                                    qty: st.manage.qty,
+                                    newSl: desiredSl,
+                                    sl: 0,
+                                    tp: pos.tp ?? 0,
+                                    oneR: r,
+                                    reservedRiskUsd: 0,
+                                    taskReason: "BE_MOVE",
+                                    htfBarOpenTime: st.htf?.barOpenTime ?? 0,
+                                    ltfBarOpenTime: st.ltf.barOpenTime,
+                                    createdAt: now,
+                                    statusCheckAt: now,
+                                    timeoutAt: now,
+                                };
+                                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                                return true;
+                            }
+                        }
                         if (!st.manage.partialTaken &&
                             profit >= CFG.partialAtR * r &&
                             netProfitUsd >= MIN_NET_PROFIT_USD) {
@@ -2921,6 +3041,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                                     tp: 0,
                                     oneR: r,
                                     reservedRiskUsd: 0,
+                                    taskReason: "TP1",
                                     htfBarOpenTime: st.htf?.barOpenTime ?? 0,
                                     ltfBarOpenTime: st.ltf.barOpenTime,
                                     createdAt: now,
@@ -2931,14 +3052,21 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                                 return true;
                             }
                         }
-                        if (profit >= CFG.trailActivateR * r && netProfitUsd >= MIN_NET_PROFIT_USD) {
+                        if (newBar && profit >= CFG.trailActivateR * r && netProfitUsd >= MIN_NET_PROFIT_USD) {
                             const currentSl = Number(pos.sl ?? 0) || 0;
-                            const minRetrace = Math.abs(px) * TRAIL_MIN_RETRACE_PCT;
-                            const retrace = Math.max(CFG.trailRetraceR * r, minRetrace);
-                            const newSlRaw = st.manage.side === "Buy"
-                                ? st.manage.maxPrice - retrace
-                                : st.manage.minPrice + retrace;
-                            const newSl = roundToTick(newSlRaw, st.instrument.tickSize);
+                            const atr = st.ltf.atr14 || 0;
+                            const buffer = Math.max(st.instrument.tickSize, atr * 0.2);
+                            const stLine = st.ltf.stLine;
+                            let newSl = st.manage.side === "Buy"
+                                ? stLine - buffer
+                                : stLine + buffer;
+                            if (!Number.isFinite(newSl)) {
+                                const minRetrace = Math.abs(px) * TRAIL_MIN_RETRACE_PCT;
+                                const retrace = Math.max(CFG.trailRetraceR * r, minRetrace);
+                                newSl = st.manage.side === "Buy"
+                                    ? st.manage.maxPrice - retrace
+                                    : st.manage.minPrice + retrace;
+                            }
                             const improves = st.manage.side === "Buy" ? newSl > currentSl : newSl < currentSl;
                             if (Number.isFinite(newSl) && improves) {
                                 const { tp: trailTp } = resolveTrailTp(dir, px, pos.tp, r);
@@ -2955,6 +3083,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                                     tp: nextTp,
                                     oneR: r,
                                     reservedRiskUsd: 0,
+                                    taskReason: "TRAIL",
                                     htfBarOpenTime: st.htf?.barOpenTime ?? 0,
                                     ltfBarOpenTime: st.ltf.barOpenTime,
                                     createdAt: now,
