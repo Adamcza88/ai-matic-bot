@@ -53,6 +53,9 @@ const SL_SLA_MS = 2000;
 const SL_MAX_ATTEMPTS = 3;
 const SL_RETRY_BACKOFF_MS = 350;
 const SAFE_SYMBOL_HOLD_MS = 8 * 60_000;
+const LOSS_STREAK_SYMBOL_COOLDOWN_MS = 45 * 60_000;
+const LOSS_STREAK_RISK_USD = 2;
+const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const ENTRY_REPRICE_AFTER_MS = 1200;
 const SYMBOL_COOLDOWN_MS = 15_000;
 const ENTRY_TIMEOUT_MS = {
@@ -330,7 +333,7 @@ const openRiskUsd = (positions) => {
         return sum + Math.abs(p.entryPrice - p.sl) * size;
     }, 0);
 };
-function computePositionSizing(symbol, entry, sl) {
+function computePositionSizing(symbol, entry, sl, riskBudgetUsd = RISK_PER_TRADE_USD) {
     if (!Number.isFinite(entry) || !Number.isFinite(sl) || entry <= 0) {
         return { ok: false, reason: "Invalid entry/SL" };
     }
@@ -342,7 +345,7 @@ function computePositionSizing(symbol, entry, sl) {
     const effRiskPct = stopPct + feePct;
     if (effRiskPct <= 0)
         return { ok: false, reason: "Effective risk invalid" };
-    const positionNotional = RISK_PER_TRADE_USD / effRiskPct;
+    const positionNotional = riskBudgetUsd / effRiskPct;
     const leverage = positionNotional / ACCOUNT_BALANCE_USD;
     if (leverage > MAX_LEVERAGE_ALLOWED) {
         return { ok: false, reason: `Leverage ${leverage.toFixed(2)} exceeds ${MAX_LEVERAGE_ALLOWED}` };
@@ -357,7 +360,7 @@ function computePositionSizing(symbol, entry, sl) {
         return { ok: false, reason: "Qty invalid" };
     }
     const riskUsd = Math.abs(entry - sl) * qty;
-    if (riskUsd > RISK_PER_TRADE_USD * 1.05) {
+    if (riskUsd > riskBudgetUsd * 1.05) {
         return { ok: false, reason: `Risk ${riskUsd.toFixed(2)} exceeds per-trade cap` };
     }
     return { ok: true, qty, notional: qty * entry, leverage, stopPct, feePct, effRiskPct, riskUsd };
@@ -623,6 +626,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     };
                 });
                 closedPnlSeenRef.current = new Set();
+                symbolLossStreakRef.current = {};
+                winStreakRef.current = 0;
+                lossStreakRef.current = 0;
+                riskCutActiveRef.current = false;
                 clearPnlHistory();
                 setAssetPnlHistory({});
             }
@@ -980,10 +987,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                                 seen.add(key);
                                 next[rec.symbol] = [rec, ...(next[rec.symbol] || [])].slice(0, 100);
                                 addPnlRecord(rec);
-                                registerOutcome(rec.pnl);
-                                if (lossStreakRef.current >= 3) {
-                                    scalpGlobalCooldownUntilRef.current = Date.now() + 30 * 60 * 1000;
-                                }
+                                registerOutcome(rec.symbol, rec.pnl);
                             });
                             if (seen.size > 500) {
                                 const trimmed = Array.from(seen).slice(-400);
@@ -1717,6 +1721,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const dataUnavailableRef = useRef(false);
     const winStreakRef = useRef(0);
     const lossStreakRef = useRef(0);
+    const symbolLossStreakRef = useRef({});
+    const riskCutActiveRef = useRef(false);
     const rollingOutcomesRef = useRef([]);
     const lastPositionsSyncAtRef = useRef(0);
     const executionCursorRef = useRef(null);
@@ -1745,7 +1751,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             message: `[${state}] ${decision} ${symbol} ${reason} | gates ${gateMsg} | prices e:${prices.entry?.toFixed?.(4) ?? "-"} sl:${prices.sl?.toFixed?.(4) ?? "-"} tp:${prices.tp?.toFixed?.(4) ?? "-"} | size ${sizing?.notional?.toFixed?.(2) ?? "-"} lev ${sizing?.leverage?.toFixed?.(2) ?? "-"} | netRRR ${netRrr != null ? netRrr.toFixed(2) : "-"}`,
         });
     }
-    const registerOutcome = (pnl) => {
+    const registerOutcome = (symbol, pnl) => {
         const win = pnl > 0;
         if (win) {
             winStreakRef.current += 1;
@@ -1756,6 +1762,29 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             winStreakRef.current = 0;
         }
         rollingOutcomesRef.current = [...rollingOutcomesRef.current.slice(-9), win];
+        if (symbol) {
+            const map = symbolLossStreakRef.current;
+            const nextStreak = win ? 0 : (map[symbol] ?? 0) + 1;
+            map[symbol] = nextStreak;
+            if (!win && nextStreak === 2) {
+                const map = scalpStateRef.current;
+                const st = map[symbol] || {
+                    symbol,
+                    nextAllowedAt: 0,
+                    pausedUntil: 0,
+                    cooldownUntil: 0,
+                    safeUntil: 0,
+                };
+                map[symbol] = st;
+                const until = Date.now() + LOSS_STREAK_SYMBOL_COOLDOWN_MS;
+                st.cooldownUntil = Math.max(st.cooldownUntil, until);
+                addLog({ action: "SYSTEM", message: `COOLDOWN ${symbol} loss-streak=2 hold=${Math.round(LOSS_STREAK_SYMBOL_COOLDOWN_MS / 60000)}m` });
+            }
+        }
+        if (lossStreakRef.current >= 3 && !riskCutActiveRef.current) {
+            riskCutActiveRef.current = true;
+            addLog({ action: "SYSTEM", message: `RISK_CUT active risk=${LOSS_STREAK_RISK_USD}USD after 3 losses (session)` });
+        }
     };
     // ========== DETERMINISTIC SCALP (Profile 1) ==========
     useEffect(() => {
@@ -3130,10 +3159,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             const tp = roundToTick(isLong ? limit + CFG.tpR * oneR : limit - CFG.tpR * oneR, st.instrument.tickSize);
+            const side = isLong ? "Buy" : "Sell";
             // Risk sizing (4/8 USDT) with reservation
             const openRisk = computeOpenRiskUsd();
             const riskMultiplier = qualityScore < QUALITY_SCORE_LOW ? 0.5 : 1;
-            const riskTarget = Math.min(4 * riskMultiplier, Math.max(0, 8 - openRisk));
+            const baseRiskUsd = riskCutActiveRef.current ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD;
+            const normalizeSide = (value) => (String(value).toLowerCase() === "buy" ? "Buy" : "Sell");
+            const betaBucketSameSide = BETA_BUCKET.has(symbol) &&
+                activePositionsRef.current.some((p) => BETA_BUCKET.has(p.symbol) && normalizeSide(p.side) === side);
+            const bucketMultiplier = betaBucketSameSide ? 0.5 : 1;
+            const riskTarget = Math.min(baseRiskUsd * riskMultiplier * bucketMultiplier, Math.max(0, 8 - openRisk));
             if (riskTarget <= 0) {
                 logScalpReject(symbol, `RISK_BUDGET openRisk=${openRisk.toFixed(2)} >= 8`);
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -3170,7 +3205,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
-            const side = isLong ? "Buy" : "Sell";
             const id = buildId(symbol, side, st.htf.barOpenTime, st.ltf.barOpenTime);
             const recent = scalpRecentIdsRef.current.get(id);
             if (recent && now - recent <= CFG.maxRecentIdWindowMs) {
@@ -3488,7 +3522,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             return false;
         }
         // Risk engine sizing
-        const sizing = computePositionSizing(symbol, safeEntry, finalSl);
+        const normalizeSide = (value) => (String(value).toLowerCase() === "buy" ? "Buy" : "Sell");
+        const betaBucketSameSide = BETA_BUCKET.has(symbol) &&
+            activePositionsRef.current.some((p) => BETA_BUCKET.has(p.symbol) && normalizeSide(p.side) === normalizeSide(side));
+        const bucketMultiplier = betaBucketSameSide ? 0.5 : 1;
+        const riskBudgetUsd = (riskCutActiveRef.current ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD) * bucketMultiplier;
+        const sizing = computePositionSizing(symbol, safeEntry, finalSl, riskBudgetUsd);
         if (sizing.ok === false) {
             const reason = sizing.reason;
             logAuditEntry("REJECT", symbol, "RISK_ENGINE", [...gatesAudit, { name: "SIZING", result: "FAIL" }], "DENY", reason, { entry: safeEntry, sl: stopLossValue, tp: takeProfitValue });
@@ -3805,7 +3844,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const pnl = (currentPrice - target.entryPrice) * dir * target.size;
             const freedNotional = marginFor(target.symbol, target.entryPrice, target.size);
             realizedPnlRef.current += pnl;
-            registerOutcome(pnl);
+            registerOutcome(target.symbol, pnl);
             const record = {
                 symbol: target.symbol,
                 pnl,
