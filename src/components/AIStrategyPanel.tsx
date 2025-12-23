@@ -6,10 +6,12 @@ interface Props {
   lang: string;
   settings: AISettings;
   onUpdateSettings: (s: AISettings) => void;
+  onClose?: () => void;
 }
 
 const AIStrategyPanel: React.FC<Props> = ({
   settings,
+  onClose,
 }) => {
   const [local] = useState(settings);
 
@@ -47,6 +49,16 @@ const AIStrategyPanel: React.FC<Props> = ({
             Uzamčeno pro AI-Matic
           </div>
         </div>
+      </div>
+
+      <div className="flex justify-end p-6 pt-0">
+        <button
+          type="button"
+          onClick={() => onClose?.()}
+          className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
+        >
+          Close
+        </button>
       </div>
     </div>
   );
