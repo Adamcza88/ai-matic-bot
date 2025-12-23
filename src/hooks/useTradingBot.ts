@@ -199,6 +199,10 @@ const ENTRY_MAX_DRIFT_BPS: Record<string, number> = {
     SOLUSDT: 10,
     ADAUSDT: 10,
 };
+const BBO_STALE_MS = 1500;
+const BBO_STALE_SOFT_MS = 5000;
+const BBO_BACKOFF_BASE_MS = 400;
+const BBO_BACKOFF_MAX_MS = 4000;
 const priceTickFor = (symbol: string, fallbackPrice?: number) => {
     const tick = PRICE_TICKS[symbol];
     if (Number.isFinite(tick) && tick > 0) return tick;
@@ -2171,6 +2175,9 @@ export const useTradingBot = (
         ltfLastScanBarOpenTime?: number;
         pending?: ScalpPending;
         manage?: ScalpManage;
+        bboNextFetchAt?: number;
+        bboFailCount?: number;
+        bboLastOkAt?: number;
         nextAllowedAt: number;
         pausedUntil: number;
         pausedReason?: string;
@@ -2529,6 +2536,9 @@ export const useTradingBot = (
                     nextAllowedAt: 0,
                     pausedUntil: 0,
                     cooldownUntil: 0,
+                    bboNextFetchAt: 0,
+                    bboFailCount: 0,
+                    bboLastOkAt: 0,
                     safeUntil: 0,
                 };
             }
@@ -3697,26 +3707,41 @@ export const useTradingBot = (
             // BBO needed when signal active / pending / open pos; otherwise keep old snapshot to save API
             const needFreshBbo = signalActive || hasPending || hasOpenPos;
             const needBbo = !st.bbo || needFreshBbo;
-            const bboStaleForUse = isBboStale(st.bbo, now, needFreshBbo ? 1500 : 5000);
+            const bboStaleForUse = isBboStale(st.bbo, now, needFreshBbo ? BBO_STALE_MS : BBO_STALE_SOFT_MS);
             if (needBbo && bboStaleForUse) {
                 const reason = st.bbo ? "stale" : "bootstrap";
-                if (reason === "stale") {
-                    const last = staleBboLogRef.current[symbol] ?? 0;
-                    if (now - last > 2000) {
-                        logTiming("FETCH_BBO", reason);
-                        staleBboLogRef.current[symbol] = now;
+                const last = staleBboLogRef.current[symbol] ?? 0;
+                if (now - last > 2000) {
+                    logTiming("FETCH_BBO", reason);
+                    staleBboLogRef.current[symbol] = now;
+                }
+                const nextAllowed = st.bboNextFetchAt ?? 0;
+                if (now < nextAllowed) {
+                    if (needFreshBbo) {
+                        st.nextAllowedAt = Math.max(st.nextAllowedAt, nextAllowed);
+                        return true;
                     }
                 } else {
-                    logTiming("FETCH_BBO", reason);
+                    try {
+                        const bbo = await fetchBbo(symbol);
+                        st.bbo = bbo;
+                        st.bboFailCount = 0;
+                        st.bboLastOkAt = now;
+                        st.bboNextFetchAt = now + BBO_STALE_MS;
+                    } catch (err) {
+                        const fails = (st.bboFailCount ?? 0) + 1;
+                        st.bboFailCount = fails;
+                        const backoff = Math.min(BBO_BACKOFF_MAX_MS, BBO_BACKOFF_BASE_MS * (2 ** Math.min(6, fails - 1)));
+                        st.bboNextFetchAt = now + backoff;
+                        addLog({ action: "ERROR", message: `BBO_FETCH_FAIL ${symbol} backoff=${backoff}ms ${getErrorMessage(err) || "unknown"}` });
+                        st.nextAllowedAt = now + CFG.symbolFetchGapMs;
+                        return true;
+                    }
                 }
-                const bbo = await fetchBbo(symbol);
-                st.bbo = bbo;
-                st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                return true;
             }
 
             const bboAgeMs = st.bbo ? now - st.bbo.ts : Infinity;
-            const bboStale = isBboStale(st.bbo, now, 1500);
+            const bboStale = isBboStale(st.bbo, now, BBO_STALE_MS);
             const executionAllowed = signalActive ? !bboStale : true;
             const spBps = st.bbo ? spreadBps(st.bbo.bid, st.bbo.ask) : Infinity;
             const atrPct = st.ltf.atr14 > 0 ? st.ltf.atr14 / Math.max(1e-8, st.ltf.last.close) : 0;
