@@ -136,6 +136,12 @@ const QTY_STEPS: Record<string, number> = {
     SOLUSDT: 0.1,
     ADAUSDT: 1,
 };
+const PRICE_TICKS: Record<string, number> = {
+    BTCUSDT: 0.1,
+    ETHUSDT: 0.01,
+    SOLUSDT: 0.001,
+    ADAUSDT: 0.0001,
+};
 const ACCOUNT_BALANCE_USD = 100;
 const RISK_PER_TRADE_USD = 4;
 const MAX_TOTAL_RISK_USD = 8;
@@ -192,6 +198,17 @@ const ENTRY_MAX_DRIFT_BPS: Record<string, number> = {
     ETHUSDT: 8,
     SOLUSDT: 10,
     ADAUSDT: 10,
+};
+const priceTickFor = (symbol: string, fallbackPrice?: number) => {
+    const tick = PRICE_TICKS[symbol];
+    if (Number.isFinite(tick) && tick > 0) return tick;
+    const base = Number.isFinite(fallbackPrice) && fallbackPrice > 0 ? fallbackPrice : 1;
+    return Math.max(base * 0.0001, 0.1);
+};
+const roundPriceToTick = (symbol: string, price?: number, fallbackPrice?: number) => {
+    if (!Number.isFinite(price)) return price;
+    const tick = priceTickFor(symbol, fallbackPrice ?? price);
+    return roundToTick(price, tick);
 };
 const entryTimeoutMsFor = (symbol: string, isRange = false) => {
     const base = ENTRY_TIMEOUT_MS[symbol] ?? 4500;
@@ -1667,20 +1684,24 @@ export const useTradingBot = (
                 }
                 const lastPx = currentPricesRef.current[symbol] ?? Number(foundPos.entryPrice ?? foundPos.avgEntryPrice ?? 0);
                 const isBuy = String(foundPos.side ?? "").toLowerCase() === "buy";
-                const minGap = Math.max((lastPx || 1) * 0.0001, 0.1);
+                const tick = priceTickFor(symbol, lastPx);
+                const minGap = Math.max((lastPx || 1) * 0.0001, tick);
+                const slRounded = roundPriceToTick(symbol, safeSl, lastPx);
+                let tpRounded = roundPriceToTick(symbol, safeTp, lastPx);
                 if (Number.isFinite(lastPx) && lastPx > 0) {
-                    if (safeSl != null) {
-                        const invalidSl = isBuy ? safeSl >= lastPx - minGap : safeSl <= lastPx + minGap;
+                    if (slRounded != null) {
+                        const invalidSl = isBuy ? slRounded >= lastPx - minGap : slRounded <= lastPx + minGap;
                         if (invalidSl) {
-                            addLog({ action: "ERROR", message: `PROTECTION_INVALID_SL ${symbol} sl=${safeSl} last=${lastPx}` });
+                            addLog({ action: "ERROR", message: `PROTECTION_INVALID_SL ${symbol} sl=${slRounded} last=${lastPx}` });
                             return false;
                         }
                     }
-                    if (safeTp != null) {
-                        const invalidTp = isBuy ? safeTp <= lastPx + minGap : safeTp >= lastPx - minGap;
+                    if (tpRounded != null) {
+                        const invalidTp = isBuy ? tpRounded <= lastPx + minGap : tpRounded >= lastPx - minGap;
                         if (invalidTp) {
                             safeTp = undefined;
-                            addLog({ action: "SYSTEM", message: `PROTECTION_DROP_TP ${symbol} tp=${tp} last=${lastPx}` });
+                            tpRounded = undefined;
+                            addLog({ action: "SYSTEM", message: `PROTECTION_DROP_TP ${symbol} tp=${tpRounded ?? tp} last=${lastPx}` });
                         }
                     }
                 }
@@ -1693,8 +1714,8 @@ export const useTradingBot = (
                     },
                     body: JSON.stringify({
                         symbol,
-                        sl: safeSl,
-                        tp: safeTp,
+                        sl: slRounded,
+                        tp: tpRounded,
                         trailingStop,
                         positionIdx: 0,
                         slTriggerBy: "LastPrice",
@@ -1708,13 +1729,15 @@ export const useTradingBot = (
                         message: `Protection set failed (${res.status}): ${txt}`,
                     });
                 }
+                const expectedSl = slRounded;
+                const expectedTp = tpRounded;
                 // verify
                 try {
                     const posResp = await fetchPositionsOnce(net);
                     const found = posResp.list.find((p) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
                     if (found) {
-                        const tpOk = safeTp == null || Math.abs(Number(found.takeProfit ?? 0) - safeTp) <= tolerance;
-                        const slOk = safeSl == null || Math.abs(Number(found.stopLoss ?? 0) - safeSl) <= tolerance;
+                        const tpOk = expectedTp == null || Math.abs(Number(found.takeProfit ?? 0) - expectedTp) <= tolerance;
+                        const slOk = expectedSl == null || Math.abs(Number(found.stopLoss ?? 0) - expectedSl) <= tolerance;
                         const tsOk = trailingStop == null || Math.abs(Number(found.trailingStop ?? 0) - trailingStop) <= tolerance;
                         if (tpOk && slOk && tsOk) {
                             setLifecycle(tradeId, "PROTECTION_SET");
@@ -2594,13 +2617,16 @@ export const useTradingBot = (
 
         const setProtection = async (symbol: string, sl?: number, tp?: number) => {
             if (!authToken) return null;
+            const lastPx = currentPricesRef.current[symbol];
+            const safeSl = roundPriceToTick(symbol, sl, lastPx);
+            const safeTp = roundPriceToTick(symbol, tp, lastPx);
             const res = await queuedFetch(`${apiBase}${apiPrefix}/protection?net=${net}`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${authToken}`,
                 },
-                body: JSON.stringify({ symbol, sl, tp, positionIdx: 0, slTriggerBy: "LastPrice", tpTriggerBy: "LastPrice" }),
+                body: JSON.stringify({ symbol, sl: safeSl, tp: safeTp, positionIdx: 0, slTriggerBy: "LastPrice", tpTriggerBy: "LastPrice" }),
             }, "order");
             const body = await res.json().catch(() => ({}));
             if (!res.ok || body?.ok === false) {
@@ -4168,8 +4194,14 @@ export const useTradingBot = (
             ? (baseEntryForRoi as number) * (1 - slMove * (isBuy ? 1 : -1))
             : undefined;
         const baseSl = Number.isFinite(sl) ? sl : Number.isFinite(safeEntry) ? (isBuy ? safeEntry * 0.99 : safeEntry * 1.01) : undefined;
-        const finalTp = Number.isFinite(roiTpPrice) ? roiTpPrice : tp;
-        const finalSl = Number.isFinite(roiSlPrice) ? roiSlPrice : baseSl;
+        const finalTpRaw = Number.isFinite(roiTpPrice) ? roiTpPrice : tp;
+        const finalSlRaw = Number.isFinite(roiSlPrice) ? roiSlPrice : baseSl;
+        const tick = priceTickFor(symbol, safeEntry);
+        let finalSl = Number.isFinite(finalSlRaw) ? roundToTick(finalSlRaw as number, tick) : undefined;
+        if (Number.isFinite(finalSl)) {
+            if (isBuy && finalSl >= safeEntry - tick) finalSl = roundToTick(safeEntry - tick, tick);
+            if (!isBuy && finalSl <= safeEntry + tick) finalSl = roundToTick(safeEntry + tick, tick);
+        }
         if (!Number.isFinite(finalSl)) {
             addLog({ action: "REJECT", message: `Skip ${symbol}: SL invalid` });
             logAuditEntry("REJECT", symbol, "EXECUTION", [{ name: "SL_SET_OK", result: "FAIL" }], "DENY", "SL invalid", { entry: safeEntry });
@@ -4178,9 +4210,18 @@ export const useTradingBot = (
         }
 
         const rDist = Math.abs(safeEntry - (finalSl as number));
-        const tp2 = isBuy ? safeEntry + 2 * rDist : safeEntry - 2 * rDist;
+        const tp2Raw = isBuy ? safeEntry + 2 * rDist : safeEntry - 2 * rDist;
+        let tp2 = roundToTick(tp2Raw, tick);
+        if (isBuy && tp2 <= safeEntry + tick) tp2 = roundToTick(safeEntry + tick, tick);
+        if (!isBuy && tp2 >= safeEntry - tick) tp2 = roundToTick(safeEntry - tick, tick);
+        let finalTp = Number.isFinite(finalTpRaw) ? roundToTick(finalTpRaw as number, tick) : undefined;
+        if (Number.isFinite(finalTp)) {
+            const invalid = isBuy ? (finalTp as number) <= safeEntry + tick : (finalTp as number) >= safeEntry - tick;
+            if (invalid) finalTp = undefined;
+        }
         const stopLossValue = Number(finalSl ?? safeEntry ?? 0);
         const takeProfitValue = tp2;
+        const protectionTp = Number.isFinite(finalTp) ? (finalTp as number) : tp2;
         const netR = netRrrWithFees(safeEntry, stopLossValue, takeProfitValue, TAKER_FEE);
         const gatesAudit: { name: string; result: "PASS" | "FAIL" }[] = [];
         gatesAudit.push({ name: "NET_RRR", result: netR >= 1.5 ? "PASS" : "FAIL" });
@@ -4278,9 +4319,9 @@ export const useTradingBot = (
         // 3. Min Edge Gate (Fee + Slippage vs Expected Reward)
         // Fee ~ 0.06% entry + 0.06% exit = 0.12%. Slippage ~ 0.05%. Total cost ~ 0.17% of notional.
         const estCost = newTradeNotional * 0.0017;
-        const estReward = Math.abs(safeEntry - (Number(finalTp) || safeEntry)) * orderQty;
+        const estReward = Math.abs(safeEntry - (Number(protectionTp) || safeEntry)) * orderQty;
         // If reward is defined and < cost * 1.5, reject
-        if (finalTp && estReward < estCost * 1.5) {
+        if (protectionTp && estReward < estCost * 1.5) {
             addLog({ action: "REJECT", message: `Risk Gate: Edge too small (Reward ${estReward.toFixed(2)} < Cost ${estCost.toFixed(2)} * 1.5)` });
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
@@ -4403,9 +4444,9 @@ export const useTradingBot = (
                     );
                     if (fill) {
                         setLifecycle(signalId, "ENTRY_FILLED");
-                        protectionTargetsRef.current[symbol] = { sl: finalSl, tp: finalTp };
+                        protectionTargetsRef.current[symbol] = { sl: finalSl, tp: protectionTp };
                         await sleep(PROTECTION_POST_FILL_DELAY_MS);
-                        const protectionOk = await commitProtection(signalId, symbol, finalSl, finalTp);
+                        const protectionOk = await commitProtection(signalId, symbol, finalSl, protectionTp);
 
                         if (protectionOk) {
                             protectionVerifyRef.current[symbol] = Date.now();
