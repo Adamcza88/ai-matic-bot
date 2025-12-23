@@ -266,6 +266,8 @@ const AI_MATIC_PRESET: AISettings = {
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    enableHardGates: true,
+    enableSoftGates: true,
     baseRiskPerTrade: 0,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -296,6 +298,8 @@ const AI_MATIC_X_PRESET: AISettings = {
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    enableHardGates: true,
+    enableSoftGates: true,
     baseRiskPerTrade: 0,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -326,6 +330,8 @@ const AI_MATIC_SCALP_PRESET: AISettings = {
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    enableHardGates: true,
+    enableSoftGates: true,
     baseRiskPerTrade: 0,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -3705,6 +3711,8 @@ export const useTradingBot = (
             const spBps = st.bbo ? spreadBps(st.bbo.bid, st.bbo.ask) : Infinity;
             const atrPct = st.ltf.atr14 > 0 ? st.ltf.atr14 / Math.max(1e-8, st.ltf.last.close) : 0;
             const emaSlopeAbs = st.ltf.emaSlopeAbs ?? 0;
+            const hardEnabled = settingsRef.current.enableHardGates !== false;
+            const softEnabled = settingsRef.current.enableSoftGates !== false;
             const qualityCtx: QualityCtx = {
                 bboAgeMs,
                 spreadBps: spBps,
@@ -3721,7 +3729,8 @@ export const useTradingBot = (
             };
             const qualityScore = qualityScoreFor(symbol, qualityCtx);
             const qualityTier = qualityScore < quota.qualityLowThreshold ? "LOW" : qualityScore > QUALITY_SCORE_HIGH ? "HIGH" : "MID";
-            const hardGate = shouldBlockEntry(symbol, qualityCtx);
+            const hardGate = hardEnabled ? shouldBlockEntry(symbol, qualityCtx) : { blocked: false, reason: "", code: "" };
+            const qualityPass = !softEnabled || qualityScore >= quota.qualityLowThreshold;
 
             const gateDetails = `pullback=${pullbackRaw}/${pullback} micro=${microBreakRaw}/${microBreak} bboFresh=${!bboStale} q=${qualityScore}`;
             addLog({
@@ -3852,7 +3861,7 @@ export const useTradingBot = (
 
             // Risk sizing (4/8 USDT) with reservation
             const openRisk = computeOpenRiskUsd();
-            const riskMultiplier = qualityScore < quota.qualityLowThreshold ? 0.5 : 1;
+            const riskMultiplier = softEnabled && qualityScore < quota.qualityLowThreshold ? 0.5 : 1;
             const baseRiskUsd = riskCutActiveRef.current ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD;
             const regimeRiskUsd = isRange ? Math.min(baseRiskUsd, RANGE_RISK_USD) : baseRiskUsd;
             const normalizeSide = (value: string | undefined) => (String(value).toLowerCase() === "buy" ? "Buy" : "Sell");
@@ -3909,12 +3918,12 @@ export const useTradingBot = (
                 { name: "HTF_TREND", result: "PASS" },
                 { name: "EMA_PULLBACK", result: "PASS" },
                 { name: "MICRO_BREAK", result: "PASS" },
-                { name: "QUALITY_SCORE", result: qualityScore < quota.qualityLowThreshold ? "FAIL" : "PASS" },
+                { name: "QUALITY_SCORE", result: qualityPass ? "PASS" : "FAIL" },
             ];
             logAuditEntry("SIGNAL", symbol, "SCAN", gates, canPlaceOrders ? "TRADE" : "DENY", "SCALP_SIGNAL", { entry: limit, sl, tp }, { notional: limit * finalQty, leverage: leverageFor(symbol) });
 
             st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
-            const extraTimeoutMs = qualityScore > QUALITY_SCORE_HIGH ? 30_000 : 0;
+            const extraTimeoutMs = softEnabled && qualityScore > QUALITY_SCORE_HIGH ? 30_000 : 0;
             if (canPlaceOrders) {
                 // Reserve risk only for actual pending entry orders
                 scalpReservedRiskUsdRef.current += reservedRiskUsd;

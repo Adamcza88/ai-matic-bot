@@ -65,6 +65,8 @@ const SettingsPanel: React.FC<Props> = ({
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    enableHardGates: true,
+    enableSoftGates: true,
     baseRiskPerTrade: 0.02,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -95,6 +97,8 @@ const SettingsPanel: React.FC<Props> = ({
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    enableHardGates: true,
+    enableSoftGates: true,
     baseRiskPerTrade: 0.02,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -125,6 +129,8 @@ const SettingsPanel: React.FC<Props> = ({
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    enableHardGates: true,
+    enableSoftGates: true,
     baseRiskPerTrade: 0.01,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
@@ -236,6 +242,63 @@ const SettingsPanel: React.FC<Props> = ({
               >
                 {local.enforceSessionHours ? "On" : "Off"}
               </button>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              Strategy Gates
+            </label>
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+                <div>
+                  <div className="font-medium">Hard podmínky</div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    Přísné blokace vstupu (spread, impulse, chop).
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateSettings({
+                      ...settings,
+                      enableHardGates: !settings.enableHardGates,
+                    })
+                  }
+                  className={`rounded-md border px-3 py-1 text-sm ${
+                    local.enableHardGates
+                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                      : "border-slate-700 bg-slate-900/40 text-slate-200"
+                  }`}
+                >
+                  {local.enableHardGates ? "On" : "Off"}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+                <div>
+                  <div className="font-medium">Soft podmínky</div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    Jemné snížení risku podle quality score.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateSettings({
+                      ...settings,
+                      enableSoftGates: !settings.enableSoftGates,
+                    })
+                  }
+                  className={`rounded-md border px-3 py-1 text-sm ${
+                    local.enableSoftGates
+                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                      : "border-slate-700 bg-slate-900/40 text-slate-200"
+                  }`}
+                >
+                  {local.enableSoftGates ? "On" : "Off"}
+                </button>
+              </div>
             </div>
           </div>
 

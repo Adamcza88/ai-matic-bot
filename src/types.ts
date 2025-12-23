@@ -14,6 +14,8 @@ export interface AISettings {
   useTrendFollowing: boolean;
   smcScalpMode: boolean;
   useLiquiditySweeps: boolean;
+  enableHardGates: boolean;
+  enableSoftGates: boolean;
   entryStrictness: "base" | "relaxed" | "ultra" | "test";
   enforceSessionHours: boolean;
   haltOnDailyLoss: boolean;
