@@ -724,7 +724,12 @@ export const useTradingBot = (
         tradeTarget3h?: number;
         qualityScore?: number;
         qualityTier?: "LOW" | "MID" | "HIGH";
+        qualityThreshold?: number;
+        qualityPass?: boolean;
+        hardEnabled?: boolean;
+        softEnabled?: boolean;
         hardBlock?: string;
+        hardBlocked?: boolean;
         gates: { name: string; ok: boolean }[];
     }>>({});
     const scanDiagnosticsRef = useRef<Record<string, {
@@ -742,7 +747,12 @@ export const useTradingBot = (
         tradeTarget3h?: number;
         qualityScore?: number;
         qualityTier?: "LOW" | "MID" | "HIGH";
+        qualityThreshold?: number;
+        qualityPass?: boolean;
+        hardEnabled?: boolean;
+        softEnabled?: boolean;
         hardBlock?: string;
+        hardBlocked?: boolean;
         gates: { name: string; ok: boolean }[];
     }>>({});
     const [walletEquity, setWalletEquity] = useState<number | null>(null);
@@ -3756,7 +3766,12 @@ export const useTradingBot = (
                     tradeTarget3h: quota.expected3h,
                     qualityScore,
                     qualityTier,
+                    qualityThreshold: quota.qualityLowThreshold,
+                    qualityPass,
+                    hardEnabled,
+                    softEnabled,
                     hardBlock: hardGate.blocked ? hardGate.reason : undefined,
+                    hardBlocked: hardGate.blocked,
                     gates: [
                         { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
                         { name: "EMA pullback", ok: pullback },

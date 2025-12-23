@@ -327,6 +327,18 @@ export default function Dashboard({
                   const sl = (Number.isFinite(trail) && trail > 0 ? trail : slValue) || undefined;
                   const tp = Number(p.tp ?? 0) || undefined;
                   const upnl = Number(p.unrealizedPnl ?? 0) || 0;
+                  const slMissing = !Number.isFinite(sl) || (sl as number) <= 0;
+                  const tpMissing = !Number.isFinite(tp) || tp <= 0;
+                  const protectionLabel = slMissing && tpMissing
+                    ? "TP/SL pending"
+                    : slMissing
+                      ? "SL missing"
+                      : tpMissing
+                        ? "TP missing"
+                        : "Protected";
+                  const protectionClass = slMissing || tpMissing
+                    ? "border-amber-500/50 text-amber-300 bg-amber-500/10"
+                    : "border-emerald-500/50 text-emerald-300 bg-emerald-500/10";
 
                   return (
                     <div
@@ -345,6 +357,9 @@ export default function Dashboard({
                             }
                           >
                             {sideLower.toUpperCase()}
+                          </Badge>
+                          <Badge variant="outline" className={protectionClass}>
+                            {protectionLabel}
                           </Badge>
                         </div>
                         <div className="text-xs text-slate-400 mt-1 font-mono">
@@ -434,6 +449,12 @@ export default function Dashboard({
               {allowedSymbols.map((sym) => {
                 const diag = scanDiagnostics?.[sym];
                 const gates = diag?.gates ?? [];
+                const hardEnabled = diag?.hardEnabled !== false;
+                const softEnabled = diag?.softEnabled !== false;
+                const hardBlocked = diag?.hardBlocked;
+                const qualityScore = diag?.qualityScore;
+                const qualityThreshold = diag?.qualityThreshold;
+                const qualityPass = diag?.qualityPass;
                 return (
                   <div key={sym} className="p-3 rounded-lg border border-white/5 bg-white/5">
                     <div className="flex items-center justify-between mb-2">
@@ -448,6 +469,24 @@ export default function Dashboard({
                       </div>
                     ) : (
                       <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div
+                          className="flex items-center gap-2 text-left"
+                          title={hardBlocked ? `Hard block: ${diag?.hardBlock}` : hardEnabled ? "Hard gate OK" : "Hard gate disabled"}
+                        >
+                          <span className={`h-2 w-2 rounded-full ${hardEnabled ? (hardBlocked ? "bg-red-400" : "bg-emerald-400") : "bg-slate-600"}`} />
+                          <span className={hardEnabled ? "text-white" : "text-slate-500"}>
+                            Hard gate {hardEnabled ? (hardBlocked ? "BLOCK" : "OK") : "OFF"}
+                          </span>
+                        </div>
+                        <div
+                          className="flex items-center gap-2 text-left"
+                          title={softEnabled ? `Quality ${qualityScore ?? "—"} / ${qualityThreshold ?? "—"}` : "Soft gate disabled"}
+                        >
+                          <span className={`h-2 w-2 rounded-full ${softEnabled ? (qualityPass ? "bg-emerald-400" : "bg-amber-400") : "bg-slate-600"}`} />
+                          <span className={softEnabled ? "text-white" : "text-slate-500"}>
+                            Soft score {softEnabled ? (qualityScore != null ? qualityScore : "—") : "OFF"}
+                          </span>
+                        </div>
                         {gates.map((g) => (
                           <button
                             key={g.name}

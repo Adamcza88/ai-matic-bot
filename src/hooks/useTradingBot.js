@@ -3331,7 +3331,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     tradeCount3h: quota.actual3h,
                     tradeTarget3h: quota.expected3h,
                     qualityTier,
+                    qualityThreshold: quota.qualityLowThreshold,
+                    qualityPass,
+                    hardEnabled,
+                    softEnabled,
                     hardBlock: hardGate.blocked ? hardGate.reason : undefined,
+                    hardBlocked: hardGate.blocked,
                     gates: [
                         { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
                         { name: "EMA pullback", ok: pullback },
