@@ -96,6 +96,7 @@ const ENTRY_MAX_DRIFT_BPS = {
     ADAUSDT: 10,
 };
 const BBO_STALE_MS = 1500;
+const BBO_HARD_MS = 1200;
 const BBO_STALE_SOFT_MS = 5000;
 const BBO_BACKOFF_BASE_MS = 400;
 const BBO_BACKOFF_MAX_MS = 4000;
@@ -160,6 +161,7 @@ const SLOPE_MIN_PCT = {
 };
 const QUALITY_SCORE_LOW = 60;
 const QUALITY_SCORE_HIGH = 75;
+const QUALITY_SCORE_BLOCK = 50;
 // RISK / STRATEGY
 const AI_MATIC_PRESET = {
     riskMode: "ai-matic",
@@ -1992,56 +1994,82 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
         const hardSpreadBpsFor = (symbol) => HARD_SPREAD_BPS[symbol] ?? 12;
         const minAtrPctFor = (symbol) => MIN_ATR_PCT[symbol] ?? 0.0008;
-        const slopeMinPctFor = (symbol) => SLOPE_MIN_PCT[symbol] ?? 0.00025;
         const spreadBps = (bid, ask) => spreadPct(bid, ask) * 10000;
         const shouldBlockEntry = (symbol, ctx) => {
             const hardSpread = hardSpreadBpsFor(symbol);
-            if (ctx.bboAgeMs > 800)
+            if (ctx.bboAgeMs > BBO_HARD_MS)
                 return { blocked: true, reason: `BBO_AGE ${Math.round(ctx.bboAgeMs)}ms`, code: "BBO_STALE" };
             if (ctx.spreadBps > hardSpread)
                 return { blocked: true, reason: `SPREAD ${ctx.spreadBps.toFixed(1)}bps>${hardSpread}`, code: "SPREAD_HARD" };
-            if (ctx.atr > 0 && ctx.range > 2.5 * ctx.atr)
+            if (ctx.atr > 0 && ctx.range > 3 * ctx.atr)
                 return { blocked: true, reason: "IMPULSE_CANDLE", code: "IMPULSE" };
-            const minAtr = minAtrPctFor(symbol);
-            const slopeMin = slopeMinPctFor(symbol);
-            if (ctx.atrPct < minAtr && ctx.emaSlopeAbs < slopeMin) {
-                return {
-                    blocked: true,
-                    reason: `CHOP atr=${(ctx.atrPct * 100).toFixed(3)}% slope=${(ctx.emaSlopeAbs * 100).toFixed(3)}%`,
-                    code: "RANGE_LOW_ATR",
-                };
-            }
             return { blocked: false, reason: "", code: "" };
         };
         const qualityScoreFor = (symbol, ctx) => {
             const hardSpread = hardSpreadBpsFor(symbol);
             const softSpread = Math.max(1, Math.round(hardSpread * 0.7));
             const minAtr = minAtrPctFor(symbol);
-            const slopeMin = slopeMinPctFor(symbol);
-            let score = 100;
-            if (ctx.bboAgeMs > 400) {
-                const penalty = clamp(((ctx.bboAgeMs - 400) / 400) * 20, 0, 20);
-                score -= penalty;
+            const totalWeight = 105;
+            let score = 0;
+            const absSlope = Math.abs(ctx.htfSlopeNorm || 0);
+            const slopeScore = clamp(absSlope / 0.06, 0, 1);
+            const sideOk = ctx.htfBias === "LONG"
+                ? ctx.htfClose >= ctx.htfEma200
+                : ctx.htfBias === "SHORT"
+                    ? ctx.htfClose <= ctx.htfEma200
+                    : false;
+            const distAtr = ctx.htfAtr > 0 ? Math.abs(ctx.htfClose - ctx.htfEma200) / ctx.htfAtr : 0;
+            const distScore = distAtr <= 0.5 ? 1 : distAtr >= 2 ? 0.4 : 1 - ((distAtr - 0.5) / 1.5) * 0.6;
+            const sideScore = sideOk ? 1 : 0;
+            const htfScore = ctx.htfBias === "NONE"
+                ? 0.2
+                : clamp(0.5 * sideScore + 0.3 * slopeScore + 0.2 * distScore, 0, 1);
+            score += htfScore * 25;
+            const distToEma = ctx.ema20DistAtr ?? 0;
+            const pullbackScore = distToEma <= 0.1 ? 0.6 :
+                distToEma <= 0.6 ? 1 :
+                    distToEma <= 1.0 ? 0.5 :
+                        distToEma <= 1.6 ? 0.2 : 0;
+            score += pullbackScore * 20;
+            const micro = ctx.microBreakAtr ?? 0;
+            const microScore = micro <= 0 ? 0.2 :
+                micro <= 0.1 ? 0.5 :
+                    micro <= 0.35 ? 1 :
+                        micro <= 0.8 ? 0.8 : 0.5;
+            score += microScore * 20;
+            const spreadScore = ctx.spreadBps <= softSpread
+                ? 1
+                : ctx.spreadBps >= hardSpread
+                    ? 0
+                    : 1 - clamp((ctx.spreadBps - softSpread) / Math.max(1, hardSpread - softSpread), 0, 1) * 0.7;
+            score += spreadScore * 12;
+            const atrLow = minAtr * 1.2;
+            const atrHigh = minAtr * 6;
+            let atrScore = 1;
+            if (ctx.atrPct <= 0) {
+                atrScore = 0.3;
             }
-            if (ctx.spreadBps > softSpread) {
-                const span = Math.max(1, hardSpread - softSpread);
-                const penalty = clamp(((ctx.spreadBps - softSpread) / span) * 30, 0, 30);
-                score -= penalty;
+            else if (ctx.atrPct < atrLow) {
+                atrScore = clamp(ctx.atrPct / atrLow, 0.2, 0.6);
             }
-            const atrSoft = minAtr * 1.6;
-            if (ctx.atrPct < atrSoft) {
-                const penalty = clamp(((atrSoft - ctx.atrPct) / Math.max(1e-8, atrSoft)) * 25, 0, 25);
-                score -= penalty;
+            else if (ctx.atrPct > atrHigh) {
+                atrScore = clamp(atrHigh / ctx.atrPct, 0.3, 0.7);
             }
-            const slopeSoft = slopeMin * 1.6;
-            if (ctx.emaSlopeAbs < slopeSoft) {
-                const penalty = clamp(((slopeSoft - ctx.emaSlopeAbs) / Math.max(1e-8, slopeSoft)) * 15, 0, 15);
-                score -= penalty;
-            }
-            if (ctx.atr > 0 && ctx.range > 2.0 * ctx.atr) {
-                score -= 10;
-            }
-            return clamp(Math.round(score), 0, 100);
+            score += atrScore * 10;
+            const rangeToAtr = ctx.atr > 0 ? ctx.range / ctx.atr : 0;
+            const impulseScore = rangeToAtr <= 1.5 ? 1 :
+                rangeToAtr <= 2.5 ? 0.7 :
+                    rangeToAtr <= 3 ? 0.4 : 0.1;
+            score += impulseScore * 8;
+            const ageMs = ctx.signalAgeMs ?? 0;
+            const tfMs = ctx.entryTfMs ?? 60000;
+            const freshnessScore = ageMs <= tfMs ? 1 :
+                ageMs <= 2 * tfMs ? 0.7 :
+                    ageMs <= 4 * tfMs ? 0.4 : 0.2;
+            score += freshnessScore * 5;
+            const corrScore = ctx.betaSameSide ? 0.5 : 1;
+            score += corrScore * 5;
+            return clamp(Math.round((score / totalWeight) * 100), 0, 100);
         };
         const isGateEnabled = (name) => {
             try {
@@ -3313,6 +3341,24 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const emaSlopeAbs = st.ltf.emaSlopeAbs ?? 0;
             const hardEnabled = settingsRef.current.enableHardGates !== false;
             const softEnabled = settingsRef.current.enableSoftGates !== false;
+            const offset = Math.max(2 * st.instrument.tickSize, CFG.offsetAtrFrac * st.ltf.atr14);
+            const limitRaw = isLong
+                ? Math.min(st.bbo.ask - st.instrument.tickSize, st.bbo.bid + offset)
+                : Math.max(st.bbo.bid + st.instrument.tickSize, st.bbo.ask - offset);
+            const limit = roundToTick(limitRaw, st.instrument.tickSize);
+            const ema20 = st.ltf.ema20;
+            const distToEmaAtr = st.ltf.atr14 > 0 && Number.isFinite(ema20)
+                ? Math.abs(limit - ema20) / st.ltf.atr14
+                : undefined;
+            const lateEntry = Number.isFinite(ema20) &&
+                st.ltf.atr14 > 0 &&
+                Math.abs(limit - ema20) > 0.6 * st.ltf.atr14;
+            const microBreakDist = isLong ? st.ltf.last.close - prev.high : prev.low - st.ltf.last.close;
+            const microBreakAtr = st.ltf.atr14 > 0 ? Math.max(0, microBreakDist) / st.ltf.atr14 : undefined;
+            const signalAgeMs = now - st.ltf.barOpenTime;
+            const betaSameSide = BETA_BUCKET.has(symbol) &&
+                activePositionsRef.current.some((p) => BETA_BUCKET.has(p.symbol) &&
+                    String(p.side ?? "").toLowerCase() === (isLong ? "buy" : "sell"));
             const qualityCtx = {
                 bboAgeMs,
                 spreadBps: spBps,
@@ -3320,6 +3366,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 emaSlopeAbs,
                 range,
                 atr: st.ltf.atr14,
+                htfBias: st.htf?.bias ?? "NONE",
+                htfClose: st.htf?.close ?? st.ltf.last.close,
+                htfEma200: st.htf?.ema200 ?? st.ltf.last.close,
+                htfSlopeNorm: st.htf?.emaSlopeNorm ?? 0,
+                htfAtr: st.htf?.atr14 ?? st.ltf.atr14,
+                ema20DistAtr: distToEmaAtr,
+                microBreakAtr,
+                signalAgeMs,
+                entryTfMs: entryTfMs,
+                betaSameSide,
             };
             const emaSlopeNorm = st.htf?.emaSlopeNorm ?? 0;
             const rejectMetricsBase = {
@@ -3328,10 +3384,11 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 emaSlopeNorm,
             };
             const qualityScore = qualityScoreFor(symbol, qualityCtx);
-            const qualityTier = qualityScore < quota.qualityLowThreshold ? "LOW" : qualityScore > QUALITY_SCORE_HIGH ? "HIGH" : "MID";
+            const qualityThreshold = softEnabled ? quota.qualityLowThreshold : QUALITY_SCORE_LOW;
+            const qualityTier = qualityScore < qualityThreshold ? "LOW" : qualityScore >= QUALITY_SCORE_HIGH ? "HIGH" : "MID";
             const hardGate = hardEnabled ? shouldBlockEntry(symbol, qualityCtx) : { blocked: false, reason: "", code: "" };
-            const qualityPass = !softEnabled || qualityScore >= quota.qualityLowThreshold;
-            const gateDetails = `pullback=${pullbackRaw}/${pullback} micro=${microBreakRaw}/${microBreak} bboFresh=${!bboStale} q=${qualityScore}`;
+            const qualityPass = !softEnabled || qualityScore >= qualityThreshold;
+            const gateDetails = `pullback=${pullbackRaw}/${pullback} micro=${microBreakRaw}/${microBreak} bboFresh=${!bboStale} late=${lateEntry ? "yes" : "no"} q=${qualityScore}`;
             addLog({
                 action: "SIGNAL",
                 message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms | fail=[${gateFailures.join(",") || "none"}] | gates raw/gated: ${gateDetails}`,
@@ -3354,7 +3411,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     tradeCount3h: quota.actual3h,
                     tradeTarget3h: quota.expected3h,
                     qualityTier,
-                    qualityThreshold: quota.qualityLowThreshold,
+                    qualityThreshold,
                     qualityPass,
                     hardEnabled,
                     softEnabled,
@@ -3403,11 +3460,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return false;
             }
             // Build limit price (maker-first)
-            const offset = Math.max(2 * st.instrument.tickSize, CFG.offsetAtrFrac * st.ltf.atr14);
-            const limitRaw = isLong
-                ? Math.min(st.bbo.ask - st.instrument.tickSize, st.bbo.bid + offset)
-                : Math.max(st.bbo.bid + st.instrument.tickSize, st.bbo.ask - offset);
-            const limit = roundToTick(limitRaw, st.instrument.tickSize);
             if (isLong && limit >= st.bbo.ask) {
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
@@ -3416,15 +3468,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
-            const ema20 = st.ltf.ema20;
-            const lateEntry = Number.isFinite(ema20) &&
-                st.ltf.atr14 > 0 &&
-                Math.abs(limit - ema20) > 0.6 * st.ltf.atr14;
-            const distToEmaAtr = st.ltf.atr14 > 0 && Number.isFinite(ema20)
-                ? Math.abs(limit - ema20) / st.ltf.atr14
-                : undefined;
-            if (lateEntry) {
-                logScalpReject(symbol, `LATE_ENTRY dist=${Math.abs(limit - ema20).toFixed(4)} atr=${st.ltf.atr14.toFixed(4)}`, { ...rejectMetricsBase, distToEmaAtr, reasonCode: "LATE_ENTRY" });
+            if (softEnabled && qualityScore < QUALITY_SCORE_BLOCK) {
+                logScalpReject(symbol, `SOFT_SCORE ${qualityScore}<${QUALITY_SCORE_BLOCK}`, { ...rejectMetricsBase, distToEmaAtr });
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
@@ -3460,7 +3505,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const side = isLong ? "Buy" : "Sell";
             // Risk sizing (4/8 USDT) with reservation
             const openRisk = computeOpenRiskUsd();
-            const riskMultiplier = softEnabled && qualityScore < quota.qualityLowThreshold ? 0.5 : 1;
+            const riskMultiplier = !softEnabled
+                ? 1
+                : qualityScore >= QUALITY_SCORE_HIGH
+                    ? 1
+                    : qualityScore >= qualityThreshold
+                        ? 0.75
+                        : 0.5;
             const baseRiskUsd = riskCutActiveRef.current ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD;
             const regimeRiskUsd = isRange ? Math.min(baseRiskUsd, RANGE_RISK_USD) : baseRiskUsd;
             const normalizeSide = (value) => (String(value).toLowerCase() === "buy" ? "Buy" : "Sell");
