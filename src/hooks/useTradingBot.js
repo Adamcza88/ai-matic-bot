@@ -56,7 +56,6 @@ const TIME_STOP_MIN_R = 0.15;
 const TIME_STOP_BARS_1M = 10;
 const TIME_STOP_BARS_3M = 6;
 const LATE_ENTRY_ATR = 0.6;
-const LATE_ENTRY_WEIGHT = 5;
 const SCALE_IN_MIN_R = 0.8;
 const SCALE_IN_MARGIN_FRACTION = 0.5;
 const MIN_NET_PROFIT_USD = 1.0;
@@ -76,7 +75,8 @@ const QUOTA_LOOKBACK_MS = 3 * 60 * 60_000;
 const QUOTA_BEHIND_PCT = 0.4;
 const QUOTA_BOOST_MS = 90 * 60_000;
 const QUALITY_SCORE_SOFT_BOOST = 55;
-const QUALITY_SCORE_BLOCK_SOL = 55;
+const QUALITY_SCORE_MID = 65;
+const QUALITY_SCORE_LOW = 55;
 const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"]);
 const TARGET_TRADES_PER_DAY = {
     BTCUSDT: 6,
@@ -85,6 +85,7 @@ const TARGET_TRADES_PER_DAY = {
     ADAUSDT: 4,
 };
 const ENTRY_REPRICE_AFTER_MS = 1200;
+const EXIT_REPRICE_AFTER_MS = 1000;
 const SYMBOL_COOLDOWN_MS = 15_000;
 const ENTRY_TIMEOUT_MS = {
     BTCUSDT: 4000,
@@ -150,21 +151,25 @@ const HARD_SPREAD_BPS = {
     SOLUSDT: 14,
     ADAUSDT: 18,
 };
-const MIN_ATR_PCT = {
-    BTCUSDT: 0.0006,
-    ETHUSDT: 0.0007,
-    SOLUSDT: 0.001,
-    ADAUSDT: 0.0012,
+const SOFT_SPREAD_BPS = {
+    BTCUSDT: 4,
+    ETHUSDT: 6,
+    SOLUSDT: 8,
+    ADAUSDT: 10,
 };
-const SLOPE_MIN_PCT = {
-    BTCUSDT: 0.0002,
-    ETHUSDT: 0.00025,
-    SOLUSDT: 0.00035,
-    ADAUSDT: 0.0004,
+const BREAK_BUFFER_BPS = {
+    BTCUSDT: 2,
+    ETHUSDT: 3,
+    SOLUSDT: 5,
+    ADAUSDT: 8,
 };
-const QUALITY_SCORE_LOW = 60;
+const ATR_SWEET_SPOT = {
+    BTCUSDT: { low: 0.001, high: 0.0035 },
+    ETHUSDT: { low: 0.0012, high: 0.0045 },
+    SOLUSDT: { low: 0.0018, high: 0.007 },
+    ADAUSDT: { low: 0.002, high: 0.008 },
+};
 const QUALITY_SCORE_HIGH = 75;
-const QUALITY_SCORE_BLOCK = 50;
 // RISK / STRATEGY
 const AI_MATIC_PRESET = {
     riskMode: "ai-matic",
@@ -1256,9 +1261,47 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             });
         }
     }, [apiBase, authToken, useTestnet]);
-    const placeReduceOnlyMarket = useCallback(async (symbol, side, qty, reason) => {
+    const fetchExitBbo = useCallback(async (symbol) => {
+        const url = `${httpBase}/v5/market/tickers?category=linear&symbol=${symbol}`;
+        const res = await queuedFetch(url, undefined, "data");
+        const json = await res.json();
+        if (json.retCode !== 0)
+            throw new Error(json.retMsg);
+        const item = json?.result?.list?.[0];
+        const bid = Number(item?.bid1Price ?? 0);
+        const ask = Number(item?.ask1Price ?? 0);
+        if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0) {
+            throw new Error(`Invalid BBO for ${symbol}`);
+        }
+        return { bid, ask };
+    }, [httpBase, queuedFetch]);
+    const cancelOrderByLinkId = useCallback(async (symbol, orderLinkId) => {
+        if (!authToken)
+            return;
+        const res = await queuedFetch(`${apiBase}${apiPrefix}/cancel?net=${useTestnet ? "testnet" : "mainnet"}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({ symbol, orderLinkId }),
+        }, "order");
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body?.ok === false) {
+            throw new Error(body?.error || `Cancel failed (${res.status})`);
+        }
+        const rc = body?.data?.retCode ?? body?.retCode;
+        if (rc && rc !== 0)
+            throw new Error(body?.data?.retMsg || body?.retMsg || "Cancel rejected");
+    }, [apiBase, apiPrefix, authToken, queuedFetch, useTestnet]);
+    const placeReduceOnlyLimit = useCallback(async (symbol, side, qty, price, timeInForce, orderLinkId, reason) => {
         if (!authToken)
             return false;
+        const step = qtyStepForSymbol(symbol);
+        const safeQty = roundDownToStep(qty, step);
+        if (!Number.isFinite(safeQty) || safeQty < step)
+            return false;
+        const safePrice = roundPriceToTick(symbol, price, currentPricesRef.current[symbol]);
         try {
             await queuedFetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
                 method: "POST",
@@ -1269,26 +1312,64 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 body: JSON.stringify({
                     symbol,
                     side,
-                    qty,
-                    orderType: "Market",
-                    timeInForce: "IOC",
+                    qty: safeQty,
+                    orderType: "Limit",
+                    price: safePrice,
+                    timeInForce,
                     reduceOnly: true,
+                    orderLinkId,
                 }),
             }, "order");
             addLog({
                 action: "AUTO_CLOSE",
-                message: `Partial reduce-only close ${symbol} qty=${qty} reason=${reason}`,
+                message: `Reduce-only exit ${symbol} qty=${safeQty} tif=${timeInForce} reason=${reason}`,
             });
             return true;
         }
         catch (err) {
             addLog({
                 action: "ERROR",
-                message: `Partial close failed ${symbol}: ${getErrorMessage(err) || "unknown"}`,
+                message: `Reduce-only exit failed ${symbol}: ${getErrorMessage(err) || "unknown"}`,
             });
             return false;
         }
     }, [apiBase, apiPrefix, authToken, queuedFetch, useTestnet]);
+    const placeReduceOnlyExit = useCallback(async (symbol, side, qty, reason) => {
+        if (!authToken)
+            return false;
+        let bbo;
+        try {
+            bbo = await fetchExitBbo(symbol);
+        }
+        catch (err) {
+            addLog({ action: "ERROR", message: `EXIT_BBO_FAIL ${symbol} ${getErrorMessage(err) || "unknown"}` });
+            return false;
+        }
+        const makerPrice = side === "Sell" ? bbo.ask : bbo.bid;
+        const aggressivePrice = side === "Sell" ? bbo.bid : bbo.ask;
+        const orderLinkId = `exit:${reason}:${symbol}:${Date.now()}`;
+        const placed = await placeReduceOnlyLimit(symbol, side, qty, makerPrice, "PostOnly", orderLinkId, reason);
+        if (!placed) {
+            return placeReduceOnlyLimit(symbol, side, qty, aggressivePrice, "IOC", `exit2:${reason}:${symbol}:${Date.now()}`, reason);
+        }
+        await sleep(EXIT_REPRICE_AFTER_MS);
+        const posResp = await fetchPositionsOnce(useTestnet ? "testnet" : "mainnet");
+        const pos = posResp.list.find((p) => p.symbol === symbol && Math.abs(Number(p.size ?? 0)) > 0);
+        if (!pos)
+            return true;
+        const remaining = Math.abs(Number(pos.size ?? 0));
+        const step = qtyStepForSymbol(symbol);
+        const remainingQty = roundDownToStep(Math.min(qty, remaining), step);
+        if (!Number.isFinite(remainingQty) || remainingQty < step)
+            return true;
+        try {
+            await cancelOrderByLinkId(symbol, orderLinkId);
+        }
+        catch {
+            // ignore cancel errors (may already be filled)
+        }
+        return placeReduceOnlyLimit(symbol, side, remainingQty, aggressivePrice, "IOC", `exit2:${reason}:${symbol}:${Date.now()}`, reason);
+    }, [authToken, cancelOrderByLinkId, fetchExitBbo, fetchPositionsOnce, placeReduceOnlyLimit, useTestnet]);
     const placeAddMarket = useCallback(async (symbol, side, qty, reason) => {
         if (!authToken)
             return false;
@@ -1710,7 +1791,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             const closeQty = roundDownToStep(size, step);
                             if (Number.isFinite(closeQty) && closeQty >= step) {
                                 const exitSide = dir > 0 ? "Sell" : "Buy";
-                                const ok = await placeReduceOnlyMarket(p.symbol, exitSide, closeQty, "TIME_STOP");
+                                const ok = await placeReduceOnlyExit(p.symbol, exitSide, closeQty, "TIME_STOP");
                                 if (ok) {
                                     timeStopRef.current[p.symbol] = now;
                                     addLog({ action: "SYSTEM", message: `TIME_STOP ${p.symbol} bars=${barsElapsed} profitR=${profitR.toFixed(2)}` });
@@ -1815,7 +1896,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         const closeQty = roundDownToStep(size * PARTIAL_EXIT_FRACTION, step);
                         if (Number.isFinite(closeQty) && closeQty >= step) {
                             const exitSide = dir > 0 ? "Sell" : "Buy";
-                            const ok = await placeReduceOnlyMarket(p.symbol, exitSide, closeQty, "TP1");
+                            const ok = await placeReduceOnlyExit(p.symbol, exitSide, closeQty, "TP1");
                             if (ok) {
                                 partialExitRef.current[p.symbol] = now;
                                 addLog({ action: "SYSTEM", message: `TP1 ${p.symbol} qty=${closeQty} profitR=${profitR.toFixed(2)}` });
@@ -1847,7 +1928,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             cancel = true;
             clearInterval(id);
         };
-    }, [authToken, commitProtection, forceClosePosition, placeReduceOnlyMarket, placeAddMarket]);
+    }, [authToken, commitProtection, forceClosePosition, placeReduceOnlyExit, placeAddMarket]);
     const [aiModelState] = useState({
         version: "1.0.0-real-strategy",
         lastRetrain: new Date(Date.now() - 7 * 24 * 3600 * 1000)
@@ -2063,7 +2144,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         };
         const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
         const hardSpreadBpsFor = (symbol) => HARD_SPREAD_BPS[symbol] ?? 12;
-        const minAtrPctFor = (symbol) => MIN_ATR_PCT[symbol] ?? 0.0008;
+        const softSpreadBpsFor = (symbol) => SOFT_SPREAD_BPS[symbol] ?? Math.max(1, Math.round(hardSpreadBpsFor(symbol) * 0.7));
+        const breakBufferBpsFor = (symbol) => BREAK_BUFFER_BPS[symbol] ?? 3;
+        const atrSweetSpotFor = (symbol) => ATR_SWEET_SPOT[symbol] ?? { low: 0.001, high: 0.004 };
         const spreadBps = (bid, ask) => spreadPct(bid, ask) * 10000;
         const shouldBlockEntry = (symbol, ctx) => {
             const hardSpread = hardSpreadBpsFor(symbol);
@@ -2077,73 +2160,108 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         };
         const qualityScoreFor = (symbol, ctx) => {
             const hardSpread = hardSpreadBpsFor(symbol);
-            const softSpread = Math.max(1, Math.round(hardSpread * 0.7));
-            const minAtr = minAtrPctFor(symbol);
-            const totalWeight = 110;
-            let score = 0;
-            const absSlope = Math.abs(ctx.htfSlopeNorm || 0);
-            const slopeScore = clamp(absSlope / 0.06, 0, 1);
-            const sideOk = ctx.htfBias === "LONG"
-                ? ctx.htfClose >= ctx.htfEma200
-                : ctx.htfBias === "SHORT"
-                    ? ctx.htfClose <= ctx.htfEma200
-                    : false;
-            const distAtr = ctx.htfAtr > 0 ? Math.abs(ctx.htfClose - ctx.htfEma200) / ctx.htfAtr : 0;
-            const distScore = distAtr <= 0.5 ? 1 : distAtr >= 2 ? 0.4 : 1 - ((distAtr - 0.5) / 1.5) * 0.6;
-            const sideScore = sideOk ? 1 : 0;
-            const htfScore = ctx.htfBias === "NONE"
-                ? 0.2
-                : clamp(0.5 * sideScore + 0.3 * slopeScore + 0.2 * distScore, 0, 1);
-            score += htfScore * 25;
-            const distToEma = ctx.ema20DistAtr ?? 0;
-            const pullbackScore = distToEma <= 0.1 ? 0.6 :
-                distToEma <= 0.6 ? 1 :
-                    distToEma <= 1.0 ? 0.5 :
-                        distToEma <= 1.6 ? 0.2 : 0;
-            score += pullbackScore * 20;
-            const lateEntryScore = distToEma <= LATE_ENTRY_ATR ? 1 :
-                distToEma <= 1.0 ? 0.4 :
-                    distToEma <= 1.6 ? 0.2 : 0;
-            score += lateEntryScore * LATE_ENTRY_WEIGHT;
-            const micro = ctx.microBreakAtr ?? 0;
-            const microScore = micro <= 0 ? 0.2 :
-                micro <= 0.1 ? 0.5 :
-                    micro <= 0.35 ? 1 :
-                        micro <= 0.8 ? 0.8 : 0.5;
-            score += microScore * 20;
-            const spreadScore = ctx.spreadBps <= softSpread
-                ? 1
-                : ctx.spreadBps >= hardSpread
-                    ? 0
-                    : 1 - clamp((ctx.spreadBps - softSpread) / Math.max(1, hardSpread - softSpread), 0, 1) * 0.7;
-            score += spreadScore * 12;
-            const atrLow = minAtr * 1.2;
-            const atrHigh = minAtr * 6;
-            let atrScore = 1;
-            if (ctx.atrPct <= 0) {
-                atrScore = 0.3;
+            const softSpread = softSpreadBpsFor(symbol);
+            const sweetSpot = atrSweetSpotFor(symbol);
+            const slopeMin = CFG.htfSlopeMinNorm;
+            let htfScore = 0;
+            if (ctx.htfBias === "LONG") {
+                if (ctx.htfClose >= ctx.htfEma200) {
+                    htfScore = ctx.htfSlopeNorm > slopeMin ? 25 : 10;
+                }
             }
-            else if (ctx.atrPct < atrLow) {
-                atrScore = clamp(ctx.atrPct / atrLow, 0.2, 0.6);
+            else if (ctx.htfBias === "SHORT") {
+                if (ctx.htfClose <= ctx.htfEma200) {
+                    htfScore = ctx.htfSlopeNorm < -slopeMin ? 25 : 10;
+                }
             }
-            else if (ctx.atrPct > atrHigh) {
-                atrScore = clamp(atrHigh / ctx.atrPct, 0.3, 0.7);
+            const distToEma = ctx.ema20DistAtr;
+            let pullbackScore = 0;
+            if (Number.isFinite(distToEma)) {
+                if (distToEma <= 0.35) {
+                    pullbackScore = 20;
+                }
+                else if (distToEma <= LATE_ENTRY_ATR) {
+                    pullbackScore = 10;
+                }
             }
-            score += atrScore * 10;
-            const rangeToAtr = ctx.atr > 0 ? ctx.range / ctx.atr : 0;
-            const impulseScore = rangeToAtr <= 1.5 ? 1 :
-                rangeToAtr <= 2.5 ? 0.7 :
-                    rangeToAtr <= 3 ? 0.4 : 0.1;
-            score += impulseScore * 8;
-            const ageMs = ctx.signalAgeMs ?? 0;
-            const tfMs = ctx.entryTfMs ?? 60_000;
-            const freshnessScore = ageMs <= tfMs ? 1 :
-                ageMs <= 2 * tfMs ? 0.7 :
-                    ageMs <= 4 * tfMs ? 0.4 : 0.2;
-            score += freshnessScore * 5;
-            const corrScore = ctx.betaSameSide ? 0.5 : 1;
-            score += corrScore * 5;
-            return clamp(Math.round((score / totalWeight) * 100), 0, 100);
+            const microScore = ctx.microBreakOk ? 20 : 0;
+            let atrScore = 0;
+            if (ctx.atrPct > 0) {
+                if (ctx.atrPct >= sweetSpot.low && ctx.atrPct <= sweetSpot.high) {
+                    atrScore = 15;
+                }
+                else {
+                    atrScore = 5;
+                }
+            }
+            let spreadScore = 0;
+            if (Number.isFinite(ctx.spreadBps)) {
+                if (ctx.spreadBps <= softSpread) {
+                    spreadScore = 10;
+                }
+                else if (ctx.spreadBps < hardSpread) {
+                    spreadScore = 5;
+                }
+            }
+            let freshnessScore = 0;
+            const breakBars = ctx.microBreakBars;
+            if (typeof breakBars === "number") {
+                if (breakBars <= 1)
+                    freshnessScore = 10;
+                else if (breakBars <= 2)
+                    freshnessScore = 5;
+            }
+            const score = clamp(Math.round(htfScore +
+                pullbackScore +
+                microScore +
+                atrScore +
+                spreadScore +
+                freshnessScore), 0, 100);
+            const breakdown = {
+                HTF: htfScore,
+                Pullback: pullbackScore,
+                Break: microScore,
+                ATR: atrScore,
+                Spread: spreadScore,
+                Freshness: freshnessScore,
+            };
+            const missing = [
+                { name: "HTF", missing: 25 - htfScore },
+                { name: "Pullback", missing: 20 - pullbackScore },
+                { name: "Break", missing: 20 - microScore },
+                { name: "ATR", missing: 15 - atrScore },
+                { name: "Spread", missing: 10 - spreadScore },
+                { name: "Freshness", missing: 10 - freshnessScore },
+            ];
+            missing.sort((a, b) => b.missing - a.missing);
+            const top = missing[0];
+            let topReason = "";
+            if (top.missing > 0) {
+                switch (top.name) {
+                    case "Pullback":
+                        topReason = Number.isFinite(distToEma) && distToEma > LATE_ENTRY_ATR
+                            ? "Late entry"
+                            : "Pullback weak";
+                        break;
+                    case "Break":
+                        topReason = "Break weak";
+                        break;
+                    case "ATR":
+                        topReason = ctx.atrPct < sweetSpot.low ? "ATR low" : "ATR high";
+                        break;
+                    case "Spread":
+                        topReason = "Spread wide";
+                        break;
+                    case "Freshness":
+                        topReason = "Stale break";
+                        break;
+                    case "HTF":
+                    default:
+                        topReason = "HTF weak";
+                        break;
+                }
+            }
+            return { score, breakdown, topReason };
         };
         const isGateEnabled = (name) => {
             try {
@@ -2332,33 +2450,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const rc = body?.data?.retCode ?? body?.retCode;
             if (rc && rc !== 0)
                 throw new Error(body?.data?.retMsg || body?.retMsg || "Protection rejected");
-            return body;
-        };
-        const placeReduceOnlyMarket = async (symbol, side, qty) => {
-            if (!authToken)
-                return null;
-            const res = await queuedFetch(`${apiBase}${apiPrefix}/order?net=${net}`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${authToken}`,
-                },
-                body: JSON.stringify({
-                    symbol,
-                    side,
-                    qty,
-                    orderType: "Market",
-                    timeInForce: "IOC",
-                    reduceOnly: true,
-                }),
-            }, "order");
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok || body?.ok === false) {
-                throw new Error(body?.error || `Close failed (${res.status})`);
-            }
-            const rc = body?.data?.retCode ?? body?.retCode;
-            if (rc && rc !== 0)
-                throw new Error(body?.data?.retMsg || body?.retMsg || "Close rejected");
             return body;
         };
         const getOpenPos = (symbol) => activePositionsRef.current.find((p) => p.symbol === symbol && Math.abs(Number(p.size ?? p.qty ?? 0)) > 0);
@@ -2857,11 +2948,14 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     return false;
                 }
                 const exitSide = p.side === "Buy" ? "Sell" : "Buy";
-                try {
-                    await placeReduceOnlyMarket(p.symbol, exitSide, closeQty);
-                }
-                catch (err) {
-                    addLog({ action: "ERROR", message: `PARTIAL_FAILED ${p.symbol} ${getErrorMessage(err) || "unknown"}` });
+                const label = p.taskReason === "TIME_STOP"
+                    ? "TIME_STOP"
+                    : p.taskReason === "TP1"
+                        ? "TP1"
+                        : "PARTIAL";
+                const ok = await placeReduceOnlyExit(p.symbol, exitSide, closeQty, label);
+                if (!ok) {
+                    addLog({ action: "ERROR", message: `PARTIAL_FAILED ${p.symbol}` });
                     st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                     return true;
                 }
@@ -2869,11 +2963,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     st.manage.partialTaken = true;
                 st.pending = undefined;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
-                const label = p.taskReason === "TIME_STOP"
-                    ? "TIME_STOP"
-                    : p.taskReason === "TP1"
-                        ? "TP1"
-                        : "PARTIAL";
                 addLog({ action: "SYSTEM", message: `${label} ${p.symbol} qty=${closeQty}` });
                 return true;
             }
@@ -3361,11 +3450,24 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             const pullbackRaw = isLong ? st.ltf.last.low <= st.ltf.ema20 : st.ltf.last.high >= st.ltf.ema20;
-            const microBreakRaw = isLong ? st.ltf.last.close > prev.high : st.ltf.last.close < prev.low;
+            const breakBufferBps = breakBufferBpsFor(symbol);
+            const breakBuffer = (isLong ? prev.high : prev.low) * (breakBufferBps / 10000);
+            const microBreakLevel = isLong ? prev.high + breakBuffer : prev.low - breakBuffer;
+            const microBreakRaw = isLong ? st.ltf.last.close > microBreakLevel : st.ltf.last.close < microBreakLevel;
             const range = st.ltf.last.high - st.ltf.last.low;
             // Apply UI toggles: disabled gate = auto-pass
             const pullback = isGateEnabled("EMA pullback") ? pullbackRaw : true;
             const microBreak = isGateEnabled("Micro break") ? microBreakRaw : true;
+            if (microBreakRaw) {
+                if (!st.microBreakBarOpenTime)
+                    st.microBreakBarOpenTime = st.ltf.barOpenTime;
+            }
+            else {
+                st.microBreakBarOpenTime = undefined;
+            }
+            const microBreakBars = st.microBreakBarOpenTime != null && entryTfMs > 0
+                ? Math.floor((st.ltf.barOpenTime - st.microBreakBarOpenTime) / entryTfMs)
+                : undefined;
             const sessionOkRaw = isSmcMode ? isKillzone(now) : true;
             const sessionOk = isGateEnabled("Session") ? sessionOkRaw : true;
             const asiaRange = isSmcMode ? computeAsiaRange(st.ltf.candles, now) : null;
@@ -3466,7 +3568,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 ? Math.abs(limit - ema20) / st.ltf.atr14
                 : undefined;
             const lateEntry = Number.isFinite(ema20) && st.ltf.atr14 > 0 && Math.abs(limit - ema20) > LATE_ENTRY_ATR * st.ltf.atr14;
-            const microBreakDist = isLong ? st.ltf.last.close - prev.high : prev.low - st.ltf.last.close;
+            const microBreakDist = isLong ? st.ltf.last.close - microBreakLevel : microBreakLevel - st.ltf.last.close;
             const microBreakAtr = st.ltf.atr14 > 0 ? Math.max(0, microBreakDist) / st.ltf.atr14 : undefined;
             const signalAgeMs = now - st.ltf.barOpenTime;
             const betaSameSide = BETA_BUCKET.has(symbol) &&
@@ -3486,6 +3588,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 htfAtr: st.htf?.atr14 ?? st.ltf.atr14,
                 ema20DistAtr: distToEmaAtr,
                 microBreakAtr,
+                microBreakOk: microBreakRaw,
+                microBreakBars,
                 signalAgeMs,
                 entryTfMs: entryTfMs,
                 betaSameSide,
@@ -3496,10 +3600,17 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 atrPct,
                 emaSlopeNorm,
             };
-            const qualityScore = qualityScoreFor(symbol, qualityCtx);
-            const baseQualityThreshold = softEnabled ? quota.qualityLowThreshold : QUALITY_SCORE_LOW;
-            const qualityThreshold = Math.min(QUALITY_SCORE_HIGH, baseQualityThreshold + (symbol === "SOLUSDT" ? 5 : 0));
-            const qualityTier = qualityScore < qualityThreshold ? "LOW" : qualityScore >= QUALITY_SCORE_HIGH ? "HIGH" : "MID";
+            const qualityResult = qualityScoreFor(symbol, qualityCtx);
+            const qualityScore = qualityResult.score;
+            const baseMinScore = symbol === "ETHUSDT" ? QUALITY_SCORE_MID : QUALITY_SCORE_LOW;
+            const qualityThreshold = softEnabled
+                ? (quota.boosted ? Math.min(baseMinScore, QUALITY_SCORE_SOFT_BOOST) : baseMinScore)
+                : QUALITY_SCORE_LOW;
+            const qualityTier = qualityScore >= QUALITY_SCORE_HIGH
+                ? "HIGH"
+                : qualityScore >= QUALITY_SCORE_MID
+                    ? "MID"
+                    : "LOW";
             const hardGate = hardEnabled ? shouldBlockEntry(symbol, qualityCtx) : { blocked: false, reason: "", code: "" };
             const qualityPass = !softEnabled || qualityScore >= qualityThreshold;
             const gateDetails = isSmcMode
@@ -3529,6 +3640,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     qualityTier,
                     qualityThreshold,
                     qualityPass,
+                    qualityBreakdown: qualityResult.breakdown,
+                    qualityTopReason: qualityResult.topReason,
                     hardEnabled,
                     softEnabled,
                     hardBlock: hardGate.blocked ? hardGate.reason : undefined,
@@ -3594,9 +3707,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
-            const qualityBlockThreshold = symbol === "SOLUSDT" ? QUALITY_SCORE_BLOCK_SOL : QUALITY_SCORE_BLOCK;
-            if (softEnabled && qualityScore < qualityBlockThreshold) {
-                logScalpReject(symbol, `SOFT_SCORE ${qualityScore}<${qualityBlockThreshold}`, { ...rejectMetricsBase, distToEmaAtr });
+            if (softEnabled && qualityScore < qualityThreshold) {
+                logScalpReject(symbol, `SOFT_SCORE ${qualityScore}<${qualityThreshold}`, { ...rejectMetricsBase, distToEmaAtr });
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
@@ -3636,7 +3748,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 ? 1
                 : qualityScore >= QUALITY_SCORE_HIGH
                     ? 1
-                    : qualityScore >= qualityThreshold
+                    : qualityScore >= QUALITY_SCORE_MID
                         ? 0.75
                         : 0.5;
             const baseRiskUsd = riskCutActiveRef.current ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD;

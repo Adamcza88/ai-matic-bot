@@ -455,6 +455,16 @@ export default function Dashboard({
                 const qualityScore = diag?.qualityScore;
                 const qualityThreshold = diag?.qualityThreshold;
                 const qualityPass = diag?.qualityPass;
+                const breakdown = diag?.qualityBreakdown;
+                const breakdownOrder = ["HTF", "Pullback", "Break", "ATR", "Spread", "Freshness"];
+                const breakdownParts = breakdown
+                  ? breakdownOrder
+                      .map((key) => {
+                        const value = breakdown[key];
+                        return Number.isFinite(value) ? `${key} ${Math.round(value)}` : null;
+                      })
+                      .filter((entry): entry is string => Boolean(entry))
+                  : [];
                 return (
                   <div key={sym} className="p-3 rounded-lg border border-white/5 bg-white/5">
                     <div className="flex items-center justify-between mb-2">
@@ -523,6 +533,16 @@ export default function Dashboard({
                             BBO age: {diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"}
                           </span>
                         </button>
+                        {(breakdownParts.length > 0 || diag?.qualityTopReason) && (
+                          <div className="col-span-2 text-[11px] text-slate-400">
+                            {breakdownParts.length > 0 && (
+                              <div>Score: {breakdownParts.join(" · ")}</div>
+                            )}
+                            {diag?.qualityTopReason && (
+                              <div>Top reason: {diag.qualityTopReason}</div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
