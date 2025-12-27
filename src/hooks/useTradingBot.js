@@ -539,7 +539,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const apiPrefix = getApiBase(useTestnet);
     useEffect(() => {
     }, [useTestnet, apiPrefix]);
-    const { httpBase } = useNetworkConfig(useTestnet);
+    const { httpBase, wsBase } = useNetworkConfig(useTestnet);
     const envBase = import.meta.env?.VITE_API_BASE ?? "";
     const inferredBase = typeof window !== "undefined" ? window.location.origin : "";
     const isLocalEnvBase = /^(https?:\/\/)?(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?/i.test(envBase.trim());
@@ -2391,6 +2391,137 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             return map[symbol];
         };
+        const WS_PING_MS = 20000;
+        const WS_RECONNECT_BASE_MS = 1000;
+        const WS_RECONNECT_MAX_MS = 15000;
+        let bboWs = null;
+        let bboWsPingId;
+        let bboWsReconnectId;
+        let bboWsBackoffMs = WS_RECONNECT_BASE_MS;
+        let bboWsDesiredSymbols = new Set();
+        let bboWsSubscribedSymbols = new Set();
+        const sendBboWs = (payload) => {
+            if (!bboWs || bboWs.readyState !== WebSocket.OPEN)
+                return;
+            bboWs.send(JSON.stringify(payload));
+        };
+        const syncBboWsSubscriptions = () => {
+            if (!bboWs || bboWs.readyState !== WebSocket.OPEN)
+                return;
+            const desired = Array.from(bboWsDesiredSymbols);
+            const next = new Set(desired);
+            const toSub = desired.filter((sym) => !bboWsSubscribedSymbols.has(sym));
+            const toUnsub = Array.from(bboWsSubscribedSymbols).filter((sym) => !next.has(sym));
+            if (toSub.length) {
+                sendBboWs({ op: "subscribe", args: toSub.map((sym) => `tickers.${sym}`) });
+            }
+            if (toUnsub.length) {
+                sendBboWs({ op: "unsubscribe", args: toUnsub.map((sym) => `tickers.${sym}`) });
+            }
+            bboWsSubscribedSymbols = next;
+        };
+        const setBboWsSymbols = (symbols) => {
+            bboWsDesiredSymbols = new Set(symbols.filter(Boolean));
+            syncBboWsSubscriptions();
+        };
+        const handleBboWsMessage = (payload) => {
+            let msg;
+            try {
+                msg = JSON.parse(payload);
+            }
+            catch {
+                return;
+            }
+            if (msg.op === "pong" || msg.success === true)
+                return;
+            if (!msg.topic || !msg.topic.startsWith("tickers."))
+                return;
+            const data = Array.isArray(msg.data) ? msg.data[msg.data.length - 1] : msg.data;
+            if (!data || typeof data !== "object")
+                return;
+            const row = data;
+            const symbol = String(row.symbol ?? msg.topic.split(".")[1] ?? "");
+            if (!symbol)
+                return;
+            const bid = Number(row.bid1Price ?? row.bidPrice ?? row.bid1 ?? 0);
+            const ask = Number(row.ask1Price ?? row.askPrice ?? row.ask1 ?? 0);
+            if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0)
+                return;
+            const st = ensureSymbolState(symbol);
+            const now = Date.now();
+            st.bbo = { bid, ask, ts: now };
+            st.bboLastOkAt = now;
+            st.bboFailCount = 0;
+        };
+        const scheduleBboWsReconnect = () => {
+            if (cancel || bboWsReconnectId)
+                return;
+            const waitMs = bboWsBackoffMs;
+            bboWsBackoffMs = Math.min(WS_RECONNECT_MAX_MS, Math.round(bboWsBackoffMs * 1.6));
+            bboWsReconnectId = setTimeout(() => {
+                bboWsReconnectId = undefined;
+                connectBboWs();
+            }, waitMs);
+        };
+        const clearBboWs = () => {
+            if (bboWsPingId) {
+                clearInterval(bboWsPingId);
+                bboWsPingId = undefined;
+            }
+            if (bboWsReconnectId) {
+                clearTimeout(bboWsReconnectId);
+                bboWsReconnectId = undefined;
+            }
+            if (bboWs) {
+                try {
+                    bboWs.close();
+                }
+                catch {
+                    // ignore
+                }
+                bboWs = null;
+            }
+        };
+        const connectBboWs = () => {
+            if (cancel || !wsBase || typeof WebSocket === "undefined")
+                return;
+            if (bboWs && (bboWs.readyState === WebSocket.OPEN || bboWs.readyState === WebSocket.CONNECTING))
+                return;
+            try {
+                bboWs = new WebSocket(wsBase);
+            }
+            catch {
+                scheduleBboWsReconnect();
+                return;
+            }
+            bboWs.addEventListener("open", () => {
+                bboWsBackoffMs = WS_RECONNECT_BASE_MS;
+                bboWsSubscribedSymbols = new Set();
+                syncBboWsSubscriptions();
+                if (bboWsPingId)
+                    clearInterval(bboWsPingId);
+                bboWsPingId = setInterval(() => {
+                    if (bboWs?.readyState === WebSocket.OPEN) {
+                        sendBboWs({ op: "ping" });
+                    }
+                }, WS_PING_MS);
+            });
+            bboWs.addEventListener("message", (event) => {
+                const raw = typeof event.data === "string" ? event.data : "";
+                if (raw)
+                    handleBboWsMessage(raw);
+            });
+            bboWs.addEventListener("error", () => {
+                scheduleBboWsReconnect();
+            });
+            bboWs.addEventListener("close", () => {
+                if (bboWsPingId) {
+                    clearInterval(bboWsPingId);
+                    bboWsPingId = undefined;
+                }
+                scheduleBboWsReconnect();
+            });
+        };
         const setActiveSymbols = (next, reason) => {
             const openSymbols = activePositionsRef.current
                 .filter((p) => Math.abs(Number(p.size ?? p.qty ?? 0)) > 0)
@@ -2406,6 +2537,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 dynamicSymbolsRef.current = unique;
                 setDynamicSymbols(unique);
             }
+            setBboWsSymbols(unique);
             scalpRotationIdxRef.current = 0;
             activeSymbols.forEach(ensureSymbolState);
             if (prev !== unique.join(",")) {
@@ -2416,6 +2548,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
         };
         activeSymbols.forEach(ensureSymbolState);
+        setBboWsSymbols(activeSymbols);
+        connectBboWs();
         const refreshMaticXSymbols = async () => {
             if (!isMaticX)
                 return;
@@ -4240,8 +4374,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             clearInterval(id);
             if (symbolRefreshId)
                 clearInterval(symbolRefreshId);
+            clearBboWs();
         };
-    }, [mode, settings.riskMode, useTestnet, httpBase, authToken, apiBase, apiPrefix, queuedFetch, fetchOrderHistoryOnce, fetchPositionsOnce, forceClosePosition]);
+    }, [mode, settings.riskMode, useTestnet, httpBase, wsBase, authToken, apiBase, apiPrefix, queuedFetch, fetchOrderHistoryOnce, fetchPositionsOnce, forceClosePosition]);
     // ========== AI-MATIC-SCALP (SMC/AMD) ==========
     // Executions polling (pro rychlejší fill detection)
     useEffect(() => {
