@@ -170,6 +170,10 @@ const SL_MAX_ATTEMPTS = 2;
 const SL_RETRY_BACKOFF_MS = 350;
 const SAFE_SYMBOL_HOLD_MS = 10 * 60_000;
 const LOSS_STREAK_SYMBOL_COOLDOWN_MS = 45 * 60_000;
+const AI_MATIC_X_LOSS_COOLDOWN_MS = 5 * 60_000;
+const AI_MATIC_X_LOSS_STREAK_COOLDOWN_MS = 15 * 60_000;
+const AI_MATIC_X_RISK_PCT_MIN = 0.0025;
+const AI_MATIC_X_RISK_PCT_MAX = 0.006;
 const LOSS_STREAK_RISK_USD = 2;
 const RANGE_RISK_USD = 2;
 const RANGE_TIMEOUT_MULT = 0.7;
@@ -314,7 +318,7 @@ const AI_MATIC_X_PRESET: AISettings = {
     useLiquiditySweeps: false,
     enableHardGates: true,
     enableSoftGates: true,
-    baseRiskPerTrade: 0,
+    baseRiskPerTrade: 0.005,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 2,
@@ -997,6 +1001,10 @@ export const useTradingBot = (
                 }, "data");
                 if (!res.ok) return;
                 const json = await res.json();
+                const payload = json?.data ?? json ?? {};
+                const retCode = Number(payload?.retCode ?? 0);
+                if (Number.isFinite(retCode) && retCode !== 0) return;
+                const result = payload?.result ?? payload?.data?.result ?? payload ?? {};
                 type UnifiedWalletEntry = {
                     coin?: unknown;
                     totalEquity?: number | string;
@@ -1007,21 +1015,36 @@ export const useTradingBot = (
                     totalPositionIM?: number | string;
                     totalOrderIM?: number | string;
                 };
-                const list = Array.isArray(json?.data?.list)
-                    ? (json.data.list as UnifiedWalletEntry[])
-                    : Array.isArray(json?.list)
-                        ? (json.list as UnifiedWalletEntry[])
+                const list = Array.isArray(result?.list)
+                    ? (result.list as UnifiedWalletEntry[])
+                    : Array.isArray(payload?.list)
+                        ? (payload.list as UnifiedWalletEntry[])
                         : [];
                 const first = list[0];
                 const coins = Array.isArray(first?.coin) ? (first.coin as CoinBalance[]) : [];
                 const pickCoin = coins.find((c) => c.coin === "USDT") || coins.find((c) => c.coin === "USD");
                 const coinBalance = pickCoin ? Number(pickCoin.walletBalance ?? pickCoin.equity) : null;
-                const totalEquityRaw = Number(first?.totalEquity ?? first?.totalWalletBalance ?? first?.totalMarginBalance ?? 0);
+                const totalEquityRaw = Number(
+                    first?.totalEquity ??
+                    result?.totalEquity ??
+                    payload?.totalEquity ??
+                    first?.totalWalletBalance ??
+                    result?.totalWalletBalance ??
+                    payload?.totalWalletBalance ??
+                    first?.totalMarginBalance ??
+                    result?.totalMarginBalance ??
+                    payload?.totalMarginBalance ??
+                    0
+                );
                 const totalAvailable = Number(first?.totalAvailableBalance ?? 0);
                 const totalInitialMargin = Number(first?.totalInitialMargin ?? 0);
                 const totalPositionIM = Number(first?.totalPositionIM ?? 0);
                 const totalOrderIM = Number(first?.totalOrderIM ?? 0);
-                const equityFallback = Number(json?.data?.totalEquity ?? (json as { totalEquity?: number | string } | null)?.totalEquity ?? 0);
+                const equityFallback = Number(
+                    payload?.totalEquity ??
+                    (json as { totalEquity?: number | string } | null)?.totalEquity ??
+                    0
+                );
                 const equity = Number.isFinite(totalEquityRaw) && totalEquityRaw > 0
                     ? totalEquityRaw
                     : Number.isFinite(coinBalance ?? NaN) && (coinBalance as number) > 0
@@ -1426,7 +1449,7 @@ export const useTradingBot = (
             }
             const data = await res.json();
             const list = data?.data?.list || data?.list || data?.result?.list || [];
-            const allowed = new Set(ALL_SYMBOLS);
+            const allowed = new Set([...ALL_SYMBOLS, ...dynamicSymbolsRef.current]);
             const items: BybitTrade[] = Array.isArray(list) ? (list as BybitTrade[]) : [];
             const mapped: TestnetTrade[] = items
                 .filter((t) => allowed.has(t.symbol || ""))
@@ -2217,6 +2240,7 @@ export const useTradingBot = (
     });
 
     const priceHistoryRef = useRef<Record<string, Candle[]>>({});
+    const dynamicSymbolsRef = useRef<string[]>([]);
     type ScalpInstrument = {
         tickSize: number;
         stepSize: number;
@@ -2247,6 +2271,9 @@ export const useTradingBot = (
         atr14: number;
         close: number;
         blockedUntilBarOpenTime: number;
+        stDir?: SuperTrendDir;
+        prevStDir?: SuperTrendDir;
+        stLine?: number;
     };
     type ScalpLtfState = {
         barOpenTime: number;
@@ -2515,19 +2542,27 @@ export const useTradingBot = (
             const map = symbolLossStreakRef.current;
             const nextStreak = win ? 0 : (map[symbol] ?? 0) + 1;
             map[symbol] = nextStreak;
-            if (!win && nextStreak === 2) {
-                const map = scalpStateRef.current;
-                const st = map[symbol] || {
+            if (!win) {
+                const stateMap = scalpStateRef.current;
+                const st = stateMap[symbol] || {
                     symbol,
                     nextAllowedAt: 0,
                     pausedUntil: 0,
                     cooldownUntil: 0,
                     safeUntil: 0,
                 };
-                map[symbol] = st;
-                const until = Date.now() + LOSS_STREAK_SYMBOL_COOLDOWN_MS;
-                st.cooldownUntil = Math.max(st.cooldownUntil, until);
-                addLog({ action: "SYSTEM", message: `COOLDOWN ${symbol} loss-streak=2 hold=${Math.round(LOSS_STREAK_SYMBOL_COOLDOWN_MS / 60000)}m` });
+                stateMap[symbol] = st;
+                const isMaticX = settingsRef.current.riskMode === "ai-matic-x";
+                if (isMaticX) {
+                    const until = Date.now() + AI_MATIC_X_LOSS_COOLDOWN_MS;
+                    st.cooldownUntil = Math.max(st.cooldownUntil, until);
+                }
+                if (nextStreak === 2) {
+                    const cooldownMs = isMaticX ? AI_MATIC_X_LOSS_STREAK_COOLDOWN_MS : LOSS_STREAK_SYMBOL_COOLDOWN_MS;
+                    const until = Date.now() + cooldownMs;
+                    st.cooldownUntil = Math.max(st.cooldownUntil, until);
+                    addLog({ action: "SYSTEM", message: `COOLDOWN ${symbol} loss-streak=2 hold=${Math.round(cooldownMs / 60000)}m` });
+                }
             }
         }
         if (lossStreakRef.current >= 3 && !riskCutActiveRef.current) {
@@ -2542,10 +2577,14 @@ export const useTradingBot = (
             setSystemState((p) => ({ ...p, bybitStatus: "Disconnected" }));
             return;
         }
-        const activeSymbols = settings.riskMode === "ai-matic-scalp" ? SMC_SYMBOLS : SYMBOLS;
+        const isMaticX = settings.riskMode === "ai-matic-x";
+        const isSmcMode = settings.riskMode === "ai-matic-scalp";
+        const activeSymbols = isSmcMode ? [...SMC_SYMBOLS] : [...SYMBOLS];
+        if (!isMaticX) dynamicSymbolsRef.current = [];
         let cancel = false;
+        let symbolRefreshId: ReturnType<typeof setInterval> | undefined;
 
-        const CFG = {
+        const BASE_CFG = {
             tickMs: 250,
             symbolFetchGapMs: 350,
             ltfCloseDelayMs: 1200,
@@ -2559,6 +2598,7 @@ export const useTradingBot = (
             lowAtrMinPct: 0, // disabled: allow entries even in low ATR
             rvolMin: 1.2,
             stLtf: { atr: 10, mult: 2.0 },
+            stHtf: { atr: 10, mult: 2.0 },
             emaPeriod: 20,
             htfEmaPeriod: 200,
             htfSlopeMinNorm: 0.03,
@@ -2568,6 +2608,12 @@ export const useTradingBot = (
             slBufferAtrFrac: 0.02,
             antiBreakoutRangeAtr: 1.5,
             antiBreakoutBodyFrac: 0.8,
+            antiBreakoutCloseFrac: 0.85,
+            momentumLookback: 10,
+            momentumVolMult: 1.4,
+            momentumPricePct: 0.008,
+            dataAgeMaxMs: 2000,
+            entryTimeoutMs: 0,
             tpR: 1.6,
             partialAtR: 0.8,
             partialFrac: 0.5,
@@ -2575,6 +2621,23 @@ export const useTradingBot = (
             trailRetraceR: 0.4,
             maxRecentIdWindowMs: 5 * 60 * 1000,
         } as const;
+        const MATIC_X_CFG = {
+            ...BASE_CFG,
+            spreadMaxPct: 0.0008,
+            lowAtrMinPct: 0.0006,
+            rvolMin: 1.15,
+            stLtf: { atr: 10, mult: 2.0 },
+            stHtf: { atr: 10, mult: 2.0 },
+            emaPeriod: 21,
+            tpR: 1.4,
+            partialAtR: 1.0,
+            trailActivateR: 0.8,
+            momentumVolMult: 1.4,
+            momentumPricePct: 0.008,
+            dataAgeMaxMs: 2000,
+            entryTimeoutMs: 60_000,
+        } as const;
+        const CFG = isMaticX ? MATIC_X_CFG : BASE_CFG;
 
         const net = useTestnet ? "testnet" : "mainnet";
         const canPlaceOrders = mode === TradingMode.AUTO_ON && Boolean(authToken);
@@ -2798,7 +2861,62 @@ export const useTradingBot = (
             }
             return map[symbol];
         };
+
+        const setActiveSymbols = (next: string[], reason?: string) => {
+            const openSymbols = activePositionsRef.current
+                .filter((p) => Math.abs(Number(p.size ?? p.qty ?? 0)) > 0)
+                .map((p) => p.symbol)
+                .filter(Boolean);
+            const combined = [...next, ...openSymbols];
+            const unique = Array.from(new Set(combined.filter(Boolean)));
+            if (!unique.length) return;
+            const prev = activeSymbols.join(",");
+            activeSymbols.splice(0, activeSymbols.length, ...unique);
+            if (isMaticX) dynamicSymbolsRef.current = unique;
+            scalpRotationIdxRef.current = 0;
+            activeSymbols.forEach(ensureSymbolState);
+            if (prev !== unique.join(",")) {
+                addLog({
+                    action: "SYSTEM",
+                    message: `SYMBOLS ${unique.join(",")} ${reason ? `(${reason})` : ""}`.trim(),
+                });
+            }
+        };
         activeSymbols.forEach(ensureSymbolState);
+
+        const refreshMaticXSymbols = async () => {
+            if (!isMaticX) return;
+            try {
+                const url = `${httpBase}/v5/market/tickers?category=linear`;
+                const res = await queuedFetch(url, undefined, "data");
+                const json = await res.json().catch(() => ({}));
+                const list = json?.result?.list ?? json?.data?.result?.list ?? [];
+                if (!Array.isArray(list)) return;
+                const ranked = list
+                    .map((item: { symbol?: string; turnover24h?: number | string; volume24h?: number | string }) => {
+                        const symbol = String(item.symbol ?? "");
+                        const volRaw = item.turnover24h ?? item.volume24h ?? 0;
+                        const volume = Number(volRaw);
+                        return { symbol, volume: Number.isFinite(volume) ? volume : 0 };
+                    })
+                    .filter((item) => /USDT$/.test(item.symbol) && item.volume > 0)
+                    .sort((a, b) => b.volume - a.volume)
+                    .slice(0, 5)
+                    .map((item) => item.symbol);
+                if (ranked.length) {
+                    setActiveSymbols(ranked, "24h-top");
+                }
+            } catch (err) {
+                addLog({ action: "ERROR", message: `SYMBOLS_UPDATE_FAIL ${getErrorMessage(err) || "unknown"}` });
+            }
+        };
+
+        if (isMaticX) {
+            void refreshMaticXSymbols();
+            symbolRefreshId = setInterval(() => {
+                if (!cancel) void refreshMaticXSymbols();
+            }, 10 * 60_000);
+        }
 
         const cleanupRecentIds = () => {
             const now = Date.now();
@@ -2923,9 +3041,10 @@ export const useTradingBot = (
         const getActiveSymbolStats = () => {
             const sizes: Record<string, number> = {};
             const symbols = new Set<string>();
+            const allowedSymbols = new Set([...ALL_SYMBOLS, ...dynamicSymbolsRef.current]);
             for (const p of activePositionsRef.current) {
                 const sym = p.symbol;
-                if (!ALL_SYMBOLS.includes(sym)) continue;
+                if (!allowedSymbols.has(sym)) continue;
                 const size = Math.abs(Number(p.size ?? p.qty ?? 0));
                 if (!Number.isFinite(size) || size <= 0) continue;
                 symbols.add(sym);
@@ -3590,9 +3709,30 @@ export const useTradingBot = (
                 const atr14 = scalpComputeAtr(candles, CFG.atrPeriod).slice(-1)[0] ?? 0;
                 const emaSlopeNorm = atr14 > 0 ? (ema200 - emaPrev) / atr14 : 0;
                 const regime: ScalpRegime = Math.abs(emaSlopeNorm) > CFG.htfSlopeMinNorm ? "TREND" : "RANGE";
+                const stSeries = computeSuperTrend(candles, CFG.stHtf.atr, CFG.stHtf.mult);
+                const stDir = stSeries.dir[stSeries.dir.length - 1];
+                const prevStDir = stSeries.dir[stSeries.dir.length - 2] ?? stDir;
+                const stLine = stSeries.line[stSeries.line.length - 1];
                 let bias: ScalpBias = "NONE";
-                if (Number.isFinite(ema200) && Number.isFinite(last.close)) {
+                if (isMaticX) {
+                    bias = stDir === "UP" ? "LONG" : "SHORT";
+                } else if (Number.isFinite(ema200) && Number.isFinite(last.close)) {
                     bias = last.close >= ema200 ? "LONG" : "SHORT";
+                }
+                let blockedUntilBarOpenTime = isMaticX ? (st.htf?.blockedUntilBarOpenTime ?? 0) : 0;
+                if (isMaticX && stDir !== prevStDir) {
+                    blockedUntilBarOpenTime = expected15 + htfMs;
+                    if (st.pending) {
+                        if (st.pending.stage === "READY_TO_PLACE") {
+                            scalpReservedRiskUsdRef.current = Math.max(0, scalpReservedRiskUsdRef.current - (st.pending.reservedRiskUsd || 0));
+                        }
+                        st.pending = undefined;
+                    }
+                    st.ltfLastScanBarOpenTime = undefined;
+                    addLog({
+                        action: "SYSTEM",
+                        message: `HTF_FLIP ${symbol} block=15m cancel-pending`,
+                    });
                 }
                 st.htf = {
                     barOpenTime: expected15,
@@ -3602,7 +3742,10 @@ export const useTradingBot = (
                     emaSlopeNorm,
                     atr14,
                     close: last.close,
-                    blockedUntilBarOpenTime: 0,
+                    blockedUntilBarOpenTime,
+                    stDir,
+                    prevStDir,
+                    stLine,
                 };
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
@@ -3617,7 +3760,7 @@ export const useTradingBot = (
                         ? st.ltfConfirm
                         : { expectedOpenTime: expected1, stage: 0 as const, attempts: 0 };
                 logTiming("FETCH_LTF", st.ltfConfirm ? "retry_confirm" : undefined);
-                const ltfLimit = settings.riskMode === "ai-matic-scalp" ? 360 : 50;
+                const ltfLimit = isSmcMode ? 360 : 50;
                 const candles = await fetchKlines(symbol, "1", ltfLimit);
                 const last = candles[candles.length - 1];
                 if (!last || last.openTime !== expected1) {
@@ -3896,13 +4039,12 @@ export const useTradingBot = (
                 logScalpReject(symbol, `COOLDOWN ${(st.cooldownUntil - now) / 1000}s`);
                 return false;
             }
-            const isSmcMode = settings.riskMode === "ai-matic-scalp";
             const biasOk = isGateEnabled("HTF bias") ? st.htf.bias !== "NONE" : true;
             if (!biasOk) return false;
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) return false;
             const isRange = st.htf.regime === "RANGE";
             const quota = getQuotaState(symbol, now);
-            const entryTfMs = isSmcMode ? 60_000 : quota.entryTfMs;
+            const entryTfMs = isSmcMode ? 60_000 : isMaticX ? 60_000 : quota.entryTfMs;
             if (entryTfMs > 60_000 && st.ltf.barOpenTime % entryTfMs !== 0) {
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -3925,10 +4067,56 @@ export const useTradingBot = (
             const microBreakLevel = isLong ? prev.high + breakBuffer : prev.low - breakBuffer;
             const microBreakRaw = isLong ? st.ltf.last.close > microBreakLevel : st.ltf.last.close < microBreakLevel;
             const range = st.ltf.last.high - st.ltf.last.low;
+            const emaVal = st.ltf.ema20;
+            const atrPctNow = st.ltf.atr14 > 0 ? st.ltf.atr14 / Math.max(1e-8, st.ltf.last.close) : 0;
+            const touchBand = Math.max(2 * st.instrument.tickSize, CFG.touchBandAtrFrac * st.ltf.atr14);
+            const emaTouchRaw = Number.isFinite(emaVal)
+                ? st.ltf.last.low <= (emaVal as number) + touchBand &&
+                  st.ltf.last.high >= (emaVal as number) - touchBand
+                : false;
+            const stFlipRaw = isLong
+                ? st.ltf.prevStDir === "DOWN" && st.ltf.stDir === "UP"
+                : st.ltf.prevStDir === "UP" && st.ltf.stDir === "DOWN";
+            const stCloseRaw = isLong ? st.ltf.last.close > st.ltf.stLine : st.ltf.last.close < st.ltf.stLine;
+            const htfStLine = st.htf?.stLine;
+            const htfLineRaw = Number.isFinite(htfStLine)
+                ? isLong
+                    ? st.ltf.last.close > (htfStLine as number)
+                    : st.ltf.last.close < (htfStLine as number)
+                : false;
+            const rvolRaw = st.ltf.rvol >= CFG.rvolMin;
+            const momentumLookback = Math.max(6, CFG.momentumLookback);
+            const momentumCandles = st.ltf.candles.slice(-momentumLookback);
+            const recentVolAvg = momentumCandles.length
+                ? momentumCandles.reduce((sum, c) => sum + (c.volume || 0), 0) / momentumCandles.length
+                : 0;
+            const volSpikeRaw = momentumCandles.length > 0 ? st.ltf.last.volume > recentVolAvg * CFG.momentumVolMult : false;
+            const impulseIdx = momentumCandles.length - 6;
+            const impulseBase = impulseIdx >= 0 ? momentumCandles[impulseIdx].close : undefined;
+            const priceImpulseRaw = Number.isFinite(impulseBase)
+                ? Math.abs(st.ltf.last.close - (impulseBase as number)) / Math.max(1e-8, impulseBase as number) >= CFG.momentumPricePct
+                : false;
+            const momentumRaw = volSpikeRaw && priceImpulseRaw;
+            const rangeTooWide = st.ltf.atr14 > 0 ? range >= CFG.antiBreakoutRangeAtr * st.ltf.atr14 : false;
+            const closeChasing = range > 0
+                ? isLong
+                    ? st.ltf.last.close >= st.ltf.last.low + range * CFG.antiBreakoutCloseFrac
+                    : st.ltf.last.close <= st.ltf.last.high - range * CFG.antiBreakoutCloseFrac
+                : false;
+            const antiBreakoutRaw = !rangeTooWide && !closeChasing;
+            const atrOkRaw = st.ltf.atr14 > 0 ? atrPctNow >= CFG.lowAtrMinPct : false;
 
             // Apply UI toggles: disabled gate = auto-pass
             const pullback = isGateEnabled("EMA pullback") ? pullbackRaw : true;
             const microBreak = isGateEnabled("Micro break") ? microBreakRaw : true;
+            const stFlip = isGateEnabled("ST1 flip") ? stFlipRaw : true;
+            const emaTouch = isGateEnabled("EMA touch") ? emaTouchRaw : true;
+            const stCloseOk = isGateEnabled("ST1 close") ? stCloseRaw : true;
+            const htfLineOk = isGateEnabled("HTF ST line") ? htfLineRaw : true;
+            const rvolOk = isGateEnabled("RVOL") ? rvolRaw : true;
+            const momentumOk = isGateEnabled("Momentum") ? momentumRaw : true;
+            const antiBreakoutOk = isGateEnabled("Anti-breakout") ? antiBreakoutRaw : true;
+            const atrOk = isGateEnabled("ATR min") ? atrOkRaw : true;
             if (microBreakRaw) {
                 if (!st.microBreakBarOpenTime) st.microBreakBarOpenTime = st.ltf.barOpenTime;
             } else {
@@ -3952,16 +4140,19 @@ export const useTradingBot = (
                         : true
                     : true
                 : true;
-            const sweepRaw = isSmcMode
+            const allowSmc = isSmcMode || isMaticX;
+            const sweepRaw = allowSmc
                 ? asiaRange?.valid
                     ? asiaSweepRaw
                     : detectSweep(st.ltf.candles, isLong, st.ltf.atr14, st.instrument.tickSize)
                 : false;
             const sweepOk = isSmcMode ? (isGateEnabled("Sweep") ? sweepRaw : true) : true;
-            const chochRaw = isSmcMode ? detectChoch(st.ltf.candles, isLong) : false;
+            const chochRaw = allowSmc ? detectChoch(st.ltf.candles, isLong) : false;
             const fvgRaw = isSmcMode ? detectFvg(st.ltf.candles, isLong ? "long" : "short") : false;
             const chochFvgRaw = isSmcMode ? chochRaw && fvgRaw : false;
             const chochFvgOk = isSmcMode ? (isGateEnabled("CHoCH+FVG") ? chochFvgRaw : true) : true;
+            const smcSignal = allowSmc ? sweepRaw && chochRaw : false;
+            const smcRequired = isMaticX && settingsRef.current.useLiquiditySweeps;
 
             const gateFailures: string[] = [];
             let signalActive = false;
@@ -3971,6 +4162,18 @@ export const useTradingBot = (
                 if (!sweepOk) gateFailures.push("Sweep");
                 if (!chochFvgOk) gateFailures.push("CHoCH+FVG");
                 signalActive = sessionOk && asiaOk && sweepOk && chochFvgOk;
+            } else if (isMaticX) {
+                if (!htfLineOk) gateFailures.push("HTF_ST");
+                if (!stFlip) gateFailures.push("ST1_FLIP");
+                if (!emaTouch) gateFailures.push("EMA_TOUCH");
+                if (!stCloseOk) gateFailures.push("ST1_CLOSE");
+                if (!rvolOk) gateFailures.push("RVOL");
+                if (!momentumOk) gateFailures.push("MOMENTUM");
+                if (!antiBreakoutOk) gateFailures.push("ANTI_BREAKOUT");
+                if (!atrOk) gateFailures.push("LOW_ATR");
+                if (smcRequired && !smcSignal) gateFailures.push("SMC");
+                signalActive = htfLineOk && stFlip && emaTouch && stCloseOk && rvolOk && momentumOk && antiBreakoutOk && atrOk;
+                if (smcRequired) signalActive = signalActive && smcSignal;
             } else {
                 if (!pullback) gateFailures.push("EMA pullback");
                 if (!microBreak) gateFailures.push("Micro break");
@@ -4015,9 +4218,28 @@ export const useTradingBot = (
 
             const bboAgeMs = st.bbo ? now - st.bbo.ts : Infinity;
             const bboStale = isBboStale(st.bbo, now, BBO_STALE_MS);
-            const executionAllowed = signalActive ? !bboStale : true;
             const spBps = st.bbo ? spreadBps(st.bbo.bid, st.bbo.ask) : Infinity;
-            const atrPct = st.ltf.atr14 > 0 ? st.ltf.atr14 / Math.max(1e-8, st.ltf.last.close) : 0;
+            const spreadPctNow = Number.isFinite(spBps) ? spBps / 10000 : Infinity;
+            const atrPct = atrPctNow;
+            const dataAgeOk = !isMaticX || bboAgeMs <= CFG.dataAgeMaxMs;
+            const spreadOk = !isMaticX || spreadPctNow <= CFG.spreadMaxPct;
+            if (isMaticX && !dataAgeOk) {
+                gateFailures.push("DATA_AGE");
+                if (signalActive) {
+                    scalpForceSafeUntilRef.current = Math.max(scalpForceSafeUntilRef.current, now + 5000);
+                    logScalpReject(symbol, `DATA_AGE ${Math.round(bboAgeMs)}ms`, {
+                        reasonCode: "DATA_AGE",
+                        spreadBps: spBps,
+                        atrPct,
+                    });
+                }
+                signalActive = false;
+            }
+            if (isMaticX && !spreadOk) {
+                gateFailures.push("SPREAD");
+                signalActive = false;
+            }
+            const executionAllowed = signalActive ? !bboStale && (!isMaticX || (spreadOk && dataAgeOk)) : true;
             const emaSlopeAbs = st.ltf.emaSlopeAbs ?? 0;
             const hardEnabled = settingsRef.current.enableHardGates !== false;
             const softEnabled = settingsRef.current.enableSoftGates !== false;
@@ -4076,11 +4298,13 @@ export const useTradingBot = (
                     ? "MID"
                     : "LOW";
             const hardGate = hardEnabled ? shouldBlockEntry(symbol, qualityCtx) : { blocked: false, reason: "", code: "" };
-            const qualityPass = !softEnabled || qualityScore >= qualityThreshold;
+            const qualityPass = isMaticX ? true : (!softEnabled || qualityScore >= qualityThreshold);
 
             const gateDetails = isSmcMode
                 ? `session=${sessionOkRaw}/${sessionOk} asia=${asiaSweepRaw}/${asiaOk} sweep=${sweepRaw}/${sweepOk} choch=${chochRaw} fvg=${fvgRaw} bboFresh=${!bboStale} q=${qualityScore}`
-                : `pullback=${pullbackRaw}/${pullback} micro=${microBreakRaw}/${microBreak} bboFresh=${!bboStale} late=${lateEntry ? "yes" : "no"} q=${qualityScore}`;
+                : isMaticX
+                    ? `htfSt=${htfLineRaw}/${htfLineOk} stFlip=${stFlipRaw}/${stFlip} emaTouch=${emaTouchRaw}/${emaTouch} stClose=${stCloseRaw}/${stCloseOk} rvol=${rvolRaw}/${rvolOk} mom=${momentumRaw}/${momentumOk} anti=${antiBreakoutRaw}/${antiBreakoutOk} atr=${atrOkRaw}/${atrOk} smc=${smcSignal}${smcRequired ? "/req" : ""} spreadOk=${spreadOk} bboFresh=${!bboStale}`
+                    : `pullback=${pullbackRaw}/${pullback} micro=${microBreakRaw}/${microBreak} bboFresh=${!bboStale} late=${lateEntry ? "yes" : "no"} q=${qualityScore}`;
             addLog({
                 action: "SIGNAL",
                 message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms | fail=[${gateFailures.join(",") || "none"}] | gates raw/gated: ${gateDetails}`,
@@ -4122,12 +4346,26 @@ export const useTradingBot = (
                             { name: "PostOnly", ok: true },
                             { name: "BBO fresh", ok: !bboStale },
                         ]
-                        : [
-                            { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
-                            { name: "EMA pullback", ok: pullback },
-                            { name: "Micro break", ok: microBreak },
-                            { name: "BBO fresh", ok: !bboStale },
-                        ],
+                        : isMaticX
+                            ? [
+                                { name: "HTF ST", ok: htfLineOk },
+                                { name: "ST1 flip", ok: stFlip },
+                                { name: "EMA touch", ok: emaTouch },
+                                { name: "ST1 close", ok: stCloseOk },
+                                { name: "RVOL", ok: rvolOk },
+                                { name: "Momentum", ok: momentumOk },
+                                { name: "Anti-breakout", ok: antiBreakoutOk },
+                                { name: "ATR min", ok: atrOk },
+                                { name: "SMC", ok: smcRequired ? smcSignal : true },
+                                { name: "Spread", ok: spreadOk },
+                                { name: "BBO fresh", ok: !bboStale },
+                            ]
+                            : [
+                                { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
+                                { name: "EMA pullback", ok: pullback },
+                                { name: "Micro break", ok: microBreak },
+                                { name: "BBO fresh", ok: !bboStale },
+                            ],
                 },
             }));
 
@@ -4176,7 +4414,7 @@ export const useTradingBot = (
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
-            if (softEnabled && qualityScore < qualityThreshold) {
+            if (softEnabled && !isMaticX && qualityScore < qualityThreshold) {
                 logScalpReject(symbol, `SOFT_SCORE ${qualityScore}<${qualityThreshold}`, { ...rejectMetricsBase, distToEmaAtr });
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -4214,14 +4452,22 @@ export const useTradingBot = (
 
             // Risk sizing (4/8 USDT) with reservation
             const openRisk = computeOpenRiskUsd();
-            const riskMultiplier = !softEnabled
+            const riskMultiplier = isMaticX
                 ? 1
-                : qualityScore >= QUALITY_SCORE_HIGH
+                : !softEnabled
                     ? 1
-                    : qualityScore >= QUALITY_SCORE_MID
-                        ? 0.75
-                        : 0.5;
-            const baseRiskUsd = riskCutActiveRef.current ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD;
+                    : qualityScore >= QUALITY_SCORE_HIGH
+                        ? 1
+                        : qualityScore >= QUALITY_SCORE_MID
+                            ? 0.75
+                            : 0.5;
+            const maticXRiskPctRaw = settingsRef.current.baseRiskPerTrade || 0.005;
+            const maticXRiskPct = clamp(maticXRiskPctRaw, AI_MATIC_X_RISK_PCT_MIN, AI_MATIC_X_RISK_PCT_MAX);
+            const baseRiskUsd = riskCutActiveRef.current
+                ? LOSS_STREAK_RISK_USD
+                : isMaticX
+                    ? ACCOUNT_BALANCE_USD * maticXRiskPct
+                    : RISK_PER_TRADE_USD;
             const regimeRiskUsd = isRange ? Math.min(baseRiskUsd, RANGE_RISK_USD) : baseRiskUsd;
             const normalizeSide = (value: string | undefined) => (String(value).toLowerCase() === "buy" ? "Buy" : "Sell");
             const betaBucketSameSide = BETA_BUCKET.has(symbol) &&
@@ -4266,27 +4512,47 @@ export const useTradingBot = (
             }
 
             const id = buildId(symbol, side, st.htf.barOpenTime, st.ltf.barOpenTime);
-            const recent = scalpRecentIdsRef.current.get(id);
-            if (recent && now - recent <= CFG.maxRecentIdWindowMs) {
+            const recentTs = scalpRecentIdsRef.current.get(id);
+            if (recentTs && now - recentTs <= CFG.maxRecentIdWindowMs) {
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
             scalpRecentIdsRef.current.set(id, now);
 
-            const gates: { name: string; result: "PASS" | "FAIL" }[] = [
-                { name: "HTF_TREND", result: "PASS" },
-                { name: "EMA_PULLBACK", result: "PASS" },
-                { name: "MICRO_BREAK", result: "PASS" },
-                { name: "QUALITY_SCORE", result: qualityPass ? "PASS" : "FAIL" },
-            ];
+            const gates: { name: string; result: "PASS" | "FAIL" }[] = isMaticX
+                ? [
+                    { name: "HTF_ST", result: htfLineOk ? "PASS" : "FAIL" },
+                    { name: "ST1_FLIP", result: stFlip ? "PASS" : "FAIL" },
+                    { name: "EMA_TOUCH", result: emaTouch ? "PASS" : "FAIL" },
+                    { name: "ST1_CLOSE", result: stCloseOk ? "PASS" : "FAIL" },
+                    { name: "RVOL", result: rvolOk ? "PASS" : "FAIL" },
+                    { name: "MOMENTUM", result: momentumOk ? "PASS" : "FAIL" },
+                    { name: "ANTI_BREAKOUT", result: antiBreakoutOk ? "PASS" : "FAIL" },
+                    { name: "ATR_MIN", result: atrOk ? "PASS" : "FAIL" },
+                    { name: "SMC", result: smcRequired ? (smcSignal ? "PASS" : "FAIL") : "PASS" },
+                    { name: "SPREAD", result: spreadOk ? "PASS" : "FAIL" },
+                ]
+                : isSmcMode
+                    ? [
+                        { name: "SESSION", result: sessionOk ? "PASS" : "FAIL" },
+                        { name: "ASIA_RANGE", result: asiaOk ? "PASS" : "FAIL" },
+                        { name: "SWEEP", result: sweepOk ? "PASS" : "FAIL" },
+                        { name: "CHOCH_FVG", result: chochFvgOk ? "PASS" : "FAIL" },
+                    ]
+                    : [
+                        { name: "HTF_TREND", result: "PASS" },
+                        { name: "EMA_PULLBACK", result: "PASS" },
+                        { name: "MICRO_BREAK", result: "PASS" },
+                        { name: "QUALITY_SCORE", result: qualityPass ? "PASS" : "FAIL" },
+                    ];
             logAuditEntry("SIGNAL", symbol, "SCAN", gates, canPlaceOrders ? "TRADE" : "DENY", "SCALP_SIGNAL", { entry: limit, sl, tp }, { notional: limit * finalQty, leverage: leverageFor(symbol) });
 
             st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
-            const extraTimeoutMs = softEnabled && qualityScore > QUALITY_SCORE_HIGH ? 30_000 : 0;
+            const extraTimeoutMs = !isMaticX && softEnabled && qualityScore > QUALITY_SCORE_HIGH ? 30_000 : 0;
             if (canPlaceOrders) {
                 // Reserve risk only for actual pending entry orders
                 scalpReservedRiskUsdRef.current += reservedRiskUsd;
-                const entryTimeoutMs = entryTimeoutMsFor(symbol, isRange);
+                const entryTimeoutMs = isMaticX && CFG.entryTimeoutMs > 0 ? CFG.entryTimeoutMs : entryTimeoutMsFor(symbol, isRange);
                 st.pending = {
                     stage: "READY_TO_PLACE",
                     orderLinkId: id,
@@ -4427,6 +4693,7 @@ export const useTradingBot = (
         return () => {
             cancel = true;
             clearInterval(id);
+            if (symbolRefreshId) clearInterval(symbolRefreshId);
         };
     }, [mode, settings.riskMode, useTestnet, httpBase, authToken, apiBase, apiPrefix, queuedFetch, fetchOrderHistoryOnce, fetchPositionsOnce, forceClosePosition]);
 
@@ -4451,7 +4718,7 @@ export const useTradingBot = (
                 const list = json?.data?.result?.list || json?.result?.list || [];
                 const cursor = json?.data?.result?.nextPageCursor || json?.result?.nextPageCursor;
                 const seen = processedExecIdsRef.current;
-                const allowedSymbols = new Set(ALL_SYMBOLS);
+                const allowedSymbols = new Set([...ALL_SYMBOLS, ...dynamicSymbolsRef.current]);
                 const nowMs = Date.now();
                 const freshMs = 5 * 60 * 1000; // show only last 5 minutes
                 const items: BybitExecution[] = Array.isArray(list) ? (list as BybitExecution[]) : [];

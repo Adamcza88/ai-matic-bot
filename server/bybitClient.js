@@ -528,8 +528,8 @@ export async function listClosedPnl(creds, { limit = 50, cursor, startTime, endT
 
 export async function getWalletBalance(creds, useTestnet = true) {
   ensureConfigured(creds);
-  const q = "accountType=UNIFIED&coin=USDT";
-  const res = await buildSignedGet(`/v5/account/wallet-balance?${q}`, creds, useTestnet);
+  const q = new URLSearchParams({ accountType: "UNIFIED" });
+  const res = await buildSignedGet(`/v5/account/wallet-balance?${q.toString()}`, creds, useTestnet);
   return res.data;
 }
 

@@ -57,8 +57,7 @@ export class Profile2Engine {
     }
     trailingTrigger(dir, snap, entry, stop) {
         const r = Math.abs(entry - stop);
-        const phaseTight = (dir === "LONG" && snap.phase === "DISTRIBUTION") || (dir === "SHORT" && snap.phase === "ACCUMULATION");
-        const activateAt = phaseTight ? 0.8 * r : 1.0 * r;
+        const activateAt = 0.8 * r;
         const level = dir === "LONG" ? entry + 0.6 * r : entry - 0.6 * r;
         return { trigger: activateAt, level };
     }
@@ -66,10 +65,10 @@ export class Profile2Engine {
         const fetcher = this.client.fetchClosedPnl;
         if (typeof fetcher !== "function")
             return false;
-        if (now - this.lastClosedPnlFetchAt < 15000)
+        if (now - this.lastClosedPnlFetchAt < 15_000)
             return true;
         this.lastClosedPnlFetchAt = now;
-        const startTime = this.lastClosedPnlTs > 0 ? this.lastClosedPnlTs - 60000 : now - 6 * 60 * 60_000;
+        const startTime = this.lastClosedPnlTs > 0 ? this.lastClosedPnlTs - 60_000 : now - 6 * 60 * 60_000;
         try {
             const res = await fetcher(startTime, now, 200);
             if (!res?.ok || !Array.isArray(res.list))
@@ -91,7 +90,7 @@ export class Profile2Engine {
             }
             return true;
         }
-        catch (_a) {
+        catch {
             return false;
         }
     }
@@ -136,7 +135,7 @@ export class Profile2Engine {
         const signal = createSignalV2({
             symbol: snap.symbol,
             direction: dir,
-            htfTrend: "bull",
+            htfTrend: decision.bias === "LONG" ? "bull" : "bear",
             entryZone: { high: entryPrice, low: entryPrice },
             invalidate: stop,
             tags: ["profile2"],
@@ -144,8 +143,8 @@ export class Profile2Engine {
         const snapshot = createRiskSnapshotV2({
             balance: 100,
             totalOpenRiskUsd: riskTotals.totalOpenRiskUsd,
-            maxAllowedRiskUsd: 8,
-            riskPerTradeUsd: 4,
+            maxAllowedRiskUsd: 1.2,
+            riskPerTradeUsd: 0.5,
             maxPositions: 2,
         });
         const plan = this.runtime.requestPlace(signal, snapshot, "taker", stop);
@@ -163,7 +162,7 @@ export class Profile2Engine {
             qty: plan.size,
             stopLoss: plan.stopLoss,
             idempotencyKey: plan.clientOrderId,
-            timeoutMs: 3 * 60_000,
+            timeoutMs: 60_000,
         });
         return plan;
     }

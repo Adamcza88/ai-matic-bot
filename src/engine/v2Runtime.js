@@ -1,5 +1,4 @@
 import { placeLimitWithProtection } from "./bybitAdapterV2.js";
-
 const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const LOSS_STREAK_SYMBOL_COOLDOWN_MS = 45 * 60_000;
 const LOSS_STREAK_RISK_USD = 2;

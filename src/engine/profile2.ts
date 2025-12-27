@@ -104,8 +104,7 @@ export class Profile2Engine {
 
   private trailingTrigger(dir: BiasDecision, snap: MarketSnapshot, entry: number, stop: number): { trigger: number; level: number } {
     const r = Math.abs(entry - stop);
-    const phaseTight = (dir === "LONG" && snap.phase === "DISTRIBUTION") || (dir === "SHORT" && snap.phase === "ACCUMULATION");
-    const activateAt = phaseTight ? 0.8 * r : 1.0 * r;
+    const activateAt = 0.8 * r;
     const level = dir === "LONG" ? entry + 0.6 * r : entry - 0.6 * r;
     return { trigger: activateAt, level };
   }
@@ -184,7 +183,7 @@ export class Profile2Engine {
     const signal = createSignalV2({
       symbol: snap.symbol,
       direction: dir,
-      htfTrend: "bull",
+      htfTrend: decision.bias === "LONG" ? "bull" : "bear",
       entryZone: { high: entryPrice, low: entryPrice },
       invalidate: stop,
       tags: ["profile2"],
@@ -193,8 +192,8 @@ export class Profile2Engine {
     const snapshot = createRiskSnapshotV2({
       balance: 100,
       totalOpenRiskUsd: riskTotals.totalOpenRiskUsd,
-      maxAllowedRiskUsd: 8,
-      riskPerTradeUsd: 4,
+      maxAllowedRiskUsd: 1.2,
+      riskPerTradeUsd: 0.5,
       maxPositions: 2,
     });
 
@@ -214,7 +213,7 @@ export class Profile2Engine {
       qty: plan.size,
       stopLoss: plan.stopLoss,
       idempotencyKey: plan.clientOrderId,
-      timeoutMs: 3 * 60_000,
+      timeoutMs: 60_000,
     });
     return plan;
   }

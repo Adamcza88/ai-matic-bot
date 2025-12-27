@@ -41,6 +41,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       description: "Agresivnější profil s přísnějšími vstupy, bez session hours a se silnějším sizingem.",
       notes: [
         "Trading hours: Off",
+        "Páry: top 5 USDT dle 24h volume",
         "Limit: max 2 pozice současně",
         "Dyn. sizing multiplier 1.0×",
       ],
@@ -99,7 +100,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useLiquiditySweeps: false,
     enableHardGates: true,
     enableSoftGates: true,
-    baseRiskPerTrade: 0.02,
+    baseRiskPerTrade: 0.005,
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 2,
