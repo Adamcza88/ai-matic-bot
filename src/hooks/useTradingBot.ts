@@ -5452,48 +5452,6 @@ export const useTradingBot = (
         setPriceAlerts((p) => p.filter((a) => a.id !== id));
     };
 
-    const manualClosePosition = useCallback(
-        async (pos: ActivePosition) => {
-            if (modeRef.current === TradingMode.PAPER) {
-                const fallbackId = pos.id ?? pos.positionId ?? pos.symbol;
-                closePosition(fallbackId);
-                addLog({ action: "SYSTEM", message: `MANUAL_CLOSE (paper) ${pos.symbol}` });
-                return true;
-            }
-            if (!authToken) {
-                addLog({ action: "ERROR", message: "Manual close failed: missing auth token" });
-                return false;
-            }
-            const qtyRaw = Math.abs(Number(pos.size ?? pos.qty ?? 0));
-            if (!Number.isFinite(qtyRaw) || qtyRaw <= 0) {
-                addLog({ action: "ERROR", message: `Manual close failed: invalid qty ${pos.symbol}` });
-                return false;
-            }
-            const step = qtyStepForSymbol(pos.symbol);
-            const qty = roundDownToStep(qtyRaw, step);
-            if (!Number.isFinite(qty) || qty < step) {
-                addLog({ action: "ERROR", message: `Manual close failed: qty too small ${pos.symbol}` });
-                return false;
-            }
-            const side = String(pos.side ?? "").toLowerCase() === "buy" ? "Sell" : "Buy";
-            const ok = await placeReduceOnlyExit(pos.symbol, side, qty, "MANUAL");
-            if (!ok) {
-                const forced = await forceClosePosition(pos);
-                addLog({
-                    action: forced ? "SYSTEM" : "ERROR",
-                    message: forced ? `MANUAL_CLOSE fallback market ${pos.symbol} qty=${qty}` : `Manual close failed ${pos.symbol}`,
-                });
-                return forced;
-            }
-            addLog({
-                action: "SYSTEM",
-                message: `MANUAL_CLOSE ${pos.symbol} qty=${qty}`,
-            });
-            return ok;
-        },
-        [authToken, closePosition, forceClosePosition, placeReduceOnlyExit]
-    );
-
     const closePosition = (id: string) => {
         setActivePositions((prev) => {
             const target = prev.find((p) => p.id === id || p.positionId === id || p.symbol === id);
@@ -5544,6 +5502,48 @@ export const useTradingBot = (
             return prev.filter((p) => p.id !== id);
         });
     };
+
+    const manualClosePosition = useCallback(
+        async (pos: ActivePosition) => {
+            if (modeRef.current === TradingMode.PAPER) {
+                const fallbackId = pos.id ?? pos.positionId ?? pos.symbol;
+                closePosition(fallbackId);
+                addLog({ action: "SYSTEM", message: `MANUAL_CLOSE (paper) ${pos.symbol}` });
+                return true;
+            }
+            if (!authToken) {
+                addLog({ action: "ERROR", message: "Manual close failed: missing auth token" });
+                return false;
+            }
+            const qtyRaw = Math.abs(Number(pos.size ?? pos.qty ?? 0));
+            if (!Number.isFinite(qtyRaw) || qtyRaw <= 0) {
+                addLog({ action: "ERROR", message: `Manual close failed: invalid qty ${pos.symbol}` });
+                return false;
+            }
+            const step = qtyStepForSymbol(pos.symbol);
+            const qty = roundDownToStep(qtyRaw, step);
+            if (!Number.isFinite(qty) || qty < step) {
+                addLog({ action: "ERROR", message: `Manual close failed: qty too small ${pos.symbol}` });
+                return false;
+            }
+            const side = String(pos.side ?? "").toLowerCase() === "buy" ? "Sell" : "Buy";
+            const ok = await placeReduceOnlyExit(pos.symbol, side, qty, "MANUAL");
+            if (!ok) {
+                const forced = await forceClosePosition(pos);
+                addLog({
+                    action: forced ? "SYSTEM" : "ERROR",
+                    message: forced ? `MANUAL_CLOSE fallback market ${pos.symbol} qty=${qty}` : `Manual close failed ${pos.symbol}`,
+                });
+                return forced;
+            }
+            addLog({
+                action: "SYSTEM",
+                message: `MANUAL_CLOSE ${pos.symbol} qty=${qty}`,
+            });
+            return ok;
+        },
+        [authToken, closePosition, forceClosePosition, placeReduceOnlyExit]
+    );
 
     const resetRiskState = () => {
         setPortfolioState((p) => ({
