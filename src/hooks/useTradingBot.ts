@@ -159,6 +159,8 @@ const TP2_R = 1.6;
 const TIME_STOP_MIN_R = 0.15;
 const TIME_STOP_BARS_1M = 10;
 const TIME_STOP_BARS_3M = 6;
+const LATE_ENTRY_ATR = 0.6;
+const LATE_ENTRY_WEIGHT = 5;
 const SCALE_IN_MIN_R = 0.8;
 const SCALE_IN_MARGIN_FRACTION = 0.5;
 const MIN_NET_PROFIT_USD = 1.0;
@@ -178,6 +180,7 @@ const QUOTA_LOOKBACK_MS = 3 * 60 * 60_000;
 const QUOTA_BEHIND_PCT = 0.4;
 const QUOTA_BOOST_MS = 90 * 60_000;
 const QUALITY_SCORE_SOFT_BOOST = 55;
+const QUALITY_SCORE_BLOCK_SOL = 55;
 const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"]);
 const TARGET_TRADES_PER_DAY: Record<string, number> = {
     BTCUSDT: 6,
@@ -2528,7 +2531,7 @@ export const useTradingBot = (
             const hardSpread = hardSpreadBpsFor(symbol);
             const softSpread = Math.max(1, Math.round(hardSpread * 0.7));
             const minAtr = minAtrPctFor(symbol);
-            const totalWeight = 105;
+            const totalWeight = 110;
             let score = 0;
 
             const absSlope = Math.abs(ctx.htfSlopeNorm || 0);
@@ -2554,6 +2557,12 @@ export const useTradingBot = (
                         distToEma <= 1.0 ? 0.5 :
                             distToEma <= 1.6 ? 0.2 : 0;
             score += pullbackScore * 20;
+
+            const lateEntryScore =
+                distToEma <= LATE_ENTRY_ATR ? 1 :
+                    distToEma <= 1.0 ? 0.4 :
+                        distToEma <= 1.6 ? 0.2 : 0;
+            score += lateEntryScore * LATE_ENTRY_WEIGHT;
 
             const micro = ctx.microBreakAtr ?? 0;
             const microScore =
@@ -3915,7 +3924,7 @@ export const useTradingBot = (
                 ? Math.abs(limit - (ema20 as number)) / st.ltf.atr14
                 : undefined;
             const lateEntry =
-                Number.isFinite(ema20) && st.ltf.atr14 > 0 && Math.abs(limit - (ema20 as number)) > 0.6 * st.ltf.atr14;
+                Number.isFinite(ema20) && st.ltf.atr14 > 0 && Math.abs(limit - (ema20 as number)) > LATE_ENTRY_ATR * st.ltf.atr14;
             const microBreakDist = isLong ? st.ltf.last.close - prev.high : prev.low - st.ltf.last.close;
             const microBreakAtr = st.ltf.atr14 > 0 ? Math.max(0, microBreakDist) / st.ltf.atr14 : undefined;
             const signalAgeMs = now - st.ltf.barOpenTime;
@@ -3947,7 +3956,8 @@ export const useTradingBot = (
                 emaSlopeNorm,
             };
             const qualityScore = qualityScoreFor(symbol, qualityCtx);
-            const qualityThreshold = softEnabled ? quota.qualityLowThreshold : QUALITY_SCORE_LOW;
+            const baseQualityThreshold = softEnabled ? quota.qualityLowThreshold : QUALITY_SCORE_LOW;
+            const qualityThreshold = Math.min(QUALITY_SCORE_HIGH, baseQualityThreshold + (symbol === "SOLUSDT" ? 5 : 0));
             const qualityTier = qualityScore < qualityThreshold ? "LOW" : qualityScore >= QUALITY_SCORE_HIGH ? "HIGH" : "MID";
             const hardGate = hardEnabled ? shouldBlockEntry(symbol, qualityCtx) : { blocked: false, reason: "", code: "" };
             const qualityPass = !softEnabled || qualityScore >= qualityThreshold;
@@ -4048,8 +4058,9 @@ export const useTradingBot = (
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
-            if (softEnabled && qualityScore < QUALITY_SCORE_BLOCK) {
-                logScalpReject(symbol, `SOFT_SCORE ${qualityScore}<${QUALITY_SCORE_BLOCK}`, { ...rejectMetricsBase, distToEmaAtr });
+            const qualityBlockThreshold = symbol === "SOLUSDT" ? QUALITY_SCORE_BLOCK_SOL : QUALITY_SCORE_BLOCK;
+            if (softEnabled && qualityScore < qualityBlockThreshold) {
+                logScalpReject(symbol, `SOFT_SCORE ${qualityScore}<${qualityBlockThreshold}`, { ...rejectMetricsBase, distToEmaAtr });
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
