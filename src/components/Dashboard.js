@@ -43,8 +43,8 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             timeframes: "HTF 15m · LTF 1m",
             session: "24/7",
             risk: "4 USDT / trade · 8 USDT total · max 2 pos",
-            entry: "ST15 bias + ST1 flip + EMA21 pullback + RVOL≥1.2",
-            execution: "PostOnly LIMIT · timeout 1×1m",
+            entry: "ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2",
+            execution: "PostOnly LIMIT · timeout 1×15sec",
         };
     }, [bot.settings?.riskMode]);
     const allowedSymbols = bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length

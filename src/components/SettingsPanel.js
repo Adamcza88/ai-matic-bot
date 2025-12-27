@@ -17,7 +17,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const profileCopy = {
         "ai-matic": {
             title: "AI-Matic",
-            description: "Konzervativnější intraday / scalp mix s kontrolou sezení a širšími filtry volatility.",
+        description: "Konzervativnější intraday / scalp mix s kontrolou sezení a širšími filtry volatility. Entry: ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2. Execution: PostOnly LIMIT · timeout 1×15sec.",
             notes: [
                 "Trading hours: On (0–23 SEČ/SELČ)",
                 "Limit: max 2 pozice současně",
