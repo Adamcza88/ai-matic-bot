@@ -18,12 +18,14 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         "ai-matic": {
             title: "AI-Matic",
         description: "Konzervativnější intraday / scalp mix s kontrolou sezení a širšími filtry volatility. Entry: ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2. Execution: PostOnly LIMIT · timeout 1×15sec.",
-            notes: [
-                "Trading hours: On (0–23 SEČ/SELČ)",
-                "Limit: max 2 pozice současně",
-                "Risk: 4 USDT / trade · 8 USDT total (po 3 ztrátách 2/4 na 60m)",
-                "Trailing profit lock",
-            ],
+        notes: [
+            "Trading hours: On (0–23 SEČ/SELČ)",
+            "Limit: max 2 pozice současně",
+            "Risk: 4 USDT / trade · 8 USDT total (po 3 ztrátách 2/4 na 60m)",
+            "Entry: ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2",
+            "Execution: PostOnly LIMIT · timeout 1×15sec",
+            "Trailing profit lock",
+        ],
         },
         "ai-matic-x": {
             title: "AI-Matic-X",
