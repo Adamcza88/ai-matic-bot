@@ -55,21 +55,33 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     const refreshOrders = refreshTestnetOrders;
     const CHECKLIST_DEFAULTS = useMemo(() => ({
         "HTF bias": true,
-        "ST flip": true,
-        "EMA pullback": true,
-        "Close vs ST": true,
-        "HTF line projection": true,
-        "RVOL ≥ 1.2": true,
+        "HTF ST": true,
+        "ST1 flip": true,
+        "EMA touch": true,
+        "ST1 close": true,
+        RVOL: true,
+        Momentum: true,
         "Anti-breakout": true,
-        "BBO fresh": true,
+        "ATR min": true,
+        SMC: true,
+        "EMA pullback": true,
+        "Micro break": true,
         Session: true,
-        "Spread ok": true,
+        Spread: true,
         "Asia range": true,
         Sweep: true,
         "CHoCH+FVG": true,
         PostOnly: true,
+        "BBO fresh": true,
         "Exec allowed": true,
         "BBO age": true,
+    }), []);
+    const CHECKLIST_ALIASES = useMemo(() => ({
+        "HTF ST": ["HTF ST line", "HTF line projection"],
+        "ST1 flip": ["ST flip"],
+        "ST1 close": ["Close vs ST"],
+        RVOL: ["RVOL ≥ 1.2"],
+        Spread: ["Spread ok"],
     }), []);
     const [checklistEnabled, setChecklistEnabled] = useState(() => {
         if (typeof localStorage === "undefined")
@@ -79,7 +91,18 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             if (!raw)
                 return CHECKLIST_DEFAULTS;
             const parsed = JSON.parse(raw);
-            return { ...CHECKLIST_DEFAULTS, ...parsed };
+            const next = { ...CHECKLIST_DEFAULTS, ...parsed };
+            Object.entries(CHECKLIST_ALIASES).forEach(([name, aliases]) => {
+                if (typeof parsed[name] === "boolean")
+                    return;
+                for (const alias of aliases) {
+                    if (typeof parsed[alias] === "boolean") {
+                        next[name] = parsed[alias];
+                        break;
+                    }
+                }
+            });
+            return next;
         }
         catch {
             return CHECKLIST_DEFAULTS;
@@ -160,7 +183,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                                             })
                                                 .filter((entry) => Boolean(entry))
                                             : [];
-                                        return (_jsxs("div", { className: "p-3 rounded-lg border border-white/5 bg-white/5", children: [_jsxs("div", { className: "flex items-center justify-between mb-2", children: [_jsx("span", { className: "font-mono font-semibold", children: sym }), _jsx(Badge, { variant: "outline", className: diag?.signalActive ? "border-emerald-500/50 text-emerald-400" : "border-slate-500/50 text-slate-400", children: diag?.signalActive ? "SIGNAL" : "NO SIGNAL" })] }), gates.length === 0 ? (_jsx("div", { className: "text-xs text-slate-500 italic", children: "\u017D\u00E1dn\u00E1 data z posledn\u00EDho scanu." })) : (_jsxs("div", { className: "grid grid-cols-2 gap-2 text-xs", children: [_jsxs("div", { className: "flex items-center gap-2 text-left", title: hardBlocked ? `Hard block: ${diag?.hardBlock}` : hardEnabled ? "Hard gate OK" : "Hard gate disabled", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${hardEnabled ? (hardBlocked ? "bg-red-400" : "bg-emerald-400") : "bg-slate-600"}` }), _jsxs("span", { className: hardEnabled ? "text-white" : "text-slate-500", children: ["Hard gate ", hardEnabled ? (hardBlocked ? "BLOCK" : "OK") : "OFF"] })] }), _jsxs("div", { className: "flex items-center gap-2 text-left", title: softEnabled ? `Quality ${qualityScore ?? "—"} / ${qualityThreshold ?? "—"}` : "Soft gate disabled", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${softEnabled ? (qualityPass ? "bg-emerald-400" : "bg-amber-400") : "bg-slate-600"}` }), _jsxs("span", { className: softEnabled ? "text-white" : "text-slate-500", children: ["Soft score ", softEnabled ? (qualityScore != null ? qualityScore : "—") : "OFF"] })] }), gates.map((g) => (_jsxs("button", { type: "button", onClick: () => toggleChecklist(g.name), className: "flex items-center gap-2 text-left", title: "Kliknut\u00EDm zahrne\u0161/vylou\u010D\u00ED\u0161 z checklistu (jen UI, neovliv\u0148uje obchodov\u00E1n\u00ED).", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}` }), _jsx("span", { className: checklistEnabled[g.name] ? "text-white" : "text-slate-500", children: g.name })] }, g.name))), _jsxs("button", { type: "button", onClick: () => toggleChecklist("Exec allowed"), className: "flex items-center gap-2 text-left", title: "Kliknut\u00EDm zahrne\u0161/vylou\u010D\u00ED\u0161 z checklistu (jen UI, neovliv\u0148uje obchodov\u00E1n\u00ED).", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}` }), _jsxs("span", { className: checklistEnabled["Exec allowed"] ? "text-white" : "text-slate-500", children: ["Exec allowed (", diag?.executionAllowed === true ? "YES" : diag?.executionAllowed === false ? "WAIT BBO" : "N/A", ")"] })] }), _jsxs("button", { type: "button", onClick: () => toggleChecklist("BBO age"), className: "flex items-center gap-2 text-left", title: "Kliknut\u00EDm zahrne\u0161/vylou\u010D\u00ED\u0161 z checklistu (jen UI, neovliv\u0148uje obchodov\u00E1n\u00ED).", children: [_jsx("span", { className: "h-2 w-2 rounded-full bg-slate-500" }), _jsxs("span", { className: checklistEnabled["BBO age"] ? "text-white" : "text-slate-500", children: ["BBO age: ", diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"] })] }), (breakdownParts.length > 0 || diag?.qualityTopReason) && (_jsxs("div", { className: "col-span-2 text-[11px] text-slate-400", children: [breakdownParts.length > 0 && (_jsxs("div", { children: ["Score: ", breakdownParts.join(" · ")] })), diag?.qualityTopReason && (_jsxs("div", { children: ["Top reason: ", diag.qualityTopReason] }))] }))] }))] }, sym));
+                                        return (_jsxs("div", { className: "p-3 rounded-lg border border-white/5 bg-white/5", children: [_jsxs("div", { className: "flex items-center justify-between mb-2", children: [_jsx("span", { className: "font-mono font-semibold", children: sym }), _jsx(Badge, { variant: "outline", className: diag?.signalActive ? "border-emerald-500/50 text-emerald-400" : "border-slate-500/50 text-slate-400", children: diag?.signalActive ? "SIGNAL" : "NO SIGNAL" })] }), gates.length === 0 ? (_jsx("div", { className: "text-xs text-slate-500 italic", children: "\u017D\u00E1dn\u00E1 data z posledn\u00EDho scanu." })) : (_jsxs("div", { className: "grid grid-cols-2 gap-2 text-xs", children: [_jsxs("div", { className: "flex items-center gap-2 text-left", title: hardBlocked ? `Hard block: ${diag?.hardBlock}` : hardEnabled ? "Hard gate OK" : "Hard gate disabled", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${hardEnabled ? (hardBlocked ? "bg-red-400" : "bg-emerald-400") : "bg-slate-600"}` }), _jsxs("span", { className: hardEnabled ? "text-white" : "text-slate-500", children: ["Hard gate ", hardEnabled ? (hardBlocked ? "BLOCK" : "OK") : "OFF"] })] }), _jsxs("div", { className: "flex items-center gap-2 text-left", title: softEnabled ? `Quality ${qualityScore ?? "—"} / ${qualityThreshold ?? "—"}` : "Soft gate disabled", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${softEnabled ? (qualityPass ? "bg-emerald-400" : "bg-amber-400") : "bg-slate-600"}` }), _jsxs("span", { className: softEnabled ? "text-white" : "text-slate-500", children: ["Soft score ", softEnabled ? (qualityScore != null ? qualityScore : "—") : "OFF"] })] }), gates.map((g) => (_jsxs("button", { type: "button", onClick: () => toggleChecklist(g.name), className: "flex items-center gap-2 text-left", title: "Kliknut\u00EDm zapne\u0161/vypne\u0161 gate pro validaci vstupu.", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}` }), _jsx("span", { className: checklistEnabled[g.name] ? "text-white" : "text-slate-500", children: g.name })] }, g.name))), _jsxs("button", { type: "button", onClick: () => toggleChecklist("Exec allowed"), className: "flex items-center gap-2 text-left", title: "Kliknut\u00EDm zapne\u0161/vypne\u0161 gate pro validaci vstupu.", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}` }), _jsxs("span", { className: checklistEnabled["Exec allowed"] ? "text-white" : "text-slate-500", children: ["Exec allowed (", diag?.executionAllowed === true ? "YES" : diag?.executionAllowed === false ? "WAIT BBO" : "N/A", ")"] })] }), _jsxs("button", { type: "button", onClick: () => toggleChecklist("BBO age"), className: "flex items-center gap-2 text-left", title: "Kliknut\u00EDm zapne\u0161/vypne\u0161 gate pro validaci vstupu.", children: [_jsx("span", { className: "h-2 w-2 rounded-full bg-slate-500" }), _jsxs("span", { className: checklistEnabled["BBO age"] ? "text-white" : "text-slate-500", children: ["BBO age: ", diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"] })] }), (breakdownParts.length > 0 || diag?.qualityTopReason) && (_jsxs("div", { className: "col-span-2 text-[11px] text-slate-400", children: [breakdownParts.length > 0 && (_jsxs("div", { children: ["Score: ", breakdownParts.join(" · ")] })), diag?.qualityTopReason && (_jsxs("div", { children: ["Top reason: ", diag.qualityTopReason] }))] }))] }))] }, sym));
                                     }) }) })] }), _jsxs(Card, { className: "bg-slate-900/50 border-white/10 text-white", children: [_jsxs(CardHeader, { className: "flex flex-row items-center justify-between space-y-0 pb-2", children: [_jsx(CardTitle, { className: "text-sm font-medium text-slate-400", children: useTestnet ? "Testnet Orders" : "Mainnet Orders" }), _jsxs("div", { className: "flex items-center gap-2", children: [ordersError && (_jsx("span", { className: "text-xs text-red-400 truncate max-w-[160px]", title: ordersError, children: ordersError })), _jsx(Button, { variant: "outline", size: "sm", onClick: () => refreshOrders(), className: "h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white", children: "Refresh" })] })] }), _jsxs(CardContent, { children: [ordersError ? (_jsxs("div", { className: "text-sm text-red-400 italic py-6 text-center border border-red-500/30 bg-red-500/5 rounded-lg", children: ["Orders API failed: ", ordersError] })) : exchangeOrders.length === 0 ? (_jsx("div", { className: "text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg", children: useTestnet ? "Žádné otevřené testnet orders." : "Žádné otevřené mainnet orders." })) : (_jsx("div", { className: "space-y-3", children: exchangeOrders.slice(0, 8).map((o) => (_jsxs("div", { className: "p-3 rounded-lg border border-white/5 bg-white/5", children: [_jsxs("div", { className: "flex items-center justify-between", children: [_jsx("span", { className: "font-mono font-semibold", children: o.symbol }), _jsx(Badge, { variant: "outline", className: o.side === "Buy" ? "border-emerald-500/50 text-emerald-500" : "border-red-500/50 text-red-500", children: o.side })] }), _jsxs("div", { className: "text-xs text-slate-400 font-mono mt-1", children: ["Qty ", o.qty, " @ ", o.price ?? "mkt", " | ", o.status] }), _jsx("div", { className: "text-[11px] text-slate-500 mt-1", children: new Date(o.createdTime).toLocaleString() })] }, o.orderId))) })), exchangeTrades.length > 0 && (_jsxs("div", { className: "mt-4 pt-3 border-t border-white/10", children: [_jsx("div", { className: "text-xs text-slate-400 mb-2", children: "Latest fills" }), _jsx("div", { className: "space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar", children: exchangeTrades.slice(0, 10).map((t) => (_jsxs("div", { className: "text-xs font-mono text-slate-300 flex justify-between", children: [_jsx("span", { className: "flex-1 truncate", children: t.symbol }), _jsx("span", { className: t.side === "Buy" ? "text-emerald-400" : "text-red-400", children: t.side }), _jsx("span", { children: t.qty }), _jsxs("span", { children: ["@", t.price] }), _jsx("span", { children: new Date(t.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) })] }, t.id))) })] }))] })] }), _jsxs(Card, { className: "bg-slate-900/50 border-white/10 text-white", children: [_jsxs(CardHeader, { className: "flex flex-row items-center justify-between space-y-0 pb-2", children: [_jsx(CardTitle, { className: "text-sm font-medium text-slate-400", children: "Asset PnL History" }), _jsxs("div", { className: "flex items-center gap-2", children: [_jsxs("span", { className: "text-xs text-slate-500", children: [Object.keys(assetPnlHistory).length, " assets"] }), _jsx(Button, { variant: "outline", size: "sm", onClick: () => resetPnlHistory(), className: "h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white", children: "Reset" })] })] }), _jsx(CardContent, { children: Object.keys(assetPnlHistory).length === 0 ? (_jsx("div", { className: "text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg", children: "\u017D\u00E1dn\u00FD historick\u00FD PnL zat\u00EDm ulo\u017Een." })) : (_jsx("div", { className: "space-y-3", children: Object.entries(assetPnlHistory).map(([symbol, records]) => {
                                         const latest = records[0];
                                         const sum = records.reduce((acc, r) => acc + (r.pnl ?? 0), 0);

@@ -2324,6 +2324,14 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             return { score, breakdown, topReason };
         };
+        const gateAliases = {
+            "HTF ST": ["HTF ST line", "HTF line projection"],
+            "ST1 flip": ["ST flip"],
+            "ST1 close": ["Close vs ST"],
+            RVOL: ["RVOL ≥ 1.2"],
+            Spread: ["Spread ok"],
+            "BBO fresh": ["BBO age"],
+        };
         const isGateEnabled = (name) => {
             try {
                 if (typeof localStorage === "undefined")
@@ -2334,6 +2342,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 const parsed = JSON.parse(raw);
                 if (typeof parsed[name] === "boolean")
                     return parsed[name];
+                const aliases = gateAliases[name];
+                if (aliases) {
+                    for (const alias of aliases) {
+                        if (typeof parsed[alias] === "boolean")
+                            return parsed[alias];
+                    }
+                }
             }
             catch {
                 // ignore errors and treat as enabled
@@ -3779,7 +3794,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const stFlip = isGateEnabled("ST1 flip") ? stFlipRaw : true;
             const emaTouch = isGateEnabled("EMA touch") ? emaTouchRaw : true;
             const stCloseOk = isGateEnabled("ST1 close") ? stCloseRaw : true;
-            const htfLineOk = isGateEnabled("HTF ST line") ? htfLineRaw : true;
+            const htfLineOk = isGateEnabled("HTF ST") ? htfLineRaw : true;
             const rvolOk = isGateEnabled("RVOL") ? rvolRaw : true;
             const momentumOk = isGateEnabled("Momentum") ? momentumRaw : true;
             const antiBreakoutOk = isGateEnabled("Anti-breakout") ? antiBreakoutRaw : true;
@@ -3907,8 +3922,13 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const spBps = st.bbo ? spreadBps(st.bbo.bid, st.bbo.ask) : Infinity;
             const spreadPctNow = Number.isFinite(spBps) ? spBps / 10000 : Infinity;
             const atrPct = atrPctNow;
-            const dataAgeOk = !isMaticX || bboAgeMs <= CFG.dataAgeMaxMs;
-            const spreadOk = !isMaticX || spreadPctNow <= CFG.spreadMaxPct;
+            const bboFreshGate = isGateEnabled("BBO fresh");
+            const spreadGate = isGateEnabled("Spread");
+            const dataAgeOkRaw = bboAgeMs <= CFG.dataAgeMaxMs;
+            const spreadOkRaw = spreadPctNow <= CFG.spreadMaxPct;
+            const dataAgeOk = !isMaticX || !bboFreshGate ? true : dataAgeOkRaw;
+            const spreadOk = !isMaticX || !spreadGate ? true : spreadOkRaw;
+            const bboFreshOk = bboFreshGate ? !bboStale : true;
             if (isMaticX && !dataAgeOk) {
                 gateFailures.push("DATA_AGE");
                 if (signalActive) {
@@ -3925,7 +3945,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 gateFailures.push("SPREAD");
                 signalActive = false;
             }
-            const executionAllowed = signalActive ? !bboStale && (!isMaticX || (spreadOk && dataAgeOk)) : true;
+            const execGateEnabled = isGateEnabled("Exec allowed");
+            const executionAllowed = signalActive
+                ? (!execGateEnabled ? true : bboFreshOk && (!isMaticX || (spreadOk && dataAgeOk)))
+                : true;
             const emaSlopeAbs = st.ltf.emaSlopeAbs ?? 0;
             const hardEnabled = settingsRef.current.enableHardGates !== false;
             const softEnabled = settingsRef.current.enableSoftGates !== false;

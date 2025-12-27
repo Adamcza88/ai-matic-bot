@@ -93,21 +93,36 @@ export default function Dashboard({
   const CHECKLIST_DEFAULTS = useMemo(
     () => ({
       "HTF bias": true,
-      "ST flip": true,
-      "EMA pullback": true,
-      "Close vs ST": true,
-      "HTF line projection": true,
-      "RVOL ≥ 1.2": true,
+      "HTF ST": true,
+      "ST1 flip": true,
+      "EMA touch": true,
+      "ST1 close": true,
+      RVOL: true,
+      Momentum: true,
       "Anti-breakout": true,
-      "BBO fresh": true,
+      "ATR min": true,
+      SMC: true,
+      "EMA pullback": true,
+      "Micro break": true,
       Session: true,
-      "Spread ok": true,
+      Spread: true,
       "Asia range": true,
       Sweep: true,
       "CHoCH+FVG": true,
       PostOnly: true,
+      "BBO fresh": true,
       "Exec allowed": true,
       "BBO age": true,
+    }),
+    []
+  );
+  const CHECKLIST_ALIASES = useMemo(
+    () => ({
+      "HTF ST": ["HTF ST line", "HTF line projection"],
+      "ST1 flip": ["ST flip"],
+      "ST1 close": ["Close vs ST"],
+      RVOL: ["RVOL ≥ 1.2"],
+      Spread: ["Spread ok"],
     }),
     []
   );
@@ -118,7 +133,17 @@ export default function Dashboard({
       const raw = localStorage.getItem("ai-matic-checklist-enabled");
       if (!raw) return CHECKLIST_DEFAULTS;
       const parsed = JSON.parse(raw) as Record<string, boolean>;
-      return { ...CHECKLIST_DEFAULTS, ...parsed };
+      const next = { ...CHECKLIST_DEFAULTS, ...parsed };
+      Object.entries(CHECKLIST_ALIASES).forEach(([name, aliases]) => {
+        if (typeof parsed[name] === "boolean") return;
+        for (const alias of aliases) {
+          if (typeof parsed[alias] === "boolean") {
+            next[name] = parsed[alias];
+            break;
+          }
+        }
+      });
+      return next;
     } catch {
       return CHECKLIST_DEFAULTS;
     }
@@ -517,7 +542,7 @@ export default function Dashboard({
                             type="button"
                             onClick={() => toggleChecklist(g.name)}
                             className="flex items-center gap-2 text-left"
-                            title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
+                            title="Kliknutím zapneš/vypneš gate pro validaci vstupu."
                           >
                             <span className={`h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
                             <span className={checklistEnabled[g.name] ? "text-white" : "text-slate-500"}>
@@ -529,7 +554,7 @@ export default function Dashboard({
                           type="button"
                           onClick={() => toggleChecklist("Exec allowed")}
                           className="flex items-center gap-2 text-left"
-                          title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
+                          title="Kliknutím zapneš/vypneš gate pro validaci vstupu."
                         >
                           <span className={`h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}`} />
                           <span className={checklistEnabled["Exec allowed"] ? "text-white" : "text-slate-500"}>
@@ -540,7 +565,7 @@ export default function Dashboard({
                           type="button"
                           onClick={() => toggleChecklist("BBO age")}
                           className="flex items-center gap-2 text-left"
-                          title="Kliknutím zahrneš/vyloučíš z checklistu (jen UI, neovlivňuje obchodování)."
+                          title="Kliknutím zapneš/vypneš gate pro validaci vstupu."
                         >
                           <span className="h-2 w-2 rounded-full bg-slate-500" />
                           <span className={checklistEnabled["BBO age"] ? "text-white" : "text-slate-500"}>
