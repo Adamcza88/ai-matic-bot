@@ -1255,8 +1255,19 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     };
     const forceClosePosition = useCallback(async (pos) => {
         if (!authToken)
-            return;
-        const side = pos.side === "buy" ? "Sell" : "Buy";
+            return false;
+        const qtyRaw = Math.abs(Number(pos.size ?? pos.qty ?? 0));
+        if (!Number.isFinite(qtyRaw) || qtyRaw <= 0) {
+            addLog({ action: "ERROR", message: `Force close failed: invalid qty ${pos.symbol}` });
+            return false;
+        }
+        const step = qtyStepForSymbol(pos.symbol);
+        const qty = roundDownToStep(qtyRaw, step);
+        if (!Number.isFinite(qty) || qty < step) {
+            addLog({ action: "ERROR", message: `Force close failed: qty too small ${pos.symbol}` });
+            return false;
+        }
+        const side = String(pos.side ?? "").toLowerCase() === "buy" ? "Sell" : "Buy";
         try {
             await queuedFetch(`${apiBase}${apiPrefix}/order?net=${useTestnet ? "testnet" : "mainnet"}`, {
                 method: "POST",
@@ -1267,7 +1278,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 body: JSON.stringify({
                     symbol: pos.symbol,
                     side,
-                    qty: Number(pos.size.toFixed(4)),
+                    qty,
                     orderType: "Market",
                     timeInForce: "IOC",
                     reduceOnly: true,
@@ -1275,16 +1286,18 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }, "order");
             addLog({
                 action: "AUTO_CLOSE",
-                message: `Forced reduce-only close ${pos.symbol} due to missing protection`,
+                message: `Forced reduce-only close ${pos.symbol} qty=${qty}`,
             });
+            return true;
         }
         catch (err) {
             addLog({
                 action: "ERROR",
                 message: `Force close failed: ${getErrorMessage(err) || "unknown"}`,
             });
+            return false;
         }
-    }, [apiBase, authToken, useTestnet]);
+    }, [apiBase, apiPrefix, authToken, queuedFetch, useTestnet]);
     const fetchExitBbo = useCallback(async (symbol) => {
         const url = `${httpBase}/v5/market/tickers?category=linear&symbol=${symbol}`;
         const res = await queuedFetch(url, undefined, "data");
@@ -4944,6 +4957,12 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         setPriceAlerts((p) => p.filter((a) => a.id !== id));
     };
     const manualClosePosition = useCallback(async (pos) => {
+        if (modeRef.current === TradingMode.PAPER) {
+            const fallbackId = pos.id ?? pos.positionId ?? pos.symbol;
+            closePosition(fallbackId);
+            addLog({ action: "SYSTEM", message: `MANUAL_CLOSE (paper) ${pos.symbol}` });
+            return true;
+        }
         if (!authToken) {
             addLog({ action: "ERROR", message: "Manual close failed: missing auth token" });
             return false;
@@ -4961,15 +4980,23 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         }
         const side = String(pos.side ?? "").toLowerCase() === "buy" ? "Sell" : "Buy";
         const ok = await placeReduceOnlyExit(pos.symbol, side, qty, "MANUAL");
+        if (!ok) {
+            const forced = await forceClosePosition(pos);
+            addLog({
+                action: forced ? "SYSTEM" : "ERROR",
+                message: forced ? `MANUAL_CLOSE fallback market ${pos.symbol} qty=${qty}` : `Manual close failed ${pos.symbol}`,
+            });
+            return forced;
+        }
         addLog({
-            action: ok ? "SYSTEM" : "ERROR",
-            message: ok ? `MANUAL_CLOSE ${pos.symbol} qty=${qty}` : `Manual close failed ${pos.symbol}`,
+            action: "SYSTEM",
+            message: `MANUAL_CLOSE ${pos.symbol} qty=${qty}`,
         });
         return ok;
-    }, [authToken, placeReduceOnlyExit]);
+    }, [authToken, closePosition, forceClosePosition, placeReduceOnlyExit]);
     const closePosition = (id) => {
         setActivePositions((prev) => {
-            const target = prev.find((p) => p.id === id);
+            const target = prev.find((p) => p.id === id || p.positionId === id || p.symbol === id);
             if (!target)
                 return prev;
             const currentPrice = currentPrices[target.symbol] ?? target.entryPrice;
