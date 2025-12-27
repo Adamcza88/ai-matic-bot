@@ -2407,6 +2407,7 @@ export const useTradingBot = (
             return null;
         }
     })();
+    const cooldownEnabled = false;
     const lastResetDayRef = useRef<string | null>(initialResetDay);
 
     const lifecycleRef = useRef<Map<string, string>>(new Map());
@@ -2553,16 +2554,18 @@ export const useTradingBot = (
                     safeUntil: 0,
                 };
                 stateMap[symbol] = st;
-                const isMaticX = settingsRef.current.riskMode === "ai-matic-x";
-                if (isMaticX) {
-                    const until = Date.now() + AI_MATIC_X_LOSS_COOLDOWN_MS;
-                    st.cooldownUntil = Math.max(st.cooldownUntil, until);
-                }
-                if (nextStreak === 2) {
-                    const cooldownMs = isMaticX ? AI_MATIC_X_LOSS_STREAK_COOLDOWN_MS : LOSS_STREAK_SYMBOL_COOLDOWN_MS;
-                    const until = Date.now() + cooldownMs;
-                    st.cooldownUntil = Math.max(st.cooldownUntil, until);
-                    addLog({ action: "SYSTEM", message: `COOLDOWN ${symbol} loss-streak=2 hold=${Math.round(cooldownMs / 60000)}m` });
+                if (cooldownEnabled) {
+                    const isMaticX = settingsRef.current.riskMode === "ai-matic-x";
+                    if (isMaticX) {
+                        const until = Date.now() + AI_MATIC_X_LOSS_COOLDOWN_MS;
+                        st.cooldownUntil = Math.max(st.cooldownUntil, until);
+                    }
+                    if (nextStreak === 2) {
+                        const cooldownMs = isMaticX ? AI_MATIC_X_LOSS_STREAK_COOLDOWN_MS : LOSS_STREAK_SYMBOL_COOLDOWN_MS;
+                        const until = Date.now() + cooldownMs;
+                        st.cooldownUntil = Math.max(st.cooldownUntil, until);
+                        addLog({ action: "SYSTEM", message: `COOLDOWN ${symbol} loss-streak=2 hold=${Math.round(cooldownMs / 60000)}m` });
+                    }
                 }
             }
         }
@@ -4184,7 +4187,7 @@ export const useTradingBot = (
             if (st.ltfLastScanBarOpenTime === st.ltf.barOpenTime) return false;
             if (scalpSafeRef.current) return false;
             if (now < scalpGlobalCooldownUntilRef.current) return false;
-            if (now < st.cooldownUntil) {
+            if (cooldownEnabled && now < st.cooldownUntil) {
                 logScalpReject(symbol, `COOLDOWN ${(st.cooldownUntil - now) / 1000}s`);
                 return false;
             }
