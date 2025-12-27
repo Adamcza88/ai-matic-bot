@@ -40,6 +40,7 @@ export default function Dashboard({
     assetPnlHistory,
     resetPnlHistory,
     scanDiagnostics,
+    manualClosePosition,
   } = bot;
   const modeOptions: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
   const profileMeta = useMemo(() => {
@@ -376,6 +377,15 @@ export default function Dashboard({
                         </div>
                         <div className="text-xs text-slate-400 mt-1 font-mono">
                           TP: {tp ?? "-"} | SL: {sl ?? "-"}
+                        </div>
+                        <div className="mt-2 flex justify-end">
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => manualClosePosition(p)}
+                          >
+                            Close
+                          </Button>
                         </div>
                       </div>
                     </div>

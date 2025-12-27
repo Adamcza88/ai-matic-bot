@@ -5227,6 +5227,34 @@ export const useTradingBot = (
         setPriceAlerts((p) => p.filter((a) => a.id !== id));
     };
 
+    const manualClosePosition = useCallback(
+        async (pos: ActivePosition) => {
+            if (!authToken) {
+                addLog({ action: "ERROR", message: "Manual close failed: missing auth token" });
+                return false;
+            }
+            const qtyRaw = Math.abs(Number(pos.size ?? pos.qty ?? 0));
+            if (!Number.isFinite(qtyRaw) || qtyRaw <= 0) {
+                addLog({ action: "ERROR", message: `Manual close failed: invalid qty ${pos.symbol}` });
+                return false;
+            }
+            const step = qtyStepForSymbol(pos.symbol);
+            const qty = roundDownToStep(qtyRaw, step);
+            if (!Number.isFinite(qty) || qty < step) {
+                addLog({ action: "ERROR", message: `Manual close failed: qty too small ${pos.symbol}` });
+                return false;
+            }
+            const side = String(pos.side ?? "").toLowerCase() === "buy" ? "Sell" : "Buy";
+            const ok = await placeReduceOnlyExit(pos.symbol, side, qty, "MANUAL");
+            addLog({
+                action: ok ? "SYSTEM" : "ERROR",
+                message: ok ? `MANUAL_CLOSE ${pos.symbol} qty=${qty}` : `Manual close failed ${pos.symbol}`,
+            });
+            return ok;
+        },
+        [authToken, placeReduceOnlyExit]
+    );
+
     const closePosition = (id: string) => {
         setActivePositions((prev) => {
             const target = prev.find((p) => p.id === id);
@@ -5380,6 +5408,7 @@ export const useTradingBot = (
         removeEntryHistoryItem,
         resetPnlHistory,
         scanDiagnostics,
+        manualClosePosition,
     };
 };
 
