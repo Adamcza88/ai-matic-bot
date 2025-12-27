@@ -174,7 +174,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                                         const qualityThreshold = diag?.qualityThreshold;
                                         const qualityPass = diag?.qualityPass;
                                         const breakdown = diag?.qualityBreakdown;
-                                        const breakdownOrder = ["HTF", "Pullback", "Break", "ATR", "Spread", "Freshness"];
+                                        const breakdownOrder = ["HTF", "Pullback", "Break", "ATR", "Spread", "Freshness", "Correlation"];
                                         const breakdownParts = breakdown
                                             ? breakdownOrder
                                                 .map((key) => {

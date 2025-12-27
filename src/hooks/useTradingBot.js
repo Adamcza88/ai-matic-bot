@@ -78,9 +78,9 @@ const ENTRY_TF_BOOST_MS = 60_000;
 const QUOTA_LOOKBACK_MS = 3 * 60 * 60_000;
 const QUOTA_BEHIND_PCT = 0.4;
 const QUOTA_BOOST_MS = 90 * 60_000;
-const QUALITY_SCORE_SOFT_BOOST = 55;
-const QUALITY_SCORE_MID = 65;
-const QUALITY_SCORE_LOW = 55;
+const QUALITY_SCORE_SOFT_BOOST = 45;
+const QUALITY_SCORE_MID = 60;
+const QUALITY_SCORE_LOW = 50;
 const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"]);
 const TARGET_TRADES_PER_DAY = {
     BTCUSDT: 6,
@@ -2238,6 +2238,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     htfScore = ctx.htfSlopeNorm < -slopeMin ? 25 : 10;
                 }
             }
+            const htfDistAtr = ctx.htfAtr > 0 ? Math.abs(ctx.htfClose - ctx.htfEma200) / ctx.htfAtr : undefined;
+            if (htfScore > 0 && Number.isFinite(htfDistAtr) && htfDistAtr > 2.5) {
+                htfScore = Math.max(0, htfScore - 5);
+            }
             const distToEma = ctx.ema20DistAtr;
             let pullbackScore = 0;
             if (Number.isFinite(distToEma)) {
@@ -2248,7 +2252,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                     pullbackScore = 10;
                 }
             }
-            const microScore = ctx.microBreakOk ? 20 : 0;
+            let microScore = 0;
+            if (ctx.microBreakOk) {
+                if (Number.isFinite(ctx.microBreakAtr) && ctx.microBreakAtr > 0 && ctx.microBreakAtr < 0.05) {
+                    microScore = 8;
+                }
+                else {
+                    microScore = 20;
+                }
+            }
+            const impulseSoft = ctx.atr > 0 && ctx.range > 2.5 * ctx.atr;
             let atrScore = 0;
             if (ctx.atrPct > 0) {
                 if (ctx.atrPct >= sweetSpot.low && ctx.atrPct <= sweetSpot.high) {
@@ -2257,6 +2270,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 else {
                     atrScore = 5;
                 }
+            }
+            if (impulseSoft && atrScore > 5) {
+                atrScore = 5;
             }
             let spreadScore = 0;
             if (Number.isFinite(ctx.spreadBps)) {
@@ -2271,16 +2287,18 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const breakBars = ctx.microBreakBars;
             if (typeof breakBars === "number") {
                 if (breakBars <= 1)
-                    freshnessScore = 10;
-                else if (breakBars <= 2)
                     freshnessScore = 5;
+                else if (breakBars <= 2)
+                    freshnessScore = 2;
             }
+            const correlationScore = ctx.betaSameSide ? 0 : 5;
             const score = clamp(Math.round(htfScore +
                 pullbackScore +
                 microScore +
                 atrScore +
                 spreadScore +
-                freshnessScore), 0, 100);
+                freshnessScore +
+                correlationScore), 0, 100);
             const breakdown = {
                 HTF: htfScore,
                 Pullback: pullbackScore,
@@ -2288,6 +2306,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 ATR: atrScore,
                 Spread: spreadScore,
                 Freshness: freshnessScore,
+                Correlation: correlationScore,
             };
             const missing = [
                 { name: "HTF", missing: 25 - htfScore },
@@ -2295,7 +2314,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 { name: "Break", missing: 20 - microScore },
                 { name: "ATR", missing: 15 - atrScore },
                 { name: "Spread", missing: 10 - spreadScore },
-                { name: "Freshness", missing: 10 - freshnessScore },
+                { name: "Freshness", missing: 5 - freshnessScore },
+                { name: "Correlation", missing: 5 - correlationScore },
             ];
             missing.sort((a, b) => b.missing - a.missing);
             const top = missing[0];
@@ -2311,13 +2331,16 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                         topReason = "Break weak";
                         break;
                     case "ATR":
-                        topReason = ctx.atrPct < sweetSpot.low ? "ATR low" : "ATR high";
+                        topReason = impulseSoft ? "Impulse" : ctx.atrPct < sweetSpot.low ? "ATR low" : "ATR high";
                         break;
                     case "Spread":
                         topReason = "Spread wide";
                         break;
                     case "Freshness":
                         topReason = "Stale break";
+                        break;
+                    case "Correlation":
+                        topReason = "Correlation risk";
                         break;
                     case "HTF":
                     default:
@@ -3999,7 +4022,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             };
             const qualityResult = qualityScoreFor(symbol, qualityCtx);
             const qualityScore = qualityResult.score;
-            const baseMinScore = symbol === "ETHUSDT" ? QUALITY_SCORE_MID : QUALITY_SCORE_LOW;
+            const baseMinScore = QUALITY_SCORE_LOW;
             const qualityThreshold = softEnabled
                 ? (quota.boosted ? Math.min(baseMinScore, QUALITY_SCORE_SOFT_BOOST) : baseMinScore)
                 : QUALITY_SCORE_LOW;
