@@ -41,6 +41,7 @@ export default function Dashboard({
     resetPnlHistory,
     scanDiagnostics,
     manualClosePosition,
+    dynamicSymbols,
   } = bot;
   const modeOptions: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
   const profileMeta = useMemo(() => {
@@ -81,7 +82,10 @@ export default function Dashboard({
     };
   }, [bot.settings?.riskMode]);
 
-  const allowedSymbols = profileMeta.symbols;
+  const allowedSymbols =
+    bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
+      ? dynamicSymbols
+      : profileMeta.symbols;
   const exchangeOrders = testnetOrders;
   const exchangeTrades = testnetTrades;
   const refreshOrders = refreshTestnetOrders;

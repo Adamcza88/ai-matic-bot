@@ -783,6 +783,7 @@ export const useTradingBot = (
         []
     );
     const [closedPositions] = useState<ClosedPosition[]>([]);
+    const [dynamicSymbols, setDynamicSymbols] = useState<string[]>([]);
     const [pendingSignals, setPendingSignals] = useState<PendingSignal[]>([]);
     const pendingSignalsRef = useRef<PendingSignal[]>([]);
     const [currentPrices, setCurrentPrices] = useState<Record<string, number>>(
@@ -2580,7 +2581,10 @@ export const useTradingBot = (
         const isMaticX = settings.riskMode === "ai-matic-x";
         const isSmcMode = settings.riskMode === "ai-matic-scalp";
         const activeSymbols = isSmcMode ? [...SMC_SYMBOLS] : [...SYMBOLS];
-        if (!isMaticX) dynamicSymbolsRef.current = [];
+        if (!isMaticX) {
+            dynamicSymbolsRef.current = [];
+            setDynamicSymbols([]);
+        }
         let cancel = false;
         let symbolRefreshId: ReturnType<typeof setInterval> | undefined;
 
@@ -2872,7 +2876,10 @@ export const useTradingBot = (
             if (!unique.length) return;
             const prev = activeSymbols.join(",");
             activeSymbols.splice(0, activeSymbols.length, ...unique);
-            if (isMaticX) dynamicSymbolsRef.current = unique;
+            if (isMaticX) {
+                dynamicSymbolsRef.current = unique;
+                setDynamicSymbols(unique);
+            }
             scalpRotationIdxRef.current = 0;
             activeSymbols.forEach(ensureSymbolState);
             if (prev !== unique.join(",")) {
@@ -5409,6 +5416,7 @@ export const useTradingBot = (
         resetPnlHistory,
         scanDiagnostics,
         manualClosePosition,
+        dynamicSymbols,
     };
 };
 

@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Activity, Settings, TrendingUp, Zap } from "lucide-react";
 import SettingsPanel from "./SettingsPanel";
 export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bot, }) {
-    const { systemState, portfolioState, activePositions, logEntries, testnetOrders, testnetTrades, ordersError, refreshTestnetOrders, assetPnlHistory, resetPnlHistory, scanDiagnostics, manualClosePosition, } = bot;
+    const { systemState, portfolioState, activePositions, logEntries, testnetOrders, testnetTrades, ordersError, refreshTestnetOrders, assetPnlHistory, resetPnlHistory, scanDiagnostics, manualClosePosition, dynamicSymbols, } = bot;
     const modeOptions = [TradingMode.OFF, TradingMode.AUTO_ON];
     const profileMeta = useMemo(() => {
         const riskMode = bot.settings?.riskMode ?? "ai-matic";
@@ -47,7 +47,9 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             execution: "PostOnly LIMIT · timeout 1×1m",
         };
     }, [bot.settings?.riskMode]);
-    const allowedSymbols = profileMeta.symbols;
+    const allowedSymbols = bot.settings?.riskMode === "ai-matic-x" && (dynamicSymbols?.length)
+        ? dynamicSymbols
+        : profileMeta.symbols;
     const exchangeOrders = testnetOrders;
     const exchangeTrades = testnetTrades;
     const refreshOrders = refreshTestnetOrders;

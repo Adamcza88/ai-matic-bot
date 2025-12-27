@@ -640,6 +640,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     }, [authToken, useTestnet]);
     const [activePositions, setActivePositions] = useState([]);
     const [closedPositions] = useState([]);
+    const [dynamicSymbols, setDynamicSymbols] = useState([]);
     const [pendingSignals, setPendingSignals] = useState([]);
     const pendingSignalsRef = useRef([]);
     const [currentPrices, setCurrentPrices] = useState({});
@@ -2133,8 +2134,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const isMaticX = settings.riskMode === "ai-matic-x";
         const isSmcMode = settings.riskMode === "ai-matic-scalp";
         const activeSymbols = isSmcMode ? [...SMC_SYMBOLS] : [...SYMBOLS];
-        if (!isMaticX)
+        if (!isMaticX) {
             dynamicSymbolsRef.current = [];
+            setDynamicSymbols([]);
+        }
         let cancel = false;
         let symbolRefreshId;
         const BASE_CFG = {
@@ -2399,8 +2402,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return;
             const prev = activeSymbols.join(",");
             activeSymbols.splice(0, activeSymbols.length, ...unique);
-            if (isMaticX)
+            if (isMaticX) {
                 dynamicSymbolsRef.current = unique;
+                setDynamicSymbols(unique);
+            }
             scalpRotationIdxRef.current = 0;
             activeSymbols.forEach(ensureSymbolState);
             if (prev !== unique.join(",")) {
@@ -4887,5 +4892,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         removeEntryHistoryItem,
         resetPnlHistory,
         scanDiagnostics,
+        dynamicSymbols,
     };
 };
