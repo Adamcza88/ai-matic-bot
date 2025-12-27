@@ -1334,6 +1334,33 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             return false;
         }
     }, [apiBase, apiPrefix, authToken, queuedFetch, useTestnet]);
+    const fetchPositionsOnce = useCallback(async (net) => {
+        if (!authToken)
+            return { list: [] };
+        const now = Date.now();
+        const cache = positionsCacheRef.current;
+        if (now - cache.ts < 2000)
+            return cache.data;
+        const url = new URL(`${apiBase}${apiPrefix}/positions`);
+        url.searchParams.set("net", net);
+        url.searchParams.set("settleCoin", "USDT");
+        url.searchParams.set("category", "linear");
+        const res = await queuedFetch(url.toString(), {
+            headers: { Authorization: `Bearer ${authToken}` },
+        }, "data");
+        if (!res.ok)
+            throw new Error(`Positions fetch failed (${res.status})`);
+        const json = await res.json();
+        const data = {
+            list: Array.isArray(json?.data?.result?.list || json?.result?.list || json?.data?.list)
+                ? (json.data?.result?.list || json?.result?.list || json?.data?.list)
+                : [],
+            retCode: json?.data?.retCode ?? json?.retCode,
+            retMsg: json?.data?.retMsg ?? json?.retMsg,
+        };
+        positionsCacheRef.current = { ts: now, data };
+        return data;
+    }, [apiBase, apiPrefix, authToken, queuedFetch]);
     const placeReduceOnlyExit = useCallback(async (symbol, side, qty, reason) => {
         if (!authToken)
             return false;
@@ -1409,33 +1436,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             return false;
         }
     }, [apiBase, apiPrefix, authToken, queuedFetch, useTestnet]);
-    const fetchPositionsOnce = useCallback(async (net) => {
-        if (!authToken)
-            return { list: [] };
-        const now = Date.now();
-        const cache = positionsCacheRef.current;
-        if (now - cache.ts < 2000)
-            return cache.data;
-        const url = new URL(`${apiBase}${apiPrefix}/positions`);
-        url.searchParams.set("net", net);
-        url.searchParams.set("settleCoin", "USDT");
-        url.searchParams.set("category", "linear");
-        const res = await queuedFetch(url.toString(), {
-            headers: { Authorization: `Bearer ${authToken}` },
-        }, "data");
-        if (!res.ok)
-            throw new Error(`Positions fetch failed (${res.status})`);
-        const json = await res.json();
-        const data = {
-            list: Array.isArray(json?.data?.result?.list || json?.result?.list || json?.data?.list)
-                ? (json.data?.result?.list || json?.result?.list || json?.data?.list)
-                : [],
-            retCode: json?.data?.retCode ?? json?.retCode,
-            retMsg: json?.data?.retMsg ?? json?.retMsg,
-        };
-        positionsCacheRef.current = { ts: now, data };
-        return data;
-    }, [apiBase, apiPrefix, authToken, queuedFetch]);
     const fetchOrderHistoryOnce = useCallback(async (net) => {
         if (!authToken)
             return { list: [] };
