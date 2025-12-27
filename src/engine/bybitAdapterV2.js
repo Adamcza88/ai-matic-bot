@@ -5,6 +5,44 @@ const isRetryable = (err) => {
         return false;
     return /timeout|temporar|rate|again/i.test(err);
 };
+export function attachClosedPnlFetcher(client, cfg) {
+    const apiPrefix = cfg.apiPrefix ?? "/api";
+    return {
+        ...client,
+        fetchClosedPnl: async (startTimeMs, endTimeMs, limit = 200) => {
+            if (!cfg.authToken)
+                return { ok: false, error: "Missing auth token" };
+            const params = new URLSearchParams({
+                net: cfg.net,
+                startTime: String(startTimeMs),
+                endTime: String(endTimeMs),
+                limit: String(limit),
+            });
+            try {
+                const res = await fetch(`${cfg.apiBase}${apiPrefix}/closed-pnl?${params.toString()}`, {
+                    headers: { Authorization: `Bearer ${cfg.authToken}` },
+                });
+                if (!res.ok) {
+                    const text = await res.text();
+                    return { ok: false, error: text || `HTTP ${res.status}` };
+                }
+                const json = await res.json();
+                const list = json?.data?.result?.list || json?.result?.list || json?.data?.list || [];
+                const mapped = Array.isArray(list)
+                    ? list.map((r) => ({
+                        symbol: String(r.symbol || ""),
+                        closedPnl: Number(r.closedPnl ?? r.realisedPnl ?? 0),
+                        execTime: Number(r.execTime ?? r.updatedTime ?? r.createdTime ?? 0),
+                    }))
+                    : [];
+                return { ok: true, list: mapped };
+            }
+            catch (err) {
+                return { ok: false, error: String(err || "fetch failed") };
+            }
+        },
+    };
+}
 export async function placeLimitWithProtection(input) {
     const { client, symbol, side, price, qty, stopLoss, timeInForce = "GTC", timeoutMs = 30_000, idempotencyKey = `v2-${Date.now()}`, } = input;
     const payload = {

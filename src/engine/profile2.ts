@@ -53,6 +53,10 @@ export type GuardrailConfig = {
 
 export class Profile2Engine {
   private runtime: V2Runtime;
+  private lastPriceBySymbol: Record<string, number> = {};
+  private lastClosedPnlFetchAt = 0;
+  private lastClosedPnlTs = 0;
+  private closedPnlSeen = new Set<string>();
   constructor(private client: BybitClient, private guard: GuardrailConfig) {
     this.runtime = new V2Runtime({
       maxOrdersPerMin: 5,
@@ -106,12 +110,67 @@ export class Profile2Engine {
     return { trigger: activateAt, level };
   }
 
+  private async refreshClosedPnl(now: number): Promise<boolean> {
+    const fetcher = this.client.fetchClosedPnl;
+    if (typeof fetcher !== "function") return false;
+    if (now - this.lastClosedPnlFetchAt < 15_000) return true;
+    this.lastClosedPnlFetchAt = now;
+    const startTime = this.lastClosedPnlTs > 0 ? this.lastClosedPnlTs - 60_000 : now - 6 * 60 * 60_000;
+    try {
+      const res = await fetcher(startTime, now, 200);
+      if (!res?.ok || !Array.isArray(res.list)) return false;
+      res.list.forEach((rec) => {
+        const tsMs = Number(rec.execTime ?? 0);
+        const pnl = Number(rec.closedPnl ?? 0);
+        if (!Number.isFinite(tsMs) || !Number.isFinite(pnl)) return;
+        this.lastClosedPnlTs = Math.max(this.lastClosedPnlTs, tsMs);
+        const key = `${rec.symbol}-${tsMs}-${pnl}`;
+        if (this.closedPnlSeen.has(key)) return;
+        this.closedPnlSeen.add(key);
+        this.runtime.recordOutcome(rec.symbol, pnl);
+      });
+      if (this.closedPnlSeen.size > 1500) {
+        this.closedPnlSeen = new Set(Array.from(this.closedPnlSeen).slice(-1000));
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async process(
     snap: MarketSnapshot,
     decision: EntryDecision,
     openPositions: { symbol: string; side: "long" | "short"; entry: number; stop: number; qty: number }[],
     riskTotals: { totalOpenRiskUsd: number }
   ): Promise<OrderPlanV2 | null> {
+    this.lastPriceBySymbol[snap.symbol] = snap.price;
+    const now = Date.now();
+    const closedPnlEnabled = await this.refreshClosedPnl(now);
+    const prevPositions = [...this.runtime.openPositions];
+    const nextPositions = openPositions.map((p) => ({
+      symbol: p.symbol,
+      side: p.side,
+      entry: p.entry,
+      stop: p.stop,
+      qty: p.qty,
+      slActive: true,
+    }));
+    const nextSymbols = new Set(nextPositions.map((p) => p.symbol));
+    if (!closedPnlEnabled) {
+      for (const prev of prevPositions) {
+        if (!nextSymbols.has(prev.symbol)) {
+          const lastPx = this.lastPriceBySymbol[prev.symbol];
+          if (Number.isFinite(lastPx)) {
+            const dir = prev.side === "long" ? 1 : -1;
+            const pnl = (lastPx - prev.entry) * dir * prev.qty;
+            this.runtime.recordOutcome(prev.symbol, pnl);
+          }
+        }
+      }
+    }
+    this.runtime.reconcile(nextPositions);
+
     if (!this.guardrails(snap)) return null;
     if (decision.bias === "NO_TRADE" || !decision.entryValid) return null;
     if (openPositions.length >= 2) return null;
