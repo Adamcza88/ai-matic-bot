@@ -65,7 +65,7 @@ export default function Dashboard({
         symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
         timeframes: "HTF 15m · LTF 1m",
         session: "24/7",
-        risk: "4 USDT / trade · 8 USDT total · max 2 pos",
+        risk: "4 USDT / trade · 8 USDT total (after 3 losses: 2/4 for 60m) · max 2 pos",
         entry: "ST15 bias + ST1 flip + EMA21 pullback + RVOL≥1.2",
         execution: "PostOnly LIMIT · timeout 1×1m",
       };

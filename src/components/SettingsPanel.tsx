@@ -33,6 +33,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       notes: [
         "Trading hours: On (0–23 SEČ/SELČ)",
         "Limit: max 2 pozice současně",
+        "Risk: 4 USDT / trade · 8 USDT total (po 3 ztrátách 2/4 na 60m)",
         "Trailing profit lock",
       ],
     },

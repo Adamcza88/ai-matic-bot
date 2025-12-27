@@ -71,6 +71,8 @@ const AI_MATIC_X_LOSS_STREAK_COOLDOWN_MS = 15 * 60_000;
 const AI_MATIC_X_RISK_PCT_MIN = 0.0025;
 const AI_MATIC_X_RISK_PCT_MAX = 0.006;
 const LOSS_STREAK_RISK_USD = 2;
+const LOSS_STREAK_TOTAL_RISK_USD = 4;
+const RISK_CUT_COOLDOWN_MS = 60 * 60_000;
 const RANGE_RISK_USD = 2;
 const RANGE_TIMEOUT_MULT = 0.7;
 const ENTRY_TF_BASE_MS = 3 * 60_000;
@@ -778,6 +780,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 winStreakRef.current = 0;
                 lossStreakRef.current = 0;
                 riskCutActiveRef.current = false;
+                riskCutUntilRef.current = 0;
                 tradeCountsRef.current = {};
                 tradeCountSeenRef.current = new Set();
                 tradeQuotaBoostRef.current = {};
@@ -1999,6 +2002,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
     const lossStreakRef = useRef(0);
     const symbolLossStreakRef = useRef({});
     const riskCutActiveRef = useRef(false);
+    const riskCutUntilRef = useRef(0);
     const rollingOutcomesRef = useRef([]);
     const lastPositionsSyncAtRef = useRef(0);
     const executionCursorRef = useRef(null);
@@ -2123,10 +2127,30 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 }
             }
         }
-        if (lossStreakRef.current >= 3 && !riskCutActiveRef.current) {
+        if (lossStreakRef.current >= 3 && settingsRef.current.riskMode === "ai-matic") {
+            const now = Date.now();
+            const nextUntil = now + RISK_CUT_COOLDOWN_MS;
             riskCutActiveRef.current = true;
-            addLog({ action: "SYSTEM", message: `RISK_CUT active risk=${LOSS_STREAK_RISK_USD}USD after 3 losses (session)` });
+            riskCutUntilRef.current = Math.max(riskCutUntilRef.current, nextUntil);
+            addLog({
+                action: "SYSTEM",
+                message: `RISK_CUT active risk=${LOSS_STREAK_RISK_USD}USD total=${LOSS_STREAK_TOTAL_RISK_USD}USD cooldown=${Math.round(RISK_CUT_COOLDOWN_MS / 60000)}m`,
+            });
         }
+    };
+    const isRiskCutActive = () => {
+        if (settingsRef.current.riskMode !== "ai-matic")
+            return false;
+        if (!riskCutActiveRef.current)
+            return false;
+        const now = Date.now();
+        if (riskCutUntilRef.current > 0 && now >= riskCutUntilRef.current) {
+            riskCutActiveRef.current = false;
+            riskCutUntilRef.current = 0;
+            addLog({ action: "SYSTEM", message: "RISK_CUT ended, risk restored" });
+            return false;
+        }
+        return true;
     };
     // ========== DETERMINISTIC SCALP (Profile 1) ==========
     useEffect(() => {
@@ -2432,9 +2456,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             return map[symbol];
         };
-        const WS_PING_MS = 20000;
+        const WS_PING_MS = 20_000;
         const WS_RECONNECT_BASE_MS = 1000;
-        const WS_RECONNECT_MAX_MS = 15000;
+        const WS_RECONNECT_MAX_MS = 15_000;
         let bboWs = null;
         let bboWsPingId;
         let bboWsReconnectId;
@@ -4178,7 +4202,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             }
             const tp = roundToTick(isLong ? limit + CFG.tpR * oneR : limit - CFG.tpR * oneR, st.instrument.tickSize);
             const side = isLong ? "Buy" : "Sell";
-            // Risk sizing (4/8 USDT) with reservation
+            // Risk sizing (4/8 USDT, risk-cut 2/4) with reservation
             const openRisk = computeOpenRiskUsd();
             const riskMultiplier = isMaticX
                 ? 1
@@ -4191,7 +4215,10 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                             : 0.5;
             const maticXRiskPctRaw = settingsRef.current.baseRiskPerTrade || 0.005;
             const maticXRiskPct = clamp(maticXRiskPctRaw, AI_MATIC_X_RISK_PCT_MIN, AI_MATIC_X_RISK_PCT_MAX);
-            const baseRiskUsd = riskCutActiveRef.current
+            const riskCutActive = isRiskCutActive();
+            const maxTotalRiskUsd = riskCutActive ? LOSS_STREAK_TOTAL_RISK_USD : MAX_TOTAL_RISK_USD;
+            const perTradeRiskUsd = riskCutActive ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD;
+            const baseRiskUsd = riskCutActive
                 ? LOSS_STREAK_RISK_USD
                 : isMaticX
                     ? ACCOUNT_BALANCE_USD * maticXRiskPct
@@ -4201,9 +4228,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
             const betaBucketSameSide = BETA_BUCKET.has(symbol) &&
                 activePositionsRef.current.some((p) => BETA_BUCKET.has(p.symbol) && normalizeSide(p.side) === side);
             const bucketMultiplier = betaBucketSameSide ? 0.5 : 1;
-            const riskTarget = Math.min(regimeRiskUsd * riskMultiplier * bucketMultiplier, Math.max(0, 8 - openRisk));
+            const riskTarget = Math.min(regimeRiskUsd * riskMultiplier * bucketMultiplier, Math.max(0, maxTotalRiskUsd - openRisk));
             if (riskTarget <= 0) {
-                logScalpReject(symbol, `RISK_BUDGET openRisk=${openRisk.toFixed(2)} >= 8`, { ...rejectMetricsBase, distToEmaAtr });
+                logScalpReject(symbol, `RISK_BUDGET openRisk=${openRisk.toFixed(2)} >= ${maxTotalRiskUsd}`, { ...rejectMetricsBase, distToEmaAtr });
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
             }
@@ -4227,7 +4254,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
                 return true;
             }
             const reservedRiskUsd = oneR * finalQty * st.instrument.contractValue;
-            if (reservedRiskUsd > 4 + 1e-6 || openRisk + reservedRiskUsd > 8 + 1e-6) {
+            if (reservedRiskUsd > perTradeRiskUsd + 1e-6 || openRisk + reservedRiskUsd > maxTotalRiskUsd + 1e-6) {
                 logScalpReject(symbol, `RISK_CAP reserved=${reservedRiskUsd.toFixed(3)} open=${openRisk.toFixed(3)}`, { ...rejectMetricsBase, distToEmaAtr });
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
                 return true;
@@ -4604,7 +4631,9 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         const betaBucketSameSide = BETA_BUCKET.has(symbol) &&
             activePositionsRef.current.some((p) => BETA_BUCKET.has(p.symbol) && normalizeSide(p.side) === normalizeSide(side));
         const bucketMultiplier = betaBucketSameSide ? 0.5 : 1;
-        const riskBudgetUsd = (riskCutActiveRef.current ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD) * bucketMultiplier;
+        const riskCutActive = isRiskCutActive();
+        const maxTotalRiskUsd = riskCutActive ? LOSS_STREAK_TOTAL_RISK_USD : MAX_TOTAL_RISK_USD;
+        const riskBudgetUsd = (riskCutActive ? LOSS_STREAK_RISK_USD : RISK_PER_TRADE_USD) * bucketMultiplier;
         const sizing = computePositionSizing(symbol, safeEntry, finalSl, riskBudgetUsd);
         if (sizing.ok === false) {
             const reason = sizing.reason;
@@ -4614,8 +4643,8 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         }
         const { qty: orderQty, notional: newTradeNotional, leverage: computedLeverage, riskUsd: sizingRisk } = sizing;
         const currentRisk = openRiskUsd(activePositionsRef.current);
-        if (currentRisk + sizingRisk > MAX_TOTAL_RISK_USD) {
-            logAuditEntry("REJECT", symbol, "RISK_ENGINE", [...gatesAudit, { name: "RISK_BUDGET", result: "FAIL" }], "DENY", `Risk budget exceeded ${(currentRisk + sizingRisk).toFixed(2)} > ${MAX_TOTAL_RISK_USD}`, { entry: safeEntry, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
+        if (currentRisk + sizingRisk > maxTotalRiskUsd) {
+            logAuditEntry("REJECT", symbol, "RISK_ENGINE", [...gatesAudit, { name: "RISK_BUDGET", result: "FAIL" }], "DENY", `Risk budget exceeded ${(currentRisk + sizingRisk).toFixed(2)} > ${maxTotalRiskUsd}`, { entry: safeEntry, sl: stopLossValue, tp: takeProfitValue }, { notional: newTradeNotional, leverage: computedLeverage }, netR);
             setPendingSignals((prev) => prev.filter((s) => s.id !== signalId));
             return false;
         }
@@ -5061,7 +5090,6 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         executeTrade,
         rejectSignal,
         closePosition,
-        manualClosePosition,
         entryHistory,
         testnetOrders,
         testnetTrades,
@@ -5076,6 +5104,7 @@ export const useTradingBot = (mode, useTestnet, authToken) => {
         removeEntryHistoryItem,
         resetPnlHistory,
         scanDiagnostics,
+        manualClosePosition,
         dynamicSymbols,
     };
 };
