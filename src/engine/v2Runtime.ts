@@ -24,6 +24,10 @@ type Position = {
   slActive: boolean;
 };
 
+const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
+const LOSS_STREAK_SYMBOL_COOLDOWN_MS = 45 * 60_000;
+const LOSS_STREAK_RISK_USD = 2;
+
 export class V2Runtime {
   state: State = "SCAN";
   killSwitch = false;
@@ -31,6 +35,10 @@ export class V2Runtime {
   logs: RuntimeLog[] = [];
   ordersTimestamps: number[] = [];
   openPositions: Position[] = [];
+  lossStreak = 0;
+  symbolLossStreak: Record<string, number> = {};
+  symbolCooldownUntil: Record<string, number> = {};
+  riskCutActive = false;
   allowedTransitions: Record<State, State[]> = {
     SCAN: ["PLACE", "SCAN"],
     PLACE: ["MANAGE", "EXIT", "SCAN"],
@@ -73,7 +81,17 @@ export class V2Runtime {
   }
 
   private riskCheck(signal: SignalV2, stop: number, snapshot: RiskSnapshotV2) {
-    const riskBudget = Math.min(4, snapshot.maxAllowedRiskUsd - this.openRisk());
+    const now = Date.now();
+    const cooldownUntil = this.symbolCooldownUntil[signal.symbol] ?? 0;
+    if (now < cooldownUntil) throw new Error(`Symbol cooldown active (${Math.round((cooldownUntil - now) / 60000)}m)`);
+    const openRisk = this.openRisk();
+    let riskBudget = Math.min(snapshot.riskPerTradeUsd ?? 4, snapshot.maxAllowedRiskUsd - openRisk);
+    if (this.riskCutActive) {
+      riskBudget = Math.min(riskBudget, LOSS_STREAK_RISK_USD);
+    }
+    const sameSideBucket = BETA_BUCKET.has(signal.symbol) &&
+      this.openPositions.some((p) => BETA_BUCKET.has(p.symbol) && p.side === signal.direction);
+    if (sameSideBucket) riskBudget *= 0.5;
     if (riskBudget <= 0) throw new Error("Risk budget exhausted");
     const dist = Math.abs(signal.entryZone.low - stop);
     if (dist <= 0) throw new Error("Invalid stop distance");
@@ -146,6 +164,25 @@ export class V2Runtime {
     this.openPositions = this.openPositions.filter((p) => p.symbol !== symbol);
     this.state = this.openPositions.length ? "MANAGE" : "EXIT";
     this.log("EXIT", { symbol });
+  }
+
+  recordOutcome(symbol: string, pnl: number) {
+    const win = pnl > 0;
+    if (win) {
+      this.lossStreak = 0;
+      this.symbolLossStreak[symbol] = 0;
+      return;
+    }
+    this.lossStreak += 1;
+    this.symbolLossStreak[symbol] = (this.symbolLossStreak[symbol] ?? 0) + 1;
+    if (this.symbolLossStreak[symbol] === 2) {
+      this.symbolCooldownUntil[symbol] = Date.now() + LOSS_STREAK_SYMBOL_COOLDOWN_MS;
+      this.log("COOLDOWN", { symbol, mins: Math.round(LOSS_STREAK_SYMBOL_COOLDOWN_MS / 60000) });
+    }
+    if (this.lossStreak >= 3 && !this.riskCutActive) {
+      this.riskCutActive = true;
+      this.log("RISK_CUT", { riskUsd: LOSS_STREAK_RISK_USD });
+    }
   }
 
   reconcile(positions: Position[]) {
