@@ -495,7 +495,7 @@ export default function Dashboard({
                 const qualityThreshold = diag?.qualityThreshold;
                 const qualityPass = diag?.qualityPass;
                 const breakdown = diag?.qualityBreakdown;
-                const breakdownOrder = ["HTF", "Pullback", "Break", "ATR", "Spread", "Freshness", "Correlation"];
+                const breakdownOrder = ["HTF", "Pullback", "Break", "ATR", "Spread", "Freshness"];
                 const breakdownParts = breakdown
                   ? breakdownOrder
                       .map((key) => {
