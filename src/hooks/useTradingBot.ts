@@ -487,6 +487,76 @@ function findRecentLowerHigh(candles: Candle[], lookback = 60) {
     return null;
 }
 
+const isKillzone = (nowMs: number): boolean => {
+    const hour = new Date(nowMs).getUTCHours();
+    const inLondon = hour >= 7 && hour < 10;
+    const inNewYork = hour >= 13 && hour < 16;
+    return inLondon || inNewYork;
+};
+
+const getAsiaSessionBounds = (nowMs: number): { start: number; end: number } => {
+    const now = new Date(nowMs);
+    const year = now.getUTCFullYear();
+    const month = now.getUTCMonth();
+    const day = now.getUTCDate();
+    let start = Date.UTC(year, month, day, 0, 0, 0);
+    let end = Date.UTC(year, month, day, 5, 0, 0);
+    if (nowMs < end) {
+        const prev = new Date(start - 24 * 60 * 60_000);
+        start = Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth(), prev.getUTCDate(), 0, 0, 0);
+        end = Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth(), prev.getUTCDate(), 5, 0, 0);
+    }
+    return { start, end };
+};
+
+const computeAsiaRange = (candles: Candle[], nowMs: number): { valid: boolean; high: number; low: number } => {
+    if (!candles || candles.length < 10) return { valid: false, high: 0, low: 0 };
+    const { start, end } = getAsiaSessionBounds(nowMs);
+    const slice = candles.filter((c) => typeof c.openTime === "number" && c.openTime >= start && c.openTime < end);
+    if (slice.length < 10) return { valid: false, high: 0, low: 0 };
+    let high = -Infinity;
+    let low = Infinity;
+    slice.forEach((c) => {
+        if (Number.isFinite(c.high)) high = Math.max(high, c.high);
+        if (Number.isFinite(c.low)) low = Math.min(low, c.low);
+    });
+    return { valid: Number.isFinite(high) && Number.isFinite(low), high, low };
+};
+
+const detectFvg = (candles: Candle[], dir: "long" | "short"): boolean => {
+    if (!candles || candles.length < 3) return false;
+    const left = candles[candles.length - 3];
+    const right = candles[candles.length - 1];
+    if (!left || !right) return false;
+    if (dir === "long") return Number.isFinite(left.high) && Number.isFinite(right.low) && left.high < right.low;
+    return Number.isFinite(left.low) && Number.isFinite(right.high) && left.low > right.high;
+};
+
+const detectSweep = (candles: Candle[], isLong: boolean, atr: number, tickSize: number): boolean => {
+    if (!candles || candles.length < 6) return false;
+    const last = candles[candles.length - 1];
+    const buffer = Math.max(tickSize || 0, (atr || 0) * 0.2);
+    if (isLong) {
+        const swingLow = findLastPivotLow(candles, 2, 2);
+        if (!swingLow) return false;
+        return last.low < swingLow.price - buffer && last.close > swingLow.price;
+    }
+    const swingHigh = findLastPivotHigh(candles, 2, 2);
+    if (!swingHigh) return false;
+    return last.high > swingHigh.price + buffer && last.close < swingHigh.price;
+};
+
+const detectChoch = (candles: Candle[], isLong: boolean): boolean => {
+    if (!candles || candles.length < 6) return false;
+    const last = candles[candles.length - 1];
+    if (isLong) {
+        const swingHigh = findLastPivotHigh(candles, 2, 2);
+        return Boolean(swingHigh && last.close > swingHigh.price);
+    }
+    const swingLow = findLastPivotLow(candles, 2, 2);
+    return Boolean(swingLow && last.close < swingLow.price);
+};
+
 const minNotionalFor = (symbol: string) => MIN_NOTIONAL_USD[symbol] ?? 5;
 
 const openRiskUsd = (positions: ActivePosition[]) => {
@@ -2380,10 +2450,7 @@ export const useTradingBot = (
             setSystemState((p) => ({ ...p, bybitStatus: "Disconnected" }));
             return;
         }
-        if (settings.riskMode === "ai-matic-scalp") {
-            return;
-        }
-
+        const activeSymbols = settings.riskMode === "ai-matic-scalp" ? SMC_SYMBOLS : SYMBOLS;
         let cancel = false;
 
         const CFG = {
@@ -2599,7 +2666,7 @@ export const useTradingBot = (
             }
             return map[symbol];
         };
-        SYMBOLS.forEach(ensureSymbolState);
+        activeSymbols.forEach(ensureSymbolState);
 
         const cleanupRecentIds = () => {
             const now = Date.now();
@@ -3445,7 +3512,8 @@ export const useTradingBot = (
                         ? st.ltfConfirm
                         : { expectedOpenTime: expected1, stage: 0 as const, attempts: 0 };
                 logTiming("FETCH_LTF", st.ltfConfirm ? "retry_confirm" : undefined);
-                const candles = await fetchKlines(symbol, "1", 50);
+                const ltfLimit = settings.riskMode === "ai-matic-scalp" ? 360 : 50;
+                const candles = await fetchKlines(symbol, "1", ltfLimit);
                 const last = candles[candles.length - 1];
                 if (!last || last.openTime !== expected1) {
                     conf.attempts += 1;
@@ -3723,12 +3791,13 @@ export const useTradingBot = (
                 logScalpReject(symbol, `COOLDOWN ${(st.cooldownUntil - now) / 1000}s`);
                 return false;
             }
+            const isSmcMode = settings.riskMode === "ai-matic-scalp";
             const biasOk = isGateEnabled("HTF bias") ? st.htf.bias !== "NONE" : true;
             if (!biasOk) return false;
             if (now < st.htf.blockedUntilBarOpenTime + CFG.htfCloseDelayMs) return false;
             const isRange = st.htf.regime === "RANGE";
             const quota = getQuotaState(symbol, now);
-            const entryTfMs = quota.entryTfMs;
+            const entryTfMs = isSmcMode ? 60_000 : quota.entryTfMs;
             if (entryTfMs > 60_000 && st.ltf.barOpenTime % entryTfMs !== 0) {
                 st.ltfLastScanBarOpenTime = st.ltf.barOpenTime;
                 st.nextAllowedAt = now + CFG.symbolFetchGapMs;
@@ -3752,12 +3821,45 @@ export const useTradingBot = (
             // Apply UI toggles: disabled gate = auto-pass
             const pullback = isGateEnabled("EMA pullback") ? pullbackRaw : true;
             const microBreak = isGateEnabled("Micro break") ? microBreakRaw : true;
+            const sessionOkRaw = isSmcMode ? isKillzone(now) : true;
+            const sessionOk = isGateEnabled("Session") ? sessionOkRaw : true;
+            const asiaRange = isSmcMode ? computeAsiaRange(st.ltf.candles, now) : null;
+            const asiaSweepRaw = isSmcMode && asiaRange?.valid
+                ? isLong
+                    ? st.ltf.last.low < asiaRange.low && st.ltf.last.close > asiaRange.low
+                    : st.ltf.last.high > asiaRange.high && st.ltf.last.close < asiaRange.high
+                : false;
+            const asiaOk = isSmcMode
+                ? isGateEnabled("Asia range")
+                    ? asiaRange?.valid
+                        ? asiaSweepRaw
+                        : true
+                    : true
+                : true;
+            const sweepRaw = isSmcMode
+                ? asiaRange?.valid
+                    ? asiaSweepRaw
+                    : detectSweep(st.ltf.candles, isLong, st.ltf.atr14, st.instrument.tickSize)
+                : false;
+            const sweepOk = isSmcMode ? (isGateEnabled("Sweep") ? sweepRaw : true) : true;
+            const chochRaw = isSmcMode ? detectChoch(st.ltf.candles, isLong) : false;
+            const fvgRaw = isSmcMode ? detectFvg(st.ltf.candles, isLong ? "long" : "short") : false;
+            const chochFvgRaw = isSmcMode ? chochRaw && fvgRaw : false;
+            const chochFvgOk = isSmcMode ? (isGateEnabled("CHoCH+FVG") ? chochFvgRaw : true) : true;
 
             const gateFailures: string[] = [];
-            if (!pullback) gateFailures.push("EMA pullback");
-            if (!microBreak) gateFailures.push("Micro break");
-
-            const signalActive = pullback && microBreak;
+            let signalActive = false;
+            if (isSmcMode) {
+                if (!sessionOk) gateFailures.push("Session");
+                if (!asiaOk) gateFailures.push("Asia range");
+                if (!sweepOk) gateFailures.push("Sweep");
+                if (!chochFvgOk) gateFailures.push("CHoCH+FVG");
+                signalActive = sessionOk && asiaOk && sweepOk && chochFvgOk;
+            } else {
+                if (!pullback) gateFailures.push("EMA pullback");
+                if (!microBreak) gateFailures.push("Micro break");
+                signalActive = pullback && microBreak;
+            }
 
             // BBO needed when signal active / pending / open pos; otherwise keep old snapshot to save API
             const needFreshBbo = signalActive || hasPending || hasOpenPos;
@@ -3850,7 +3952,9 @@ export const useTradingBot = (
             const hardGate = hardEnabled ? shouldBlockEntry(symbol, qualityCtx) : { blocked: false, reason: "", code: "" };
             const qualityPass = !softEnabled || qualityScore >= qualityThreshold;
 
-            const gateDetails = `pullback=${pullbackRaw}/${pullback} micro=${microBreakRaw}/${microBreak} bboFresh=${!bboStale} late=${lateEntry ? "yes" : "no"} q=${qualityScore}`;
+            const gateDetails = isSmcMode
+                ? `session=${sessionOkRaw}/${sessionOk} asia=${asiaSweepRaw}/${asiaOk} sweep=${sweepRaw}/${sweepOk} choch=${chochRaw} fvg=${fvgRaw} bboFresh=${!bboStale} q=${qualityScore}`
+                : `pullback=${pullbackRaw}/${pullback} micro=${microBreakRaw}/${microBreak} bboFresh=${!bboStale} late=${lateEntry ? "yes" : "no"} q=${qualityScore}`;
             addLog({
                 action: "SIGNAL",
                 message: `SCALP ${symbol} signal=${signalActive ? "ACTIVE" : "NONE"} execAllowed=${signalActive ? executionAllowed : "N/A"} bboAge=${Number.isFinite(bboAgeMs) ? bboAgeMs.toFixed(0) : "inf"}ms | fail=[${gateFailures.join(",") || "none"}] | gates raw/gated: ${gateDetails}`,
@@ -3880,12 +3984,22 @@ export const useTradingBot = (
                     softEnabled,
                     hardBlock: hardGate.blocked ? hardGate.reason : undefined,
                     hardBlocked: hardGate.blocked,
-                    gates: [
-                        { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
-                        { name: "EMA pullback", ok: pullback },
-                        { name: "Micro break", ok: microBreak },
-                        { name: "BBO fresh", ok: !bboStale },
-                    ],
+                    gates: isSmcMode
+                        ? [
+                            { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
+                            { name: "Session", ok: sessionOk },
+                            { name: "Asia range", ok: asiaOk },
+                            { name: "Sweep", ok: sweepOk },
+                            { name: "CHoCH+FVG", ok: chochFvgOk },
+                            { name: "PostOnly", ok: true },
+                            { name: "BBO fresh", ok: !bboStale },
+                        ]
+                        : [
+                            { name: "HTF bias", ok: st.htf?.bias !== "NONE" },
+                            { name: "EMA pullback", ok: pullback },
+                            { name: "Micro break", ok: microBreak },
+                            { name: "BBO fresh", ok: !bboStale },
+                        ],
                 },
             }));
 
@@ -4093,7 +4207,7 @@ export const useTradingBot = (
                     });
                     if (safeNow) {
                         const now = Date.now();
-                        for (const sym of SYMBOLS) {
+                        for (const sym of activeSymbols) {
                             const st = ensureSymbolState(sym);
                             const p = st.pending;
                             if (!p) continue;
@@ -4117,7 +4231,7 @@ export const useTradingBot = (
 
                 // Urgent pending tasks always first
                 let urgent: string | null = null;
-                for (const sym of SYMBOLS) {
+                for (const sym of activeSymbols) {
                     if (scalpActiveSymbolRef.current && scalpActiveSymbolRef.current !== sym) continue;
                     const st = ensureSymbolState(sym);
                     const p = st.pending;
@@ -4146,14 +4260,14 @@ export const useTradingBot = (
                 const expectedHtf = expectedOpenTime(now, htfMs, CFG.htfCloseDelayMs);
                 const expectedLtf = expectedOpenTime(now, ltfMs, CFG.ltfCloseDelayMs);
 
-                const htfDue = SYMBOLS.find((sym) => {
+                const htfDue = activeSymbols.find((sym) => {
                     if (scalpActiveSymbolRef.current && scalpActiveSymbolRef.current !== sym) return false;
                     const st = ensureSymbolState(sym);
                     if (!isSymbolReady(sym)) return false;
                     return !st.htf || st.htf.barOpenTime < expectedHtf || (st.htfConfirm && st.htfConfirm.expectedOpenTime === expectedHtf);
                 });
 
-                const ltfDue = SYMBOLS.find((sym) => {
+                const ltfDue = activeSymbols.find((sym) => {
                     if (scalpActiveSymbolRef.current && scalpActiveSymbolRef.current !== sym) return false;
                     const st = ensureSymbolState(sym);
                     if (!isSymbolReady(sym)) return false;
@@ -4161,7 +4275,7 @@ export const useTradingBot = (
                 });
 
                 const idx = scalpRotationIdxRef.current;
-                let rotated = SYMBOLS[idx % SYMBOLS.length];
+                let rotated = activeSymbols[idx % activeSymbols.length];
                 scalpRotationIdxRef.current = idx + 1;
                 if (scalpActiveSymbolRef.current) rotated = scalpActiveSymbolRef.current;
 
