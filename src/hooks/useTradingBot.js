@@ -7,7 +7,7 @@ import { addPnlRecord, clearPnlHistory, loadPnlHistory } from "../lib/pnlHistory
 import { computeAtr as scalpComputeAtr } from "../engine/ta";
 import { computeEma as scalpComputeEma, computeSma as scalpComputeSma, computeSuperTrend, findLastPivotHigh, findLastPivotLow, roundDownToStep, roundToTick, } from "../engine/deterministicScalp";
 // SYMBOLS (Deterministic Scalp Profile 1)
-const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 // SYMBOLS (AI-MATIC-SCALP)
 const SMC_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 const ALL_SYMBOLS = Array.from(new Set([...SYMBOLS, ...SMC_SYMBOLS]));
@@ -74,7 +74,7 @@ const QUOTA_LOOKBACK_MS = 3 * 60 * 60_000;
 const QUOTA_BEHIND_PCT = 0.4;
 const QUOTA_BOOST_MS = 90 * 60_000;
 const QUALITY_SCORE_SOFT_BOOST = 55;
-const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
+const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"]);
 const TARGET_TRADES_PER_DAY = {
     BTCUSDT: 6,
     ETHUSDT: 6,

@@ -48,7 +48,7 @@ export default function Dashboard({
       return {
         label: "AI-MATIC-SCALP",
         subtitle: "SMC/AMD (1h/15m/5m/1m)",
-        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
         timeframes: "HTF 1h · M15 · M5 · LTF 1m",
         session: "London/NY killzones (Prague)",
         risk: "1% equity (min 10 / cap 200) · margin 5/pos · max 2 pos",
@@ -60,7 +60,7 @@ export default function Dashboard({
       return {
         label: "AI-MATIC-X",
         subtitle: "AI-MATIC (15m/1m)",
-        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
         timeframes: "HTF 15m · LTF 1m",
         session: "24/7",
         risk: "4 USDT / trade · 8 USDT total · max 2 pos",
@@ -71,7 +71,7 @@ export default function Dashboard({
     return {
       label: "AI-MATIC",
       subtitle: "AI-MATIC (15m/1m)",
-      symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+      symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
       timeframes: "HTF 15m · LTF 1m",
       session: "24/7",
       risk: "4 USDT / trade · 8 USDT total · max 2 pos",
