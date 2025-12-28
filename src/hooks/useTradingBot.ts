@@ -152,6 +152,10 @@ export function useTradingBot(
   const intentPendingRef = useRef<Set<string>>(new Set());
   const settingsRef = useRef<AISettings>(settings);
   const walletRef = useRef<typeof walletSnapshot | null>(walletSnapshot);
+  const handleDecisionRef = useRef<
+    ((symbol: string, decision: PriceFeedDecision) => void) | null
+  >(null);
+  const feedLogRef = useRef<{ env: string; ts: number } | null>(null);
 
   useEffect(() => {
     persistSettings(settings);
@@ -1048,32 +1052,47 @@ export function useTradingBot(
   );
 
   useEffect(() => {
+    handleDecisionRef.current = handleDecision;
+  }, [handleDecision]);
+
+  useEffect(() => {
     if (!authToken) return;
-    if (mode === TradingMode.OFF) return;
 
     signalSeenRef.current.clear();
     intentPendingRef.current.clear();
     decisionRef.current = {};
     setScanDiagnostics(null);
 
-    const stop = startPriceFeed(WATCH_SYMBOLS, handleDecision, {
-      useTestnet,
-      timeframe: "1",
-    });
-
-    addLogEntries([
-      {
-        id: `feed:start:${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        action: "STATUS",
-        message: `Price feed connected (${useTestnet ? "testnet" : "mainnet"})`,
+    const stop = startPriceFeed(
+      WATCH_SYMBOLS,
+      (symbol, decision) => {
+        handleDecisionRef.current?.(symbol, decision);
       },
-    ]);
+      {
+        useTestnet,
+        timeframe: "1",
+      }
+    );
+
+    const envLabel = useTestnet ? "testnet" : "mainnet";
+    const lastLog = feedLogRef.current;
+    const now = Date.now();
+    if (!lastLog || lastLog.env !== envLabel || now - lastLog.ts > 5000) {
+      feedLogRef.current = { env: envLabel, ts: now };
+      addLogEntries([
+        {
+          id: `feed:start:${envLabel}:${now}`,
+          timestamp: new Date(now).toISOString(),
+          action: "STATUS",
+          message: `Price feed connected (${envLabel})`,
+        },
+      ]);
+    }
 
     return () => {
       stop();
     };
-  }, [addLogEntries, authToken, handleDecision, mode, useTestnet]);
+  }, [addLogEntries, authToken, useTestnet]);
 
   const systemState = useMemo<SystemState>(() => {
     const hasSuccess = Boolean(lastSuccessAt);
