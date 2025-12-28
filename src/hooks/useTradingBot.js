@@ -339,6 +339,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         addGate("Signal", signalActive);
         addGate("Engine ok", context.engineOk);
         addGate("Session ok", context.sessionOk);
+        addGate("Confirm required", !context.settings.requireConfirmationInAuto);
         addGate("Max positions", context.maxPositionsOk);
         addGate("Position clear", !context.hasPosition);
         addGate("Orders clear", !context.hasOrders);
@@ -393,7 +394,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                         ? hardReasons.join(" · ")
                         : undefined
                     : "Exec allowed (OFF)"
-                : undefined,
+                : execEnabled
+                    ? "Waiting for signal"
+                    : "Exec allowed (OFF)",
             gates,
             lastScanTs,
             feedAgeMs,

@@ -477,7 +477,9 @@ export function useTradingBot(
               ? hardReasons.join(" · ")
               : undefined
             : "Exec allowed (OFF)"
-          : undefined,
+          : execEnabled
+            ? "Waiting for signal"
+            : "Exec allowed (OFF)",
         gates,
         lastScanTs,
         feedAgeMs,

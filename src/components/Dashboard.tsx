@@ -586,7 +586,7 @@ export default function Dashboard({
                   ? "YES"
                   : diag?.executionAllowed === false
                     ? (diag?.executionReason ?? "BLOCKED")
-                    : "N/A";
+                    : (diag?.executionReason ?? "N/A");
                 const feedAgeMs = diag?.feedAgeMs;
                 const feedAgeOk = diag?.feedAgeOk;
                 const feedAgeLabel = feedAgeOk == null

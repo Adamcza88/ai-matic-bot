@@ -249,7 +249,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                                             ? "YES"
                                             : diag?.executionAllowed === false
                                                 ? (diag?.executionReason ?? "BLOCKED")
-                                                : "N/A";
+                                                : (diag?.executionReason ?? "N/A");
                                         const feedAgeMs = diag?.feedAgeMs;
                                         const feedAgeOk = diag?.feedAgeOk;
                                         const feedAgeLabel = feedAgeOk == null
