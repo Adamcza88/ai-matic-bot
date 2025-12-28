@@ -483,7 +483,7 @@ export default function Dashboard({
                   ) : (
                     logEntries
                     .filter((l) => {
-                      if (l.action === "SIGNAL" || l.action === "ERROR" || l.action === "STATUS" || l.action === "REJECT") return true;
+                      if (l.action === "SIGNAL" || l.action === "ERROR" || l.action === "STATUS" || l.action === "REJECT" || l.action === "SYSTEM") return true;
                       const msg = String(l.message || "");
                       if (msg.startsWith("TIMING ")) return true;
                       if (msg.startsWith("PAUSE ") || msg.includes("SAFE_MODE")) return true;
