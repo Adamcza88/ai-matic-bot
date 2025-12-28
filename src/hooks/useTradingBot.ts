@@ -395,22 +395,22 @@ export function useTradingBot(
       const softEnabled = context.settings.enableSoftGates !== false;
       const hardReasons: string[] = [];
       if (!context.engineOk && isGateEnabled("Engine ok")) {
-        hardReasons.push("ENGINE_HALTED");
+        hardReasons.push("Engine ok");
       }
       if (!context.sessionOk && isGateEnabled("Session ok")) {
-        hardReasons.push("SESSION_OFF");
+        hardReasons.push("Session ok");
       }
       if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
-        hardReasons.push("MAX_POSITIONS");
+        hardReasons.push("Max positions");
       }
       if (context.hasPosition && isGateEnabled("Position open")) {
-        hardReasons.push("POSITION_OPEN");
+        hardReasons.push("Position open");
       }
       if (context.hasOrders && isGateEnabled("Open orders")) {
-        hardReasons.push("OPEN_ORDERS");
+        hardReasons.push("Open orders");
       }
       if (context.settings.requireConfirmationInAuto) {
-        hardReasons.push("CONFIRM_REQUIRED");
+        hardReasons.push("Confirm required");
       }
 
       const hardBlocked = hardEnabled && hardReasons.length > 0;
@@ -428,14 +428,13 @@ export function useTradingBot(
         hardBlocked,
         hardBlock: hardBlocked ? hardReasons.join(" · ") : undefined,
         executionAllowed,
-        executionReason:
-          signalActive
-            ? execEnabled
-              ? hardReasons.length > 0
-                ? hardReasons.join(" · ")
-                : undefined
-              : "EXEC_DISABLED"
-            : undefined,
+        executionReason: signalActive
+          ? execEnabled
+            ? hardReasons.length > 0
+              ? hardReasons.join(" · ")
+              : undefined
+            : "Exec allowed (OFF)"
+          : undefined,
         gates,
         lastScanTs,
       };
@@ -998,34 +997,43 @@ export function useTradingBot(
       const context = getSymbolContext(symbol, decision);
       const blockReasons: string[] = [];
       if (!context.engineOk && isGateEnabled("Engine ok")) {
-        blockReasons.push("ENGINE_HALTED");
+        blockReasons.push("Engine ok");
       }
       if (!context.sessionOk && isGateEnabled("Session ok")) {
-        blockReasons.push("SESSION_OFF");
+        blockReasons.push("Session ok");
       }
       if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
-        blockReasons.push("MAX_POSITIONS");
+        blockReasons.push("Max positions");
       }
       if (context.hasPosition && isGateEnabled("Position open")) {
-        blockReasons.push("POSITION_OPEN");
+        blockReasons.push("Position open");
       }
       if (context.hasOrders && isGateEnabled("Open orders")) {
-        blockReasons.push("OPEN_ORDERS");
+        blockReasons.push("Open orders");
       }
       if (context.settings.requireConfirmationInAuto) {
-        blockReasons.push("CONFIRM_REQUIRED");
-      }
-      if (!isGateEnabled("Exec allowed")) {
-        blockReasons.push("EXEC_DISABLED");
+        blockReasons.push("Confirm required");
       }
 
+      const execEnabled = isGateEnabled("Exec allowed");
       if (blockReasons.length) {
         addLogEntries([
           {
             id: `signal:block:${signalId}`,
             timestamp: new Date(now).toISOString(),
             action: "RISK_BLOCK",
-            message: `${symbol} blocked: ${blockReasons.join(" · ")}`,
+            message: `${symbol} blocked by: ${blockReasons.join(" · ")}`,
+          },
+        ]);
+        return;
+      }
+      if (!execEnabled) {
+        addLogEntries([
+          {
+            id: `signal:exec-off:${signalId}`,
+            timestamp: new Date(now).toISOString(),
+            action: "STATUS",
+            message: `${symbol} exec disabled (manual)`,
           },
         ]);
         return;
