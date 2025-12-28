@@ -120,6 +120,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const lastStateRef = useRef(new Map());
     const lastRestartRef = useRef(0);
     const [feedEpoch, setFeedEpoch] = useState(0);
+    const symbolTickRef = useRef(new Map());
     useEffect(() => {
         persistSettings(settings);
     }, [settings]);
@@ -323,6 +324,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     }, []);
     const buildScanDiagnostics = useCallback((symbol, decision, lastScanTs) => {
         const context = getSymbolContext(symbol, decision);
+        const lastTick = symbolTickRef.current.get(symbol) ?? 0;
+        const bboAgeMs = lastTick > 0 ? Math.max(0, Date.now() - lastTick) : null;
         const signalActive = Boolean(decision?.signal);
         const pos = positionsRef.current.find((p) => p.symbol === symbol);
         const sl = toNumber(pos?.sl);
@@ -385,6 +388,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 : undefined,
             gates,
             lastScanTs,
+            bboAgeMs,
         };
     }, [getSymbolContext, isGateEnabled]);
     const refreshDiagnosticsFromDecisions = useCallback(() => {
@@ -822,6 +826,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const handleDecision = useCallback((symbol, decision) => {
         const now = Date.now();
         feedLastTickRef.current = now;
+        symbolTickRef.current.set(symbol, now);
         decisionRef.current[symbol] = { decision, ts: now };
         setScanDiagnostics((prev) => ({
             ...(prev ?? {}),
