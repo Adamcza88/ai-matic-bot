@@ -339,35 +339,47 @@ export default function Dashboard({
           </CardHeader>
           <CardContent>
             <div className="space-y-3 text-sm">
-              <div className="flex justify-between items-center">
+              <div className="grid grid-cols-[120px,1fr] items-center gap-4">
                 <span className="text-slate-400">Profile</span>
-                <Badge variant="secondary" className="bg-emerald-600/80 text-white">
+                <Badge variant="secondary" className="bg-emerald-600/80 text-white justify-self-end">
                   {profileMeta.label}
                 </Badge>
               </div>
-              <div className="flex justify-between">
+              <div className="grid grid-cols-[120px,1fr] items-start gap-4">
                 <span className="text-slate-400">Symbols</span>
-                <span className="font-mono">{allowedSymbols.join(", ")}</span>
+                <span className="font-mono text-right break-words min-w-0">
+                  {allowedSymbols.join(", ")}
+                </span>
               </div>
-              <div className="flex justify-between">
+              <div className="grid grid-cols-[120px,1fr] items-start gap-4">
                 <span className="text-slate-400">Timeframes</span>
-                <span className="font-mono">{profileMeta.timeframes}</span>
+                <span className="font-mono text-right break-words min-w-0">
+                  {profileMeta.timeframes}
+                </span>
               </div>
-              <div className="flex justify-between">
+              <div className="grid grid-cols-[120px,1fr] items-start gap-4">
                 <span className="text-slate-400">Session</span>
-                <span className="font-mono">{profileMeta.session}</span>
+                <span className="font-mono text-right break-words min-w-0">
+                  {profileMeta.session}
+                </span>
               </div>
-              <div className="flex justify-between">
+              <div className="grid grid-cols-[120px,1fr] items-start gap-4">
                 <span className="text-slate-400">Risk</span>
-                <span className="font-mono">{profileMeta.risk}</span>
+                <span className="font-mono text-right break-words min-w-0">
+                  {profileMeta.risk}
+                </span>
               </div>
-              <div className="flex justify-between">
+              <div className="grid grid-cols-[120px,1fr] items-start gap-4">
                 <span className="text-slate-400">Entry</span>
-                <span className="font-mono">{profileMeta.entry}</span>
+                <span className="font-mono text-right break-words min-w-0">
+                  {profileMeta.entry}
+                </span>
               </div>
-              <div className="flex justify-between">
+              <div className="grid grid-cols-[120px,1fr] items-start gap-4">
                 <span className="text-slate-400">Execution</span>
-                <span className="font-mono">{profileMeta.execution}</span>
+                <span className="font-mono text-right break-words min-w-0">
+                  {profileMeta.execution}
+                </span>
               </div>
             </div>
           </CardContent>
