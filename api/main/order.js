@@ -1,4 +1,10 @@
-import { createDemoOrder, getWalletBalance } from "../../server/bybitClient.js";
+import {
+  cancelOrder,
+  createDemoOrder,
+  getDemoPositions,
+  getWalletBalance,
+  listDemoOpenOrders,
+} from "../../server/bybitClient.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 
 function setCors(res) {
@@ -77,6 +83,7 @@ export default async function handler(req, res) {
       timeInForce,
       reduceOnly,
       leverage,
+      orderLinkId,
     } = req.body || {};
 
     const normalizedSide =
@@ -93,6 +100,33 @@ export default async function handler(req, res) {
         ok: false,
         error: "Missing or invalid required fields: symbol, side",
       });
+    }
+
+    // Cancel stale open orders for this symbol when no position is open.
+    try {
+      const posRes = await getDemoPositions({ apiKey: key, apiSecret: secret }, useTestnet);
+      const posList = posRes?.result?.list ?? [];
+      const hasOpenPosition = posList.some(
+        (p) => String(p?.symbol ?? "") === symbol && Number(p?.size ?? 0) > 0
+      );
+      if (!hasOpenPosition) {
+        const openRes = await listDemoOpenOrders({ apiKey: key, apiSecret: secret }, { limit: 50 }, useTestnet);
+        const openList = openRes?.result?.list ?? [];
+        for (const o of openList) {
+          if (String(o?.symbol ?? "") !== symbol) continue;
+          const existingLinkId = String(o?.orderLinkId ?? "");
+          if (orderLinkId && existingLinkId === String(orderLinkId)) continue;
+          const orderId = o?.orderId ?? o?.orderID ?? o?.id;
+          if (!orderId) continue;
+          await cancelOrder(
+            { symbol, orderId: String(orderId) },
+            { apiKey: key, apiSecret: secret },
+            useTestnet
+          );
+        }
+      }
+    } catch (err) {
+      console.error("[Order API] Cancel stale orders failed:", err?.message || err);
     }
 
     const qtyValue = Number(qty);
@@ -118,6 +152,7 @@ export default async function handler(req, res) {
       reduceOnly,
       category: "linear",
       leverage: leverage != null ? Number(leverage) : undefined,
+      orderLinkId: orderLinkId != null ? String(orderLinkId) : undefined,
     };
 
     const result = await createDemoOrder(

@@ -451,18 +451,20 @@ export function useTradingBot(
         !context.hasOrders,
         `open ${symbolOrders.length}`
       );
-      if (pos) {
-        addGate(
-          "SL set",
-          Number.isFinite(sl) && sl > 0,
-          Number.isFinite(sl) ? `SL ${formatNumber(sl, 6)}` : undefined
-        );
-        addGate(
-          "TP set",
-          Number.isFinite(tp) && tp > 0,
-          Number.isFinite(tp) ? `TP ${formatNumber(tp, 6)}` : undefined
-        );
-      }
+      const slOk =
+        context.hasPosition && Number.isFinite(sl) && sl > 0;
+      const tpOk =
+        context.hasPosition && Number.isFinite(tp) && tp > 0;
+      addGate(
+        "SL set",
+        slOk,
+        slOk ? `SL ${formatNumber(sl, 6)}` : undefined
+      );
+      addGate(
+        "TP set",
+        tpOk,
+        tpOk ? `TP ${formatNumber(tp, 6)}` : undefined
+      );
 
       const hardEnabled = context.settings.enableHardGates !== false;
       const softEnabled = context.settings.enableSoftGates !== false;
