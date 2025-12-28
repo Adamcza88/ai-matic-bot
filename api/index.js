@@ -53,6 +53,11 @@ export default async function handler(req, res) {
             return closedPnlHandler(req, res);
         }
 
+        if (path === "/api/demo/reconcile") {
+            const { default: reconcileHandler } = await import("./demo/reconcile.js");
+            return reconcileHandler(req, res);
+        }
+
         if (path === "/api/demo/executions") {
             const { default: executionsHandler } = await import("./demo/executions.js");
             return executionsHandler(req, res);
@@ -98,6 +103,11 @@ export default async function handler(req, res) {
         if (path === "/api/main/closed-pnl") {
             const { default: closedPnlHandler } = await import("./main/closed-pnl.js");
             return closedPnlHandler(req, res);
+        }
+
+        if (path === "/api/main/reconcile") {
+            const { default: reconcileHandler } = await import("./main/reconcile.js");
+            return reconcileHandler(req, res);
         }
 
         if (path === "/api/main/executions") {

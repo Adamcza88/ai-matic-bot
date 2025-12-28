@@ -66,12 +66,16 @@ function toIso(ts) {
         return "";
     return new Date(n).toISOString();
 }
+function formatNumber(value, digits = 4) {
+    return Number.isFinite(value) ? value.toFixed(digits) : "";
+}
 function asErrorMessage(err) {
     return err instanceof Error ? err.message : String(err ?? "unknown_error");
 }
 function extractList(data) {
     return data?.result?.list ?? data?.list ?? [];
 }
+const WATCH_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 export function useTradingBot(_mode, useTestnet = false, authToken) {
     const [settings, setSettings] = useState(() => loadStoredSettings() ?? DEFAULT_SETTINGS);
     const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
@@ -79,6 +83,7 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
     const [orders, setOrders] = useState(null);
     const [trades, setTrades] = useState(null);
     const [logEntries, setLogEntries] = useState(null);
+    const [scanDiagnostics, setScanDiagnostics] = useState(null);
     const [assetPnlHistory, setAssetPnlHistory] = useState(null);
     const [closedPnlRecords, setClosedPnlRecords] = useState(null);
     const [walletSnapshot, setWalletSnapshot] = useState(null);
@@ -120,9 +125,12 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
             fetchJson("/executions", { limit: "50" }),
             fetchJson("/wallet"),
             fetchJson("/closed-pnl", { limit: "200" }),
+            fetchJson("/reconcile"),
         ]);
         let sawError = false;
-        const [positionsRes, ordersRes, executionsRes, walletRes, closedPnlRes,] = results;
+        let tradeLogs = null;
+        let pnlLogs = null;
+        const [positionsRes, ordersRes, executionsRes, walletRes, closedPnlRes, reconcileRes,] = results;
         if (positionsRes.status === "fulfilled") {
             const list = extractList(positionsRes.value);
             const next = list
@@ -205,16 +213,58 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
                 };
             });
             setTrades(nextTrades);
-            setLogEntries(nextTrades
-                .filter((t) => Boolean(t.id && t.time) &&
-                Number.isFinite(t.qty) &&
-                Number.isFinite(t.price))
-                .map((t) => ({
-                id: t.id,
-                timestamp: t.time,
-                action: "SYSTEM",
-                message: `${t.symbol} ${t.side} ${t.qty} @ ${t.price}`,
-            })));
+            tradeLogs = list
+                .map((t) => {
+                const timestamp = toIso(t?.execTime ?? t?.transactTime ?? t?.createdTime);
+                if (!timestamp)
+                    return null;
+                const symbol = String(t?.symbol ?? "");
+                const side = String(t?.side ?? "");
+                const qty = toNumber(t?.execQty ?? t?.qty);
+                const price = toNumber(t?.execPrice ?? t?.price);
+                const value = toNumber(t?.execValue ?? t?.value);
+                const fee = toNumber(t?.execFee ?? t?.fee);
+                const execType = String(t?.execType ?? t?.exec_type ?? "");
+                const orderId = String(t?.orderId ?? t?.orderID ?? "");
+                const orderLinkId = String(t?.orderLinkId ?? t?.orderLinkID ?? t?.clOrdId ?? "");
+                const isMaker = typeof t?.isMaker === "boolean" ? t.isMaker : undefined;
+                const parts = [];
+                if (symbol &&
+                    side &&
+                    Number.isFinite(qty) &&
+                    Number.isFinite(price)) {
+                    parts.push(`${symbol} ${side} ${formatNumber(qty, 4)} @ ${formatNumber(price, 6)}`);
+                }
+                else if (symbol && side) {
+                    parts.push(`${symbol} ${side}`);
+                }
+                if (Number.isFinite(value)) {
+                    parts.push(`value ${formatNumber(value, 4)}`);
+                }
+                if (Number.isFinite(fee)) {
+                    parts.push(`fee ${formatNumber(fee, 4)}`);
+                }
+                if (execType)
+                    parts.push(`type ${execType}`);
+                if (orderId)
+                    parts.push(`order ${orderId}`);
+                if (orderLinkId)
+                    parts.push(`link ${orderLinkId}`);
+                if (typeof isMaker === "boolean") {
+                    parts.push(isMaker ? "maker" : "taker");
+                }
+                const message = parts.filter(Boolean).join(" | ");
+                if (!message)
+                    return null;
+                const id = String(t?.execId ?? t?.tradeId ?? `${symbol}-${timestamp}`);
+                return {
+                    id,
+                    timestamp,
+                    action: "SYSTEM",
+                    message,
+                };
+            })
+                .filter((entry) => Boolean(entry));
             setLastSuccessAt(now);
         }
         else {
@@ -265,6 +315,20 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
             }
             setClosedPnlRecords(records);
             setAssetPnlHistory(map);
+            pnlLogs = records
+                .map((r) => {
+                const timestamp = new Date(r.ts).toISOString();
+                if (!timestamp)
+                    return null;
+                const message = `PNL ${r.symbol} ${r.pnl >= 0 ? "+" : ""}${r.pnl.toFixed(2)}`;
+                return {
+                    id: `pnl:${r.symbol}:${r.ts}`,
+                    timestamp,
+                    action: "SYSTEM",
+                    message,
+                };
+            })
+                .filter((entry) => Boolean(entry));
             setLastSuccessAt(now);
         }
         else {
@@ -272,6 +336,91 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
             setSystemError(msg);
             setRecentErrors((prev) => [msg, ...prev].slice(0, 5));
             sawError = true;
+        }
+        if (reconcileRes.status === "fulfilled") {
+            const payload = reconcileRes.value ?? {};
+            const reconPositions = payload?.positions ?? [];
+            const reconOrders = payload?.orders ?? [];
+            const reconDiffs = payload?.diffs ?? [];
+            const symbols = new Set(WATCH_SYMBOLS);
+            for (const p of reconPositions) {
+                const sym = String(p?.symbol ?? "");
+                if (sym)
+                    symbols.add(sym);
+            }
+            for (const o of reconOrders) {
+                const sym = String(o?.symbol ?? "");
+                if (sym)
+                    symbols.add(sym);
+            }
+            for (const d of reconDiffs) {
+                const sym = String(d?.symbol ?? "");
+                if (sym)
+                    symbols.add(sym);
+            }
+            const nextDiagnostics = {};
+            for (const sym of symbols) {
+                const pos = reconPositions.find((p) => String(p?.symbol ?? "") === sym);
+                const symOrders = reconOrders.filter((o) => String(o?.symbol ?? "") === sym);
+                const symDiffs = reconDiffs.filter((d) => String(d?.symbol ?? "") === sym);
+                const hardBlocked = symDiffs.some((d) => String(d?.severity ?? "").toUpperCase() === "HIGH");
+                const hardBlock = symDiffs
+                    .map((d) => d?.message)
+                    .filter(Boolean)
+                    .join("; ");
+                const gates = [];
+                const gateNames = new Set();
+                const pushGate = (name, ok) => {
+                    if (!name || gateNames.has(name))
+                        return;
+                    gateNames.add(name);
+                    gates.push({ name, ok });
+                };
+                pushGate("Position open", Boolean(pos));
+                pushGate("Open orders", symOrders.length > 0);
+                if (pos) {
+                    const sl = toNumber(pos?.sl ?? pos?.stopLoss);
+                    const tp = toNumber(pos?.tp ?? pos?.takeProfit);
+                    pushGate("SL set", Number.isFinite(sl) && sl > 0);
+                    pushGate("TP set", Number.isFinite(tp) && tp > 0);
+                }
+                for (const diff of symDiffs) {
+                    const label = String(diff?.message ?? diff?.field ?? diff?.type ?? "");
+                    if (label)
+                        pushGate(label, false);
+                }
+                nextDiagnostics[sym] = {
+                    signalActive: Boolean(pos) || symOrders.length > 0,
+                    hardEnabled: true,
+                    softEnabled: false,
+                    hardBlocked,
+                    hardBlock: hardBlock || undefined,
+                    gates,
+                };
+            }
+            setScanDiagnostics(nextDiagnostics);
+            setLastSuccessAt(now);
+        }
+        else {
+            const msg = asErrorMessage(reconcileRes.reason);
+            setSystemError(msg);
+            setRecentErrors((prev) => [msg, ...prev].slice(0, 5));
+            sawError = true;
+        }
+        if (tradeLogs || pnlLogs) {
+            const combined = [...(tradeLogs ?? []), ...(pnlLogs ?? [])]
+                .filter((entry) => Boolean(entry.timestamp))
+                .sort((a, b) => new Date(b.timestamp).getTime() -
+                new Date(a.timestamp).getTime());
+            const seen = new Set();
+            const unique = [];
+            for (const entry of combined) {
+                if (seen.has(entry.id))
+                    continue;
+                seen.add(entry.id);
+                unique.push(entry);
+            }
+            setLogEntries(unique.slice(0, 200));
         }
         if (!sawError) {
             setSystemError(null);
@@ -420,7 +569,7 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
         refreshTestnetOrders: refreshAll,
         assetPnlHistory,
         resetPnlHistory,
-        scanDiagnostics: null,
+        scanDiagnostics,
         manualClosePosition,
         dynamicSymbols: null,
         settings,

@@ -52,6 +52,7 @@ export default function Dashboard({
   const tradesLoaded = Array.isArray(testnetTrades);
   const logsLoaded = Array.isArray(logEntries);
   const pnlLoaded = Boolean(assetPnlHistory);
+  const scanLoaded = scanDiagnostics !== null;
   const modeOptions: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
   const profileMeta = useMemo(() => {
     const riskMode = bot.settings?.riskMode ?? "ai-matic";
@@ -542,15 +543,29 @@ export default function Dashboard({
                       })
                       .filter((entry): entry is string => Boolean(entry))
                   : [];
+                const signalLabel = !scanLoaded
+                  ? "LOADING"
+                  : diag?.signalActive
+                    ? "SIGNAL"
+                    : "NO SIGNAL";
+                const signalClass = !scanLoaded
+                  ? "border-slate-500/50 text-slate-400"
+                  : diag?.signalActive
+                    ? "border-emerald-500/50 text-emerald-400"
+                    : "border-slate-500/50 text-slate-400";
                 return (
                   <div key={sym} className="p-3 rounded-lg border border-white/5 bg-white/5">
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-mono font-semibold">{sym}</span>
-                      <Badge variant="outline" className={diag?.signalActive ? "border-emerald-500/50 text-emerald-400" : "border-slate-500/50 text-slate-400"}>
-                        {diag?.signalActive ? "SIGNAL" : "NO SIGNAL"}
+                      <Badge variant="outline" className={signalClass}>
+                        {signalLabel}
                       </Badge>
                     </div>
-                    {gates.length === 0 ? (
+                    {!scanLoaded ? (
+                      <div className="text-xs text-slate-500 italic">
+                        Načítám poslední scan…
+                      </div>
+                    ) : gates.length === 0 ? (
                       <div className="text-xs text-slate-500 italic">
                         Žádná data z posledního scanu.
                       </div>

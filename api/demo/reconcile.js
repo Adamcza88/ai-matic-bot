@@ -29,12 +29,19 @@ export default async function handler(req, res) {
 
     const user = await getUserFromToken(token);
     const keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+    const apiKey = keys.apiKey;
+    const apiSecret = keys.apiSecret;
 
-    const data = await reconcileState(
-      { apiKey: keys.apiKey, apiSecret: keys.apiSecret },
-      useTestnet
-    );
+    if (!apiKey || !apiSecret) {
+      return res.status(400).json({
+        ok: false,
+        error: useTestnet
+          ? "Bybit TESTNET API key/secret not configured for this user"
+          : "Bybit MAINNET API key/secret not configured for this user",
+      });
+    }
 
+    const data = await reconcileState({ apiKey, apiSecret }, useTestnet);
     return res.status(200).json({ ok: true, data });
   } catch (err) {
     console.error("GET /api/demo/reconcile error:", err);

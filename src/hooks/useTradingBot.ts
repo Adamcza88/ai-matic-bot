@@ -79,6 +79,10 @@ function toIso(ts: unknown) {
   return new Date(n).toISOString();
 }
 
+function formatNumber(value: number, digits = 4) {
+  return Number.isFinite(value) ? value.toFixed(digits) : "";
+}
+
 function asErrorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err ?? "unknown_error");
 }
@@ -88,6 +92,7 @@ function extractList(data: any) {
 }
 
 type ClosedPnlRecord = { symbol: string; pnl: number; ts: number };
+const WATCH_SYMBOLS: Symbol[] = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 
 export function useTradingBot(
   _mode?: unknown,
@@ -103,6 +108,9 @@ export function useTradingBot(
   const [orders, setOrders] = useState<TestnetOrder[] | null>(null);
   const [trades, setTrades] = useState<TestnetTrade[] | null>(null);
   const [logEntries, setLogEntries] = useState<LogEntry[] | null>(null);
+  const [scanDiagnostics, setScanDiagnostics] = useState<
+    Record<string, any> | null
+  >(null);
   const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap | null>(
     null
   );
@@ -158,15 +166,19 @@ export function useTradingBot(
       fetchJson("/executions", { limit: "50" }),
       fetchJson("/wallet"),
       fetchJson("/closed-pnl", { limit: "200" }),
+      fetchJson("/reconcile"),
     ]);
 
     let sawError = false;
+    let tradeLogs: LogEntry[] | null = null;
+    let pnlLogs: LogEntry[] | null = null;
     const [
       positionsRes,
       ordersRes,
       executionsRes,
       walletRes,
       closedPnlRes,
+      reconcileRes,
     ] = results;
 
     if (positionsRes.status === "fulfilled") {
@@ -255,21 +267,68 @@ export function useTradingBot(
         } as TestnetTrade;
       });
       setTrades(nextTrades);
-      setLogEntries(
-        nextTrades
-          .filter(
-            (t) =>
-              Boolean(t.id && t.time) &&
-              Number.isFinite(t.qty) &&
-              Number.isFinite(t.price)
-          )
-          .map((t) => ({
-            id: t.id,
-            timestamp: t.time,
+      tradeLogs = list
+        .map((t: any) => {
+          const timestamp = toIso(
+            t?.execTime ?? t?.transactTime ?? t?.createdTime
+          );
+          if (!timestamp) return null;
+          const symbol = String(t?.symbol ?? "");
+          const side = String(t?.side ?? "");
+          const qty = toNumber(t?.execQty ?? t?.qty);
+          const price = toNumber(t?.execPrice ?? t?.price);
+          const value = toNumber(t?.execValue ?? t?.value);
+          const fee = toNumber(t?.execFee ?? t?.fee);
+          const execType = String(t?.execType ?? t?.exec_type ?? "");
+          const orderId = String(t?.orderId ?? t?.orderID ?? "");
+          const orderLinkId = String(
+            t?.orderLinkId ?? t?.orderLinkID ?? t?.clOrdId ?? ""
+          );
+          const isMaker =
+            typeof t?.isMaker === "boolean" ? t.isMaker : undefined;
+
+          const parts: string[] = [];
+          if (
+            symbol &&
+            side &&
+            Number.isFinite(qty) &&
+            Number.isFinite(price)
+          ) {
+            parts.push(
+              `${symbol} ${side} ${formatNumber(qty, 4)} @ ${formatNumber(
+                price,
+                6
+              )}`
+            );
+          } else if (symbol && side) {
+            parts.push(`${symbol} ${side}`);
+          }
+          if (Number.isFinite(value)) {
+            parts.push(`value ${formatNumber(value, 4)}`);
+          }
+          if (Number.isFinite(fee)) {
+            parts.push(`fee ${formatNumber(fee, 4)}`);
+          }
+          if (execType) parts.push(`type ${execType}`);
+          if (orderId) parts.push(`order ${orderId}`);
+          if (orderLinkId) parts.push(`link ${orderLinkId}`);
+          if (typeof isMaker === "boolean") {
+            parts.push(isMaker ? "maker" : "taker");
+          }
+
+          const message = parts.filter(Boolean).join(" | ");
+          if (!message) return null;
+          const id = String(
+            t?.execId ?? t?.tradeId ?? `${symbol}-${timestamp}`
+          );
+          return {
+            id,
+            timestamp,
             action: "SYSTEM",
-            message: `${t.symbol} ${t.side} ${t.qty} @ ${t.price}`,
-          }))
-      );
+            message,
+          } as LogEntry;
+        })
+        .filter((entry: LogEntry | null): entry is LogEntry => Boolean(entry));
       setLastSuccessAt(now);
     } else {
       const msg = asErrorMessage(executionsRes.reason);
@@ -326,12 +385,119 @@ export function useTradingBot(
       }
       setClosedPnlRecords(records);
       setAssetPnlHistory(map);
+      pnlLogs = records
+        .map((r) => {
+          const timestamp = new Date(r.ts).toISOString();
+          if (!timestamp) return null;
+          const message = `PNL ${r.symbol} ${r.pnl >= 0 ? "+" : ""}${r.pnl.toFixed(2)}`;
+          return {
+            id: `pnl:${r.symbol}:${r.ts}`,
+            timestamp,
+            action: "SYSTEM",
+            message,
+          } as LogEntry;
+        })
+        .filter((entry: LogEntry | null): entry is LogEntry => Boolean(entry));
       setLastSuccessAt(now);
     } else {
       const msg = asErrorMessage(closedPnlRes.reason);
       setSystemError(msg);
       setRecentErrors((prev) => [msg, ...prev].slice(0, 5));
       sawError = true;
+    }
+
+    if (reconcileRes.status === "fulfilled") {
+      const payload = reconcileRes.value ?? {};
+      const reconPositions = payload?.positions ?? [];
+      const reconOrders = payload?.orders ?? [];
+      const reconDiffs = payload?.diffs ?? [];
+      const symbols = new Set<string>(WATCH_SYMBOLS);
+      for (const p of reconPositions) {
+        const sym = String(p?.symbol ?? "");
+        if (sym) symbols.add(sym);
+      }
+      for (const o of reconOrders) {
+        const sym = String(o?.symbol ?? "");
+        if (sym) symbols.add(sym);
+      }
+      for (const d of reconDiffs) {
+        const sym = String(d?.symbol ?? "");
+        if (sym) symbols.add(sym);
+      }
+
+      const nextDiagnostics: Record<string, any> = {};
+      for (const sym of symbols) {
+        const pos = reconPositions.find(
+          (p: any) => String(p?.symbol ?? "") === sym
+        );
+        const symOrders = reconOrders.filter(
+          (o: any) => String(o?.symbol ?? "") === sym
+        );
+        const symDiffs = reconDiffs.filter(
+          (d: any) => String(d?.symbol ?? "") === sym
+        );
+        const hardBlocked = symDiffs.some(
+          (d: any) => String(d?.severity ?? "").toUpperCase() === "HIGH"
+        );
+        const hardBlock = symDiffs
+          .map((d: any) => d?.message)
+          .filter(Boolean)
+          .join("; ");
+        const gates: { name: string; ok: boolean }[] = [];
+        const gateNames = new Set<string>();
+        const pushGate = (name: string, ok: boolean) => {
+          if (!name || gateNames.has(name)) return;
+          gateNames.add(name);
+          gates.push({ name, ok });
+        };
+
+        pushGate("Position open", Boolean(pos));
+        pushGate("Open orders", symOrders.length > 0);
+        if (pos) {
+          const sl = toNumber(pos?.sl ?? pos?.stopLoss);
+          const tp = toNumber(pos?.tp ?? pos?.takeProfit);
+          pushGate("SL set", Number.isFinite(sl) && sl > 0);
+          pushGate("TP set", Number.isFinite(tp) && tp > 0);
+        }
+        for (const diff of symDiffs) {
+          const label = String(diff?.message ?? diff?.field ?? diff?.type ?? "");
+          if (label) pushGate(label, false);
+        }
+
+        nextDiagnostics[sym] = {
+          signalActive: Boolean(pos) || symOrders.length > 0,
+          hardEnabled: true,
+          softEnabled: false,
+          hardBlocked,
+          hardBlock: hardBlock || undefined,
+          gates,
+        };
+      }
+      setScanDiagnostics(nextDiagnostics);
+      setLastSuccessAt(now);
+    } else {
+      const msg = asErrorMessage(reconcileRes.reason);
+      setSystemError(msg);
+      setRecentErrors((prev) => [msg, ...prev].slice(0, 5));
+      sawError = true;
+    }
+
+    if (tradeLogs || pnlLogs) {
+      const combined = [...(tradeLogs ?? []), ...(pnlLogs ?? [])]
+        .filter((entry) => Boolean(entry.timestamp))
+        .sort(
+          (a, b) =>
+            new Date(b.timestamp).getTime() -
+            new Date(a.timestamp).getTime()
+        );
+      const seen = new Set<string>();
+      const unique: LogEntry[] = [];
+      for (const entry of combined) {
+        if (seen.has(entry.id)) continue;
+        seen.add(entry.id);
+        unique.push(entry);
+      }
+      setLogEntries(unique.slice(0, 200));
     }
 
     if (!sawError) {
@@ -498,7 +664,7 @@ export function useTradingBot(
     refreshTestnetOrders: refreshAll,
     assetPnlHistory,
     resetPnlHistory,
-    scanDiagnostics: null,
+    scanDiagnostics,
     manualClosePosition,
     dynamicSymbols: null,
     settings,
