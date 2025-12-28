@@ -298,6 +298,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             now,
             sessionOk,
             maxPositionsOk,
+            maxPositions,
+            openPositionsCount,
             hasPosition,
             hasOrders,
             engineOk,
@@ -332,20 +334,41 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const pos = positionsRef.current.find((p) => p.symbol === symbol);
         const sl = toNumber(pos?.sl);
         const tp = toNumber(pos?.tp);
+        const symbolOrders = ordersRef.current.filter((o) => String(o.symbol ?? "") === symbol);
         const gates = [];
-        const addGate = (name, ok) => {
-            gates.push({ name, ok });
+        const addGate = (name, ok, detail) => {
+            gates.push({ name, ok, detail: ok ? detail : undefined });
         };
-        addGate("Signal", signalActive);
-        addGate("Engine ok", context.engineOk);
-        addGate("Session ok", context.sessionOk);
-        addGate("Confirm required", !context.settings.requireConfirmationInAuto);
-        addGate("Max positions", context.maxPositionsOk);
-        addGate("Position clear", !context.hasPosition);
-        addGate("Orders clear", !context.hasOrders);
+        const signalDetail = (() => {
+            const sig = decision?.signal;
+            if (!sig)
+                return undefined;
+            const side = String(sig.intent?.side ?? "").toUpperCase();
+            const entry = toNumber(sig.intent?.entry);
+            const parts = [];
+            if (side)
+                parts.push(side);
+            if (Number.isFinite(entry)) {
+                parts.push(`@ ${formatNumber(entry, 2)}`);
+            }
+            return parts.join(" ") || "signal active";
+        })();
+        addGate("Signal", signalActive, signalDetail);
+        addGate("Engine ok", context.engineOk, "running");
+        const sessionDetail = context.settings.enforceSessionHours
+            ? `${String(context.settings.tradingStartHour).padStart(2, "0")}:00-${String(context.settings.tradingEndHour).padStart(2, "0")}:00`
+            : "24/7";
+        addGate("Session ok", context.sessionOk, sessionDetail);
+        addGate("Confirm required", !context.settings.requireConfirmationInAuto, "not required");
+        const maxPositionsDetail = Number.isFinite(context.maxPositions)
+            ? `open ${context.openPositionsCount}/${context.maxPositions}`
+            : `open ${context.openPositionsCount}`;
+        addGate("Max positions", context.maxPositionsOk, maxPositionsDetail);
+        addGate("Position clear", !context.hasPosition, "no open position");
+        addGate("Orders clear", !context.hasOrders, `open ${symbolOrders.length}`);
         if (pos) {
-            addGate("SL set", Number.isFinite(sl) && sl > 0);
-            addGate("TP set", Number.isFinite(tp) && tp > 0);
+            addGate("SL set", Number.isFinite(sl) && sl > 0, Number.isFinite(sl) ? `SL ${formatNumber(sl, 6)}` : undefined);
+            addGate("TP set", Number.isFinite(tp) && tp > 0, Number.isFinite(tp) ? `TP ${formatNumber(tp, 6)}` : undefined);
         }
         const hardEnabled = context.settings.enableHardGates !== false;
         const softEnabled = context.settings.enableSoftGates !== false;

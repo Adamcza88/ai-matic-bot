@@ -641,6 +641,7 @@ export default function Dashboard({
                             <span className={`h-2 w-2 rounded-full ${g.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
                             <span className={checklistEnabled[g.name] ? "text-white" : "text-slate-500"}>
                               {g.name}
+                              {g.ok && g.detail ? `: ${g.detail}` : ""}
                             </span>
                           </button>
                         ))}
