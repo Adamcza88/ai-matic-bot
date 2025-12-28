@@ -159,6 +159,11 @@ export function useTradingBot(
   const feedLogRef = useRef<{ env: string; ts: number } | null>(null);
   const logDedupeRef = useRef<Map<string, number>>(new Map());
   const gateOverridesRef = useRef<Record<string, boolean>>({});
+  const feedLastTickRef = useRef(0);
+  const lastHeartbeatRef = useRef(0);
+  const lastStateRef = useRef<Map<string, string>>(new Map());
+  const lastRestartRef = useRef(0);
+  const [feedEpoch, setFeedEpoch] = useState(0);
 
   useEffect(() => {
     persistSettings(settings);
@@ -366,6 +371,25 @@ export function useTradingBot(
     },
     [isSessionAllowed]
   );
+
+  const resolveSymbolState = useCallback((symbol: string) => {
+    const decision = decisionRef.current[symbol]?.decision;
+    const state = String(decision?.state ?? "").toUpperCase();
+    if (state === "MANAGE") return "MANAGE";
+    if (state === "SCAN") return "SCAN";
+
+    const hasPosition = positionsRef.current.some((p) => {
+      if (p.symbol !== symbol) return false;
+      const size = toNumber(p.size ?? p.qty);
+      return Number.isFinite(size) && size > 0;
+    });
+    if (hasPosition) return "MANAGE";
+    const hasOrders = ordersRef.current.some(
+      (o) => String(o.symbol ?? "") === symbol
+    );
+    if (hasOrders) return "MANAGE";
+    return "SCAN";
+  }, []);
 
   const buildScanDiagnostics = useCallback(
     (symbol: string, decision: PriceFeedDecision, lastScanTs: number) => {
@@ -939,11 +963,28 @@ export function useTradingBot(
   const handleDecision = useCallback(
     (symbol: string, decision: PriceFeedDecision) => {
       const now = Date.now();
+      feedLastTickRef.current = now;
       decisionRef.current[symbol] = { decision, ts: now };
       setScanDiagnostics((prev) => ({
         ...(prev ?? {}),
         [symbol]: buildScanDiagnostics(symbol, decision, now),
       }));
+
+      const nextState = String(decision?.state ?? "").toUpperCase();
+      if (nextState) {
+        const prevState = lastStateRef.current.get(symbol);
+        if (prevState && prevState !== nextState) {
+          addLogEntries([
+            {
+              id: `state:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} state ${prevState} → ${nextState}`,
+            },
+          ]);
+        }
+        lastStateRef.current.set(symbol, nextState);
+      }
 
       const signal = decision?.signal ?? null;
       if (!signal) return;
@@ -1163,7 +1204,62 @@ export function useTradingBot(
     return () => {
       stop();
     };
-  }, [addLogEntries, authToken, useTestnet]);
+  }, [addLogEntries, authToken, feedEpoch, useTestnet]);
+
+  useEffect(() => {
+    if (!authToken) return;
+    const heartbeatId = setInterval(() => {
+      const now = Date.now();
+      const lastTick = feedLastTickRef.current;
+      const staleMs = lastTick ? now - lastTick : Number.POSITIVE_INFINITY;
+      if (staleMs > 60_000) {
+        const lastRestart = lastRestartRef.current;
+        if (now - lastRestart > 120_000) {
+          lastRestartRef.current = now;
+          addLogEntries([
+            {
+              id: `feed:stale:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "ERROR",
+              message: `Price feed stale (${Math.round(staleMs / 1000)}s) - reconnecting`,
+            },
+          ]);
+          setFeedEpoch((v) => v + 1);
+        }
+      }
+
+      if (now - lastHeartbeatRef.current < 60_000) return;
+      lastHeartbeatRef.current = now;
+
+      const scan: string[] = [];
+      const manage: string[] = [];
+      for (const symbol of WATCH_SYMBOLS) {
+        const state = resolveSymbolState(symbol);
+        if (state === "MANAGE") manage.push(symbol);
+        else scan.push(symbol);
+      }
+
+      const parts: string[] = [];
+      if (scan.length) parts.push(`scan: ${scan.join(", ")}`);
+      if (manage.length) parts.push(`manage: ${manage.join(", ")}`);
+      const message = parts.length
+        ? `BOT HEARTBEAT | ${parts.join(" | ")}`
+        : "BOT HEARTBEAT | idle";
+
+      addLogEntries([
+        {
+          id: `heartbeat:${now}`,
+          timestamp: new Date(now).toISOString(),
+          action: "STATUS",
+          message,
+        },
+      ]);
+    }, 30_000);
+
+    return () => {
+      clearInterval(heartbeatId);
+    };
+  }, [addLogEntries, authToken, resolveSymbolState]);
 
   const systemState = useMemo<SystemState>(() => {
     const hasSuccess = Boolean(lastSuccessAt);

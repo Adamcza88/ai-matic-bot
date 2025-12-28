@@ -115,6 +115,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const feedLogRef = useRef(null);
     const logDedupeRef = useRef(new Map());
     const gateOverridesRef = useRef({});
+    const feedLastTickRef = useRef(0);
+    const lastHeartbeatRef = useRef(0);
+    const lastStateRef = useRef(new Map());
+    const lastRestartRef = useRef(0);
+    const [feedEpoch, setFeedEpoch] = useState(0);
     useEffect(() => {
         persistSettings(settings);
     }, [settings]);
@@ -296,6 +301,26 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             engineOk,
         };
     }, [isSessionAllowed]);
+    const resolveSymbolState = useCallback((symbol) => {
+        const decision = decisionRef.current[symbol]?.decision;
+        const state = String(decision?.state ?? "").toUpperCase();
+        if (state === "MANAGE")
+            return "MANAGE";
+        if (state === "SCAN")
+            return "SCAN";
+        const hasPosition = positionsRef.current.some((p) => {
+            if (p.symbol !== symbol)
+                return false;
+            const size = toNumber(p.size ?? p.qty);
+            return Number.isFinite(size) && size > 0;
+        });
+        if (hasPosition)
+            return "MANAGE";
+        const hasOrders = ordersRef.current.some((o) => String(o.symbol ?? "") === symbol);
+        if (hasOrders)
+            return "MANAGE";
+        return "SCAN";
+    }, []);
     const buildScanDiagnostics = useCallback((symbol, decision, lastScanTs) => {
         const context = getSymbolContext(symbol, decision);
         const signalActive = Boolean(decision?.signal);
@@ -335,7 +360,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             hardReasons.push("Open orders");
         }
         if (context.settings.requireConfirmationInAuto) {
-            hardReasons.push("CONFIRM_REQUIRED");
+            hardReasons.push("Confirm required");
         }
         const hardBlocked = hardEnabled && hardReasons.length > 0;
         const execEnabled = isGateEnabled("Exec allowed");
@@ -356,7 +381,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     ? hardReasons.length > 0
                         ? hardReasons.join(" · ")
                         : undefined
-                    : "Exec allowed OFF"
+                    : "Exec allowed (OFF)"
                 : undefined,
             gates,
             lastScanTs,
@@ -796,11 +821,27 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     }
     const handleDecision = useCallback((symbol, decision) => {
         const now = Date.now();
+        feedLastTickRef.current = now;
         decisionRef.current[symbol] = { decision, ts: now };
         setScanDiagnostics((prev) => ({
             ...(prev ?? {}),
             [symbol]: buildScanDiagnostics(symbol, decision, now),
         }));
+        const nextState = String(decision?.state ?? "").toUpperCase();
+        if (nextState) {
+            const prevState = lastStateRef.current.get(symbol);
+            if (prevState && prevState !== nextState) {
+                addLogEntries([
+                    {
+                        id: `state:${symbol}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `${symbol} state ${prevState} → ${nextState}`,
+                    },
+                ]);
+            }
+            lastStateRef.current.set(symbol, nextState);
+        }
         const signal = decision?.signal ?? null;
         if (!signal)
             return;
@@ -863,7 +904,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             blockReasons.push("Open orders");
         }
         if (context.settings.requireConfirmationInAuto) {
-            blockReasons.push("CONFIRM_REQUIRED");
+            blockReasons.push("Confirm required");
         }
         const execEnabled = isGateEnabled("Exec allowed");
         if (blockReasons.length) {
@@ -997,7 +1038,62 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         return () => {
             stop();
         };
-    }, [addLogEntries, authToken, useTestnet]);
+    }, [addLogEntries, authToken, feedEpoch, useTestnet]);
+    useEffect(() => {
+        if (!authToken)
+            return;
+        const heartbeatId = setInterval(() => {
+            const now = Date.now();
+            const lastTick = feedLastTickRef.current;
+            const staleMs = lastTick ? now - lastTick : Number.POSITIVE_INFINITY;
+            if (staleMs > 60_000) {
+                const lastRestart = lastRestartRef.current;
+                if (now - lastRestart > 120_000) {
+                    lastRestartRef.current = now;
+                    addLogEntries([
+                        {
+                            id: `feed:stale:${now}`,
+                            timestamp: new Date(now).toISOString(),
+                            action: "ERROR",
+                            message: `Price feed stale (${Math.round(staleMs / 1000)}s) - reconnecting`,
+                        },
+                    ]);
+                    setFeedEpoch((v) => v + 1);
+                }
+            }
+            if (now - lastHeartbeatRef.current < 60_000)
+                return;
+            lastHeartbeatRef.current = now;
+            const scan = [];
+            const manage = [];
+            for (const symbol of WATCH_SYMBOLS) {
+                const state = resolveSymbolState(symbol);
+                if (state === "MANAGE")
+                    manage.push(symbol);
+                else
+                    scan.push(symbol);
+            }
+            const parts = [];
+            if (scan.length)
+                parts.push(`scan: ${scan.join(", ")}`);
+            if (manage.length)
+                parts.push(`manage: ${manage.join(", ")}`);
+            const message = parts.length
+                ? `BOT HEARTBEAT | ${parts.join(" | ")}`
+                : "BOT HEARTBEAT | idle";
+            addLogEntries([
+                {
+                    id: `heartbeat:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "STATUS",
+                    message,
+                },
+            ]);
+        }, 30_000);
+        return () => {
+            clearInterval(heartbeatId);
+        };
+    }, [addLogEntries, authToken, resolveSymbolState]);
     const systemState = useMemo(() => {
         const hasSuccess = Boolean(lastSuccessAt);
         const status = !authToken
