@@ -95,7 +95,6 @@ function normalizePosition(bPos, orders, instrument) {
 
         // Calculated fields
         rrr: (Math.abs(tp - entryPrice) / Math.abs(entryPrice - sl)) || 0,
-        peakPrice: 0, // Cannot determine from API easily without history tracking
     };
 }
 

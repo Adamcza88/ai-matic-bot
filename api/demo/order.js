@@ -91,14 +91,19 @@ export default async function handler(req, res) {
       });
     }
 
-    // ===== DEFAULT QTY PRO TEST MODE =====
-    const safeQty = qty && Number(qty) > 0 ? Number(qty) : 1;
+    const qtyValue = Number(qty);
+    if (!Number.isFinite(qtyValue) || qtyValue <= 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing or invalid required field: qty",
+      });
+    }
 
     // ===== BYBIT PAYLOAD =====
     const payload = {
       symbol,
       side: sideFormatted, // Buy / Sell
-      qty: safeQty,
+      qty: qtyValue,
       price: price != null ? Number(price) : undefined,
       sl: sl != null ? Number(sl) : undefined,
       tp: tp != null ? Number(tp) : undefined,

@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendIntent } from "../api/botApi";
 import { getApiBase } from "../engine/networkConfig";
+import { startPriceFeed } from "../engine/priceFeed";
+import { TradingMode } from "../types";
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
@@ -76,7 +78,7 @@ function extractList(data) {
     return data?.result?.list ?? data?.list ?? [];
 }
 const WATCH_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
-export function useTradingBot(_mode, useTestnet = false, authToken) {
+export function useTradingBot(mode, useTestnet = false, authToken) {
     const [settings, setSettings] = useState(() => loadStoredSettings() ?? DEFAULT_SETTINGS);
     const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
     const [positions, setPositions] = useState(null);
@@ -92,10 +94,42 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
     const [recentErrors, setRecentErrors] = useState([]);
     const [lastLatencyMs, setLastLatencyMs] = useState(null);
     const [lastSuccessAt, setLastSuccessAt] = useState(null);
-    const pollRef = useRef(false);
+    const fastPollRef = useRef(false);
+    const slowPollRef = useRef(false);
+    const orderSnapshotRef = useRef(new Map());
+    const positionSnapshotRef = useRef(new Map());
+    const execSeenRef = useRef(new Set());
+    const pnlSeenRef = useRef(new Set());
+    const fastOkRef = useRef(false);
+    const slowOkRef = useRef(false);
+    const modeRef = useRef(mode);
+    const positionsRef = useRef([]);
+    const ordersRef = useRef([]);
+    const decisionRef = useRef({});
+    const signalSeenRef = useRef(new Set());
+    const intentPendingRef = useRef(new Set());
+    const settingsRef = useRef(settings);
+    const walletRef = useRef(walletSnapshot);
     useEffect(() => {
         persistSettings(settings);
     }, [settings]);
+    useEffect(() => {
+        settingsRef.current = settings;
+    }, [settings]);
+    useEffect(() => {
+        walletRef.current = walletSnapshot;
+    }, [walletSnapshot]);
+    useEffect(() => {
+        modeRef.current = mode;
+    }, [mode]);
+    useEffect(() => {
+        if (positions)
+            positionsRef.current = positions;
+    }, [positions]);
+    useEffect(() => {
+        if (orders)
+            ordersRef.current = orders;
+    }, [orders]);
     const fetchJson = useCallback(async (path, params) => {
         if (!authToken) {
             throw new Error("missing_auth_token");
@@ -114,25 +148,209 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
         }
         return json?.data ?? json;
     }, [apiBase, authToken]);
-    const refreshAll = useCallback(async () => {
-        if (pollRef.current)
+    const addLogEntries = useCallback((entries) => {
+        if (!entries.length)
             return;
-        pollRef.current = true;
+        setLogEntries((prev) => {
+            const list = prev ? [...prev] : [];
+            const map = new Map(list.map((entry) => [entry.id, entry]));
+            for (const entry of entries) {
+                map.set(entry.id, entry);
+            }
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            return merged.slice(0, 200);
+        });
+    }, []);
+    const getEquityValue = useCallback(() => {
+        const wallet = walletRef.current;
+        const totalEquity = toNumber(wallet?.totalEquity);
+        if (Number.isFinite(totalEquity) && totalEquity > 0)
+            return totalEquity;
+        const totalWalletBalance = toNumber(wallet?.totalWalletBalance);
+        if (Number.isFinite(totalWalletBalance) && totalWalletBalance > 0) {
+            return totalWalletBalance;
+        }
+        const availableBalance = toNumber(wallet?.availableBalance);
+        if (Number.isFinite(availableBalance) && availableBalance > 0) {
+            return availableBalance;
+        }
+        return Number.NaN;
+    }, []);
+    const isSessionAllowed = useCallback((now, next) => {
+        if (!next.enforceSessionHours)
+            return true;
+        const day = now.getDay();
+        if (Array.isArray(next.tradingDays) && next.tradingDays.length > 0) {
+            if (!next.tradingDays.includes(day))
+                return false;
+        }
+        const start = Number(next.tradingStartHour);
+        const end = Number(next.tradingEndHour);
+        if (!Number.isFinite(start) || !Number.isFinite(end))
+            return true;
+        if (start === end)
+            return true;
+        const hour = now.getHours();
+        if (start < end)
+            return hour >= start && hour <= end;
+        return hour >= start || hour <= end;
+    }, []);
+    const computeNotionalForSignal = useCallback((entry, sl) => {
+        const settings = settingsRef.current;
+        const equity = getEquityValue();
+        if (!Number.isFinite(equity) || equity <= 0) {
+            return { ok: false, reason: "missing_equity" };
+        }
+        const baseRiskRaw = toNumber(settings.baseRiskPerTrade);
+        if (!Number.isFinite(baseRiskRaw) || baseRiskRaw <= 0) {
+            return { ok: false, reason: "invalid_risk" };
+        }
+        let riskUsd = baseRiskRaw <= 1 ? equity * baseRiskRaw : baseRiskRaw;
+        const maxRiskPct = toNumber(settings.maxPortfolioRiskPercent);
+        if (Number.isFinite(maxRiskPct) &&
+            maxRiskPct > 0 &&
+            maxRiskPct <= 1) {
+            riskUsd = Math.min(riskUsd, equity * maxRiskPct);
+        }
+        const sizingMultiplier = toNumber(settings.positionSizingMultiplier);
+        if (Number.isFinite(sizingMultiplier) && sizingMultiplier > 0) {
+            riskUsd *= sizingMultiplier;
+        }
+        const riskPerUnit = Math.abs(entry - sl);
+        if (!Number.isFinite(riskPerUnit) || riskPerUnit <= 0) {
+            return { ok: false, reason: "invalid_sl_distance" };
+        }
+        let qty = riskUsd / riskPerUnit;
+        if (!Number.isFinite(qty) || qty <= 0) {
+            return { ok: false, reason: "invalid_qty" };
+        }
+        let notional = qty * entry;
+        const maxAllocPct = toNumber(settings.maxAllocatedCapitalPercent);
+        if (Number.isFinite(maxAllocPct) &&
+            maxAllocPct > 0 &&
+            maxAllocPct <= 1 &&
+            Number.isFinite(entry) &&
+            entry > 0) {
+            const maxNotional = equity * maxAllocPct;
+            if (Number.isFinite(maxNotional) && maxNotional > 0) {
+                if (notional > maxNotional) {
+                    notional = maxNotional;
+                    qty = notional / entry;
+                }
+            }
+        }
+        return { ok: true, notional, qty, riskUsd, equity };
+    }, [getEquityValue]);
+    const getSymbolContext = useCallback((symbol, decision) => {
+        const settings = settingsRef.current;
+        const now = new Date();
+        const sessionOk = isSessionAllowed(now, settings);
+        const maxPositions = toNumber(settings.maxOpenPositions);
+        const openPositionsCount = positionsRef.current.length;
+        const maxPositionsOk = !Number.isFinite(maxPositions) ||
+            maxPositions <= 0 ||
+            openPositionsCount < maxPositions;
+        const hasPosition = positionsRef.current.some((p) => {
+            if (p.symbol !== symbol)
+                return false;
+            const size = toNumber(p.size ?? p.qty);
+            return Number.isFinite(size) && size > 0;
+        });
+        const hasOrders = ordersRef.current.some((o) => String(o.symbol ?? "") === symbol);
+        const engineOk = !(decision?.halted ?? false);
+        return {
+            settings,
+            now,
+            sessionOk,
+            maxPositionsOk,
+            hasPosition,
+            hasOrders,
+            engineOk,
+        };
+    }, [isSessionAllowed]);
+    const buildScanDiagnostics = useCallback((symbol, decision, lastScanTs) => {
+        const context = getSymbolContext(symbol, decision);
+        const signalActive = Boolean(decision?.signal);
+        const pos = positionsRef.current.find((p) => p.symbol === symbol);
+        const sl = toNumber(pos?.sl);
+        const tp = toNumber(pos?.tp);
+        const gates = [];
+        const addGate = (name, ok) => {
+            gates.push({ name, ok });
+        };
+        addGate("Signal", signalActive);
+        addGate("Engine ok", context.engineOk);
+        addGate("Session ok", context.sessionOk);
+        addGate("Max positions", context.maxPositionsOk);
+        addGate("Position open", context.hasPosition);
+        addGate("Open orders", context.hasOrders);
+        if (pos) {
+            addGate("SL set", Number.isFinite(sl) && sl > 0);
+            addGate("TP set", Number.isFinite(tp) && tp > 0);
+        }
+        const hardEnabled = context.settings.enableHardGates !== false;
+        const softEnabled = context.settings.enableSoftGates !== false;
+        const hardReasons = [];
+        if (!context.engineOk)
+            hardReasons.push("ENGINE_HALTED");
+        if (!context.sessionOk)
+            hardReasons.push("SESSION_OFF");
+        if (!context.maxPositionsOk)
+            hardReasons.push("MAX_POSITIONS");
+        if (context.hasPosition)
+            hardReasons.push("POSITION_OPEN");
+        if (context.hasOrders)
+            hardReasons.push("OPEN_ORDERS");
+        if (context.settings.requireConfirmationInAuto) {
+            hardReasons.push("CONFIRM_REQUIRED");
+        }
+        const hardBlocked = hardEnabled && hardReasons.length > 0;
+        const executionAllowed = signalActive
+            ? hardReasons.length === 0
+            : null;
+        return {
+            signalActive,
+            hardEnabled,
+            softEnabled,
+            hardBlocked,
+            hardBlock: hardBlocked ? hardReasons.join(" · ") : undefined,
+            executionAllowed,
+            executionReason: signalActive && hardReasons.length > 0
+                ? hardReasons.join(" · ")
+                : undefined,
+            gates,
+            lastScanTs,
+        };
+    }, [getSymbolContext]);
+    const refreshDiagnosticsFromDecisions = useCallback(() => {
+        const entries = Object.entries(decisionRef.current);
+        if (!entries.length)
+            return;
+        setScanDiagnostics((prev) => {
+            const next = { ...(prev ?? {}) };
+            for (const [symbol, data] of entries) {
+                next[symbol] = buildScanDiagnostics(symbol, data.decision, data.ts);
+            }
+            return next;
+        });
+    }, [buildScanDiagnostics]);
+    const refreshFast = useCallback(async () => {
+        if (fastPollRef.current)
+            return;
+        fastPollRef.current = true;
         const now = Date.now();
         const results = await Promise.allSettled([
             fetchJson("/positions"),
             fetchJson("/orders", { limit: "50" }),
             fetchJson("/executions", { limit: "50" }),
-            fetchJson("/wallet"),
-            fetchJson("/closed-pnl", { limit: "200" }),
-            fetchJson("/reconcile"),
         ]);
         let sawError = false;
-        let tradeLogs = null;
-        let pnlLogs = null;
-        const [positionsRes, ordersRes, executionsRes, walletRes, closedPnlRes, reconcileRes,] = results;
+        const newLogs = [];
+        const [positionsRes, ordersRes, executionsRes] = results;
         if (positionsRes.status === "fulfilled") {
             const list = extractList(positionsRes.value);
+            const prevPositions = positionSnapshotRef.current;
+            const nextPositions = new Map();
             const next = list
                 .map((p) => {
                 const size = toNumber(p?.size ?? p?.qty);
@@ -143,6 +361,7 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
                 const entryPrice = toNumber(p?.entryPrice ?? p?.avgEntryPrice);
                 const unrealized = toNumber(p?.unrealisedPnl ?? p?.unrealizedPnl);
                 const openedAt = toIso(p?.createdTime ?? p?.updatedTime);
+                nextPositions.set(String(p?.symbol ?? ""), { size, side });
                 return {
                     positionId: String(p?.positionId ?? `${p?.symbol}-${sideRaw}`),
                     id: String(p?.positionId ?? ""),
@@ -164,28 +383,108 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
             })
                 .filter((p) => Boolean(p));
             setPositions(next);
+            positionsRef.current = next;
             setLastSuccessAt(now);
+            for (const [symbol, nextPos] of nextPositions.entries()) {
+                const prev = prevPositions.get(symbol);
+                if (!prev) {
+                    newLogs.push({
+                        id: `pos-open:${symbol}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `POSITION OPEN ${symbol} ${nextPos.side} size ${formatNumber(nextPos.size, 4)}`,
+                    });
+                    continue;
+                }
+                if (Number.isFinite(prev.size) && prev.size !== nextPos.size) {
+                    newLogs.push({
+                        id: `pos-size:${symbol}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `POSITION SIZE ${symbol} ${formatNumber(prev.size, 4)} → ${formatNumber(nextPos.size, 4)}`,
+                    });
+                }
+            }
+            for (const [symbol, prevPos] of prevPositions.entries()) {
+                if (!nextPositions.has(symbol)) {
+                    newLogs.push({
+                        id: `pos-close:${symbol}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `POSITION CLOSED ${symbol} ${prevPos.side} size ${formatNumber(prevPos.size, 4)}`,
+                    });
+                }
+            }
+            positionSnapshotRef.current = nextPositions;
         }
         if (ordersRes.status === "fulfilled") {
             const list = extractList(ordersRes.value);
+            const prevOrders = orderSnapshotRef.current;
+            const nextOrders = new Map();
             const next = list
                 .map((o) => {
                 const qty = toNumber(o?.qty ?? o?.orderQty ?? o?.leavesQty);
                 const price = toNumber(o?.price);
-                return {
-                    orderId: String(o?.orderId ?? o?.orderID ?? o?.id ?? ""),
-                    symbol: String(o?.symbol ?? ""),
-                    side: (o?.side ?? "Buy"),
+                const orderId = String(o?.orderId ?? o?.orderID ?? o?.id ?? "");
+                const symbol = String(o?.symbol ?? "");
+                const side = String(o?.side ?? "Buy");
+                const status = String(o?.orderStatus ?? o?.order_status ?? o?.status ?? "");
+                const entry = {
+                    orderId,
+                    symbol,
+                    side: side,
                     qty: Number.isFinite(qty) ? qty : Number.NaN,
                     price: Number.isFinite(price) ? price : null,
-                    status: String(o?.orderStatus ?? o?.order_status ?? o?.status ?? ""),
+                    status,
                     createdTime: toIso(o?.createdTime ?? o?.created_at) || "",
                 };
+                if (orderId) {
+                    nextOrders.set(orderId, {
+                        status,
+                        qty: Number.isFinite(qty) ? qty : Number.NaN,
+                        price: Number.isFinite(price) ? price : null,
+                        side,
+                        symbol,
+                    });
+                }
+                return entry;
             })
                 .filter((o) => Boolean(o.orderId));
             setOrders(next);
+            ordersRef.current = next;
             setOrdersError(null);
             setLastSuccessAt(now);
+            for (const [orderId, nextOrder] of nextOrders.entries()) {
+                const prev = prevOrders.get(orderId);
+                if (!prev) {
+                    newLogs.push({
+                        id: `order-new:${orderId}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `ORDER NEW ${nextOrder.symbol} ${nextOrder.side} ${formatNumber(nextOrder.qty, 4)} @ ${nextOrder.price ?? "mkt"} | ${nextOrder.status}`,
+                    });
+                    continue;
+                }
+                if (prev.status !== nextOrder.status) {
+                    newLogs.push({
+                        id: `order-status:${orderId}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `ORDER STATUS ${nextOrder.symbol} ${prev.status} → ${nextOrder.status}`,
+                    });
+                }
+            }
+            for (const [orderId, prevOrder] of prevOrders.entries()) {
+                if (!nextOrders.has(orderId)) {
+                    newLogs.push({
+                        id: `order-closed:${orderId}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `ORDER CLOSED ${prevOrder.symbol} ${prevOrder.side} ${formatNumber(prevOrder.qty, 4)} | ${prevOrder.status}`,
+                    });
+                }
+            }
+            orderSnapshotRef.current = nextOrders;
         }
         else {
             const msg = asErrorMessage(ordersRes.reason);
@@ -196,6 +495,7 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
         }
         if (executionsRes.status === "fulfilled") {
             const list = extractList(executionsRes.value);
+            const execSeen = execSeenRef.current;
             const nextTrades = list.map((t) => {
                 const price = toNumber(t?.execPrice ?? t?.price);
                 const qty = toNumber(t?.execQty ?? t?.qty);
@@ -213,7 +513,7 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
                 };
             });
             setTrades(nextTrades);
-            tradeLogs = list
+            const tradeLogs = list
                 .map((t) => {
                 const timestamp = toIso(t?.execTime ?? t?.transactTime ?? t?.createdTime);
                 if (!timestamp)
@@ -257,6 +557,9 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
                 if (!message)
                     return null;
                 const id = String(t?.execId ?? t?.tradeId ?? `${symbol}-${timestamp}`);
+                if (execSeen.has(id))
+                    return null;
+                execSeen.add(id);
                 return {
                     id,
                     timestamp,
@@ -265,6 +568,12 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
                 };
             })
                 .filter((entry) => Boolean(entry));
+            if (tradeLogs.length) {
+                addLogEntries(tradeLogs);
+            }
+            else {
+                setLogEntries((prev) => prev ?? []);
+            }
             setLastSuccessAt(now);
         }
         else {
@@ -273,6 +582,29 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
             setRecentErrors((prev) => [msg, ...prev].slice(0, 5));
             sawError = true;
         }
+        if (newLogs.length) {
+            addLogEntries(newLogs);
+        }
+        refreshDiagnosticsFromDecisions();
+        fastOkRef.current = !sawError;
+        if (!sawError && slowOkRef.current) {
+            setSystemError(null);
+        }
+        fastPollRef.current = false;
+    }, [addLogEntries, fetchJson, refreshDiagnosticsFromDecisions, useTestnet]);
+    const refreshSlow = useCallback(async () => {
+        if (slowPollRef.current)
+            return;
+        slowPollRef.current = true;
+        const now = Date.now();
+        const results = await Promise.allSettled([
+            fetchJson("/wallet"),
+            fetchJson("/closed-pnl", { limit: "200" }),
+            fetchJson("/reconcile"),
+        ]);
+        let sawError = false;
+        const newLogs = [];
+        const [walletRes, closedPnlRes, reconcileRes] = results;
         if (walletRes.status === "fulfilled") {
             const list = extractList(walletRes.value);
             const row = list[0] ?? {};
@@ -315,20 +647,19 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
             }
             setClosedPnlRecords(records);
             setAssetPnlHistory(map);
-            pnlLogs = records
-                .map((r) => {
-                const timestamp = new Date(r.ts).toISOString();
-                if (!timestamp)
-                    return null;
-                const message = `PNL ${r.symbol} ${r.pnl >= 0 ? "+" : ""}${r.pnl.toFixed(2)}`;
-                return {
-                    id: `pnl:${r.symbol}:${r.ts}`,
-                    timestamp,
+            const pnlSeen = pnlSeenRef.current;
+            for (const r of records) {
+                const id = `pnl:${r.symbol}:${r.ts}`;
+                if (pnlSeen.has(id))
+                    continue;
+                pnlSeen.add(id);
+                newLogs.push({
+                    id,
+                    timestamp: new Date(r.ts).toISOString(),
                     action: "SYSTEM",
-                    message,
-                };
-            })
-                .filter((entry) => Boolean(entry));
+                    message: `PNL ${r.symbol} ${r.pnl >= 0 ? "+" : ""}${r.pnl.toFixed(2)}`,
+                });
+            }
             setLastSuccessAt(now);
         }
         else {
@@ -339,66 +670,20 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
         }
         if (reconcileRes.status === "fulfilled") {
             const payload = reconcileRes.value ?? {};
-            const reconPositions = payload?.positions ?? [];
-            const reconOrders = payload?.orders ?? [];
             const reconDiffs = payload?.diffs ?? [];
-            const symbols = new Set(WATCH_SYMBOLS);
-            for (const p of reconPositions) {
-                const sym = String(p?.symbol ?? "");
-                if (sym)
-                    symbols.add(sym);
+            for (const diff of reconDiffs) {
+                const sym = String(diff?.symbol ?? "");
+                const label = String(diff?.message ?? diff?.field ?? diff?.type ?? "");
+                if (!label)
+                    continue;
+                const severity = String(diff?.severity ?? "").toUpperCase();
+                newLogs.push({
+                    id: `reconcile:${sym}:${label}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: severity === "HIGH" ? "ERROR" : "STATUS",
+                    message: `RECONCILE ${sym} ${label}`,
+                });
             }
-            for (const o of reconOrders) {
-                const sym = String(o?.symbol ?? "");
-                if (sym)
-                    symbols.add(sym);
-            }
-            for (const d of reconDiffs) {
-                const sym = String(d?.symbol ?? "");
-                if (sym)
-                    symbols.add(sym);
-            }
-            const nextDiagnostics = {};
-            for (const sym of symbols) {
-                const pos = reconPositions.find((p) => String(p?.symbol ?? "") === sym);
-                const symOrders = reconOrders.filter((o) => String(o?.symbol ?? "") === sym);
-                const symDiffs = reconDiffs.filter((d) => String(d?.symbol ?? "") === sym);
-                const hardBlocked = symDiffs.some((d) => String(d?.severity ?? "").toUpperCase() === "HIGH");
-                const hardBlock = symDiffs
-                    .map((d) => d?.message)
-                    .filter(Boolean)
-                    .join("; ");
-                const gates = [];
-                const gateNames = new Set();
-                const pushGate = (name, ok) => {
-                    if (!name || gateNames.has(name))
-                        return;
-                    gateNames.add(name);
-                    gates.push({ name, ok });
-                };
-                pushGate("Position open", Boolean(pos));
-                pushGate("Open orders", symOrders.length > 0);
-                if (pos) {
-                    const sl = toNumber(pos?.sl ?? pos?.stopLoss);
-                    const tp = toNumber(pos?.tp ?? pos?.takeProfit);
-                    pushGate("SL set", Number.isFinite(sl) && sl > 0);
-                    pushGate("TP set", Number.isFinite(tp) && tp > 0);
-                }
-                for (const diff of symDiffs) {
-                    const label = String(diff?.message ?? diff?.field ?? diff?.type ?? "");
-                    if (label)
-                        pushGate(label, false);
-                }
-                nextDiagnostics[sym] = {
-                    signalActive: Boolean(pos) || symOrders.length > 0,
-                    hardEnabled: true,
-                    softEnabled: false,
-                    hardBlocked,
-                    hardBlock: hardBlock || undefined,
-                    gates,
-                };
-            }
-            setScanDiagnostics(nextDiagnostics);
             setLastSuccessAt(now);
         }
         else {
@@ -407,44 +692,44 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
             setRecentErrors((prev) => [msg, ...prev].slice(0, 5));
             sawError = true;
         }
-        if (tradeLogs || pnlLogs) {
-            const combined = [...(tradeLogs ?? []), ...(pnlLogs ?? [])]
-                .filter((entry) => Boolean(entry.timestamp))
-                .sort((a, b) => new Date(b.timestamp).getTime() -
-                new Date(a.timestamp).getTime());
-            const seen = new Set();
-            const unique = [];
-            for (const entry of combined) {
-                if (seen.has(entry.id))
-                    continue;
-                seen.add(entry.id);
-                unique.push(entry);
-            }
-            setLogEntries(unique.slice(0, 200));
+        if (newLogs.length) {
+            addLogEntries(newLogs);
         }
-        if (!sawError) {
+        else {
+            setLogEntries((prev) => prev ?? []);
+        }
+        slowOkRef.current = !sawError;
+        if (!sawError && fastOkRef.current) {
             setSystemError(null);
         }
-        pollRef.current = false;
-    }, [fetchJson, useTestnet]);
+        slowPollRef.current = false;
+    }, [addLogEntries, fetchJson]);
     useEffect(() => {
         if (!authToken) {
             setSystemError("missing_auth_token");
             return;
         }
         let alive = true;
-        const tick = async () => {
+        const tickFast = async () => {
             if (!alive)
                 return;
-            await refreshAll();
+            await refreshFast();
         };
-        const id = setInterval(tick, 2500);
-        tick();
+        const tickSlow = async () => {
+            if (!alive)
+                return;
+            await refreshSlow();
+        };
+        const fastId = setInterval(tickFast, 1000);
+        const slowId = setInterval(tickSlow, 10000);
+        tickFast();
+        tickSlow();
         return () => {
             alive = false;
-            clearInterval(id);
+            clearInterval(fastId);
+            clearInterval(slowId);
         };
-    }, [authToken, refreshAll]);
+    }, [authToken, refreshFast, refreshSlow]);
     async function autoTrade(signal) {
         if (!authToken)
             throw new Error("missing_auth_token");
@@ -465,6 +750,183 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
         };
         await sendIntent(intent, { authToken, useTestnet });
     }
+    const handleDecision = useCallback((symbol, decision) => {
+        const now = Date.now();
+        decisionRef.current[symbol] = { decision, ts: now };
+        setScanDiagnostics((prev) => ({
+            ...(prev ?? {}),
+            [symbol]: buildScanDiagnostics(symbol, decision, now),
+        }));
+        const signal = decision?.signal ?? null;
+        if (!signal)
+            return;
+        const signalId = String(signal.id ?? `${symbol}-${now}`);
+        if (signalSeenRef.current.has(signalId))
+            return;
+        signalSeenRef.current.add(signalId);
+        const intent = signal.intent;
+        const entry = toNumber(intent?.entry);
+        const sl = toNumber(intent?.sl);
+        const tp = toNumber(intent?.tp);
+        const side = String(intent?.side ?? "").toLowerCase() === "buy" ? "Buy" : "Sell";
+        const timestamp = signal.createdAt || new Date(now).toISOString();
+        const msgParts = [`${symbol} ${side}`];
+        if (Number.isFinite(entry)) {
+            msgParts.push(`entry ${formatNumber(entry, 6)}`);
+        }
+        if (Number.isFinite(sl)) {
+            msgParts.push(`sl ${formatNumber(sl, 6)}`);
+        }
+        if (Number.isFinite(tp)) {
+            msgParts.push(`tp ${formatNumber(tp, 6)}`);
+        }
+        if (signal.message)
+            msgParts.push(signal.message);
+        addLogEntries([
+            {
+                id: `signal:${signalId}`,
+                timestamp,
+                action: "SIGNAL",
+                message: msgParts.join(" | "),
+            },
+        ]);
+        if (modeRef.current !== TradingMode.AUTO_ON) {
+            addLogEntries([
+                {
+                    id: `signal:auto-off:${signalId}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "STATUS",
+                    message: `AUTO_OFF ${symbol} signal not executed`,
+                },
+            ]);
+            return;
+        }
+        const context = getSymbolContext(symbol, decision);
+        const blockReasons = [];
+        if (!context.engineOk)
+            blockReasons.push("ENGINE_HALTED");
+        if (!context.sessionOk)
+            blockReasons.push("SESSION_OFF");
+        if (!context.maxPositionsOk)
+            blockReasons.push("MAX_POSITIONS");
+        if (context.hasPosition)
+            blockReasons.push("POSITION_OPEN");
+        if (context.hasOrders)
+            blockReasons.push("OPEN_ORDERS");
+        if (context.settings.requireConfirmationInAuto) {
+            blockReasons.push("CONFIRM_REQUIRED");
+        }
+        if (blockReasons.length) {
+            addLogEntries([
+                {
+                    id: `signal:block:${signalId}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "RISK_BLOCK",
+                    message: `${symbol} blocked: ${blockReasons.join(" · ")}`,
+                },
+            ]);
+            return;
+        }
+        if (!Number.isFinite(entry) || !Number.isFinite(sl) || entry <= 0 || sl <= 0) {
+            addLogEntries([
+                {
+                    id: `signal:invalid:${signalId}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "ERROR",
+                    message: `${symbol} invalid signal params (entry/sl)`,
+                },
+            ]);
+            return;
+        }
+        const sizing = computeNotionalForSignal(entry, sl);
+        if (!sizing.ok) {
+            addLogEntries([
+                {
+                    id: `signal:sizing:${signalId}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "ERROR",
+                    message: `${symbol} sizing failed: ${sizing.reason}`,
+                },
+            ]);
+            return;
+        }
+        if (intentPendingRef.current.has(symbol)) {
+            addLogEntries([
+                {
+                    id: `signal:pending:${signalId}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "STATUS",
+                    message: `${symbol} intent pending`,
+                },
+            ]);
+            return;
+        }
+        intentPendingRef.current.add(symbol);
+        void (async () => {
+            try {
+                await autoTrade({
+                    symbol: symbol,
+                    side,
+                    entryPrice: entry,
+                    slPrice: sl,
+                    tpPrices: Number.isFinite(tp) ? [tp] : [],
+                    notionalUSDT: sizing.notional,
+                });
+                addLogEntries([
+                    {
+                        id: `signal:sent:${signalId}`,
+                        timestamp: new Date().toISOString(),
+                        action: "STATUS",
+                        message: `${symbol} intent sent | qty ${formatNumber(sizing.qty, 6)} | notional ${formatNumber(sizing.notional, 2)}`,
+                    },
+                ]);
+            }
+            catch (err) {
+                addLogEntries([
+                    {
+                        id: `signal:error:${signalId}`,
+                        timestamp: new Date().toISOString(),
+                        action: "ERROR",
+                        message: `${symbol} intent failed: ${asErrorMessage(err)}`,
+                    },
+                ]);
+            }
+            finally {
+                intentPendingRef.current.delete(symbol);
+            }
+        })();
+    }, [
+        addLogEntries,
+        autoTrade,
+        buildScanDiagnostics,
+        computeNotionalForSignal,
+        getSymbolContext,
+    ]);
+    useEffect(() => {
+        if (!authToken)
+            return;
+        if (mode === TradingMode.OFF)
+            return;
+        signalSeenRef.current.clear();
+        intentPendingRef.current.clear();
+        decisionRef.current = {};
+        setScanDiagnostics(null);
+        const stop = startPriceFeed(WATCH_SYMBOLS, handleDecision, {
+            useTestnet,
+            timeframe: "1",
+        });
+        addLogEntries([
+            {
+                id: `feed:start:${Date.now()}`,
+                timestamp: new Date().toISOString(),
+                action: "STATUS",
+                message: `Price feed connected (${useTestnet ? "testnet" : "mainnet"})`,
+            },
+        ]);
+        return () => {
+            stop();
+        };
+    }, [addLogEntries, authToken, handleDecision, mode, useTestnet]);
     const systemState = useMemo(() => {
         const hasSuccess = Boolean(lastSuccessAt);
         const status = !authToken
@@ -521,8 +983,8 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
         };
     }, [closedPnlRecords, positions, settings.maxOpenPositions, walletSnapshot]);
     const resetPnlHistory = useCallback(() => {
-        void refreshAll();
-    }, [refreshAll]);
+        void refreshSlow();
+    }, [refreshSlow]);
     const manualClosePosition = useCallback(async (pos) => {
         if (!authToken)
             throw new Error("missing_auth_token");
@@ -551,9 +1013,9 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
         if (!res.ok || json?.ok === false) {
             throw new Error(json?.error || `close_failed:${res.status}`);
         }
-        await refreshAll();
+        await refreshFast();
         return true;
-    }, [apiBase, authToken, refreshAll]);
+    }, [apiBase, authToken, refreshFast]);
     const updateSettings = useCallback((next) => {
         setSettings(next);
     }, []);
@@ -566,7 +1028,7 @@ export function useTradingBot(_mode, useTestnet = false, authToken) {
         testnetOrders: orders,
         testnetTrades: trades,
         ordersError,
-        refreshTestnetOrders: refreshAll,
+        refreshTestnetOrders: refreshFast,
         assetPnlHistory,
         resetPnlHistory,
         scanDiagnostics,

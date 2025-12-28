@@ -53,6 +53,14 @@ export default function Dashboard({
   const logsLoaded = Array.isArray(logEntries);
   const pnlLoaded = Boolean(assetPnlHistory);
   const scanLoaded = scanDiagnostics !== null;
+  const lastScanTs = useMemo(() => {
+    if (!scanDiagnostics) return null;
+    const values = Object.values(scanDiagnostics)
+      .map((d: any) => d?.lastScanTs)
+      .filter((ts) => Number.isFinite(ts));
+    if (!values.length) return null;
+    return Math.max(...(values as number[]));
+  }, [scanDiagnostics]);
   const modeOptions: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
   const profileMeta = useMemo(() => {
     const riskMode = bot.settings?.riskMode ?? "ai-matic";
@@ -521,6 +529,15 @@ export default function Dashboard({
             <CardTitle className="text-sm font-medium text-slate-400">
               Signal Checklist (last scan)
             </CardTitle>
+            <div className="text-[11px] text-slate-500 mt-1">
+              {scanLoaded && lastScanTs
+                ? `Last scan: ${new Date(lastScanTs).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}`
+                : "Last scan: —"}
+            </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -546,13 +563,18 @@ export default function Dashboard({
                 const signalLabel = !scanLoaded
                   ? "LOADING"
                   : diag?.signalActive
-                    ? "SIGNAL"
-                    : "NO SIGNAL";
+                    ? "ACTIVE"
+                    : "IDLE";
                 const signalClass = !scanLoaded
                   ? "border-slate-500/50 text-slate-400"
                   : diag?.signalActive
                     ? "border-emerald-500/50 text-emerald-400"
                     : "border-slate-500/50 text-slate-400";
+                const execLabel = diag?.executionAllowed === true
+                  ? "YES"
+                  : diag?.executionAllowed === false
+                    ? (diag?.executionReason ?? "BLOCKED")
+                    : "N/A";
                 return (
                   <div key={sym} className="p-3 rounded-lg border border-white/5 bg-white/5">
                     <div className="flex items-center justify-between mb-2">
@@ -611,7 +633,7 @@ export default function Dashboard({
                         >
                           <span className={`h-2 w-2 rounded-full ${diag?.executionAllowed === true ? "bg-emerald-400" : diag?.executionAllowed === false ? "bg-amber-400" : "bg-slate-600"}`} />
                           <span className={checklistEnabled["Exec allowed"] ? "text-white" : "text-slate-500"}>
-                            Exec allowed ({diag?.executionAllowed === true ? "YES" : diag?.executionAllowed === false ? "WAIT BBO" : "N/A"})
+                            Exec allowed ({execLabel})
                           </span>
                         </button>
                         <button

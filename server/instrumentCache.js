@@ -54,9 +54,8 @@ export async function getInstrumentInfo(symbol, useTestnet = true) {
         return info;
     } catch (err) {
         console.error(`[InstrumentCache] Failed to fetch ${symbol}:`, err.message);
-        // Return fallback if cache exists (even if stale) or defaults
+        // Return cached data if available; otherwise surface error.
         if (cached) return cached.data;
-        // Fallback defaults
-        return { minQty: 0.001, stepSize: 0.001, minNotional: 5, tickSize: 0.01, contractValue: 1 };
+        throw err;
     }
 }

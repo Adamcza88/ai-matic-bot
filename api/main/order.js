@@ -95,12 +95,18 @@ export default async function handler(req, res) {
       });
     }
 
-    const safeQty = qty && Number(qty) > 0 ? Number(qty) : 1;
+    const qtyValue = Number(qty);
+    if (!Number.isFinite(qtyValue) || qtyValue <= 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing or invalid required field: qty",
+      });
+    }
 
     const payload = {
       symbol,
       side: sideFormatted,
-      qty: safeQty,
+      qty: qtyValue,
       price: price != null ? Number(price) : undefined,
       triggerPrice: triggerPrice != null ? Number(triggerPrice) : undefined,
       sl: sl != null ? Number(sl) : undefined,

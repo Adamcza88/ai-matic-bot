@@ -1,8 +1,8 @@
 // src/engine/priceFeed.ts
 // Public realtime feed z Bybitu přes WebSocket s automatickým pingem
 import { evaluateStrategyForSymbol, } from "@/engine/botEngine";
-// Mainnet public WS feed (switch from testnet)
-const FEED_URL = "wss://stream.bybit.com/v5/public/linear";
+const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
+const FEED_URL_TESTNET = "wss://stream-testnet.bybit.com/v5/public/linear";
 // WS ping interval (Bybit vyžaduje každých ~20s)
 const PING_INTERVAL = 20000;
 // Buffer svíček pro každý symbol
@@ -36,14 +36,15 @@ function normalizeWsKline(row) {
         };
     }
 }
-export function startPriceFeed(symbols, onDecision) {
-    const ws = new WebSocket(FEED_URL);
+export function startPriceFeed(symbols, onDecision, opts) {
+    const ws = new WebSocket(opts?.useTestnet ? FEED_URL_TESTNET : FEED_URL_MAINNET);
+    const timeframe = opts?.timeframe ?? "1";
     let pingTimer = null;
     ws.addEventListener("open", () => {
         console.log("Bybit WS open → subscribing…");
         ws.send(JSON.stringify({
             op: "subscribe",
-            args: symbols.map((s) => `kline.1.${s}`),
+            args: symbols.map((s) => `kline.${timeframe}.${s}`),
         }));
         // ping nutný pro udržení spojení
         pingTimer = setInterval(() => {
