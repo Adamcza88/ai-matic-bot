@@ -43,6 +43,15 @@ export default function Dashboard({
     manualClosePosition,
     dynamicSymbols,
   } = bot;
+  const formatMoney = (value?: number, digits = 2) =>
+    Number.isFinite(value) ? value.toFixed(digits) : "—";
+  const dailyPnl = portfolioState?.dailyPnl;
+  const dailyPnlOk = Number.isFinite(dailyPnl);
+  const positionsLoaded = Array.isArray(activePositions);
+  const ordersLoaded = Array.isArray(testnetOrders);
+  const tradesLoaded = Array.isArray(testnetTrades);
+  const logsLoaded = Array.isArray(logEntries);
+  const pnlLoaded = Boolean(assetPnlHistory);
   const modeOptions: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
   const profileMeta = useMemo(() => {
     const riskMode = bot.settings?.riskMode ?? "ai-matic";
@@ -86,8 +95,8 @@ export default function Dashboard({
     bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
       ? dynamicSymbols
       : profileMeta.symbols;
-  const exchangeOrders = testnetOrders;
-  const exchangeTrades = testnetTrades;
+  const exchangeOrders = ordersLoaded ? testnetOrders : [];
+  const exchangeTrades = tradesLoaded ? testnetTrades : [];
   const refreshOrders = refreshTestnetOrders;
 
   const CHECKLIST_DEFAULTS = useMemo(
@@ -239,7 +248,11 @@ export default function Dashboard({
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-400">Latency</span>
-                  <span className="font-mono">{systemState.latency} ms</span>
+                  <span className="font-mono">
+                    {Number.isFinite(systemState.latency)
+                      ? `${systemState.latency} ms`
+                      : "—"}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-400">Last Error</span>
@@ -252,25 +265,31 @@ export default function Dashboard({
                 <div className="flex justify-between">
                   <span className="text-slate-400">Total Capital</span>
                   <span className="font-mono font-medium text-lg">
-                    ${portfolioState.totalCapital.toFixed(2)}
+                    ${formatMoney(portfolioState.totalCapital)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Allocated</span>
                   <span className="font-mono text-slate-300">
-                    ${portfolioState.allocatedCapital.toFixed(2)}
+                    ${formatMoney(portfolioState.allocatedCapital)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Daily PnL</span>
                   <span
-                    className={`font-mono ${portfolioState.dailyPnl >= 0
-                      ? "text-emerald-500"
-                      : "text-red-500"
-                      }`}
+                    className={`font-mono ${
+                      dailyPnlOk
+                        ? (dailyPnl as number) >= 0
+                          ? "text-emerald-500"
+                          : "text-red-500"
+                        : "text-slate-500"
+                    }`}
                   >
-                    {portfolioState.dailyPnl > 0 ? "+" : ""}
-                    {portfolioState.dailyPnl.toFixed(2)} USD
+                    {dailyPnlOk
+                      ? `${(dailyPnl as number) > 0 ? "+" : ""}${(
+                          dailyPnl as number
+                        ).toFixed(2)} USD`
+                      : "—"}
                   </span>
                 </div>
               </div>
@@ -342,21 +361,30 @@ export default function Dashboard({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {activePositions.length === 0 ? (
+            {!positionsLoaded ? (
+              <div className="text-sm text-slate-500 italic py-8 text-center border border-dashed border-slate-800 rounded-lg">
+                Načítám pozice…
+              </div>
+            ) : activePositions.length === 0 ? (
               <div className="text-sm text-slate-500 italic py-8 text-center border border-dashed border-slate-800 rounded-lg">
                 No open positions.
               </div>
             ) : (
               <div className="space-y-3">
                 {activePositions.map((p) => {
-                  const size = Number(p.size ?? p.qty ?? 0);
+                  const size = Number(p.size ?? p.qty);
                   const sideLower = String(p.side ?? "").toLowerCase();
                   const isBuy = sideLower === "buy";
-                  const trail = Number(p.currentTrailingStop ?? 0);
-                  const slValue = Number(p.sl ?? 0);
-                  const sl = (Number.isFinite(trail) && trail > 0 ? trail : slValue) || undefined;
-                  const tp = Number(p.tp ?? 0) || undefined;
-                  const upnl = Number(p.unrealizedPnl ?? 0) || 0;
+                  const trail = Number(p.currentTrailingStop);
+                  const slValue = Number(p.sl);
+                  const sl = Number.isFinite(trail) && trail > 0
+                    ? trail
+                    : Number.isFinite(slValue)
+                      ? slValue
+                      : undefined;
+                  const tpValue = Number(p.tp);
+                  const tp = Number.isFinite(tpValue) ? tpValue : undefined;
+                  const upnl = Number(p.unrealizedPnl);
                   const slMissing = !Number.isFinite(sl) || (sl as number) <= 0;
                   const tpMissing = !Number.isFinite(tp) || tp <= 0;
                   const protectionLabel = slMissing && tpMissing
@@ -393,19 +421,25 @@ export default function Dashboard({
                           </Badge>
                         </div>
                         <div className="text-xs text-slate-400 mt-1 font-mono">
-                          Entry: {p.entryPrice} | Size: {Number.isFinite(size) ? size.toFixed(4) : "-"}
+                          Entry: {Number.isFinite(p.entryPrice) ? Number(p.entryPrice).toFixed(4) : "—"} | Size: {Number.isFinite(size) ? size.toFixed(4) : "—"}
                         </div>
                       </div>
                       <div className="text-right">
                         <div
-                          className={`font-mono font-bold text-lg ${upnl >= 0 ? "text-emerald-500" : "text-red-500"
-                            }`}
+                          className={`font-mono font-bold text-lg ${
+                            Number.isFinite(upnl)
+                              ? upnl >= 0
+                                ? "text-emerald-500"
+                                : "text-red-500"
+                              : "text-slate-500"
+                          }`}
                         >
-                          {upnl > 0 ? "+" : ""}
-                          {upnl.toFixed(2)} USD
+                          {Number.isFinite(upnl)
+                            ? `${upnl > 0 ? "+" : ""}${upnl.toFixed(2)} USD`
+                            : "—"}
                         </div>
                         <div className="text-xs text-slate-400 mt-1 font-mono">
-                          TP: {tp ?? "-"} | SL: {sl ?? "-"}
+                          TP: {Number.isFinite(tp) ? tp : "—"} | SL: {Number.isFinite(sl) ? sl : "—"}
                         </div>
                         <div className="mt-2 flex justify-end">
                           <Button
@@ -438,12 +472,16 @@ export default function Dashboard({
                 <div className="text-sm text-slate-500 italic">
                   Live feed je z bezpečnostních důvodů skrytý na Testnetu. Přepni na MAINNET pro zobrazení.
                 </div>
-              ) : logEntries.length === 0 ? (
+              ) : !logsLoaded ? (
                   <div className="text-sm text-slate-500 italic">
-                    No activity yet.
+                    Načítám logy…
                   </div>
-                ) : (
-                  logEntries
+                ) : logEntries.length === 0 ? (
+                    <div className="text-sm text-slate-500 italic">
+                      No activity yet.
+                    </div>
+                  ) : (
+                    logEntries
                     .filter((l) => {
                       if (l.action === "SIGNAL" || l.action === "ERROR" || l.action === "STATUS" || l.action === "REJECT") return true;
                       const msg = String(l.message || "");
@@ -618,6 +656,10 @@ export default function Dashboard({
               <div className="text-sm text-red-400 italic py-6 text-center border border-red-500/30 bg-red-500/5 rounded-lg">
                 Orders API failed: {ordersError}
               </div>
+            ) : !ordersLoaded ? (
+              <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
+                Načítám orders…
+              </div>
             ) : exchangeOrders.length === 0 ? (
               <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
                 {useTestnet ? "Žádné otevřené testnet orders." : "Žádné otevřené mainnet orders."}
@@ -639,16 +681,18 @@ export default function Dashboard({
                       </Badge>
                     </div>
                     <div className="text-xs text-slate-400 font-mono mt-1">
-                      Qty {o.qty} @ {o.price ?? "mkt"} | {o.status}
+                      Qty {Number.isFinite(o.qty) ? o.qty : "—"} @ {Number.isFinite(o.price) ? o.price : "mkt"} | {o.status}
                     </div>
                     <div className="text-[11px] text-slate-500 mt-1">
-                      {new Date(o.createdTime).toLocaleString()}
+                      {o.createdTime
+                        ? new Date(o.createdTime).toLocaleString()
+                        : "—"}
                     </div>
                   </div>
                 ))}
               </div>
             )}
-            {exchangeTrades.length > 0 && (
+            {tradesLoaded && exchangeTrades.length > 0 && (
               <div className="mt-4 pt-3 border-t border-white/10">
                 <div className="text-xs text-slate-400 mb-2">Latest fills</div>
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
@@ -656,9 +700,17 @@ export default function Dashboard({
                     <div key={t.id} className="text-xs font-mono text-slate-300 flex justify-between">
                       <span className="flex-1 truncate">{t.symbol}</span>
                       <span className={t.side === "Buy" ? "text-emerald-400" : "text-red-400"}>{t.side}</span>
-                      <span>{t.qty}</span>
-                      <span>@{t.price}</span>
-                      <span>{new Date(t.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                      <span>{Number.isFinite(t.qty) ? t.qty : "—"}</span>
+                      <span>@{Number.isFinite(t.price) ? t.price : "—"}</span>
+                      <span>
+                        {t.time
+                          ? new Date(t.time).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                            })
+                          : "—"}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -673,7 +725,7 @@ export default function Dashboard({
             <CardTitle className="text-sm font-medium text-slate-400">Asset PnL History</CardTitle>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-500">
-                {Object.keys(assetPnlHistory).length} assets
+                {pnlLoaded ? `${Object.keys(assetPnlHistory).length} assets` : "—"}
               </span>
               <Button
                 variant="outline"
@@ -681,12 +733,16 @@ export default function Dashboard({
                 onClick={() => resetPnlHistory()}
                 className="h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white"
               >
-                Reset
+                Refresh
               </Button>
             </div>
           </CardHeader>
           <CardContent>
-            {Object.keys(assetPnlHistory).length === 0 ? (
+            {!pnlLoaded ? (
+              <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
+                Načítám PnL…
+              </div>
+            ) : Object.keys(assetPnlHistory).length === 0 ? (
               <div className="text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg">
                 Žádný historický PnL zatím uložen.
               </div>
@@ -694,7 +750,10 @@ export default function Dashboard({
               <div className="space-y-3">
                 {Object.entries(assetPnlHistory).map(([symbol, records]) => {
                   const latest = records[0];
-                  const sum = records.reduce((acc, r) => acc + (r.pnl ?? 0), 0);
+                  const sum = records.reduce((acc, r) => {
+                    return Number.isFinite(r.pnl) ? acc + r.pnl : acc;
+                  }, 0);
+                  const latestPnl = latest && Number.isFinite(latest.pnl) ? latest.pnl : null;
                   return (
                     <div
                       key={symbol}
@@ -711,8 +770,8 @@ export default function Dashboard({
                       </div>
                       {latest && (
                         <div className="text-xs text-slate-400 font-mono mt-1">
-                          Poslední: {latest.pnl >= 0 ? "+" : ""}
-                          {latest.pnl.toFixed(2)} · {new Date(latest.timestamp).toLocaleString()}
+                          Poslední: {latestPnl != null ? (latestPnl >= 0 ? "+" : "") : ""}
+                          {latestPnl != null ? latestPnl.toFixed(2) : "—"} · {latest.timestamp ? new Date(latest.timestamp).toLocaleString() : "—"}
                         </div>
                       )}
                     </div>
