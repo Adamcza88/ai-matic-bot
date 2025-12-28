@@ -7,6 +7,8 @@ import { TradingMode } from "../types";
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
+const MIN_POSITION_NOTIONAL_USD = 4;
+const MAX_POSITION_NOTIONAL_USD = 7;
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
     strictRiskAdherence: true,
@@ -260,6 +262,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return { ok: false, reason: "invalid_qty" };
         }
         let notional = qty * entry;
+        if (Number.isFinite(notional) && notional > 0) {
+            notional = Math.min(Math.max(notional, MIN_POSITION_NOTIONAL_USD), MAX_POSITION_NOTIONAL_USD);
+            qty = notional / entry;
+        }
         const maxAllocPct = toNumber(settings.maxAllocatedCapitalPercent);
         if (Number.isFinite(maxAllocPct) &&
             maxAllocPct > 0 &&
@@ -268,9 +274,15 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             entry > 0) {
             const maxNotional = equity * maxAllocPct;
             if (Number.isFinite(maxNotional) && maxNotional > 0) {
+                if (maxNotional < MIN_POSITION_NOTIONAL_USD) {
+                    return { ok: false, reason: "insufficient_equity" };
+                }
                 if (notional > maxNotional) {
                     notional = maxNotional;
                     qty = notional / entry;
+                }
+                if (notional < MIN_POSITION_NOTIONAL_USD) {
+                    return { ok: false, reason: "insufficient_equity" };
                 }
             }
         }
@@ -366,10 +378,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         addGate("Max positions", context.maxPositionsOk, maxPositionsDetail);
         addGate("Position clear", !context.hasPosition, "no open position");
         addGate("Orders clear", !context.hasOrders, `open ${symbolOrders.length}`);
-        if (pos) {
-            addGate("SL set", Number.isFinite(sl) && sl > 0, Number.isFinite(sl) ? `SL ${formatNumber(sl, 6)}` : undefined);
-            addGate("TP set", Number.isFinite(tp) && tp > 0, Number.isFinite(tp) ? `TP ${formatNumber(tp, 6)}` : undefined);
-        }
+        const slOk = context.hasPosition && Number.isFinite(sl) && sl > 0;
+        const tpOk = context.hasPosition && Number.isFinite(tp) && tp > 0;
+        addGate("SL set", slOk, slOk ? `SL ${formatNumber(sl, 6)}` : undefined);
+        addGate("TP set", tpOk, tpOk ? `TP ${formatNumber(tp, 6)}` : undefined);
         const hardEnabled = context.settings.enableHardGates !== false;
         const softEnabled = context.settings.enableSoftGates !== false;
         const hardReasons = [];

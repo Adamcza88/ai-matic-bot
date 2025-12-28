@@ -20,6 +20,8 @@ import type { AssetPnlMap } from "../lib/pnlHistory";
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
+const MIN_POSITION_NOTIONAL_USD = 4;
+const MAX_POSITION_NOTIONAL_USD = 7;
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -319,6 +321,13 @@ export function useTradingBot(
       }
 
       let notional = qty * entry;
+      if (Number.isFinite(notional) && notional > 0) {
+        notional = Math.min(
+          Math.max(notional, MIN_POSITION_NOTIONAL_USD),
+          MAX_POSITION_NOTIONAL_USD
+        );
+        qty = notional / entry;
+      }
       const maxAllocPct = toNumber(settings.maxAllocatedCapitalPercent);
       if (
         Number.isFinite(maxAllocPct) &&
@@ -329,9 +338,15 @@ export function useTradingBot(
       ) {
         const maxNotional = equity * maxAllocPct;
         if (Number.isFinite(maxNotional) && maxNotional > 0) {
+          if (maxNotional < MIN_POSITION_NOTIONAL_USD) {
+            return { ok: false, reason: "insufficient_equity" as const };
+          }
           if (notional > maxNotional) {
             notional = maxNotional;
             qty = notional / entry;
+          }
+          if (notional < MIN_POSITION_NOTIONAL_USD) {
+            return { ok: false, reason: "insufficient_equity" as const };
           }
         }
       }
