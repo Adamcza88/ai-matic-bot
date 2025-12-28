@@ -131,7 +131,10 @@ export default function Dashboard({
       PostOnly: true,
       "BBO fresh": true,
       "Exec allowed": true,
-      "BBO age": true,
+      "Feed age": true,
+      "Position clear": true,
+      "Orders clear": true,
+      "Confirm required": true,
     }),
     []
   );
@@ -142,6 +145,10 @@ export default function Dashboard({
       "ST1 close": ["Close vs ST"],
       RVOL: ["RVOL ≥ 1.2"],
       Spread: ["Spread ok"],
+      "Feed age": ["BBO age", "BBO fresh"],
+      "Position clear": ["Position open"],
+      "Orders clear": ["Open orders"],
+      "Confirm required": ["CONFIRM_REQUIRED"],
     }),
     []
   );
@@ -580,6 +587,13 @@ export default function Dashboard({
                   : diag?.executionAllowed === false
                     ? (diag?.executionReason ?? "BLOCKED")
                     : "N/A";
+                const feedAgeMs = diag?.feedAgeMs;
+                const feedAgeOk = diag?.feedAgeOk;
+                const feedAgeLabel = feedAgeOk == null
+                  ? "N/A"
+                  : feedAgeOk
+                    ? "OK"
+                    : "FAIL";
                 return (
                   <div key={sym} className="p-3 rounded-lg border border-white/5 bg-white/5">
                     <div className="flex items-center justify-between mb-2">
@@ -643,13 +657,13 @@ export default function Dashboard({
                         </button>
                         <button
                           type="button"
-                          onClick={() => toggleChecklist("BBO age")}
+                          onClick={() => toggleChecklist("Feed age")}
                           className="flex items-center gap-2 text-left"
                           title="Kliknutím zapneš/vypneš gate pro validaci vstupu."
                         >
-                          <span className="h-2 w-2 rounded-full bg-slate-500" />
-                          <span className={checklistEnabled["BBO age"] ? "text-white" : "text-slate-500"}>
-                            BBO age: {diag?.bboAgeMs != null && Number.isFinite(diag.bboAgeMs) ? `${diag.bboAgeMs} ms` : "—"}
+                          <span className={`h-2 w-2 rounded-full ${feedAgeOk == null ? "bg-slate-600" : feedAgeOk ? "bg-emerald-400" : "bg-red-400"}`} />
+                          <span className={checklistEnabled["Feed age"] ? "text-white" : "text-slate-500"}>
+                            Feed age {feedAgeLabel}: {feedAgeMs != null && Number.isFinite(feedAgeMs) ? `${feedAgeMs} ms` : "—"}
                           </span>
                         </button>
                         {(breakdownParts.length > 0 || diag?.qualityTopReason) && (

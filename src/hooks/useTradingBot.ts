@@ -19,6 +19,7 @@ import type { AssetPnlMap } from "../lib/pnlHistory";
 
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
+const FEED_AGE_OK_MS = 60_000;
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -396,8 +397,10 @@ export function useTradingBot(
     (symbol: string, decision: PriceFeedDecision, lastScanTs: number) => {
       const context = getSymbolContext(symbol, decision);
       const lastTick = symbolTickRef.current.get(symbol) ?? 0;
-      const bboAgeMs =
+      const feedAgeMs =
         lastTick > 0 ? Math.max(0, Date.now() - lastTick) : null;
+      const feedAgeOk =
+        feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
       const signalActive = Boolean(decision?.signal);
       const pos = positionsRef.current.find((p) => p.symbol === symbol);
       const sl = toNumber(pos?.sl);
@@ -411,9 +414,13 @@ export function useTradingBot(
       addGate("Signal", signalActive);
       addGate("Engine ok", context.engineOk);
       addGate("Session ok", context.sessionOk);
+      addGate(
+        "Confirm required",
+        !context.settings.requireConfirmationInAuto
+      );
       addGate("Max positions", context.maxPositionsOk);
-      addGate("Position open", context.hasPosition);
-      addGate("Open orders", context.hasOrders);
+      addGate("Position clear", !context.hasPosition);
+      addGate("Orders clear", !context.hasOrders);
       if (pos) {
         addGate("SL set", Number.isFinite(sl) && sl > 0);
         addGate("TP set", Number.isFinite(tp) && tp > 0);
@@ -422,23 +429,31 @@ export function useTradingBot(
       const hardEnabled = context.settings.enableHardGates !== false;
       const softEnabled = context.settings.enableSoftGates !== false;
       const hardReasons: string[] = [];
-      if (!context.engineOk && isGateEnabled("Engine ok")) {
-        hardReasons.push("Engine ok");
-      }
-      if (!context.sessionOk && isGateEnabled("Session ok")) {
-        hardReasons.push("Session ok");
-      }
-      if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
-        hardReasons.push("Max positions");
-      }
-      if (context.hasPosition && isGateEnabled("Position open")) {
-        hardReasons.push("Position open");
-      }
-      if (context.hasOrders && isGateEnabled("Open orders")) {
-        hardReasons.push("Open orders");
-      }
-      if (context.settings.requireConfirmationInAuto) {
-        hardReasons.push("Confirm required");
+      if (hardEnabled) {
+        if (!context.engineOk && isGateEnabled("Engine ok")) {
+          hardReasons.push("Engine ok");
+        }
+        if (!context.sessionOk && isGateEnabled("Session ok")) {
+          hardReasons.push("Session ok");
+        }
+        if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
+          hardReasons.push("Max positions");
+        }
+        if (context.hasPosition && isGateEnabled("Position clear")) {
+          hardReasons.push("Position clear");
+        }
+        if (context.hasOrders && isGateEnabled("Orders clear")) {
+          hardReasons.push("Orders clear");
+        }
+        if (feedAgeOk === false && isGateEnabled("Feed age")) {
+          hardReasons.push("Feed age");
+        }
+        if (
+          context.settings.requireConfirmationInAuto &&
+          isGateEnabled("Confirm required")
+        ) {
+          hardReasons.push("Confirm required");
+        }
       }
 
       const hardBlocked = hardEnabled && hardReasons.length > 0;
@@ -465,7 +480,8 @@ export function useTradingBot(
           : undefined,
         gates,
         lastScanTs,
-        bboAgeMs,
+        feedAgeMs,
+        feedAgeOk,
       };
     },
     [getSymbolContext, isGateEnabled]
@@ -1043,23 +1059,29 @@ export function useTradingBot(
 
       const context = getSymbolContext(symbol, decision);
       const blockReasons: string[] = [];
-      if (!context.engineOk && isGateEnabled("Engine ok")) {
-        blockReasons.push("Engine ok");
-      }
-      if (!context.sessionOk && isGateEnabled("Session ok")) {
-        blockReasons.push("Session ok");
-      }
-      if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
-        blockReasons.push("Max positions");
-      }
-      if (context.hasPosition && isGateEnabled("Position open")) {
-        blockReasons.push("Position open");
-      }
-      if (context.hasOrders && isGateEnabled("Open orders")) {
-        blockReasons.push("Open orders");
-      }
-      if (context.settings.requireConfirmationInAuto) {
-        blockReasons.push("Confirm required");
+      const hardEnabled = context.settings.enableHardGates !== false;
+      if (hardEnabled) {
+        if (!context.engineOk && isGateEnabled("Engine ok")) {
+          blockReasons.push("Engine ok");
+        }
+        if (!context.sessionOk && isGateEnabled("Session ok")) {
+          blockReasons.push("Session ok");
+        }
+        if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
+          blockReasons.push("Max positions");
+        }
+        if (context.hasPosition && isGateEnabled("Position clear")) {
+          blockReasons.push("Position clear");
+        }
+        if (context.hasOrders && isGateEnabled("Orders clear")) {
+          blockReasons.push("Orders clear");
+        }
+        if (
+          context.settings.requireConfirmationInAuto &&
+          isGateEnabled("Confirm required")
+        ) {
+          blockReasons.push("Confirm required");
+        }
       }
 
       const execEnabled = isGateEnabled("Exec allowed");
