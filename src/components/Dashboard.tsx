@@ -42,6 +42,7 @@ export default function Dashboard({
     scanDiagnostics,
     manualClosePosition,
     dynamicSymbols,
+    updateGateOverrides,
   } = bot;
   const formatMoney = (value?: number, digits = 2) =>
     Number.isFinite(value) ? value.toFixed(digits) : "—";
@@ -171,6 +172,10 @@ export default function Dashboard({
     if (typeof localStorage === "undefined") return;
     localStorage.setItem("ai-matic-checklist-enabled", JSON.stringify(checklistEnabled));
   }, [checklistEnabled]);
+
+  useEffect(() => {
+    updateGateOverrides?.(checklistEnabled);
+  }, [checklistEnabled, updateGateOverrides]);
 
   const toggleChecklist = (name: string) => {
     setChecklistEnabled((p) => ({ ...p, [name]: !(p[name] ?? true) }));

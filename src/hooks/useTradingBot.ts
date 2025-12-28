@@ -18,6 +18,7 @@ import type {
 import type { AssetPnlMap } from "../lib/pnlHistory";
 
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
+const LOG_DEDUPE_WINDOW_MS = 1500;
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -156,6 +157,8 @@ export function useTradingBot(
     ((symbol: string, decision: PriceFeedDecision) => void) | null
   >(null);
   const feedLogRef = useRef<{ env: string; ts: number } | null>(null);
+  const logDedupeRef = useRef<Map<string, number>>(new Map());
+  const gateOverridesRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     persistSettings(settings);
@@ -205,10 +208,26 @@ export function useTradingBot(
 
   const addLogEntries = useCallback((entries: LogEntry[]) => {
     if (!entries.length) return;
+    const dedupe = logDedupeRef.current;
+    const now = Date.now();
+    const filtered: LogEntry[] = [];
+    for (const entry of entries) {
+      const key = `${entry.action}:${entry.message}`;
+      const last = dedupe.get(key);
+      if (last && now - last < LOG_DEDUPE_WINDOW_MS) continue;
+      dedupe.set(key, now);
+      filtered.push(entry);
+    }
+    if (dedupe.size > 1000) {
+      for (const [key, ts] of dedupe.entries()) {
+        if (now - ts > 60_000) dedupe.delete(key);
+      }
+    }
+    if (!filtered.length) return;
     setLogEntries((prev) => {
       const list = prev ? [...prev] : [];
       const map = new Map(list.map((entry) => [entry.id, entry]));
-      for (const entry of entries) {
+      for (const entry of filtered) {
         map.set(entry.id, entry);
       }
       const merged = Array.from(map.values()).sort(
@@ -217,6 +236,11 @@ export function useTradingBot(
       );
       return merged.slice(0, 200);
     });
+  }, []);
+
+  const isGateEnabled = useCallback((name: string) => {
+    const value = gateOverridesRef.current?.[name];
+    return typeof value === "boolean" ? value : true;
   }, []);
 
   const getEquityValue = useCallback(() => {
@@ -370,18 +394,31 @@ export function useTradingBot(
       const hardEnabled = context.settings.enableHardGates !== false;
       const softEnabled = context.settings.enableSoftGates !== false;
       const hardReasons: string[] = [];
-      if (!context.engineOk) hardReasons.push("ENGINE_HALTED");
-      if (!context.sessionOk) hardReasons.push("SESSION_OFF");
-      if (!context.maxPositionsOk) hardReasons.push("MAX_POSITIONS");
-      if (context.hasPosition) hardReasons.push("POSITION_OPEN");
-      if (context.hasOrders) hardReasons.push("OPEN_ORDERS");
+      if (!context.engineOk && isGateEnabled("Engine ok")) {
+        hardReasons.push("ENGINE_HALTED");
+      }
+      if (!context.sessionOk && isGateEnabled("Session ok")) {
+        hardReasons.push("SESSION_OFF");
+      }
+      if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
+        hardReasons.push("MAX_POSITIONS");
+      }
+      if (context.hasPosition && isGateEnabled("Position open")) {
+        hardReasons.push("POSITION_OPEN");
+      }
+      if (context.hasOrders && isGateEnabled("Open orders")) {
+        hardReasons.push("OPEN_ORDERS");
+      }
       if (context.settings.requireConfirmationInAuto) {
         hardReasons.push("CONFIRM_REQUIRED");
       }
 
       const hardBlocked = hardEnabled && hardReasons.length > 0;
+      const execEnabled = isGateEnabled("Exec allowed");
       const executionAllowed = signalActive
-        ? hardReasons.length === 0
+        ? execEnabled
+          ? hardReasons.length === 0
+          : false
         : null;
 
       return {
@@ -392,14 +429,18 @@ export function useTradingBot(
         hardBlock: hardBlocked ? hardReasons.join(" · ") : undefined,
         executionAllowed,
         executionReason:
-          signalActive && hardReasons.length > 0
-            ? hardReasons.join(" · ")
+          signalActive
+            ? execEnabled
+              ? hardReasons.length > 0
+                ? hardReasons.join(" · ")
+                : undefined
+              : "EXEC_DISABLED"
             : undefined,
         gates,
         lastScanTs,
       };
     },
-    [getSymbolContext]
+    [getSymbolContext, isGateEnabled]
   );
 
   const refreshDiagnosticsFromDecisions = useCallback(() => {
@@ -417,6 +458,14 @@ export function useTradingBot(
       return next;
     });
   }, [buildScanDiagnostics]);
+
+  const updateGateOverrides = useCallback(
+    (overrides: Record<string, boolean>) => {
+      gateOverridesRef.current = { ...overrides };
+      refreshDiagnosticsFromDecisions();
+    },
+    [refreshDiagnosticsFromDecisions]
+  );
 
   const refreshFast = useCallback(async () => {
     if (fastPollRef.current) return;
@@ -948,13 +997,26 @@ export function useTradingBot(
 
       const context = getSymbolContext(symbol, decision);
       const blockReasons: string[] = [];
-      if (!context.engineOk) blockReasons.push("ENGINE_HALTED");
-      if (!context.sessionOk) blockReasons.push("SESSION_OFF");
-      if (!context.maxPositionsOk) blockReasons.push("MAX_POSITIONS");
-      if (context.hasPosition) blockReasons.push("POSITION_OPEN");
-      if (context.hasOrders) blockReasons.push("OPEN_ORDERS");
+      if (!context.engineOk && isGateEnabled("Engine ok")) {
+        blockReasons.push("ENGINE_HALTED");
+      }
+      if (!context.sessionOk && isGateEnabled("Session ok")) {
+        blockReasons.push("SESSION_OFF");
+      }
+      if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
+        blockReasons.push("MAX_POSITIONS");
+      }
+      if (context.hasPosition && isGateEnabled("Position open")) {
+        blockReasons.push("POSITION_OPEN");
+      }
+      if (context.hasOrders && isGateEnabled("Open orders")) {
+        blockReasons.push("OPEN_ORDERS");
+      }
       if (context.settings.requireConfirmationInAuto) {
         blockReasons.push("CONFIRM_REQUIRED");
+      }
+      if (!isGateEnabled("Exec allowed")) {
+        blockReasons.push("EXEC_DISABLED");
       }
 
       if (blockReasons.length) {
@@ -1048,6 +1110,7 @@ export function useTradingBot(
       buildScanDiagnostics,
       computeNotionalForSignal,
       getSymbolContext,
+      isGateEnabled,
     ]
   );
 
@@ -1210,6 +1273,7 @@ export function useTradingBot(
     dynamicSymbols: null,
     settings,
     updateSettings,
+    updateGateOverrides,
   };
 }
 

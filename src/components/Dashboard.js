@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Activity, Settings, TrendingUp, Zap } from "lucide-react";
 import SettingsPanel from "./SettingsPanel";
 export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bot, }) {
-    const { systemState, portfolioState, activePositions, logEntries, testnetOrders, testnetTrades, ordersError, refreshTestnetOrders, assetPnlHistory, resetPnlHistory, scanDiagnostics, manualClosePosition, dynamicSymbols, } = bot;
+    const { systemState, portfolioState, activePositions, logEntries, testnetOrders, testnetTrades, ordersError, refreshTestnetOrders, assetPnlHistory, resetPnlHistory, scanDiagnostics, manualClosePosition, dynamicSymbols, updateGateOverrides, } = bot;
     const formatMoney = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : "—";
     const dailyPnl = portfolioState?.dailyPnl;
     const dailyPnlOk = Number.isFinite(dailyPnl);
@@ -132,6 +132,9 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             return;
         localStorage.setItem("ai-matic-checklist-enabled", JSON.stringify(checklistEnabled));
     }, [checklistEnabled]);
+    useEffect(() => {
+        updateGateOverrides?.(checklistEnabled);
+    }, [checklistEnabled, updateGateOverrides]);
     const toggleChecklist = (name) => {
         setChecklistEnabled((p) => ({ ...p, [name]: !(p[name] ?? true) }));
     };

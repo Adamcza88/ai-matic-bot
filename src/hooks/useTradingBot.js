@@ -5,6 +5,7 @@ import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import { TradingMode } from "../types";
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
+const LOG_DEDUPE_WINDOW_MS = 1500;
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
     strictRiskAdherence: true,
@@ -110,6 +111,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const intentPendingRef = useRef(new Set());
     const settingsRef = useRef(settings);
     const walletRef = useRef(walletSnapshot);
+    const handleDecisionRef = useRef(null);
+    const feedLogRef = useRef(null);
+    const logDedupeRef = useRef(new Map());
+    const gateOverridesRef = useRef({});
     useEffect(() => {
         persistSettings(settings);
     }, [settings]);
@@ -151,15 +156,38 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const addLogEntries = useCallback((entries) => {
         if (!entries.length)
             return;
+        const dedupe = logDedupeRef.current;
+        const now = Date.now();
+        const filtered = [];
+        for (const entry of entries) {
+            const key = `${entry.action}:${entry.message}`;
+            const last = dedupe.get(key);
+            if (last && now - last < LOG_DEDUPE_WINDOW_MS)
+                continue;
+            dedupe.set(key, now);
+            filtered.push(entry);
+        }
+        if (dedupe.size > 1000) {
+            for (const [key, ts] of dedupe.entries()) {
+                if (now - ts > 60_000)
+                    dedupe.delete(key);
+            }
+        }
+        if (!filtered.length)
+            return;
         setLogEntries((prev) => {
             const list = prev ? [...prev] : [];
             const map = new Map(list.map((entry) => [entry.id, entry]));
-            for (const entry of entries) {
+            for (const entry of filtered) {
                 map.set(entry.id, entry);
             }
             const merged = Array.from(map.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
             return merged.slice(0, 200);
         });
+    }, []);
+    const isGateEnabled = useCallback((name) => {
+        const value = gateOverridesRef.current?.[name];
+        return typeof value === "boolean" ? value : true;
     }, []);
     const getEquityValue = useCallback(() => {
         const wallet = walletRef.current;
@@ -291,22 +319,30 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const hardEnabled = context.settings.enableHardGates !== false;
         const softEnabled = context.settings.enableSoftGates !== false;
         const hardReasons = [];
-        if (!context.engineOk)
+        if (!context.engineOk && isGateEnabled("Engine ok")) {
             hardReasons.push("ENGINE_HALTED");
-        if (!context.sessionOk)
+        }
+        if (!context.sessionOk && isGateEnabled("Session ok")) {
             hardReasons.push("SESSION_OFF");
-        if (!context.maxPositionsOk)
+        }
+        if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
             hardReasons.push("MAX_POSITIONS");
-        if (context.hasPosition)
+        }
+        if (context.hasPosition && isGateEnabled("Position open")) {
             hardReasons.push("POSITION_OPEN");
-        if (context.hasOrders)
+        }
+        if (context.hasOrders && isGateEnabled("Open orders")) {
             hardReasons.push("OPEN_ORDERS");
+        }
         if (context.settings.requireConfirmationInAuto) {
             hardReasons.push("CONFIRM_REQUIRED");
         }
         const hardBlocked = hardEnabled && hardReasons.length > 0;
+        const execEnabled = isGateEnabled("Exec allowed");
         const executionAllowed = signalActive
-            ? hardReasons.length === 0
+            ? execEnabled
+                ? hardReasons.length === 0
+                : false
             : null;
         return {
             signalActive,
@@ -315,13 +351,17 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             hardBlocked,
             hardBlock: hardBlocked ? hardReasons.join(" · ") : undefined,
             executionAllowed,
-            executionReason: signalActive && hardReasons.length > 0
-                ? hardReasons.join(" · ")
+            executionReason: signalActive
+                ? execEnabled
+                    ? hardReasons.length > 0
+                        ? hardReasons.join(" · ")
+                        : undefined
+                    : "EXEC_DISABLED"
                 : undefined,
             gates,
             lastScanTs,
         };
-    }, [getSymbolContext]);
+    }, [getSymbolContext, isGateEnabled]);
     const refreshDiagnosticsFromDecisions = useCallback(() => {
         const entries = Object.entries(decisionRef.current);
         if (!entries.length)
@@ -334,6 +374,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return next;
         });
     }, [buildScanDiagnostics]);
+    const updateGateOverrides = useCallback((overrides) => {
+        gateOverridesRef.current = { ...overrides };
+        refreshDiagnosticsFromDecisions();
+    }, [refreshDiagnosticsFromDecisions]);
     const refreshFast = useCallback(async () => {
         if (fastPollRef.current)
             return;
@@ -803,18 +847,26 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }
         const context = getSymbolContext(symbol, decision);
         const blockReasons = [];
-        if (!context.engineOk)
+        if (!context.engineOk && isGateEnabled("Engine ok")) {
             blockReasons.push("ENGINE_HALTED");
-        if (!context.sessionOk)
+        }
+        if (!context.sessionOk && isGateEnabled("Session ok")) {
             blockReasons.push("SESSION_OFF");
-        if (!context.maxPositionsOk)
+        }
+        if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
             blockReasons.push("MAX_POSITIONS");
-        if (context.hasPosition)
+        }
+        if (context.hasPosition && isGateEnabled("Position open")) {
             blockReasons.push("POSITION_OPEN");
-        if (context.hasOrders)
+        }
+        if (context.hasOrders && isGateEnabled("Open orders")) {
             blockReasons.push("OPEN_ORDERS");
+        }
         if (context.settings.requireConfirmationInAuto) {
             blockReasons.push("CONFIRM_REQUIRED");
+        }
+        if (!isGateEnabled("Exec allowed")) {
+            blockReasons.push("EXEC_DISABLED");
         }
         if (blockReasons.length) {
             addLogEntries([
@@ -901,32 +953,42 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         buildScanDiagnostics,
         computeNotionalForSignal,
         getSymbolContext,
+        isGateEnabled,
     ]);
     useEffect(() => {
+        handleDecisionRef.current = handleDecision;
+    }, [handleDecision]);
+    useEffect(() => {
         if (!authToken)
-            return;
-        if (mode === TradingMode.OFF)
             return;
         signalSeenRef.current.clear();
         intentPendingRef.current.clear();
         decisionRef.current = {};
         setScanDiagnostics(null);
-        const stop = startPriceFeed(WATCH_SYMBOLS, handleDecision, {
+        const stop = startPriceFeed(WATCH_SYMBOLS, (symbol, decision) => {
+            handleDecisionRef.current?.(symbol, decision);
+        }, {
             useTestnet,
             timeframe: "1",
         });
-        addLogEntries([
-            {
-                id: `feed:start:${Date.now()}`,
-                timestamp: new Date().toISOString(),
-                action: "STATUS",
-                message: `Price feed connected (${useTestnet ? "testnet" : "mainnet"})`,
-            },
-        ]);
+        const envLabel = useTestnet ? "testnet" : "mainnet";
+        const lastLog = feedLogRef.current;
+        const now = Date.now();
+        if (!lastLog || lastLog.env !== envLabel || now - lastLog.ts > 5000) {
+            feedLogRef.current = { env: envLabel, ts: now };
+            addLogEntries([
+                {
+                    id: `feed:start:${envLabel}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "STATUS",
+                    message: `Price feed connected (${envLabel})`,
+                },
+            ]);
+        }
         return () => {
             stop();
         };
-    }, [addLogEntries, authToken, handleDecision, mode, useTestnet]);
+    }, [addLogEntries, authToken, useTestnet]);
     const systemState = useMemo(() => {
         const hasSuccess = Boolean(lastSuccessAt);
         const status = !authToken
@@ -1036,5 +1098,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         dynamicSymbols: null,
         settings,
         updateSettings,
+        updateGateOverrides,
     };
 }
