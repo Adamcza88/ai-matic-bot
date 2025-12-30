@@ -83,7 +83,10 @@ export function startPriceFeed(symbols, onDecision, opts) {
             buffer.push(candle);
             if (buffer.length > 500)
                 buffer.shift();
-            const decision = evaluateStrategyForSymbol(symbol, buffer);
+            const overrides = typeof opts?.configOverrides === "function"
+                ? opts.configOverrides(symbol)
+                : opts?.configOverrides;
+            const decision = evaluateStrategyForSymbol(symbol, buffer, overrides ?? {});
             onDecision(symbol, decision);
         }
         catch (err) {

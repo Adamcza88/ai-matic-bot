@@ -85,6 +85,28 @@ const WATCH_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 export function useTradingBot(mode, useTestnet = false, authToken) {
     const [settings, setSettings] = useState(() => loadStoredSettings() ?? DEFAULT_SETTINGS);
     const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
+    const engineConfig = useMemo(() => {
+        if (settings.riskMode !== "ai-matic") {
+            return {};
+        }
+        const strictness = settings.entryStrictness === "base"
+            ? "relaxed"
+            : settings.entryStrictness;
+        return {
+            baseTimeframe: "15m",
+            signalTimeframe: "5m",
+            entryStrictness: strictness,
+            adxThreshold: 20,
+            aggressiveAdxThreshold: 28,
+            minAtrFractionOfPrice: 0.0004,
+            atrEntryMultiplier: 1.6,
+            swingBackoffAtr: 0.6,
+            liquiditySweepVolumeMult: 1.0,
+            volExpansionAtrMult: 1.15,
+            volExpansionVolMult: 1.1,
+            cooldownBars: 0,
+        };
+    }, [settings.entryStrictness, settings.riskMode]);
     const [positions, setPositions] = useState(null);
     const [orders, setOrders] = useState(null);
     const [trades, setTrades] = useState(null);
@@ -1076,6 +1098,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }, {
             useTestnet,
             timeframe: "1",
+            configOverrides: engineConfig,
         });
         const envLabel = useTestnet ? "testnet" : "mainnet";
         const lastLog = feedLogRef.current;
@@ -1094,7 +1117,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         return () => {
             stop();
         };
-    }, [addLogEntries, authToken, feedEpoch, useTestnet]);
+    }, [addLogEntries, authToken, engineConfig, feedEpoch, useTestnet]);
     useEffect(() => {
         if (!authToken)
             return;

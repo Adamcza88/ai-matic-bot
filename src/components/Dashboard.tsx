@@ -89,16 +89,16 @@ export default function Dashboard({
         execution: "PostOnly LIMIT · timeout 1×1m",
       };
     }
-    return {
-      label: "AI-MATIC",
-      subtitle: "AI-MATIC (15m/1m)",
-      symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-      timeframes: "HTF 15m · LTF 1m",
-      session: "24/7",
-      risk: "4 USDT / trade · 8 USDT total · max 2 pos",
-      entry: "ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2",
-      execution: "PostOnly LIMIT · timeout 1×15sec",
-    };
+      return {
+        label: "AI-MATIC",
+        subtitle: "AI-MATIC (15m/1m)",
+        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
+        timeframes: "HTF 15m · MTF 5m · LTF 1m",
+        session: "24/7",
+        risk: "4 USDT / trade · 8 USDT total · max 2 pos",
+        entry: "ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2",
+        execution: "PostOnly LIMIT · timeout 1×15sec",
+      };
   }, [bot.settings?.riskMode]);
 
   const allowedSymbols =

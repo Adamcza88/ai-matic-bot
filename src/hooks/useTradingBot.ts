@@ -5,6 +5,7 @@ import { Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import type { PriceFeedDecision } from "../engine/priceFeed";
+import type { BotConfig } from "../engine/botEngine";
 import { TradingMode } from "../types";
 import type {
   AISettings,
@@ -110,6 +111,29 @@ export function useTradingBot(
     () => loadStoredSettings() ?? DEFAULT_SETTINGS
   );
   const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
+  const engineConfig = useMemo<Partial<BotConfig>>(() => {
+    if (settings.riskMode !== "ai-matic") {
+      return {};
+    }
+    const strictness =
+      settings.entryStrictness === "base"
+        ? "relaxed"
+        : settings.entryStrictness;
+    return {
+      baseTimeframe: "15m",
+      signalTimeframe: "5m",
+      entryStrictness: strictness,
+      adxThreshold: 20,
+      aggressiveAdxThreshold: 28,
+      minAtrFractionOfPrice: 0.0004,
+      atrEntryMultiplier: 1.6,
+      swingBackoffAtr: 0.6,
+      liquiditySweepVolumeMult: 1.0,
+      volExpansionAtrMult: 1.15,
+      volExpansionVolMult: 1.1,
+      cooldownBars: 0,
+    };
+  }, [settings.entryStrictness, settings.riskMode]);
 
   const [positions, setPositions] = useState<ActivePosition[] | null>(null);
   const [orders, setOrders] = useState<TestnetOrder[] | null>(null);
@@ -1268,6 +1292,7 @@ export function useTradingBot(
       {
         useTestnet,
         timeframe: "1",
+        configOverrides: engineConfig,
       }
     );
 
@@ -1289,7 +1314,7 @@ export function useTradingBot(
     return () => {
       stop();
     };
-  }, [addLogEntries, authToken, feedEpoch, useTestnet]);
+  }, [addLogEntries, authToken, engineConfig, feedEpoch, useTestnet]);
 
   useEffect(() => {
     if (!authToken) return;

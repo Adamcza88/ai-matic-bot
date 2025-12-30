@@ -5,6 +5,7 @@ import {
   Candle,
   evaluateStrategyForSymbol,
 } from "@/engine/botEngine";
+import type { BotConfig } from "@/engine/botEngine";
 
 const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
 const FEED_URL_TESTNET = "wss://stream-testnet.bybit.com/v5/public/linear";
@@ -75,7 +76,13 @@ interface BybitWsMessage {
 export function startPriceFeed(
   symbols: string[],
   onDecision: (symbol: string, decision: PriceFeedDecision) => void,
-  opts?: { useTestnet?: boolean; timeframe?: string }
+  opts?: {
+    useTestnet?: boolean;
+    timeframe?: string;
+    configOverrides?:
+      | Partial<BotConfig>
+      | ((symbol: string) => Partial<BotConfig>);
+  }
 ): () => void {
   const ws = new WebSocket(opts?.useTestnet ? FEED_URL_TESTNET : FEED_URL_MAINNET);
   const timeframe = opts?.timeframe ?? "1";
@@ -136,7 +143,15 @@ export function startPriceFeed(
       buffer.push(candle);
       if (buffer.length > 500) buffer.shift();
 
-      const decision = evaluateStrategyForSymbol(symbol, buffer);
+      const overrides =
+        typeof opts?.configOverrides === "function"
+          ? opts.configOverrides(symbol)
+          : opts?.configOverrides;
+      const decision = evaluateStrategyForSymbol(
+        symbol,
+        buffer,
+        overrides ?? {}
+      );
       onDecision(symbol, decision);
     } catch (err) {
       console.error("priceFeed ws error:", err);
