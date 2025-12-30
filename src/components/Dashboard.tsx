@@ -1,7 +1,7 @@
 // src/components/Dashboard.tsx
 import { TradingMode } from "../types";
 import type { TradingBotApi } from "../hooks/useTradingBot";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -134,7 +134,7 @@ export default function Dashboard({
       "Feed age": true,
       "Position clear": true,
       "Orders clear": true,
-      "Confirm required": true,
+      "Confirm required": false,
     }),
     []
   );
@@ -181,12 +181,27 @@ export default function Dashboard({
   }, [checklistEnabled]);
 
   useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    const migrated = localStorage.getItem("ai-matic-checklist-migration-v2");
+    if (migrated) return;
+    localStorage.setItem("ai-matic-checklist-migration-v2", "true");
+    setChecklistEnabled((prev) => ({
+      ...prev,
+      "Exec allowed": true,
+      "Confirm required": false,
+    }));
+  }, []);
+
+  useEffect(() => {
     updateGateOverrides?.(checklistEnabled);
   }, [checklistEnabled, updateGateOverrides]);
 
   const toggleChecklist = (name: string) => {
     setChecklistEnabled((p) => ({ ...p, [name]: !(p[name] ?? true) }));
   };
+  const resetChecklist = useCallback(() => {
+    setChecklistEnabled(CHECKLIST_DEFAULTS);
+  }, [CHECKLIST_DEFAULTS]);
   const [showSettings, setShowSettings] = useState(false);
 
   return (
@@ -549,10 +564,20 @@ export default function Dashboard({
 
         {/* === SIGNAL CHECKLIST (detailed) === */}
         <Card className="bg-slate-900/50 border-white/10 text-white">
-          <CardHeader>
-            <CardTitle className="text-sm font-medium text-slate-400">
-              Signal Checklist (last scan)
-            </CardTitle>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-4">
+              <CardTitle className="text-sm font-medium text-slate-400">
+                Signal Checklist (last scan)
+              </CardTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={resetChecklist}
+                className="h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white"
+              >
+                Reset gates
+              </Button>
+            </div>
             <div className="text-[11px] text-slate-500 mt-1">
               {scanLoaded && lastScanTs
                 ? `Last scan: ${new Date(lastScanTs).toLocaleTimeString([], {

@@ -1,7 +1,7 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 // src/components/Dashboard.tsx
 import { TradingMode } from "../types";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -96,7 +96,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         "Feed age": true,
         "Position clear": true,
         "Orders clear": true,
-        "Confirm required": true,
+        "Confirm required": false,
     }), []);
     const CHECKLIST_ALIASES = useMemo(() => ({
         "HTF ST": ["HTF ST line", "HTF line projection"],
@@ -140,11 +140,27 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         localStorage.setItem("ai-matic-checklist-enabled", JSON.stringify(checklistEnabled));
     }, [checklistEnabled]);
     useEffect(() => {
+        if (typeof localStorage === "undefined")
+            return;
+        const migrated = localStorage.getItem("ai-matic-checklist-migration-v2");
+        if (migrated)
+            return;
+        localStorage.setItem("ai-matic-checklist-migration-v2", "true");
+        setChecklistEnabled((prev) => ({
+            ...prev,
+            "Exec allowed": true,
+            "Confirm required": false,
+        }));
+    }, []);
+    useEffect(() => {
         updateGateOverrides?.(checklistEnabled);
     }, [checklistEnabled, updateGateOverrides]);
     const toggleChecklist = (name) => {
         setChecklistEnabled((p) => ({ ...p, [name]: !(p[name] ?? true) }));
     };
+    const resetChecklist = useCallback(() => {
+        setChecklistEnabled(CHECKLIST_DEFAULTS);
+    }, [CHECKLIST_DEFAULTS]);
     const [showSettings, setShowSettings] = useState(false);
     return (_jsxs("div", { className: "space-y-6", children: [_jsxs("div", { className: "flex flex-col md:flex-row justify-between items-start md:items-center gap-4", children: [_jsxs("div", { children: [_jsx("h2", { className: "text-3xl font-bold tracking-tight text-white", children: "Dashboard" }), _jsx("p", { className: "text-slate-400 hidden lg:block", children: profileMeta.subtitle })] }), _jsxs("div", { className: "flex flex-col sm:flex-row gap-4 items-start sm:items-center", children: [_jsxs("div", { className: "flex items-center bg-slate-900 p-1 rounded-lg border border-white/10", children: [_jsx(Button, { variant: useTestnet ? "secondary" : "ghost", size: "sm", onClick: () => setUseTestnet(true), className: useTestnet ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white", children: "TESTNET" }), _jsx(Button, { variant: !useTestnet ? "secondary" : "ghost", size: "sm", onClick: () => setUseTestnet(false), className: !useTestnet ? "bg-emerald-600 text-white hover:bg-emerald-700" : "text-slate-400 hover:text-white", children: "MAINNET" })] }), _jsx("div", { className: "flex items-center bg-slate-900 p-1 rounded-lg border border-white/10", children: modeOptions.map((m) => (_jsx(Button, { variant: mode === m ? "secondary" : "ghost", size: "sm", onClick: () => setMode(m), className: mode === m
                                         ? "bg-blue-600 text-white hover:bg-blue-700"
@@ -210,7 +226,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                                                     hour: "2-digit",
                                                     minute: "2-digit",
                                                     second: "2-digit",
-                                                }) }), _jsx("span", { className: "font-medium text-blue-400 w-24 text-xs uppercase tracking-wider", children: l.action }), _jsx("span", { className: "text-slate-300", children: l.message })] }, l.id)))) }) })] }), _jsxs(Card, { className: "bg-slate-900/50 border-white/10 text-white", children: [_jsxs(CardHeader, { children: [_jsx(CardTitle, { className: "text-sm font-medium text-slate-400", children: "Signal Checklist (last scan)" }), _jsx("div", { className: "text-[11px] text-slate-500 mt-1", children: scanLoaded && lastScanTs
+                                                }) }), _jsx("span", { className: "font-medium text-blue-400 w-24 text-xs uppercase tracking-wider", children: l.action }), _jsx("span", { className: "text-slate-300", children: l.message })] }, l.id)))) }) })] }), _jsxs(Card, { className: "bg-slate-900/50 border-white/10 text-white", children: [_jsxs(CardHeader, { className: "pb-2", children: [_jsxs("div", { className: "flex items-center justify-between gap-4", children: [_jsx(CardTitle, { className: "text-sm font-medium text-slate-400", children: "Signal Checklist (last scan)" }), _jsx(Button, { variant: "outline", size: "sm", onClick: resetChecklist, className: "h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white", children: "Reset gates" })] }), _jsx("div", { className: "text-[11px] text-slate-500 mt-1", children: scanLoaded && lastScanTs
                                             ? `Last scan: ${new Date(lastScanTs).toLocaleTimeString([], {
                                                 hour: "2-digit",
                                                 minute: "2-digit",
