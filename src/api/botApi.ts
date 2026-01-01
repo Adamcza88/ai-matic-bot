@@ -29,6 +29,10 @@ export async function sendIntent(intent: TradeIntent, opts: AuthOpts) {
     throw new Error("invalid_qty");
   }
 
+  const isConditional = intent.entryType === "CONDITIONAL";
+  const triggerPrice = isConditional
+    ? intent.triggerPrice ?? intent.entryPrice
+    : undefined;
   const timeInForce =
     intent.entryType === "LIMIT_MAKER_FIRST" ? "PostOnly" : "GTC";
 
@@ -38,6 +42,7 @@ export async function sendIntent(intent: TradeIntent, opts: AuthOpts) {
     qty,
     orderType: "Limit",
     price: intent.entryPrice,
+    triggerPrice,
     timeInForce,
     orderLinkId: intent.intentId,
     sl: intent.slPrice,

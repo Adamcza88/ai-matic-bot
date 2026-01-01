@@ -69,6 +69,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    strategyCheatSheetEnabled: false,
     enableHardGates: true,
     enableSoftGates: true,
     baseRiskPerTrade: 0.02,
@@ -101,6 +102,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    strategyCheatSheetEnabled: false,
     enableHardGates: true,
     enableSoftGates: true,
     baseRiskPerTrade: 0.005,
@@ -133,6 +135,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    strategyCheatSheetEnabled: false,
     enableHardGates: true,
     enableSoftGates: true,
     baseRiskPerTrade: 0.01,
@@ -303,6 +306,37 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                   {local.enableSoftGates ? "On" : "Off"}
                 </button>
               </div>
+            </div>
+          </div>
+
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              Strategy Cheat Sheet
+            </label>
+            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              <div>
+                <div className="font-medium">{local.strategyCheatSheetEnabled ? "On" : "Off"}</div>
+                <div className="text-xs text-slate-400 mt-1">
+                  Prioritize saved entry setups (Limit/Conditional).
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setLocal({
+                    ...local,
+                    strategyCheatSheetEnabled: !local.strategyCheatSheetEnabled,
+                  })
+                }
+                className={`rounded-md border px-3 py-1 text-sm ${
+                  local.strategyCheatSheetEnabled
+                    ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                    : "border-slate-700 bg-slate-900/40 text-slate-200"
+                }`}
+              >
+                {local.strategyCheatSheetEnabled ? "On" : "Off"}
+              </button>
             </div>
           </div>
 

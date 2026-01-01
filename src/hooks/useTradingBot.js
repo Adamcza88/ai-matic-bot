@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = {
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
+    strategyCheatSheetEnabled: false,
     enableHardGates: true,
     enableSoftGates: true,
     entryStrictness: "base",
@@ -111,8 +112,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             volExpansionAtrMult: 1.15,
             volExpansionVolMult: 1.1,
             cooldownBars: 0,
+            useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
         };
-    }, [settings.entryStrictness, settings.riskMode]);
+    }, [settings.entryStrictness, settings.riskMode, settings.strategyCheatSheetEnabled]);
     const [positions, setPositions] = useState(null);
     const [orders, setOrders] = useState(null);
     const [trades, setTrades] = useState(null);
@@ -908,8 +910,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             profile: "AI-MATIC",
             symbol: signal.symbol,
             side: signal.side,
-            entryType: "LIMIT_MAKER_FIRST",
+            entryType: signal.entryType,
             entryPrice: signal.entryPrice,
+            triggerPrice: signal.triggerPrice,
             qtyMode: signal.qtyMode,
             qtyValue: signal.qtyValue,
             slPrice: signal.slPrice,
@@ -955,6 +958,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const sl = toNumber(intent?.sl);
         const tp = toNumber(intent?.tp);
         const side = String(intent?.side ?? "").toLowerCase() === "buy" ? "Buy" : "Sell";
+        const entryType = signal.entryType === "CONDITIONAL" ||
+            signal.entryType === "LIMIT" ||
+            signal.entryType === "LIMIT_MAKER_FIRST"
+            ? signal.entryType
+            : "LIMIT_MAKER_FIRST";
+        const triggerPrice = entryType === "CONDITIONAL"
+            ? Number.isFinite(signal.triggerPrice)
+                ? signal.triggerPrice
+                : entry
+            : undefined;
         const timestamp = signal.createdAt || new Date(now).toISOString();
         const msgParts = [`${symbol} ${side}`];
         if (Number.isFinite(entry)) {
@@ -1079,6 +1092,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     symbol: symbol,
                     side,
                     entryPrice: entry,
+                    entryType,
+                    triggerPrice,
                     slPrice: sl,
                     tpPrices: Number.isFinite(tp) ? [tp] : [],
                     qtyMode,

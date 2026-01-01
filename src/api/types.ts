@@ -1,6 +1,6 @@
 export type Symbol = "BTCUSDT" | "ETHUSDT" | "SOLUSDT" | "ADAUSDT";
 export type Side = "Buy" | "Sell";
-export type EntryType = "LIMIT_MAKER_FIRST" | "LIMIT" | "MARKET_DISABLED";
+export type EntryType = "LIMIT_MAKER_FIRST" | "LIMIT" | "CONDITIONAL" | "MARKET_DISABLED";
 
 export type TradeIntent = {
   intentId: string;
@@ -10,6 +10,7 @@ export type TradeIntent = {
   side: Side;
   entryType: EntryType;
   entryPrice?: number;
+  triggerPrice?: number;
   qtyMode: "USDT_NOTIONAL" | "BASE_QTY";
   qtyValue: number;
   slPrice: number;

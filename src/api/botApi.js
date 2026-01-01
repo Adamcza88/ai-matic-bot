@@ -18,6 +18,8 @@ export async function sendIntent(intent, opts) {
     if (!Number.isFinite(qty) || qty <= 0) {
         throw new Error("invalid_qty");
     }
+    const isConditional = intent.entryType === "CONDITIONAL";
+    const triggerPrice = isConditional ? intent.triggerPrice ?? intent.entryPrice : undefined;
     const timeInForce = intent.entryType === "LIMIT_MAKER_FIRST" ? "PostOnly" : "GTC";
     const payload = {
         symbol: intent.symbol,
@@ -25,6 +27,7 @@ export async function sendIntent(intent, opts) {
         qty,
         orderType: "Limit",
         price: intent.entryPrice,
+        triggerPrice,
         timeInForce,
         orderLinkId: intent.intentId,
         sl: intent.slPrice,

@@ -1,7 +1,7 @@
 // hooks/useTradingBot.ts
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendIntent } from "../api/botApi";
-import { Symbol } from "../api/types";
+import { EntryType, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import type { PriceFeedDecision } from "../engine/priceFeed";
@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS: AISettings = {
   useTrendFollowing: true,
   smcScalpMode: true,
   useLiquiditySweeps: false,
+  strategyCheatSheetEnabled: false,
   enableHardGates: true,
   enableSoftGates: true,
   entryStrictness: "base",
@@ -138,8 +139,9 @@ export function useTradingBot(
       volExpansionAtrMult: 1.15,
       volExpansionVolMult: 1.1,
       cooldownBars: 0,
+      useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
     };
-  }, [settings.entryStrictness, settings.riskMode]);
+  }, [settings.entryStrictness, settings.riskMode, settings.strategyCheatSheetEnabled]);
 
   const [positions, setPositions] = useState<ActivePosition[] | null>(null);
   const [orders, setOrders] = useState<TestnetOrder[] | null>(null);
@@ -1071,6 +1073,8 @@ export function useTradingBot(
     entryPrice: number;
     slPrice: number;
     tpPrices: number[];
+    entryType: EntryType;
+    triggerPrice?: number;
     qtyMode: "USDT_NOTIONAL" | "BASE_QTY";
     qtyValue: number;
   }) {
@@ -1081,8 +1085,9 @@ export function useTradingBot(
       profile: "AI-MATIC",
       symbol: signal.symbol,
       side: signal.side,
-      entryType: "LIMIT_MAKER_FIRST",
+      entryType: signal.entryType,
       entryPrice: signal.entryPrice,
+      triggerPrice: signal.triggerPrice,
       qtyMode: signal.qtyMode,
       qtyValue: signal.qtyValue,
       slPrice: signal.slPrice,
@@ -1134,6 +1139,18 @@ export function useTradingBot(
       const tp = toNumber(intent?.tp);
       const side =
         String(intent?.side ?? "").toLowerCase() === "buy" ? "Buy" : "Sell";
+      const entryType =
+        signal.entryType === "CONDITIONAL" ||
+        signal.entryType === "LIMIT" ||
+        signal.entryType === "LIMIT_MAKER_FIRST"
+          ? signal.entryType
+          : "LIMIT_MAKER_FIRST";
+      const triggerPrice =
+        entryType === "CONDITIONAL"
+          ? Number.isFinite(signal.triggerPrice)
+            ? signal.triggerPrice
+            : entry
+          : undefined;
       const timestamp =
         signal.createdAt || new Date(now).toISOString();
 
@@ -1269,6 +1286,8 @@ export function useTradingBot(
             symbol: symbol as Symbol,
             side,
             entryPrice: entry,
+            entryType,
+            triggerPrice,
             slPrice: sl,
             tpPrices: Number.isFinite(tp) ? [tp] : [],
             qtyMode,
