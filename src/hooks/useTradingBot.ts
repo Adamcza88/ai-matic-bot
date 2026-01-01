@@ -117,11 +117,11 @@ export function useTradingBot(
     }
     const strictness =
       settings.entryStrictness === "base"
-        ? "relaxed"
+        ? "ultra"
         : settings.entryStrictness;
     return {
       baseTimeframe: "15m",
-      signalTimeframe: "5m",
+      signalTimeframe: "1m",
       entryStrictness: strictness,
       adxThreshold: 20,
       aggressiveAdxThreshold: 28,
