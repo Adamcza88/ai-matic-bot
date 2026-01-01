@@ -89,6 +89,13 @@ const FIXED_QTY_BY_SYMBOL = {
     SOLUSDT: 3.5,
     ADAUSDT: 995,
 };
+
+const TRAIL_PROFILE_BY_RISK_MODE = {
+    "ai-matic": { activateR: 1.4, lockR: 0.6 },
+    "ai-matic-x": { activateR: 1.4, lockR: 0.6 },
+    "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
+};
+
 export function useTradingBot(mode, useTestnet = false, authToken) {
     const [settings, setSettings] = useState(() => loadStoredSettings() ?? DEFAULT_SETTINGS);
     const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
@@ -339,6 +346,27 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const equity = getEquityValue();
         return { ok: true, notional, qty: fixedQty, riskUsd, equity };
     }, [getEquityValue]);
+
+    const computeTrailingPlan = useCallback((entry, sl, side) => {
+        const settings = settingsRef.current;
+        if (!settings.lockProfitsWithTrail)
+            return null;
+        const r = Math.abs(entry - sl);
+        if (!Number.isFinite(r) || r <= 0)
+            return null;
+        const profile = TRAIL_PROFILE_BY_RISK_MODE[settings.riskMode] ??
+            TRAIL_PROFILE_BY_RISK_MODE["ai-matic"];
+        const activateR = profile.activateR;
+        const lockR = profile.lockR;
+        const distance = Math.abs(activateR - lockR) * r;
+        if (!Number.isFinite(distance) || distance <= 0)
+            return null;
+        const dir = side === "Buy" ? 1 : -1;
+        const activePrice = entry + dir * activateR * r;
+        if (!Number.isFinite(activePrice) || activePrice <= 0)
+            return null;
+        return { trailingStop: distance, trailingActivePrice: activePrice };
+    }, []);
     const getSymbolContext = useCallback((symbol, decision) => {
         const settings = settingsRef.current;
         const now = new Date();
@@ -913,6 +941,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             entryType: signal.entryType,
             entryPrice: signal.entryPrice,
             triggerPrice: signal.triggerPrice,
+            trailingStop: signal.trailingStop,
+            trailingActivePrice: signal.trailingActivePrice,
             qtyMode: signal.qtyMode,
             qtyValue: signal.qtyValue,
             slPrice: signal.slPrice,
@@ -1059,6 +1089,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return;
         }
         const fixedSizing = computeFixedSizing(symbol, entry, sl);
+        const trailingPlan = computeTrailingPlan(entry, sl, side);
         const sizing = fixedSizing ?? computeNotionalForSignal(entry, sl);
         if (!sizing.ok) {
             addLogEntries([
@@ -1094,6 +1125,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     entryPrice: entry,
                     entryType,
                     triggerPrice,
+                    trailingStop: trailingPlan?.trailingStop,
+                    trailingActivePrice: trailingPlan?.trailingActivePrice,
                     slPrice: sl,
                     tpPrices: Number.isFinite(tp) ? [tp] : [],
                     qtyMode,
@@ -1128,6 +1161,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         buildScanDiagnostics,
         computeFixedSizing,
         computeNotionalForSignal,
+        computeTrailingPlan,
         getSymbolContext,
         isGateEnabled,
     ]);

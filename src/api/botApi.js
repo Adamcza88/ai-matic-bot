@@ -28,6 +28,8 @@ export async function sendIntent(intent, opts) {
         orderType: "Limit",
         price: intent.entryPrice,
         triggerPrice,
+        trailingStop: intent.trailingStop,
+        trailingActivePrice: intent.trailingActivePrice,
         timeInForce,
         orderLinkId: intent.intentId,
         sl: intent.slPrice,

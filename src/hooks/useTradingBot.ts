@@ -109,6 +109,16 @@ const FIXED_QTY_BY_SYMBOL: Record<Symbol, number> = {
   ADAUSDT: 995,
 };
 
+const TRAIL_PROFILE_BY_RISK_MODE: Record<
+  AISettings["riskMode"],
+  { activateR: number; lockR: number }
+> = {
+  "ai-matic": { activateR: 1.4, lockR: 0.6 },
+  "ai-matic-x": { activateR: 1.4, lockR: 0.6 },
+  "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
+};
+
+
 export function useTradingBot(
   mode?: TradingMode,
   useTestnet = false,
@@ -411,6 +421,28 @@ export function useTradingBot(
       return { ok: true as const, notional, qty: fixedQty, riskUsd, equity };
     },
     [getEquityValue]
+  );
+
+
+  const computeTrailingPlan = useCallback(
+    (entry: number, sl: number, side: "Buy" | "Sell") => {
+      const settings = settingsRef.current;
+      if (!settings.lockProfitsWithTrail) return null;
+      const r = Math.abs(entry - sl);
+      if (!Number.isFinite(r) || r <= 0) return null;
+      const profile =
+        TRAIL_PROFILE_BY_RISK_MODE[settings.riskMode] ??
+        TRAIL_PROFILE_BY_RISK_MODE["ai-matic"];
+      const activateR = profile.activateR;
+      const lockR = profile.lockR;
+      const distance = Math.abs(activateR - lockR) * r;
+      if (!Number.isFinite(distance) || distance <= 0) return null;
+      const dir = side === "Buy" ? 1 : -1;
+      const activePrice = entry + dir * activateR * r;
+      if (!Number.isFinite(activePrice) || activePrice <= 0) return null;
+      return { trailingStop: distance, trailingActivePrice: activePrice };
+    },
+    []
   );
 
   const getSymbolContext = useCallback(
@@ -1075,6 +1107,8 @@ export function useTradingBot(
     tpPrices: number[];
     entryType: EntryType;
     triggerPrice?: number;
+    trailingStop?: number;
+    trailingActivePrice?: number;
     qtyMode: "USDT_NOTIONAL" | "BASE_QTY";
     qtyValue: number;
   }) {
@@ -1088,6 +1122,8 @@ export function useTradingBot(
       entryType: signal.entryType,
       entryPrice: signal.entryPrice,
       triggerPrice: signal.triggerPrice,
+      trailingStop: signal.trailingStop,
+      trailingActivePrice: signal.trailingActivePrice,
       qtyMode: signal.qtyMode,
       qtyValue: signal.qtyValue,
       slPrice: signal.slPrice,
@@ -1251,6 +1287,7 @@ export function useTradingBot(
       }
 
       const fixedSizing = computeFixedSizing(symbol as Symbol, entry, sl);
+      const trailingPlan = computeTrailingPlan(entry, sl, side);
       const sizing = fixedSizing ?? computeNotionalForSignal(entry, sl);
       if (!sizing.ok) {
         addLogEntries([
@@ -1288,6 +1325,8 @@ export function useTradingBot(
             entryPrice: entry,
             entryType,
             triggerPrice,
+            trailingStop: trailingPlan?.trailingStop,
+            trailingActivePrice: trailingPlan?.trailingActivePrice,
             slPrice: sl,
             tpPrices: Number.isFinite(tp) ? [tp] : [],
             qtyMode,
@@ -1324,6 +1363,7 @@ export function useTradingBot(
       buildScanDiagnostics,
       computeFixedSizing,
       computeNotionalForSignal,
+      computeTrailingPlan,
       getSymbolContext,
       isGateEnabled,
     ]

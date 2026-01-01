@@ -278,7 +278,6 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     result = orderRes.data;
 
     metric("order_success", { env: logContext.env, symbol: order.symbol });
-    return result;
   } catch (error) {
     metric("order_failure", { env: logContext.env, symbol: order.symbol, error: error.message });
     logContext.error = error.message || String(error);
@@ -328,6 +327,7 @@ export async function setTradingStop(protection, creds, useTestnet = true) {
     category: "linear",
     symbol: protection.symbol,
     positionIdx: protection.positionIdx ?? 0,
+    tpslMode: protection.tpslMode ?? "Full",
   };
 
   if (protection.tp != null) {

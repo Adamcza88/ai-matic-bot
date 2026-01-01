@@ -11,6 +11,8 @@ export type TradeIntent = {
   entryType: EntryType;
   entryPrice?: number;
   triggerPrice?: number;
+  trailingStop?: number;
+  trailingActivePrice?: number;
   qtyMode: "USDT_NOTIONAL" | "BASE_QTY";
   qtyValue: number;
   slPrice: number;
