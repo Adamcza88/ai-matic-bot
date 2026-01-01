@@ -101,6 +101,12 @@ function extractList(data: any) {
 
 type ClosedPnlRecord = { symbol: string; pnl: number; ts: number };
 const WATCH_SYMBOLS: Symbol[] = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
+const FIXED_QTY_BY_SYMBOL: Record<Symbol, number> = {
+  BTCUSDT: 0.005,
+  ETHUSDT: 0.15,
+  SOLUSDT: 3.5,
+  ADAUSDT: 995,
+};
 
 export function useTradingBot(
   mode?: TradingMode,
@@ -376,6 +382,31 @@ export function useTradingBot(
       }
 
       return { ok: true as const, notional, qty, riskUsd, equity };
+    },
+    [getEquityValue]
+  );
+
+  const computeFixedSizing = useCallback(
+    (symbol: Symbol, entry: number, sl: number) => {
+      const fixedQty = FIXED_QTY_BY_SYMBOL[symbol];
+      if (fixedQty == null) return null;
+      if (!Number.isFinite(fixedQty) || fixedQty <= 0) {
+        return { ok: false as const, reason: "invalid_fixed_qty" as const };
+      }
+      if (!Number.isFinite(entry) || entry <= 0) {
+        return { ok: false as const, reason: "invalid_entry" as const };
+      }
+      const notional = fixedQty * entry;
+      if (!Number.isFinite(notional) || notional <= 0) {
+        return { ok: false as const, reason: "invalid_fixed_notional" as const };
+      }
+      const riskPerUnit = Math.abs(entry - sl);
+      const riskUsd =
+        Number.isFinite(riskPerUnit) && riskPerUnit > 0
+          ? riskPerUnit * fixedQty
+          : Number.NaN;
+      const equity = getEquityValue();
+      return { ok: true as const, notional, qty: fixedQty, riskUsd, equity };
     },
     [getEquityValue]
   );
@@ -1040,7 +1071,8 @@ export function useTradingBot(
     entryPrice: number;
     slPrice: number;
     tpPrices: number[];
-    notionalUSDT: number;
+    qtyMode: "USDT_NOTIONAL" | "BASE_QTY";
+    qtyValue: number;
   }) {
     if (!authToken) throw new Error("missing_auth_token");
     const intent = {
@@ -1051,8 +1083,8 @@ export function useTradingBot(
       side: signal.side,
       entryType: "LIMIT_MAKER_FIRST",
       entryPrice: signal.entryPrice,
-      qtyMode: "USDT_NOTIONAL",
-      qtyValue: signal.notionalUSDT,
+      qtyMode: signal.qtyMode,
+      qtyValue: signal.qtyValue,
       slPrice: signal.slPrice,
       tpPrices: signal.tpPrices ?? [],
       expireAfterMs: 30_000,
@@ -1201,7 +1233,8 @@ export function useTradingBot(
         return;
       }
 
-      const sizing = computeNotionalForSignal(entry, sl);
+      const fixedSizing = computeFixedSizing(symbol as Symbol, entry, sl);
+      const sizing = fixedSizing ?? computeNotionalForSignal(entry, sl);
       if (!sizing.ok) {
         addLogEntries([
           {
@@ -1213,6 +1246,9 @@ export function useTradingBot(
         ]);
         return;
       }
+      const useFixedQty = fixedSizing?.ok === true;
+      const qtyMode = useFixedQty ? "BASE_QTY" : "USDT_NOTIONAL";
+      const qtyValue = useFixedQty ? sizing.qty : sizing.notional;
 
       if (intentPendingRef.current.has(symbol)) {
         addLogEntries([
@@ -1235,7 +1271,8 @@ export function useTradingBot(
             entryPrice: entry,
             slPrice: sl,
             tpPrices: Number.isFinite(tp) ? [tp] : [],
-            notionalUSDT: sizing.notional,
+            qtyMode,
+            qtyValue,
           });
           addLogEntries([
             {
@@ -1266,6 +1303,7 @@ export function useTradingBot(
       addLogEntries,
       autoTrade,
       buildScanDiagnostics,
+      computeFixedSizing,
       computeNotionalForSignal,
       getSymbolContext,
       isGateEnabled,
