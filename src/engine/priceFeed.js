@@ -38,7 +38,6 @@ function normalizeWsKline(row) {
         };
     }
 }
-
 function normalizeRestKline(row) {
     if (!Array.isArray(row) || row.length < 6)
         return null;
@@ -54,7 +53,6 @@ function normalizeRestKline(row) {
         return null;
     return { openTime, open, high, low, close, volume };
 }
-
 function mergeCandles(existing, incoming, maxCandles) {
     const merged = new Map();
     for (const c of existing) {
@@ -72,7 +70,6 @@ function mergeCandles(existing, incoming, maxCandles) {
         return sorted;
     return sorted.slice(-maxCandles);
 }
-
 async function fetchBackfillCandles(args) {
     const intervalMinutes = Number(args.interval) || 1;
     const totalBars = Math.max(1, Math.ceil(args.lookbackMinutes / intervalMinutes));

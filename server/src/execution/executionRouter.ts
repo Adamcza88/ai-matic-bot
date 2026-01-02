@@ -21,6 +21,28 @@ function setStatus(
   ctx.setState({ ...ctx.state, ...extra, ts: Date.now(), status });
 }
 
+async function waitForPositionOpen(
+  ctx: Ctx,
+  symbol: Symbol,
+  timeoutMs: number,
+  intervalMs = 1000
+): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (Date.now() < deadline) {
+    try {
+      const snap = await ctx.bybit.getSnapshot(symbol);
+      const size = Number(
+        snap?.position?.size ?? snap?.position?.qty ?? 0
+      );
+      if (Number.isFinite(size) && Math.abs(size) > 0) return true;
+    } catch {
+      // ignore transient polling errors
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+
 export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
   if (ctx.isMarketStale() || ctx.isPrivateStale()) {
     setStatus(ctx, "STALE_DATA", { lastIntentId: intent.intentId });
@@ -86,15 +108,6 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
     ],
   });
 
-  const tp1 = intent.tpPrices?.[0];
-  await ctx.bybit.setTradingStop({
-    symbol: intent.symbol,
-    stopLoss: intent.slPrice,
-    takeProfit: tp1,
-    trailingStop: intent.trailingStop,
-    trailingActivePrice: intent.trailingActivePrice,
-  });
-
   setTimeout(async () => {
     const s = ctx.state;
     if (s.lastIntentId !== intent.intentId) return;
@@ -111,6 +124,39 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
       ctx.audit.write("entry_timeout_cancel_error", { e: String(e) });
     }
   }, intent.expireAfterMs);
+
+  const tp1 = intent.tpPrices?.[0];
+  void (async () => {
+    const waitMs = Math.max(0, Math.min(intent.expireAfterMs, 30_000));
+    const ready = await waitForPositionOpen(ctx, intent.symbol, waitMs);
+    if (!ready) {
+      ctx.audit.write("trading_stop_skipped", {
+        intentId: intent.intentId,
+        symbol: intent.symbol,
+        reason: "POSITION_NOT_OPEN",
+      });
+      return;
+    }
+    try {
+      await ctx.bybit.setTradingStop({
+        symbol: intent.symbol,
+        stopLoss: intent.slPrice,
+        takeProfit: tp1,
+        trailingStop: intent.trailingStop,
+        trailingActivePrice: intent.trailingActivePrice,
+      });
+      ctx.audit.write("trading_stop_set", {
+        intentId: intent.intentId,
+        symbol: intent.symbol,
+      });
+    } catch (e) {
+      ctx.audit.write("trading_stop_error", {
+        intentId: intent.intentId,
+        symbol: intent.symbol,
+        error: String(e),
+      });
+    }
+  })();
 }
 
 export async function killSwitch(ctx: Ctx, symbol: Symbol) {

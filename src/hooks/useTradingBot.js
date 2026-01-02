@@ -97,8 +97,8 @@ const FIXED_QTY_BY_SYMBOL = {
     ADAUSDT: 995,
 };
 const TRAIL_PROFILE_BY_RISK_MODE = {
-    "ai-matic": { activateR: 1.4, lockR: 0.6 },
-    "ai-matic-x": { activateR: 1.4, lockR: 0.6 },
+    "ai-matic": { activateR: 1.0, lockR: 0.6 },
+    "ai-matic-x": { activateR: 1.0, lockR: 0.6 },
     "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
 };
 const TRAIL_SYMBOL_MODE = {
@@ -371,10 +371,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const computeTrailingPlan = useCallback((entry, sl, side, symbol) => {
         const settings = settingsRef.current;
         const symbolMode = TRAIL_SYMBOL_MODE[symbol];
+        const forceTrail = settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-x";
         if (symbolMode === "off")
             return null;
-        if (!settings.lockProfitsWithTrail && symbolMode !== "on")
+        if (!forceTrail && !settings.lockProfitsWithTrail && symbolMode !== "on") {
             return null;
+        }
         const r = Math.abs(entry - sl);
         if (!Number.isFinite(r) || r <= 0)
             return null;
@@ -1156,6 +1158,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     qtyMode,
                     qtyValue,
                 });
+                if (trailingPlan) {
+                    addLogEntries([
+                        {
+                            id: `signal:trail:${signalId}`,
+                            timestamp: new Date().toISOString(),
+                            action: "STATUS",
+                            message: `${symbol} TS čeká na otevření pozice (Bybit vyžaduje aktivní pozici) | aktivace ${formatNumber(trailingPlan.trailingActivePrice ?? Number.NaN, 6)} | distance ${formatNumber(trailingPlan.trailingStop ?? Number.NaN, 6)}`,
+                        },
+                    ]);
+                }
                 addLogEntries([
                     {
                         id: `signal:sent:${signalId}`,
