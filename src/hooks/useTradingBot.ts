@@ -65,7 +65,14 @@ function loadStoredSettings(): AISettings | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
-    return { ...DEFAULT_SETTINGS, ...parsed } as AISettings;
+    const merged = { ...DEFAULT_SETTINGS, ...parsed } as AISettings;
+    if (
+      !Number.isFinite(merged.maxOpenPositions) ||
+      merged.maxOpenPositions < 3
+    ) {
+      merged.maxOpenPositions = 3;
+    }
+    return merged;
   } catch {
     return null;
   }

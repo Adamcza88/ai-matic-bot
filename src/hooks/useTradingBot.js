@@ -51,7 +51,12 @@ function loadStoredSettings() {
         const parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== "object")
             return null;
-        return { ...DEFAULT_SETTINGS, ...parsed };
+        const merged = { ...DEFAULT_SETTINGS, ...parsed };
+        if (!Number.isFinite(merged.maxOpenPositions) ||
+            merged.maxOpenPositions < 3) {
+            merged.maxOpenPositions = 3;
+        }
+        return merged;
     }
     catch {
         return null;
