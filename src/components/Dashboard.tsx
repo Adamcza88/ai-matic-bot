@@ -63,8 +63,8 @@ export default function Dashboard({
     return Math.max(...(values as number[]));
   }, [scanDiagnostics]);
   const modeOptions: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
+  const riskMode = bot.settings?.riskMode ?? "ai-matic";
   const profileMeta = useMemo(() => {
-    const riskMode = bot.settings?.riskMode ?? "ai-matic";
     if (riskMode === "ai-matic-scalp") {
       return {
         label: "AI-MATIC-SCALP",
@@ -99,7 +99,7 @@ export default function Dashboard({
         entry: "ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2",
         execution: "PostOnly LIMIT · timeout 1×15sec",
       };
-  }, [bot.settings?.riskMode]);
+  }, [riskMode]);
 
   const allowedSymbols =
     bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
@@ -109,88 +109,125 @@ export default function Dashboard({
   const exchangeTrades = tradesLoaded ? testnetTrades : [];
   const refreshOrders = refreshTestnetOrders;
 
-  const CHECKLIST_DEFAULTS = useMemo(
+  const CHECKLIST_DEFAULTS_BY_PROFILE = useMemo(
     () => ({
-      "HTF bias": true,
-      "HTF ST": true,
-      "ST1 flip": true,
-      "EMA touch": true,
-      "ST1 close": true,
-      RVOL: true,
-      Momentum: true,
-      "Anti-breakout": true,
-      "ATR min": true,
-      SMC: true,
-      "EMA pullback": true,
-      "Micro break": true,
-      Session: true,
-      Spread: true,
-      "Asia range": true,
-      Sweep: true,
-      "CHoCH+FVG": true,
-      PostOnly: true,
-      "BBO fresh": true,
-      "Exec allowed": true,
-      "Feed age": true,
-      "Position clear": true,
-      "Orders clear": true,
-      "Confirm required": false,
+      "ai-matic": {
+        Signal: true,
+        "Engine ok": true,
+        "Session ok": true,
+        "Confirm required": false,
+        "Max positions": true,
+        "Position clear": true,
+        "Orders clear": true,
+        "SL set": true,
+        "TP set": true,
+        "Exec allowed": true,
+        "Feed age": true,
+      },
+      "ai-matic-x": {
+        Signal: true,
+        "Engine ok": true,
+        "Session ok": true,
+        "Confirm required": false,
+        "Max positions": true,
+        "Position clear": true,
+        "Orders clear": true,
+        "SL set": true,
+        "TP set": true,
+        "Exec allowed": true,
+        "Feed age": true,
+      },
+      "ai-matic-scalp": {
+        Signal: true,
+        "Engine ok": true,
+        "Session ok": true,
+        "Confirm required": false,
+        "Max positions": true,
+        "Position clear": true,
+        "Orders clear": true,
+        "SL set": true,
+        "TP set": true,
+        "Exec allowed": true,
+        "Feed age": true,
+      },
     }),
     []
   );
+  const CHECKLIST_DEFAULTS = useMemo(() => {
+    return (
+      CHECKLIST_DEFAULTS_BY_PROFILE[riskMode] ??
+      CHECKLIST_DEFAULTS_BY_PROFILE["ai-matic"]
+    );
+  }, [CHECKLIST_DEFAULTS_BY_PROFILE, riskMode]);
   const CHECKLIST_ALIASES = useMemo(
     () => ({
-      "HTF ST": ["HTF ST line", "HTF line projection"],
-      "ST1 flip": ["ST flip"],
-      "ST1 close": ["Close vs ST"],
-      RVOL: ["RVOL ≥ 1.2"],
-      Spread: ["Spread ok"],
       "Feed age": ["BBO age", "BBO fresh"],
       "Position clear": ["Position open"],
       "Orders clear": ["Open orders"],
+      "Session ok": ["Session"],
       "Confirm required": ["CONFIRM_REQUIRED"],
     }),
     []
   );
 
-  const [checklistEnabled, setChecklistEnabled] = useState<Record<string, boolean>>(() => {
-    if (typeof localStorage === "undefined") return CHECKLIST_DEFAULTS;
+  const gateStorageKey = useMemo(
+    () => `ai-matic-checklist-enabled:${riskMode}`,
+    [riskMode]
+  );
+  const [checklistEnabled, setChecklistEnabled] = useState<Record<string, boolean>>(
+    () => CHECKLIST_DEFAULTS
+  );
+
+  useEffect(() => {
+    if (typeof localStorage === "undefined") {
+      setChecklistEnabled(CHECKLIST_DEFAULTS);
+      return;
+    }
     try {
-      const raw = localStorage.getItem("ai-matic-checklist-enabled");
-      if (!raw) return CHECKLIST_DEFAULTS;
+      const legacy = localStorage.getItem("ai-matic-checklist-enabled");
+      const raw = localStorage.getItem(gateStorageKey) ?? legacy;
+      if (!raw) {
+        setChecklistEnabled(CHECKLIST_DEFAULTS);
+        return;
+      }
       const parsed = JSON.parse(raw) as Record<string, boolean>;
-      const next = { ...CHECKLIST_DEFAULTS, ...parsed };
+      const next = { ...CHECKLIST_DEFAULTS, ...(parsed ?? {}) };
       Object.entries(CHECKLIST_ALIASES).forEach(([name, aliases]) => {
-        if (typeof parsed[name] === "boolean") return;
+        if (typeof parsed?.[name] === "boolean") return;
         for (const alias of aliases) {
-          if (typeof parsed[alias] === "boolean") {
+          if (typeof parsed?.[alias] === "boolean") {
             next[name] = parsed[alias];
             break;
           }
         }
       });
-      return next;
+      setChecklistEnabled(next);
     } catch {
-      return CHECKLIST_DEFAULTS;
+      setChecklistEnabled(CHECKLIST_DEFAULTS);
     }
-  });
+  }, [CHECKLIST_ALIASES, CHECKLIST_DEFAULTS, gateStorageKey]);
 
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
-    localStorage.setItem("ai-matic-checklist-enabled", JSON.stringify(checklistEnabled));
-  }, [checklistEnabled]);
+    localStorage.setItem(gateStorageKey, JSON.stringify(checklistEnabled));
+  }, [checklistEnabled, gateStorageKey]);
 
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
-    const migrated = localStorage.getItem("ai-matic-checklist-migration-v2");
+    const migrated = localStorage.getItem(
+      `ai-matic-checklist-migration-v3:${riskMode}`
+    );
     if (migrated) return;
-    localStorage.setItem("ai-matic-checklist-migration-v2", "true");
+    localStorage.setItem(
+      `ai-matic-checklist-migration-v3:${riskMode}`,
+      "true"
+    );
     setChecklistEnabled((prev) => ({
       ...prev,
       "Exec allowed": true,
       "Confirm required": false,
     }));
-  }, []);
+  }, [riskMode]);
 
   useEffect(() => {
     updateGateOverrides?.(checklistEnabled);
