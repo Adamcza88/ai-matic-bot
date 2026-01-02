@@ -38,7 +38,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                 symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
                 timeframes: "HTF 1h · M15 · M5 · LTF 1m",
                 session: "London/NY killzones (Prague)",
-                risk: "1% equity (min 10 / cap 200) · margin 5/pos · max 2 pos",
+                risk: "1% equity (min 10 / cap 200) · margin 5/pos · max 3 pos",
                 entry: "Sweep → CHoCH → FVG → PostOnly LIMIT",
                 execution: "LIMIT(PostOnly) + SL server-side + TP1 1R",
             };
@@ -46,12 +46,12 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         if (riskMode === "ai-matic-x") {
             return {
                 label: "AI-MATIC-X",
-                subtitle: "AI-MATIC (15m/1m)",
+                subtitle: "SMC HTF/LTF (4h/1h/15m/1m)",
                 symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-                timeframes: "HTF 15m · LTF 1m",
+                timeframes: "HTF 4h · 1h · LTF 15m · 1m",
                 session: "24/7",
-                risk: "4 USDT / trade · 8 USDT total (after 3 losses: 2/4 for 60m) · max 2 pos",
-                entry: "ST15 bias + ST1 flip + EMA21 pullback + RVOL≥1.2",
+                risk: "4 USDT / trade · 8 USDT total (after 3 losses: 2/4 for 60m) · max 3 pos",
+                entry: "HTF bias + POI (OB/FVG/Breaker/Liquidity) → LTF CHOCH/MSS + displacement pullback",
                 execution: "PostOnly LIMIT · timeout 1×1m",
             };
         }
@@ -59,9 +59,9 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             label: "AI-MATIC",
             subtitle: "AI-MATIC (15m/1m)",
             symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-                timeframes: "HTF 15m · LTF 1m",
+            timeframes: "HTF 15m · LTF 1m",
             session: "24/7",
-            risk: "4 USDT / trade · 8 USDT total · max 2 pos",
+            risk: "4 USDT / trade · 8 USDT total · max 3 pos",
             entry: "ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2",
             execution: "PostOnly LIMIT · timeout 1×15sec",
         };
@@ -282,7 +282,17 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                                                                     minute: "2-digit",
                                                                     second: "2-digit",
                                                                 })
-                                                                : "—" })] }, t.id))) })] }))] })] }), _jsxs(Card, { className: "bg-slate-900/50 border-white/10 text-white", children: [_jsxs(CardHeader, { className: "flex flex-row items-center justify-between space-y-0 pb-2", children: [_jsx(CardTitle, { className: "text-sm font-medium text-slate-400", children: "Asset PnL History" }), _jsxs("div", { className: "flex items-center gap-2", children: [_jsx("span", { className: "text-xs text-slate-500", children: pnlLoaded ? `${Object.keys(assetPnlHistory).length} assets` : "—" }), _jsx(Button, { variant: "outline", size: "sm", onClick: () => resetPnlHistory(), className: "h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white", children: "Refresh" })] })] }), _jsx(CardContent, { children: !pnlLoaded ? (_jsx("div", { className: "text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg", children: "Na\u010D\u00EDt\u00E1m PnL\u2026" })) : Object.keys(assetPnlHistory).length === 0 ? (_jsx("div", { className: "text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg", children: "\u017D\u00E1dn\u00FD historick\u00FD PnL zat\u00EDm ulo\u017Een." })) : (_jsx("div", { className: "space-y-3", children: Object.entries(assetPnlHistory).map(([symbol, records]) => {
+                                                                : "—" })] }, t.id))) })] }))] })] }), _jsxs(Card, { className: "bg-slate-900/50 border-white/10 text-white", children: [_jsxs(CardHeader, { className: "flex flex-row items-center justify-between space-y-0 pb-2", children: [_jsx(CardTitle, { className: "text-sm font-medium text-slate-400", children: "Asset PnL History" }), _jsxs("div", { className: "flex items-center gap-2", children: [_jsx("span", { className: "text-xs text-slate-500", children: pnlLoaded ? `${Object.keys(assetPnlHistory).length} assets` : "—" }), _jsx(Button, { variant: "outline", size: "sm", onClick: () => resetPnlHistory(), className: "h-7 text-xs border-white/10 hover:bg-white/10 hover:text-white", children: "Refresh" })] })] }), _jsx(CardContent, { children: !pnlLoaded ? (_jsx("div", { className: "text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg", children: "Na\u010D\u00EDt\u00E1m PnL\u2026" })) : Object.keys(assetPnlHistory).length === 0 ? (_jsx("div", { className: "text-sm text-slate-500 italic py-6 text-center border border-dashed border-slate-800 rounded-lg", children: "\u017D\u00E1dn\u00FD historick\u00FD PnL zat\u00EDm ulo\u017Een." })) : (_jsx("div", { className: "space-y-3", children: Object.entries(assetPnlHistory)
+                                        .sort((a, b) => {
+                                        const latestA = a[1]?.[0]?.timestamp
+                                            ? Date.parse(a[1][0].timestamp)
+                                            : 0;
+                                        const latestB = b[1]?.[0]?.timestamp
+                                            ? Date.parse(b[1][0].timestamp)
+                                            : 0;
+                                        return latestB - latestA;
+                                    })
+                                        .map(([symbol, records]) => {
                                         const latest = records[0];
                                         const sum = records.reduce((acc, r) => {
                                             return Number.isFinite(r.pnl) ? acc + r.pnl : acc;

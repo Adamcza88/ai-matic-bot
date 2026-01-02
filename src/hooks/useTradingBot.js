@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendIntent } from "../api/botApi";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
+import { evaluateSmcStrategyForSymbol } from "../engine/smcStrategy";
 import { TradingMode } from "../types";
+import { loadPnlHistory, mergePnlRecords } from "../lib/pnlHistory";
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
@@ -29,7 +31,7 @@ const DEFAULT_SETTINGS = {
     baseRiskPerTrade: 0,
     maxAllocatedCapitalPercent: 1.0,
     maxPortfolioRiskPercent: 0.2,
-    maxOpenPositions: 2,
+    maxOpenPositions: 3,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -89,24 +91,34 @@ const FIXED_QTY_BY_SYMBOL = {
     SOLUSDT: 3.5,
     ADAUSDT: 995,
 };
-
 const TRAIL_PROFILE_BY_RISK_MODE = {
     "ai-matic": { activateR: 1.4, lockR: 0.6 },
     "ai-matic-x": { activateR: 1.4, lockR: 0.6 },
     "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
 };
-
+const CHEAT_SHEET_SETUP_BY_RISK_MODE = {
+    "ai-matic": "ai-matic-core",
+    "ai-matic-x": "ai-matic-x-smc",
+};
 export function useTradingBot(mode, useTestnet = false, authToken) {
     const [settings, setSettings] = useState(() => loadStoredSettings() ?? DEFAULT_SETTINGS);
     const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
     const engineConfig = useMemo(() => {
+        const cheatSheetSetupId = settings.strategyCheatSheetEnabled
+            ? CHEAT_SHEET_SETUP_BY_RISK_MODE[settings.riskMode]
+            : undefined;
+        const baseConfig = {
+            useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
+            ...(cheatSheetSetupId ? { cheatSheetSetupId } : {}),
+        };
         if (settings.riskMode !== "ai-matic") {
-            return {};
+            return baseConfig;
         }
         const strictness = settings.entryStrictness === "base"
             ? "ultra"
             : settings.entryStrictness;
         return {
+            ...baseConfig,
             baseTimeframe: "15m",
             signalTimeframe: "1m",
             entryStrictness: strictness,
@@ -119,7 +131,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             volExpansionAtrMult: 1.15,
             volExpansionVolMult: 1.1,
             cooldownBars: 0,
-            useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
         };
     }, [settings.entryStrictness, settings.riskMode, settings.strategyCheatSheetEnabled]);
     const [positions, setPositions] = useState(null);
@@ -127,7 +138,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const [trades, setTrades] = useState(null);
     const [logEntries, setLogEntries] = useState(null);
     const [scanDiagnostics, setScanDiagnostics] = useState(null);
-    const [assetPnlHistory, setAssetPnlHistory] = useState(null);
+    const [assetPnlHistory, setAssetPnlHistory] = useState(() => loadPnlHistory());
     const [closedPnlRecords, setClosedPnlRecords] = useState(null);
     const [walletSnapshot, setWalletSnapshot] = useState(null);
     const [ordersError, setOrdersError] = useState(null);
@@ -346,7 +357,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const equity = getEquityValue();
         return { ok: true, notional, qty: fixedQty, riskUsd, equity };
     }, [getEquityValue]);
-
     const computeTrailingPlan = useCallback((entry, sl, side) => {
         const settings = settingsRef.current;
         if (!settings.lockProfitsWithTrail)
@@ -456,7 +466,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             : `open ${context.openPositionsCount}`;
         addGate("Max positions", context.maxPositionsOk, maxPositionsDetail);
         addGate("Position clear", !context.hasPosition, "no open position");
-        addGate("Orders clear", !context.hasOrders, `open ${symbolOrders.length}`);
+        const ordersDetail = Number.isFinite(context.maxPositions)
+            ? `open ${symbolOrders.length}/${context.maxPositions}`
+            : `open ${symbolOrders.length}`;
+        addGate("Orders clear", !context.hasOrders, ordersDetail);
         const slOk = context.hasPosition && Number.isFinite(sl) && sl > 0;
         const tpOk = context.hasPosition && Number.isFinite(tp) && tp > 0;
         addGate("SL set", slOk, slOk ? `SL ${formatNumber(sl, 6)}` : undefined);
@@ -835,15 +848,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 return { symbol, pnl, ts };
             })
                 .filter((r) => Boolean(r));
-            const map = {};
-            for (const r of records) {
-                const entry = {
-                    symbol: r.symbol,
-                    pnl: r.pnl,
-                    timestamp: new Date(r.ts).toISOString(),
-                };
-                map[r.symbol] = [entry, ...(map[r.symbol] ?? [])];
-            }
+            const pnlRecords = records.map((r) => ({
+                symbol: r.symbol,
+                pnl: r.pnl,
+                timestamp: new Date(r.ts).toISOString(),
+            }));
+            const map = mergePnlRecords(pnlRecords);
             setClosedPnlRecords(records);
             setAssetPnlHistory(map);
             const pnlSeen = pnlSeenRef.current;
@@ -1102,7 +1112,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             ]);
             return;
         }
-        const useFixedQty = (fixedSizing === null || fixedSizing === void 0 ? void 0 : fixedSizing.ok) === true;
+        const useFixedQty = fixedSizing?.ok === true;
         const qtyMode = useFixedQty ? "BASE_QTY" : "USDT_NOTIONAL";
         const qtyValue = useFixedQty ? sizing.qty : sizing.notional;
         if (intentPendingRef.current.has(symbol)) {
@@ -1175,12 +1185,18 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         intentPendingRef.current.clear();
         decisionRef.current = {};
         setScanDiagnostics(null);
+        const decisionFn = settingsRef.current.riskMode === "ai-matic-x"
+            ? evaluateSmcStrategyForSymbol
+            : undefined;
+        const maxCandles = settingsRef.current.riskMode === "ai-matic-x" ? 3000 : undefined;
         const stop = startPriceFeed(WATCH_SYMBOLS, (symbol, decision) => {
             handleDecisionRef.current?.(symbol, decision);
         }, {
             useTestnet,
             timeframe: "1",
             configOverrides: engineConfig,
+            decisionFn,
+            maxCandles,
         });
         const envLabel = useTestnet ? "testnet" : "mainnet";
         const lastLog = feedLogRef.current;

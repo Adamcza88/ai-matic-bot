@@ -149,6 +149,7 @@ export interface BotConfig {
   strategyProfile: "trend" | "scalp" | "swing" | "intraday";
   entryStrictness: "base" | "relaxed" | "ultra" | "test";
   useStrategyCheatSheet?: boolean;
+  cheatSheetSetupId?: string;
   accountBalance: number;
   atrPeriod: number;
   adxPeriod: number;
@@ -184,7 +185,7 @@ export interface BotConfig {
 
 function applyProfileOverrides(cfg: BotConfig): BotConfig {
   if (cfg.strategyProfile !== "scalp") {
-    return { ...cfg, maxOpenPositions: Math.min(cfg.maxOpenPositions, 2) };
+    return { ...cfg, maxOpenPositions: Math.min(cfg.maxOpenPositions, 3) };
   }
   const scalpRisk = Math.min(Math.max(cfg.riskPerTrade, 0.01), 0.02);
   const base = {
@@ -192,7 +193,7 @@ function applyProfileOverrides(cfg: BotConfig): BotConfig {
     riskPerTrade: scalpRisk,
     maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
     maxPortfolioRiskPercent: Math.max(Math.min(cfg.maxPortfolioRiskPercent, 0.12), 0.08),
-    maxOpenPositions: 1,
+    maxOpenPositions: 3,
     enforceSessionHours: false,
     trailingActivationR: 1,
     minStopPercent: Math.min(cfg.minStopPercent, 0.0012),
@@ -204,7 +205,7 @@ function applyProfileOverrides(cfg: BotConfig): BotConfig {
       { triggerR: 2, stopToR: 1 },
     ],
   };
-  return { ...base, maxOpenPositions: Math.min(base.maxOpenPositions, 2) };
+  return { ...base, maxOpenPositions: Math.min(base.maxOpenPositions, 3) };
 }
 
 /**
@@ -237,7 +238,7 @@ export const defaultConfig: BotConfig = {
   maxRiskPerTradeCap: 0.07,
   tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
   enforceSessionHours: false,
-  maxOpenPositions: 2,
+  maxOpenPositions: 3,
   maxExitChunks: 3,
   trailingActivationR: 2,
   minStopPercent: 0.0035,
@@ -1399,7 +1400,8 @@ export function evaluateStrategyForSymbol(
     };
   }
   if (signal && botConfig.useStrategyCheatSheet) {
-    const setupId = getDefaultCheatSheetSetupId();
+    const setupId =
+      botConfig.cheatSheetSetupId ?? getDefaultCheatSheetSetupId();
     const setup = setupId ? getCheatSheetSetup(setupId) : null;
     if (setup) {
       signal.setupId = setup.id;

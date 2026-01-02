@@ -1,4 +1,4 @@
-import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet.js";
+import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet";
 export var Trend;
 (function (Trend) {
     Trend["Bull"] = "bull";
@@ -69,7 +69,7 @@ export var State;
 })(State || (State = {}));
 function applyProfileOverrides(cfg) {
     if (cfg.strategyProfile !== "scalp") {
-        return { ...cfg, maxOpenPositions: Math.min(cfg.maxOpenPositions, 2) };
+        return { ...cfg, maxOpenPositions: Math.min(cfg.maxOpenPositions, 3) };
     }
     const scalpRisk = Math.min(Math.max(cfg.riskPerTrade, 0.01), 0.02);
     const base = {
@@ -77,7 +77,7 @@ function applyProfileOverrides(cfg) {
         riskPerTrade: scalpRisk,
         maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
         maxPortfolioRiskPercent: Math.max(Math.min(cfg.maxPortfolioRiskPercent, 0.12), 0.08),
-        maxOpenPositions: 1,
+        maxOpenPositions: 3,
         enforceSessionHours: false,
         trailingActivationR: 1,
         minStopPercent: Math.min(cfg.minStopPercent, 0.0012),
@@ -89,7 +89,7 @@ function applyProfileOverrides(cfg) {
             { triggerR: 2, stopToR: 1 },
         ],
     };
-    return { ...base, maxOpenPositions: Math.min(base.maxOpenPositions, 2) };
+    return { ...base, maxOpenPositions: Math.min(base.maxOpenPositions, 3) };
 }
 /**
  * Default configuration values.
@@ -121,7 +121,7 @@ export const defaultConfig = {
     maxRiskPerTradeCap: 0.07,
     tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
     enforceSessionHours: false,
-    maxOpenPositions: 2,
+    maxOpenPositions: 3,
     maxExitChunks: 3,
     trailingActivationR: 2,
     minStopPercent: 0.0035,
@@ -1194,7 +1194,7 @@ export function evaluateStrategyForSymbol(symbol, candles, config = {}) {
         };
     }
     if (signal && botConfig.useStrategyCheatSheet) {
-        const setupId = getDefaultCheatSheetSetupId();
+        const setupId = botConfig.cheatSheetSetupId ?? getDefaultCheatSheetSetupId();
         const setup = setupId ? getCheatSheetSetup(setupId) : null;
         if (setup) {
             signal.setupId = setup.id;
@@ -1202,7 +1202,8 @@ export function evaluateStrategyForSymbol(symbol, candles, config = {}) {
             if (setup.entryType === "CONDITIONAL") {
                 const dir = signal.intent.side === "buy" ? 1 : -1;
                 const offsetBps = setup.triggerOffsetBps ?? 0;
-                signal.triggerPrice = signal.intent.entry * (1 + (dir * offsetBps) / 10000);
+                signal.triggerPrice =
+                    signal.intent.entry * (1 + (dir * offsetBps) / 10000);
             }
         }
     }

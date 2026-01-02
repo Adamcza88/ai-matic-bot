@@ -4,6 +4,7 @@ import { sendIntent } from "../api/botApi";
 import { EntryType, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
+import { evaluateSmcStrategyForSymbol } from "../engine/smcStrategy";
 import type { PriceFeedDecision } from "../engine/priceFeed";
 import type { BotConfig } from "../engine/botEngine";
 import { TradingMode } from "../types";
@@ -16,6 +17,7 @@ import type {
   TestnetOrder,
   TestnetTrade,
 } from "../types";
+import { loadPnlHistory, mergePnlRecords } from "../lib/pnlHistory";
 import type { AssetPnlMap } from "../lib/pnlHistory";
 
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
@@ -44,7 +46,7 @@ const DEFAULT_SETTINGS: AISettings = {
   baseRiskPerTrade: 0,
   maxAllocatedCapitalPercent: 1.0,
   maxPortfolioRiskPercent: 0.2,
-  maxOpenPositions: 2,
+  maxOpenPositions: 3,
   requireConfirmationInAuto: false,
   positionSizingMultiplier: 1.0,
   customInstructions: "",
@@ -117,6 +119,12 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
   "ai-matic-x": { activateR: 1.4, lockR: 0.6 },
   "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
 };
+const CHEAT_SHEET_SETUP_BY_RISK_MODE: Partial<
+  Record<AISettings["riskMode"], string>
+> = {
+  "ai-matic": "ai-matic-core",
+  "ai-matic-x": "ai-matic-x-smc",
+};
 
 
 export function useTradingBot(
@@ -129,14 +137,22 @@ export function useTradingBot(
   );
   const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
   const engineConfig = useMemo<Partial<BotConfig>>(() => {
+    const cheatSheetSetupId = settings.strategyCheatSheetEnabled
+      ? CHEAT_SHEET_SETUP_BY_RISK_MODE[settings.riskMode]
+      : undefined;
+    const baseConfig: Partial<BotConfig> = {
+      useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
+      ...(cheatSheetSetupId ? { cheatSheetSetupId } : {}),
+    };
     if (settings.riskMode !== "ai-matic") {
-      return {};
+      return baseConfig;
     }
     const strictness =
       settings.entryStrictness === "base"
         ? "ultra"
         : settings.entryStrictness;
     return {
+      ...baseConfig,
       baseTimeframe: "15m",
       signalTimeframe: "1m",
       entryStrictness: strictness,
@@ -149,7 +165,6 @@ export function useTradingBot(
       volExpansionAtrMult: 1.15,
       volExpansionVolMult: 1.1,
       cooldownBars: 0,
-      useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
     };
   }, [settings.entryStrictness, settings.riskMode, settings.strategyCheatSheetEnabled]);
 
@@ -161,7 +176,7 @@ export function useTradingBot(
     Record<string, any> | null
   >(null);
   const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap | null>(
-    null
+    () => loadPnlHistory()
   );
   const [closedPnlRecords, setClosedPnlRecords] = useState<
     ClosedPnlRecord[] | null
@@ -550,10 +565,13 @@ export function useTradingBot(
         : `open ${context.openPositionsCount}`;
       addGate("Max positions", context.maxPositionsOk, maxPositionsDetail);
       addGate("Position clear", !context.hasPosition, "no open position");
+      const ordersDetail = Number.isFinite(context.maxPositions)
+        ? `open ${symbolOrders.length}/${context.maxPositions}`
+        : `open ${symbolOrders.length}`;
       addGate(
         "Orders clear",
         !context.hasOrders,
-        `open ${symbolOrders.length}`
+        ordersDetail
       );
       const slOk =
         context.hasPosition && Number.isFinite(sl) && sl > 0;
@@ -1004,15 +1022,12 @@ export function useTradingBot(
         .filter((r: ClosedPnlRecord | null): r is ClosedPnlRecord =>
           Boolean(r)
         );
-      const map: AssetPnlMap = {};
-      for (const r of records) {
-        const entry = {
-          symbol: r.symbol,
-          pnl: r.pnl,
-          timestamp: new Date(r.ts).toISOString(),
-        };
-        map[r.symbol] = [entry, ...(map[r.symbol] ?? [])];
-      }
+      const pnlRecords = records.map((r) => ({
+        symbol: r.symbol,
+        pnl: r.pnl,
+        timestamp: new Date(r.ts).toISOString(),
+      }));
+      const map = mergePnlRecords(pnlRecords);
       setClosedPnlRecords(records);
       setAssetPnlHistory(map);
       const pnlSeen = pnlSeenRef.current;
@@ -1381,6 +1396,12 @@ export function useTradingBot(
     decisionRef.current = {};
     setScanDiagnostics(null);
 
+    const decisionFn =
+      settingsRef.current.riskMode === "ai-matic-x"
+        ? evaluateSmcStrategyForSymbol
+        : undefined;
+    const maxCandles =
+      settingsRef.current.riskMode === "ai-matic-x" ? 3000 : undefined;
     const stop = startPriceFeed(
       WATCH_SYMBOLS,
       (symbol, decision) => {
@@ -1390,6 +1411,8 @@ export function useTradingBot(
         useTestnet,
         timeframe: "1",
         configOverrides: engineConfig,
+        decisionFn,
+        maxCandles,
       }
     );
 

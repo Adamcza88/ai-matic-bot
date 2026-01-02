@@ -20,7 +20,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
             description: "Konzervativnější intraday / scalp mix s kontrolou sezení a širšími filtry volatility. Entry: ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2. Execution: PostOnly LIMIT · timeout 1×15sec.",
             notes: [
                 "Trading hours: On (0–23 SEČ/SELČ)",
-                "Limit: max 2 pozice současně",
+                "Limit: max 3 pozice současně",
                 "Risk: 4 USDT / trade · 8 USDT total (po 3 ztrátách 2/4 na 60m)",
                 "Entry: ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2",
                 "Execution: PostOnly LIMIT · timeout 1×15sec",
@@ -29,12 +29,24 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         },
         "ai-matic-x": {
             title: "AI-Matic-X",
-            description: "Agresivnější profil s přísnějšími vstupy, bez session hours a se silnějším sizingem.",
+            description: "SMC profil s HTF 4h/1h biasem a POI (OB/FVG/Breaker/Liquidity) a LTF 15m/1m entry přes CHOCH/MSS a displacement pullback.",
             notes: [
                 "Trading hours: Off",
                 "Páry: top 5 USDT dle 24h volume",
-                "Limit: max 2 pozice současně",
-                "Dyn. sizing multiplier 1.0×",
+                "HTF: 4h + 1h structure (HH/HL, LH/LL) + swing points",
+                "POI: Order blocky, FVG, breaker blocks, liquidity pools",
+                "LTF: 15m + 1m displacement + CHOCH/MSS + mitigace",
+                "Entry: pullback do HTF POI po inducement sweep; ignoruj LTF bez HTF",
+                "LONG: EMA9 > EMA21 (M5), ADX>22, ATR <70% prům.20, cena nad VWAP; SL pod low, TP 1.8× ATR",
+                "LONG: Pullback k EMA50 na M15 + higher low, ADX>20; entry break high, SL pod EMA50",
+                "LONG: Momentum <30 na M1 + bullish engulfing; rychlý scalp",
+                "LONG: Breakout nad resistance s ATR expanzí +20% a ADX>25",
+                "SHORT: EMA9 < EMA21 (M5), ADX>22, ATR <70% prům.20, cena pod VWAP; SL nad high",
+                "SHORT: Pullback k EMA50 na M15 + lower high, ADX>20; entry break low, SL nad EMA50",
+                "SHORT: Momentum >70 na M1 + bearish engulfing",
+                "SHORT: Breakdown pod support s ATR expanzí a ADX>25",
+                "Filtrace: žádný vstup proti HTF biasu (např. 1h EMA200)",
+                "Relaxed: 70%+ confidence (2+ indikátorů) · Auto‑On vždy s TP/SL + trailing",
             ],
         },
         "ai-matic-scalp": {
@@ -62,7 +74,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         baseRiskPerTrade: 0.02,
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
-        maxOpenPositions: 2,
+        maxOpenPositions: 3,
         entryStrictness: "base",
         enforceSessionHours: true,
         haltOnDailyLoss: true,
@@ -94,7 +106,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         baseRiskPerTrade: 0.005,
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
-        maxOpenPositions: 2,
+        maxOpenPositions: 3,
         entryStrictness: "ultra",
         enforceSessionHours: false,
         haltOnDailyLoss: true,
@@ -126,7 +138,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         baseRiskPerTrade: 0.01,
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
-        maxOpenPositions: 2,
+        maxOpenPositions: 3,
         entryStrictness: "ultra",
         enforceSessionHours: false,
         haltOnDailyLoss: true,
@@ -175,11 +187,11 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                     }), className: `rounded-md border px-3 py-1 text-sm ${local.enableSoftGates
                                                         ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
                                                         : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enableSoftGates ? "On" : "Off" })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Cheat Sheet" }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: local.strategyCheatSheetEnabled ? "On" : "Off" }), _jsx("div", { className: "text-xs text-slate-400 mt-1", children: "Prioritize saved entry setups (Limit/Conditional)." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
-                                                        ...local,
-                                                        strategyCheatSheetEnabled: !local.strategyCheatSheetEnabled,
-                                                    }), className: `rounded-md border px-3 py-1 text-sm ${local.strategyCheatSheetEnabled
-                                                        ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                                                        : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.strategyCheatSheetEnabled ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Max Positions" }), _jsx("div", { className: "rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm", children: local.maxOpenPositions })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsx("ul", { className: "list-disc list-inside space-y-1 text-slate-400", children: meta.notes.map((n) => (_jsx("li", { children: n }, n))) }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Max positions", " ", local.maxOpenPositions] })] })] }), _jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:justify-end mt-6", children: [_jsx("button", { type: "button", onClick: () => {
+                                                ...local,
+                                                strategyCheatSheetEnabled: !local.strategyCheatSheetEnabled,
+                                            }), className: `rounded-md border px-3 py-1 text-sm ${local.strategyCheatSheetEnabled
+                                                ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.strategyCheatSheetEnabled ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Max Positions" }), _jsx("div", { className: "rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm", children: local.maxOpenPositions })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsx("ul", { className: "list-disc list-inside space-y-1 text-slate-400", children: meta.notes.map((n) => (_jsx("li", { children: n }, n))) }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Max positions", " ", local.maxOpenPositions] })] })] }), _jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:justify-end mt-6", children: [_jsx("button", { type: "button", onClick: () => {
                                 onUpdateSettings(local);
                                 onClose();
                             }, className: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-emerald-600 text-white hover:bg-emerald-500 h-10 px-4 py-2 w-full sm:w-auto", children: "Save" }), _jsx("button", { onClick: onClose, className: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full sm:w-auto", children: "Close" })] })] }) }));

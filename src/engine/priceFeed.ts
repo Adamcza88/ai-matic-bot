@@ -82,10 +82,18 @@ export function startPriceFeed(
     configOverrides?:
       | Partial<BotConfig>
       | ((symbol: string) => Partial<BotConfig>);
+    decisionFn?: (
+      symbol: string,
+      candles: Candle[],
+      config?: Partial<BotConfig>
+    ) => PriceFeedDecision;
+    maxCandles?: number;
   }
 ): () => void {
   const ws = new WebSocket(opts?.useTestnet ? FEED_URL_TESTNET : FEED_URL_MAINNET);
   const timeframe = opts?.timeframe ?? "1";
+  const maxCandles = opts?.maxCandles ?? 500;
+  const decisionFn = opts?.decisionFn ?? evaluateStrategyForSymbol;
 
   let pingTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -141,17 +149,13 @@ export function startPriceFeed(
       };
 
       buffer.push(candle);
-      if (buffer.length > 500) buffer.shift();
+      if (buffer.length > maxCandles) buffer.shift();
 
       const overrides =
         typeof opts?.configOverrides === "function"
           ? opts.configOverrides(symbol)
           : opts?.configOverrides;
-      const decision = evaluateStrategyForSymbol(
-        symbol,
-        buffer,
-        overrides ?? {}
-      );
+      const decision = decisionFn(symbol, buffer, overrides ?? {});
       onDecision(symbol, decision);
     } catch (err) {
       console.error("priceFeed ws error:", err);

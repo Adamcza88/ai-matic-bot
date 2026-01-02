@@ -52,3 +52,41 @@ export function clearPnlHistory(): AssetPnlMap {
   persistPnlHistory(empty);
   return empty;
 }
+
+export function mergePnlRecords(records: AssetPnlRecord[]): AssetPnlMap {
+  const current = loadPnlHistory();
+  const next: AssetPnlMap = { ...current };
+  const seenBySymbol = new Map<string, Set<string>>();
+
+  for (const [symbol, list] of Object.entries(current)) {
+    seenBySymbol.set(
+      symbol,
+      new Set(list.map((r) => `${r.timestamp}:${r.pnl}`))
+    );
+  }
+
+  for (const record of records) {
+    if (!record.symbol) continue;
+    const key = `${record.timestamp}:${record.pnl}`;
+    const seen = seenBySymbol.get(record.symbol) ?? new Set<string>();
+    if (!seen.has(key)) {
+      const list = next[record.symbol] ?? [];
+      list.push(record);
+      next[record.symbol] = list;
+      seen.add(key);
+      seenBySymbol.set(record.symbol, seen);
+    }
+  }
+
+  for (const [symbol, list] of Object.entries(next)) {
+    list.sort(
+      (a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)
+    );
+    if (list.length > MAX_RECORDS_PER_SYMBOL) {
+      next[symbol] = list.slice(0, MAX_RECORDS_PER_SYMBOL);
+    }
+  }
+
+  persistPnlHistory(next);
+  return next;
+}

@@ -39,6 +39,8 @@ function normalizeWsKline(row) {
 export function startPriceFeed(symbols, onDecision, opts) {
     const ws = new WebSocket(opts?.useTestnet ? FEED_URL_TESTNET : FEED_URL_MAINNET);
     const timeframe = opts?.timeframe ?? "1";
+    const maxCandles = opts?.maxCandles ?? 500;
+    const decisionFn = opts?.decisionFn ?? evaluateStrategyForSymbol;
     let pingTimer = null;
     ws.addEventListener("open", () => {
         console.log("Bybit WS open → subscribing…");
@@ -81,12 +83,12 @@ export function startPriceFeed(symbols, onDecision, opts) {
                 volume,
             };
             buffer.push(candle);
-            if (buffer.length > 500)
+            if (buffer.length > maxCandles)
                 buffer.shift();
             const overrides = typeof opts?.configOverrides === "function"
                 ? opts.configOverrides(symbol)
                 : opts?.configOverrides;
-            const decision = evaluateStrategyForSymbol(symbol, buffer, overrides ?? {});
+            const decision = decisionFn(symbol, buffer, overrides ?? {});
             onDecision(symbol, decision);
         }
         catch (err) {

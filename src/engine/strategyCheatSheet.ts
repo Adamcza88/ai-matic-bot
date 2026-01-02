@@ -27,6 +27,24 @@ export const STRATEGY_CHEAT_SHEET: StrategyCheatSheetSetup[] = [
       "PostOnly limit entry with short timeout",
     ],
   },
+  {
+    id: "ai-matic-x-smc",
+    name: "AI-MATIC-X SMC Hierarchy",
+    description:
+      "HTF 4h/1h bias + POI with LTF 15m/1m CHOCH/MSS and displacement pullback entries.",
+    entryType: "LIMIT_MAKER_FIRST",
+    side: "both",
+    priority: 2,
+    rules: [
+      "HTF 4h/1h structure defines bias (HH/HL vs LH/LL)",
+      "HTF key swings + POI zones: OB, FVG, Breaker, Liquidity pools",
+      "LTF 15m/1m displacement toward HTF bias",
+      "LTF CHOCH confirms shift; MSS break + mitigation",
+      "LTF OB/FVG aligns with HTF POI before entry",
+      "Entry on pullback into HTF POI after inducement sweep",
+      "Ignore LTF-only patterns without HTF context",
+    ],
+  },
 ];
 
 export function getCheatSheetSetup(id: string): StrategyCheatSheetSetup | null {
