@@ -1203,6 +1203,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             ? evaluateSmcStrategyForSymbol
             : undefined;
         const maxCandles = settingsRef.current.riskMode === "ai-matic-x" ? 3000 : undefined;
+        const backfill = settingsRef.current.riskMode === "ai-matic-x"
+            ? { enabled: true, interval: "1", lookbackMinutes: 1440, limit: 1000 }
+            : undefined;
         const stop = startPriceFeed(WATCH_SYMBOLS, (symbol, decision) => {
             handleDecisionRef.current?.(symbol, decision);
         }, {
@@ -1211,6 +1214,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             configOverrides: engineConfig,
             decisionFn,
             maxCandles,
+            backfill,
         });
         const envLabel = useTestnet ? "testnet" : "mainnet";
         const lastLog = feedLogRef.current;

@@ -79,6 +79,8 @@ export class BybitV5AdapterImpl implements BybitAdapter {
     symbol: Symbol;
     stopLoss: number;
     takeProfit?: number;
+    trailingStop?: number;
+    trailingActivePrice?: number;
   }) {
     await this.v5.rest.setTradingStop({
       category: "linear",
@@ -86,6 +88,12 @@ export class BybitV5AdapterImpl implements BybitAdapter {
       positionIdx: 0,
       stopLoss: String(args.stopLoss),
       takeProfit: args.takeProfit != null ? String(args.takeProfit) : undefined,
+      trailingStop:
+        args.trailingStop != null ? String(args.trailingStop) : undefined,
+      activePrice:
+        args.trailingActivePrice != null
+          ? String(args.trailingActivePrice)
+          : undefined,
       tpslMode: "Full",
     });
   }

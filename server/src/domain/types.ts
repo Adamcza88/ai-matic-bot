@@ -17,6 +17,8 @@ export type TradeIntent = {
 
   slPrice: number; // protective stop
   tpPrices: number[]; // take-profit ladder (optional empty)
+  trailingStop?: number; // distance from price
+  trailingActivePrice?: number; // activation price
 
   expireAfterMs: number; // entry timeout
   tags?: Record<string, string>; // reason, bias snapshot, etc.

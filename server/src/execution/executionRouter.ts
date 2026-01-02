@@ -91,6 +91,8 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
     symbol: intent.symbol,
     stopLoss: intent.slPrice,
     takeProfit: tp1,
+    trailingStop: intent.trailingStop,
+    trailingActivePrice: intent.trailingActivePrice,
   });
 
   setTimeout(async () => {

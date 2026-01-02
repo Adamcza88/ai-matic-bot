@@ -3,6 +3,8 @@
 import { evaluateStrategyForSymbol, } from "@/engine/botEngine";
 const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
 const FEED_URL_TESTNET = "wss://stream-testnet.bybit.com/v5/public/linear";
+const REST_URL_MAINNET = "https://api.bybit.com";
+const REST_URL_TESTNET = "https://api-testnet.bybit.com";
 // WS ping interval (Bybit vyžaduje každých ~20s)
 const PING_INTERVAL = 20000;
 // Buffer svíček pro každý symbol
@@ -36,12 +38,111 @@ function normalizeWsKline(row) {
         };
     }
 }
+
+function normalizeRestKline(row) {
+    if (!Array.isArray(row) || row.length < 6)
+        return null;
+    const openTime = Number(row[0]);
+    const open = parseFloat(row[1]);
+    const high = parseFloat(row[2]);
+    const low = parseFloat(row[3]);
+    const close = parseFloat(row[4]);
+    const volume = parseFloat(row[5]);
+    if (!Number.isFinite(openTime))
+        return null;
+    if (![open, high, low, close].every(Number.isFinite))
+        return null;
+    return { openTime, open, high, low, close, volume };
+}
+
+function mergeCandles(existing, incoming, maxCandles) {
+    const merged = new Map();
+    for (const c of existing) {
+        if (!Number.isFinite(c.openTime))
+            continue;
+        merged.set(c.openTime, c);
+    }
+    for (const c of incoming) {
+        if (!Number.isFinite(c.openTime))
+            continue;
+        merged.set(c.openTime, c);
+    }
+    const sorted = Array.from(merged.values()).sort((a, b) => a.openTime - b.openTime);
+    if (sorted.length <= maxCandles)
+        return sorted;
+    return sorted.slice(-maxCandles);
+}
+
+async function fetchBackfillCandles(args) {
+    const intervalMinutes = Number(args.interval) || 1;
+    const totalBars = Math.max(1, Math.ceil(args.lookbackMinutes / intervalMinutes));
+    const limitPerRequest = Math.min(Math.max(args.limit ?? 1000, 1), 1000);
+    const base = args.useTestnet ? REST_URL_TESTNET : REST_URL_MAINNET;
+    const out = [];
+    let end = Date.now();
+    let lastEnd = end;
+    while (out.length < totalBars) {
+        const limit = Math.min(limitPerRequest, totalBars - out.length);
+        const url = `${base}/v5/market/kline?category=linear&symbol=${args.symbol}&interval=${args.interval}&limit=${limit}&end=${end}`;
+        const res = await fetch(url);
+        if (!res.ok)
+            throw new Error(`backfill_failed:${res.status}`);
+        const json = await res.json();
+        const list = json?.result?.list ?? [];
+        if (!Array.isArray(list) || list.length === 0)
+            break;
+        const parsed = list
+            .map((row) => normalizeRestKline(row))
+            .filter((c) => Boolean(c));
+        if (!parsed.length)
+            break;
+        out.push(...parsed);
+        const oldest = parsed.reduce((min, c) => Math.min(min, c.openTime), Infinity);
+        if (!Number.isFinite(oldest))
+            break;
+        end = oldest - 1;
+        if (end >= lastEnd)
+            break;
+        lastEnd = end;
+    }
+    return out.sort((a, b) => a.openTime - b.openTime);
+}
 export function startPriceFeed(symbols, onDecision, opts) {
     const ws = new WebSocket(opts?.useTestnet ? FEED_URL_TESTNET : FEED_URL_MAINNET);
     const timeframe = opts?.timeframe ?? "1";
     const maxCandles = opts?.maxCandles ?? 500;
     const decisionFn = opts?.decisionFn ?? evaluateStrategyForSymbol;
+    const backfill = opts?.backfill;
     let pingTimer = null;
+    if (backfill?.enabled) {
+        const interval = backfill.interval ?? timeframe;
+        const lookbackMinutes = backfill.lookbackMinutes ?? 1440;
+        const limit = backfill.limit ?? 1000;
+        for (const symbol of symbols) {
+            fetchBackfillCandles({
+                symbol,
+                interval,
+                lookbackMinutes,
+                useTestnet: opts?.useTestnet,
+                limit,
+            })
+                .then((candles) => {
+                if (!candles.length)
+                    return;
+                const buffer = ensureBuffer(symbol);
+                const merged = mergeCandles(buffer, candles, maxCandles);
+                candleBuffers[symbol] = merged;
+                const overrides = typeof opts?.configOverrides === "function"
+                    ? opts.configOverrides(symbol)
+                    : opts?.configOverrides;
+                const decision = decisionFn(symbol, merged, overrides ?? {});
+                onDecision(symbol, decision);
+            })
+                .catch((err) => {
+                console.warn(`backfill failed for ${symbol}:`, err);
+            });
+        }
+    }
     ws.addEventListener("open", () => {
         console.log("Bybit WS open → subscribing…");
         ws.send(JSON.stringify({

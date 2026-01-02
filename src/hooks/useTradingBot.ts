@@ -1417,6 +1417,10 @@ export function useTradingBot(
         : undefined;
     const maxCandles =
       settingsRef.current.riskMode === "ai-matic-x" ? 3000 : undefined;
+    const backfill =
+      settingsRef.current.riskMode === "ai-matic-x"
+        ? { enabled: true, interval: "1", lookbackMinutes: 1440, limit: 1000 }
+        : undefined;
     const stop = startPriceFeed(
       WATCH_SYMBOLS,
       (symbol, decision) => {
@@ -1428,6 +1432,7 @@ export function useTradingBot(
         configOverrides: engineConfig,
         decisionFn,
         maxCandles,
+        backfill,
       }
     );
 

@@ -114,8 +114,8 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         },
     }), []);
     const CHECKLIST_DEFAULTS = useMemo(() => {
-        return CHECKLIST_DEFAULTS_BY_PROFILE[riskMode] ??
-            CHECKLIST_DEFAULTS_BY_PROFILE["ai-matic"];
+        return (CHECKLIST_DEFAULTS_BY_PROFILE[riskMode] ??
+            CHECKLIST_DEFAULTS_BY_PROFILE["ai-matic"]);
     }, [CHECKLIST_DEFAULTS_BY_PROFILE, riskMode]);
     const CHECKLIST_ALIASES = useMemo(() => ({
         "Feed age": ["BBO age", "BBO fresh"],
