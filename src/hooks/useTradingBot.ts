@@ -126,6 +126,12 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
   "ai-matic-x": { activateR: 1.4, lockR: 0.6 },
   "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
 };
+const TRAIL_SYMBOL_MODE: Partial<Record<Symbol, "on" | "off">> = {
+  SOLUSDT: "on",
+  ADAUSDT: "on",
+  BTCUSDT: "on",
+  ETHUSDT: "on",
+};
 const CHEAT_SHEET_SETUP_BY_RISK_MODE: Partial<
   Record<AISettings["riskMode"], string>
 > = {
@@ -447,9 +453,11 @@ export function useTradingBot(
 
 
   const computeTrailingPlan = useCallback(
-    (entry: number, sl: number, side: "Buy" | "Sell") => {
+    (entry: number, sl: number, side: "Buy" | "Sell", symbol: Symbol) => {
       const settings = settingsRef.current;
-      if (!settings.lockProfitsWithTrail) return null;
+      const symbolMode = TRAIL_SYMBOL_MODE[symbol];
+      if (symbolMode === "off") return null;
+      if (!settings.lockProfitsWithTrail && symbolMode !== "on") return null;
       const r = Math.abs(entry - sl);
       if (!Number.isFinite(r) || r <= 0) return null;
       const profile =
@@ -1309,7 +1317,7 @@ export function useTradingBot(
       }
 
       const fixedSizing = computeFixedSizing(symbol as Symbol, entry, sl);
-      const trailingPlan = computeTrailingPlan(entry, sl, side);
+      const trailingPlan = computeTrailingPlan(entry, sl, side, symbol as Symbol);
       const sizing = fixedSizing ?? computeNotionalForSignal(entry, sl);
       if (!sizing.ok) {
         addLogEntries([

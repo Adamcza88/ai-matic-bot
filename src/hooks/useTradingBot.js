@@ -101,6 +101,12 @@ const TRAIL_PROFILE_BY_RISK_MODE = {
     "ai-matic-x": { activateR: 1.4, lockR: 0.6 },
     "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
 };
+const TRAIL_SYMBOL_MODE = {
+    SOLUSDT: "on",
+    ADAUSDT: "on",
+    BTCUSDT: "on",
+    ETHUSDT: "on",
+};
 const CHEAT_SHEET_SETUP_BY_RISK_MODE = {
     "ai-matic": "ai-matic-core",
     "ai-matic-x": "ai-matic-x-smc",
@@ -362,9 +368,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const equity = getEquityValue();
         return { ok: true, notional, qty: fixedQty, riskUsd, equity };
     }, [getEquityValue]);
-    const computeTrailingPlan = useCallback((entry, sl, side) => {
+    const computeTrailingPlan = useCallback((entry, sl, side, symbol) => {
         const settings = settingsRef.current;
-        if (!settings.lockProfitsWithTrail)
+        const symbolMode = TRAIL_SYMBOL_MODE[symbol];
+        if (symbolMode === "off")
+            return null;
+        if (!settings.lockProfitsWithTrail && symbolMode !== "on")
             return null;
         const r = Math.abs(entry - sl);
         if (!Number.isFinite(r) || r <= 0)
@@ -1104,7 +1113,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return;
         }
         const fixedSizing = computeFixedSizing(symbol, entry, sl);
-        const trailingPlan = computeTrailingPlan(entry, sl, side);
+        const trailingPlan = computeTrailingPlan(entry, sl, side, symbol);
         const sizing = fixedSizing ?? computeNotionalForSignal(entry, sl);
         if (!sizing.ok) {
             addLogEntries([
