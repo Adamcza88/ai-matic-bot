@@ -11,6 +11,7 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 4;
 const MAX_POSITION_NOTIONAL_USD = 7;
+const MAX_ORDERS_PER_POSITION = 3;
 const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
 const DEFAULT_SETTINGS = {
@@ -521,7 +522,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             const size = toNumber(p.size ?? p.qty);
             return Number.isFinite(size) && size > 0;
         });
-        const hasOrders = ordersRef.current.some((o) => String(o.symbol ?? "") === symbol);
+        const symbolOrdersCount = ordersRef.current.filter((o) => String(o.symbol ?? "") === symbol).length;
+        const ordersClearOk = symbolOrdersCount < MAX_ORDERS_PER_POSITION;
         const engineOk = !(decision?.halted ?? false);
         return {
             settings,
@@ -531,7 +533,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             maxPositions,
             openPositionsCount,
             hasPosition,
-            hasOrders,
+            symbolOrdersCount,
+            ordersClearOk,
             engineOk,
         };
     }, [isSessionAllowed]);
@@ -610,7 +613,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const pos = positionsRef.current.find((p) => p.symbol === symbol);
         const sl = toNumber(pos?.sl);
         const tp = toNumber(pos?.tp);
-        const symbolOrders = ordersRef.current.filter((o) => String(o.symbol ?? "") === symbol);
         const gates = [];
         const addGate = (name, ok, detail) => {
             gates.push({ name, ok, detail: ok ? detail : undefined });
@@ -648,10 +650,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             : `open ${context.openPositionsCount}`;
         addGate("Max positions", context.maxPositionsOk, maxPositionsDetail);
         addGate("Position clear", !context.hasPosition, "no open position");
-        const ordersDetail = Number.isFinite(context.maxPositions)
-            ? `open ${symbolOrders.length}/${context.maxPositions}`
-            : `open ${symbolOrders.length}`;
-        addGate("Orders clear", !context.hasOrders, ordersDetail);
+        const ordersDetail = `open ${context.symbolOrdersCount}/${MAX_ORDERS_PER_POSITION}`;
+        addGate("Orders clear", context.ordersClearOk, ordersDetail);
         const slOk = context.hasPosition && Number.isFinite(sl) && sl > 0;
         const tpOk = context.hasPosition && Number.isFinite(tp) && tp > 0;
         addGate("SL set", slOk, slOk ? `SL ${formatNumber(sl, 6)}` : undefined);
@@ -675,7 +675,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             if (context.hasPosition && isGateEnabled("Position clear")) {
                 hardReasons.push("Position clear");
             }
-            if (context.hasOrders && isGateEnabled("Orders clear")) {
+            if (!context.ordersClearOk && isGateEnabled("Orders clear")) {
                 hardReasons.push("Orders clear");
             }
             if (feedAgeOk === false && isGateEnabled("Feed age")) {
@@ -1143,8 +1143,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             entryType: signal.entryType,
             entryPrice: signal.entryPrice,
             triggerPrice: signal.triggerPrice,
-            trailingStop: signal.trailingStop,
-            trailingActivePrice: signal.trailingActivePrice,
             qtyMode: signal.qtyMode,
             qtyValue: signal.qtyValue,
             slPrice: signal.slPrice,
@@ -1252,7 +1250,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             if (context.hasPosition && isGateEnabled("Position clear")) {
                 blockReasons.push("Position clear");
             }
-            if (context.hasOrders && isGateEnabled("Orders clear")) {
+            if (!context.ordersClearOk && isGateEnabled("Orders clear")) {
                 blockReasons.push("Orders clear");
             }
             if (context.settings.requireConfirmationInAuto &&
@@ -1295,7 +1293,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return;
         }
         const fixedSizing = computeFixedSizing(symbol, entry, sl);
-        const trailingPlan = computeTrailingPlan(entry, sl, side, symbol);
         const sizing = fixedSizing ?? computeNotionalForSignal(entry, sl);
         if (!sizing.ok) {
             addLogEntries([
@@ -1331,23 +1328,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     entryPrice: entry,
                     entryType,
                     triggerPrice,
-                    trailingStop: trailingPlan?.trailingStop,
-                    trailingActivePrice: trailingPlan?.trailingActivePrice,
                     slPrice: sl,
                     tpPrices: Number.isFinite(tp) ? [tp] : [],
                     qtyMode,
                     qtyValue,
                 });
-                if (trailingPlan) {
-                    addLogEntries([
-                        {
-                            id: `signal:trail:${signalId}`,
-                            timestamp: new Date().toISOString(),
-                            action: "STATUS",
-                            message: `${symbol} TS naplánován (aktivuje se po otevření pozice) | aktivace ${formatNumber(trailingPlan.trailingActivePrice ?? Number.NaN, 6)} | distance ${formatNumber(trailingPlan.trailingStop ?? Number.NaN, 6)}`,
-                        },
-                    ]);
-                }
                 addLogEntries([
                     {
                         id: `signal:sent:${signalId}`,
@@ -1377,7 +1362,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         buildScanDiagnostics,
         computeFixedSizing,
         computeNotionalForSignal,
-        computeTrailingPlan,
         getSymbolContext,
         isGateEnabled,
         resolveTrendGate,
