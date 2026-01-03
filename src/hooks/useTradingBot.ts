@@ -26,6 +26,7 @@ const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 4;
 const MAX_POSITION_NOTIONAL_USD = 7;
 const MAX_ORDERS_PER_POSITION = 3;
+const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
 
@@ -580,7 +581,7 @@ export function useTradingBot(
         if (!plan) continue;
 
         const lastAttempt = trailingSyncRef.current.get(symbol);
-        if (lastAttempt && now - lastAttempt < 60_000) {
+        if (lastAttempt && now - lastAttempt < TS_VERIFY_INTERVAL_MS) {
           continue;
         }
         trailingSyncRef.current.set(symbol, now);
@@ -1336,14 +1337,18 @@ export function useTradingBot(
     };
     const fastId = setInterval(tickFast, 1000);
     const slowId = setInterval(tickSlow, 10000);
+    const tsId = setInterval(() => {
+      void syncTrailingProtection(positionsRef.current);
+    }, TS_VERIFY_INTERVAL_MS);
     tickFast();
     tickSlow();
     return () => {
       alive = false;
       clearInterval(fastId);
       clearInterval(slowId);
+      clearInterval(tsId);
     };
-  }, [authToken, refreshFast, refreshSlow]);
+  }, [authToken, refreshFast, refreshSlow, syncTrailingProtection]);
 
   async function autoTrade(signal: {
     symbol: Symbol;
