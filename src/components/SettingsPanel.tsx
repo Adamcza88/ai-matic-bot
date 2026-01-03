@@ -225,7 +225,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic"
                     ? "bg-emerald-600 text-white"
-                    : "bg-slate-800 text-slate-200"
+                    : "bg-slate-800 text-secondary-foreground"
                 }`}
               >
                 AI-Matic
@@ -235,7 +235,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic-x"
                     ? "bg-emerald-600 text-white"
-                    : "bg-slate-800 text-slate-200"
+                    : "bg-slate-800 text-secondary-foreground"
                 }`}
               >
                 AI-Matic-X
@@ -245,7 +245,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic-scalp"
                     ? "bg-emerald-600 text-white"
-                    : "bg-slate-800 text-slate-200"
+                    : "bg-slate-800 text-secondary-foreground"
                 }`}
               >
                 AI-Matic-Scalp
@@ -257,10 +257,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Enforce Trading Hours
             </label>
-            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
               <div>
                 <div className="font-medium">{local.enforceSessionHours ? "On" : "Off"}</div>
-                <div className="text-xs text-slate-400 mt-1">
+                <div className="text-xs text-secondary-foreground/70 mt-1">
                   {local.enforceSessionHours ? tradingWindowLabel : `Vypnuto (${tzLabel})`}
                 </div>
               </div>
@@ -288,10 +288,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
               Strategy Gates
             </label>
             <div className="grid gap-2">
-              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
                 <div>
                   <div className="font-medium">Hard podmínky</div>
-                  <div className="text-xs text-slate-400 mt-1">
+                  <div className="text-xs text-secondary-foreground/70 mt-1">
                     Přísné blokace vstupu (spread hard, impulse, stale BBO).
                   </div>
                 </div>
@@ -313,10 +313,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 </button>
               </div>
 
-              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
                 <div>
                   <div className="font-medium">Soft podmínky</div>
-                  <div className="text-xs text-slate-400 mt-1">
+                  <div className="text-xs text-secondary-foreground/70 mt-1">
                     Jemné snížení risku podle quality score.
                   </div>
                 </div>
@@ -345,7 +345,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Trend Gate Mode
             </label>
-            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm space-y-2">
+            <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
               <select
                 value={local.trendGateMode}
                 onChange={(e) =>
@@ -360,7 +360,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 <option value="follow">Follow</option>
                 <option value="reverse">Reverse</option>
               </select>
-              <div className="text-xs text-slate-400">
+              <div className="text-xs text-secondary-foreground/70">
                 Adaptive: follow when ADX &gt;= 25 or score &gt;= 3, otherwise reverse.
                 Follow: only with trend direction. Reverse: only mean-reversion.
               </div>
@@ -371,10 +371,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Strategy Cheat Sheet
             </label>
-            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
               <div>
                 <div className="font-medium">{local.strategyCheatSheetEnabled ? "On" : "Off"}</div>
-                <div className="text-xs text-slate-400 mt-1">
+                <div className="text-xs text-secondary-foreground/70 mt-1">
                   Prioritize saved entry setups (Limit/Conditional).
                 </div>
               </div>
@@ -401,7 +401,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             <label className="text-sm font-medium leading-none">
               Max Positions
             </label>
-            <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+            <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
               {local.maxOpenPositions}
             </div>
           </div>

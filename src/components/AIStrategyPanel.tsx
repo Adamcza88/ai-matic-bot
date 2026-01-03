@@ -38,14 +38,14 @@ const AIStrategyPanel: React.FC<Props> = ({
 
         <div className="grid gap-2">
           <label className="text-sm font-medium leading-none">Enforce Trading Hours</label>
-          <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+          <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
             {local.enforceSessionHours ? "On" : "Off"} (uzamčeno)
           </div>
         </div>
 
         <div className="grid gap-2">
           <label className="text-sm font-medium leading-none">Custom Strategy Text</label>
-          <div className="rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm">
+          <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
             Uzamčeno pro AI-Matic
           </div>
         </div>
