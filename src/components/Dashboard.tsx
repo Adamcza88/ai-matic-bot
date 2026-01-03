@@ -93,11 +93,11 @@ export default function Dashboard({
         label: "AI-MATIC",
         subtitle: "AI-MATIC (1h/15m/5m/1m)",
         symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-        timeframes: "1h context · 15m micro · 5m signal · 1m confirm",
-        session: "Tokyo/London/NY context (1h)",
+        timeframes: "1h/15m/5m/1m + POI analyzer",
+        session: "POI: Breaker > OB > FVG > Liquidity",
         risk: "4 USDT / trade · 8 USDT total · max 3 pos",
-        entry: "1h direction → 15m setup/bias → 5m entry → 1m confirm",
-        execution: "1m confirmation + SL/TS management",
+        entry: "FVG/OB/Breaker + liquidity pools (0.2% tol, min 3 touches)",
+        execution: "Swing window 7 · 1m potvrzení + SL/TS management",
       };
   }, [riskMode]);
 

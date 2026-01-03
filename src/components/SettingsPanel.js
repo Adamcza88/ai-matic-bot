@@ -17,19 +17,19 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         ? "08:00–12:00 / 13:00–17:00 (UTC)"
         : `${String(local.tradingStartHour).padStart(2, "0")}:00–${String(local.tradingEndHour).padStart(2, "0")}:00 (${tzLabel})`;
     const profileCopy = {
-        "ai-matic": {
-            title: "AI-Matic",
-            description: "TF stack: 1H kontext, 15M mikro-kontext, 5M signál, 1M potvrzení a řízení pozice.",
-            notes: [
-                "1H: směr trhu, BOS/CHoCH, hlavní S/R, hlavní OB zóny",
-                "1H: kontext seancí Tokio/Londýn/New York + fáze dne AMD",
-                "15M: pullbacky a retesty, mini OB, inducement, propojení 1H → 5M",
-                "15M: trend a patterny",
-                "5M: vstupní patterny, reakce objemu, potvrzení Smart Money, validace RRR",
-                "1M: potvrzení entry, přesné načasování, management SL a trailing stop",
-                "Pravidlo: směr určuje 1H, setup/bias zpřesní 15M, entry je 5M, potvrzení/řízení 1M",
-            ],
-        },
+    "ai-matic": {
+        title: "AI-Matic",
+        description: "TF stack + POI analyzer (OB/FVG/Breaker/Liquidity) s prioritou.",
+        notes: [
+            "TF stack: 1H kontext, 15M mikro, 5M signál, 1M potvrzení/řízení",
+            "FVG: 3-svíčková imbalance (priority 1)",
+            "OB: poslední opačná svíčka před impulsem (priority 2)",
+            "Breaker: mitigace OB + close za extremem (priority 3)",
+            "Liquidity pools: equal highs/lows, tolerance 0.2 %, min 3 dotyky",
+            "Swing points window: 7 (pro highs/lows)",
+            "POI priorita: Breaker > OB > FVG > Liquidity",
+        ],
+    },
         "ai-matic-x": {
             title: "AI-Matic-X",
             description: "SMC profil s HTF 4h/1h biasem a POI (OB/FVG/Breaker/Liquidity) a LTF 15m/1m entry přes CHOCH/MSS a displacement pullback.",
