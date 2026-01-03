@@ -32,14 +32,15 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   const profileCopy: Record<AISettings["riskMode"], { title: string; description: string; notes: string[] }> = {
     "ai-matic": {
       title: "AI-Matic",
-      description: "Konzervativnější intraday / scalp mix s kontrolou sezení a širšími filtry volatility. Entry: ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2. Execution: PostOnly LIMIT · timeout 1×15sec.",
+      description: "TF stack: 1H kontext, 15M mikro-kontext, 5M signál, 1M potvrzení a řízení pozice.",
       notes: [
-        "Trading hours: On (0–23 SEČ/SELČ)",
-        "Limit: max 3 pozice současně",
-        "Risk: 4 USDT / trade · 8 USDT total (po 3 ztrátách 2/4 na 60m)",
-        "Entry: ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2",
-        "Execution: PostOnly LIMIT · timeout 1×15sec",
-        "Trailing profit lock",
+        "1H: směr trhu, BOS/CHoCH, hlavní S/R, hlavní OB zóny",
+        "1H: kontext seancí Tokio/Londýn/New York + fáze dne AMD",
+        "15M: pullbacky a retesty, mini OB, inducement, propojení 1H → 5M",
+        "15M: trend a patterny",
+        "5M: vstupní patterny, reakce objemu, potvrzení Smart Money, validace RRR",
+        "1M: potvrzení entry, přesné načasování, management SL a trailing stop",
+        "Pravidlo: směr určuje 1H, setup/bias zpřesní 15M, entry je 5M, potvrzení/řízení 1M",
       ],
     },
     "ai-matic-x": {

@@ -2,15 +2,17 @@ export const STRATEGY_CHEAT_SHEET = [
     {
         id: "ai-matic-core",
         name: "AI-MATIC Core Entry",
-        description: "Baseline AI-MATIC entry based on HTF bias, LTF confirmation, and EMA pullback.",
+        description: "AI-MATIC TF stack: 1h context, 15m micro, 5m signal, 1m confirmation/management.",
         entryType: "LIMIT_MAKER_FIRST",
         side: "both",
         priority: 1,
         rules: [
-            "HTF 15m bias aligned",
-            "LTF 1m close confirms bias",
-            "EMA20 pullback with RVOL >= 1.2",
-            "PostOnly limit entry with short timeout",
+            "1h context: direction, BOS/CHoCH, major S/R, main OB zones",
+            "1h session context: Tokyo/London/New York + AMD phase",
+            "15m: pullback/retest, mini OB, inducement; align 1h to 5m",
+            "15m: trend + pattern context",
+            "5m: entry patterns, volume reaction, SMC confirmation, RRR validation",
+            "1m: entry confirmation + timing + SL/trailing management",
         ],
     },
     {

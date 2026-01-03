@@ -91,13 +91,13 @@ export default function Dashboard({
     }
       return {
         label: "AI-MATIC",
-        subtitle: "AI-MATIC (15m/1m)",
+        subtitle: "AI-MATIC (1h/15m/5m/1m)",
         symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-        timeframes: "HTF 15m · LTF 1m",
-        session: "24/7",
+        timeframes: "1h context · 15m micro · 5m signal · 1m confirm",
+        session: "Tokyo/London/NY context (1h)",
         risk: "4 USDT / trade · 8 USDT total · max 3 pos",
-        entry: "ST15 bias + ST1 Close + EMA20 pullback + RVOL≥1.2",
-        execution: "PostOnly LIMIT · timeout 1×15sec",
+        entry: "1h direction → 15m setup/bias → 5m entry → 1m confirm",
+        execution: "1m confirmation + SL/TS management",
       };
   }, [riskMode]);
 
