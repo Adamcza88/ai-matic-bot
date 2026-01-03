@@ -119,7 +119,7 @@ const TRAIL_SYMBOL_MODE = {
 };
 const CHEAT_SHEET_SETUP_BY_RISK_MODE = {
     "ai-matic": "ai-matic-core",
-    "ai-matic-x": "ai-matic-x-smc",
+    "ai-matic-x": "ai-matic-x-smart-money-combo",
     "ai-matic-scalp": "ai-matic-scalp-scalpera",
 };
 export function useTradingBot(mode, useTestnet = false, authToken) {

@@ -148,7 +148,7 @@ const CHEAT_SHEET_SETUP_BY_RISK_MODE: Partial<
   Record<AISettings["riskMode"], string>
 > = {
   "ai-matic": "ai-matic-core",
-  "ai-matic-x": "ai-matic-x-smc",
+  "ai-matic-x": "ai-matic-x-smart-money-combo",
   "ai-matic-scalp": "ai-matic-scalp-scalpera",
 };
 

@@ -53,6 +53,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         "POI: Order blocky, FVG, breaker blocks, liquidity pools",
         "LTF: 15m + 1m displacement + CHOCH/MSS + mitigace",
         "Entry: pullback do HTF POI po inducement sweep; ignoruj LTF bez HTF",
+        "Smart Money combo: OB + liquidity, sweep/inducement, break & retest, FVG",
+        "Checklist gate: min 7/10 potvrzeni (EMA 8/21/50, pattern, volume, BTC, OB, sweep, retest, FVG, VP/SR, CoinGlass)",
         "LONG: EMA9 > EMA21 (M5), ADX>22, ATR <70% prům.20, cena nad VWAP; SL pod low, TP 1.8× ATR",
         "LONG: Pullback k EMA50 na M15 + higher low, ADX>20; entry break high, SL pod EMA50",
         "LONG: Momentum <30 na M1 + bullish engulfing; rychlý scalp",
