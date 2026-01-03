@@ -10,7 +10,7 @@ import { useAuth } from "./hooks/useAuth";
 import { supabase } from "./lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { LogOut, User, Settings } from "lucide-react";
+import { LogOut, Moon, Settings, Sun, User } from "lucide-react";
 import Logo from "./components/Logo";
 // Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
 const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
@@ -32,12 +32,30 @@ export default function App() {
         }
         return false; // Default to MAINNET
     });
+    const [theme, setTheme] = useState(() => {
+        if (typeof localStorage !== "undefined") {
+            const saved = localStorage.getItem("ai-matic-theme");
+            if (saved === "light" || saved === "dark")
+                return saved;
+        }
+        return "dark";
+    });
     useEffect(() => {
         localStorage.setItem("ai-matic-mode", mode);
     }, [mode]);
     useEffect(() => {
         localStorage.setItem("ai-matic-useTestnet", String(useTestnet));
     }, [useTestnet]);
+    useEffect(() => {
+        localStorage.setItem("ai-matic-theme", theme);
+        const root = document.documentElement;
+        if (theme === "dark") {
+            root.classList.add("dark");
+        }
+        else {
+            root.classList.remove("dark");
+        }
+    }, [theme]);
     const [showKeyPanel, setShowKeyPanel] = useState(false);
     const [missingServices, setMissingServices] = useState([]);
     const [keysError, setKeysError] = useState(null);
@@ -90,14 +108,7 @@ export default function App() {
         }
     }, [missingServices, useTestnet]);
     if (auth.status === "checking") {
-        return (_jsx("div", { style: {
-                minHeight: "100vh",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "#0b1224",
-                color: "white",
-            }, children: "Loading session..." }));
+        return (_jsx("div", { className: "min-h-screen flex items-center justify-center bg-background text-foreground", children: "Loading session..." }));
     }
     if (auth.status === "blocked") {
         return _jsx(NotReleased, { message: auth.error });
@@ -108,21 +119,21 @@ export default function App() {
     if ((auth.status !== "ready" || !auth.user) && !isGuest) {
         return _jsx(NotReleased, { message: "Unable to verify access." });
     }
-    return (_jsxs("div", { className: "min-h-screen bg-slate-950 text-white p-6 relative isolate", children: [_jsx("div", { className: "absolute inset-0 opacity-10 -z-10", style: {
+    return (_jsxs("div", { className: "min-h-screen bg-background text-foreground p-6 relative isolate", children: [_jsx("div", { className: "absolute inset-0 opacity-10 -z-10", style: {
                     backgroundImage: "url(/loginBackground.svg)",
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                     backgroundRepeat: "no-repeat",
-                } }), _jsxs("header", { className: "flex items-center justify-between mb-6 p-4 border border-white/10 rounded-xl bg-white/5 backdrop-blur-xs flex-col gap-5 sm:flex-row", children: [_jsxs("div", { className: "flex items-center gap-4", children: [_jsx(Logo, { className: "w-10 h-10 text-blue-500" }), _jsxs("div", { children: [_jsx("div", { className: "font-bold text-xl tracking-tight", children: "AI Matic" }), _jsxs("div", { className: "text-slate-400 text-sm flex items-center gap-2", children: [_jsx(User, { className: "w-3 h-3" }), "Signed in as ", userEmail] })] })] }), _jsxs("div", { className: "flex gap-2 items-center", children: [_jsxs(Button, { variant: missingServices.length > 0 ? "destructive" : "outline", size: "sm", onClick: () => setShowKeyPanel((v) => !v), className: missingServices.length > 0
+                } }), _jsxs("header", { className: "flex items-center justify-between mb-6 p-4 border border-border/60 rounded-xl bg-card/70 backdrop-blur-xs flex-col gap-5 sm:flex-row", children: [_jsxs("div", { className: "flex items-center gap-4", children: [_jsx(Logo, { className: "w-10 h-10 text-primary" }), _jsxs("div", { children: [_jsx("div", { className: "font-bold text-xl tracking-tight", children: "AI Matic" }), _jsxs("div", { className: "text-muted-foreground text-sm flex items-center gap-2", children: [_jsx(User, { className: "w-3 h-3" }), "Signed in as ", userEmail] })] })] }), _jsxs("div", { className: "flex gap-2 items-center", children: [_jsxs(Button, { variant: "outline", size: "sm", onClick: () => setTheme(theme === "dark" ? "light" : "dark"), className: "border-border/60 text-foreground hover:bg-accent hover:text-accent-foreground", children: [theme === "dark" ? (_jsx(Sun, { className: "w-4 h-4 mr-2" })) : (_jsx(Moon, { className: "w-4 h-4 mr-2" })), theme === "dark" ? "Light" : "Dark"] }), _jsxs(Button, { variant: missingServices.length > 0 ? "destructive" : "outline", size: "sm", onClick: () => setShowKeyPanel((v) => !v), className: missingServices.length > 0
                                     ? "bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20"
-                                    : "border-white/20 text-white hover:bg-white/10 hover:text-white", children: [_jsx(Settings, { className: "w-4 h-4 mr-2" }), "Profile / API keys", missingServices.length > 0 && (_jsx(Badge, { variant: "destructive", className: "ml-2 px-1.5 py-0.5 h-5", children: missingServices.length }))] }), _jsxs(Button, { variant: "ghost", size: "sm", onClick: () => {
+                                    : "border-border/60 text-foreground hover:bg-accent hover:text-accent-foreground", children: [_jsx(Settings, { className: "w-4 h-4 mr-2" }), "Profile / API keys", missingServices.length > 0 && (_jsx(Badge, { variant: "destructive", className: "ml-2 px-1.5 py-0.5 h-5", children: missingServices.length }))] }), _jsxs(Button, { variant: "ghost", size: "sm", onClick: () => {
                                     if (isGuest) {
                                         setIsGuest(false);
                                     }
                                     else {
                                         auth.signOut();
                                     }
-                                }, className: "text-slate-400 hover:text-white hover:bg-white/10", children: [_jsx(LogOut, { className: "w-4 h-4 mr-2" }), "Sign out"] })] })] }), missingServices.length > 0 && !showKeyPanel && (_jsxs("div", { className: "mb-6 p-4 rounded-xl border border-red-500/30 bg-red-500/10 flex items-center justify-between gap-4", children: [_jsxs("div", { children: [_jsx("div", { className: "font-bold text-red-400", children: missingServices.length === 1
+                                }, className: "text-muted-foreground hover:text-foreground hover:bg-accent", children: [_jsx(LogOut, { className: "w-4 h-4 mr-2" }), "Sign out"] })] })] }), missingServices.length > 0 && !showKeyPanel && (_jsxs("div", { className: "mb-6 p-4 rounded-xl border border-red-500/30 bg-red-500/10 flex items-center justify-between gap-4", children: [_jsxs("div", { children: [_jsx("div", { className: "font-bold text-red-400", children: missingServices.length === 1
                                     ? "Chybí API klíč"
                                     : "Chybí některé API klíče" }), _jsxs("div", { className: "text-sm text-red-300/80", children: ["Je pot\u0159eba doplnit: ", missingServices.join(", ")] }), keysError && (_jsx("div", { className: "text-amber-400 mt-1.5 text-xs", children: keysError }))] }), _jsx(Button, { size: "sm", onClick: () => setShowKeyPanel(true), className: "bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-none", children: "Otev\u0159\u00EDt nastaven\u00ED" })] })), showKeyPanel && (_jsx(ApiKeysManager, { userId: isGuest ? "guest" : auth.user?.id ?? "", onKeysUpdated: refreshKeyStatus })), _jsx(Dashboard, { mode: mode, setMode: setMode, useTestnet: useTestnet, setUseTestnet: setUseTestnet, bot: bot })] }));
 }

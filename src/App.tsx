@@ -9,7 +9,7 @@ import { useAuth } from "./hooks/useAuth";
 import { supabase } from "./lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { LogOut, User, Settings } from "lucide-react";
+import { LogOut, Moon, Settings, Sun, User } from "lucide-react";
 import Logo from "./components/Logo";
 
 // Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
@@ -31,6 +31,13 @@ export default function App() {
     }
     return false; // Default to MAINNET
   });
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    if (typeof localStorage !== "undefined") {
+      const saved = localStorage.getItem("ai-matic-theme");
+      if (saved === "light" || saved === "dark") return saved;
+    }
+    return "dark";
+  });
 
   useEffect(() => {
     localStorage.setItem("ai-matic-mode", mode);
@@ -39,6 +46,16 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("ai-matic-useTestnet", String(useTestnet));
   }, [useTestnet]);
+
+  useEffect(() => {
+    localStorage.setItem("ai-matic-theme", theme);
+    const root = document.documentElement;
+    if (theme === "dark") {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+  }, [theme]);
   const [showKeyPanel, setShowKeyPanel] = useState(false);
   const [missingServices, setMissingServices] = useState<string[]>([]);
   const [keysError, setKeysError] = useState<string | null>(null);
@@ -103,16 +120,7 @@ export default function App() {
 
   if (auth.status === "checking") {
     return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#0b1224",
-          color: "white",
-        }}
-      >
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
         Loading session...
       </div>
     );
@@ -139,7 +147,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-6 relative isolate">
+    <div className="min-h-screen bg-background text-foreground p-6 relative isolate">
       <div
         className="absolute inset-0 opacity-10 -z-10"
         style={{
@@ -149,12 +157,12 @@ export default function App() {
           backgroundRepeat: "no-repeat",
         }}
       />
-      <header className="flex items-center justify-between mb-6 p-4 border border-white/10 rounded-xl bg-white/5 backdrop-blur-xs flex-col gap-5 sm:flex-row">
+      <header className="flex items-center justify-between mb-6 p-4 border border-border/60 rounded-xl bg-card/70 backdrop-blur-xs flex-col gap-5 sm:flex-row">
         <div className="flex items-center gap-4">
-          <Logo className="w-10 h-10 text-blue-500" />
+          <Logo className="w-10 h-10 text-primary" />
           <div>
             <div className="font-bold text-xl tracking-tight">AI Matic</div>
-            <div className="text-slate-400 text-sm flex items-center gap-2">
+            <div className="text-muted-foreground text-sm flex items-center gap-2">
               <User className="w-3 h-3" />
               Signed in as {userEmail}
             </div>
@@ -162,13 +170,26 @@ export default function App() {
         </div>
         <div className="flex gap-2 items-center">
           <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            className="border-border/60 text-foreground hover:bg-accent hover:text-accent-foreground"
+          >
+            {theme === "dark" ? (
+              <Sun className="w-4 h-4 mr-2" />
+            ) : (
+              <Moon className="w-4 h-4 mr-2" />
+            )}
+            {theme === "dark" ? "Light" : "Dark"}
+          </Button>
+          <Button
             variant={missingServices.length > 0 ? "destructive" : "outline"}
             size="sm"
             onClick={() => setShowKeyPanel((v) => !v)}
             className={
               missingServices.length > 0
                 ? "bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20"
-                : "border-white/20 text-white hover:bg-white/10 hover:text-white"
+                : "border-border/60 text-foreground hover:bg-accent hover:text-accent-foreground"
             }
           >
             <Settings className="w-4 h-4 mr-2" />
@@ -189,7 +210,7 @@ export default function App() {
                 auth.signOut();
               }
             }}
-            className="text-slate-400 hover:text-white hover:bg-white/10"
+            className="text-muted-foreground hover:text-foreground hover:bg-accent"
           >
             <LogOut className="w-4 h-4 mr-2" />
             Sign out
