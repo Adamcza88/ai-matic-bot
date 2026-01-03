@@ -75,6 +75,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     const CHECKLIST_DEFAULTS_BY_PROFILE = useMemo(() => ({
         "ai-matic": {
             Signal: true,
+            "Trend bias": false,
             "Engine ok": true,
             "Session ok": true,
             "Confirm required": false,
@@ -88,6 +89,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         },
         "ai-matic-x": {
             Signal: true,
+            "Trend bias": false,
             "Engine ok": true,
             "Session ok": true,
             "Confirm required": false,
@@ -101,6 +103,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         },
         "ai-matic-scalp": {
             Signal: true,
+            "Trend bias": false,
             "Engine ok": true,
             "Session ok": true,
             "Confirm required": false,

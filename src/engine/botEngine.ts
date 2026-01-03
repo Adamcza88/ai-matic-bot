@@ -129,6 +129,7 @@ export interface Position {
   highWaterMark: number;
   lowWaterMark: number;
   opened: number;
+  entryKind?: EntryKind;
   partialTaken: boolean;
   slDistance: number;
   pyramidLevel: number;
@@ -182,6 +183,20 @@ export interface BotConfig {
   volExpansionAtrMult: number;
   volExpansionVolMult: number;
 }
+
+export type EntryKind =
+  | "BREAKOUT"
+  | "PULLBACK"
+  | "MOMENTUM"
+  | "MEAN_REVERSION"
+  | "OTHER";
+
+type EntrySignal = {
+  side: "long" | "short";
+  entry: number;
+  stopLoss: number;
+  kind: EntryKind;
+};
 
 function applyProfileOverrides(cfg: BotConfig): BotConfig {
   if (cfg.strategyProfile !== "scalp") {
@@ -437,26 +452,20 @@ export class TradingBot {
     this.history[timeframe] = data;
   }
 
-  /**
-   * Determine the prevailing trend using EMA Slope and Price Structure.
-   * Logic:
-   * - Bull: Price > EMA50 AND EMA50 Slope > 0
-   * - Bear: Price < EMA50 AND EMA50 Slope < 0
-   * - Range: Low ADX OR Flattish Slope
-   */
-  determineTrend(df: DataFrame): Trend {
+  private computeTrendMetrics(df: DataFrame): {
+    trend: Trend;
+    score: number;
+    adx: number;
+  } {
+    if (df.length < 20) {
+      return { trend: Trend.Range, score: 0, adx: Number.NaN };
+    }
     const closes = df.map((c) => c.close);
     const highs = df.map((c) => c.high);
     const lows = df.map((c) => c.low);
     const adxArray = computeADX(highs, lows, closes, this.config.adxPeriod);
     const currentAdx = adxArray[adxArray.length - 1];
 
-    // 1. Regime Gate: Low ADX => Range
-    if (currentAdx < this.config.adxThreshold) {
-      return Trend.Range;
-    }
-
-    // 2. Compute EMA50 and its Slope
     const ema = (series: number[], period: number): number[] => {
       const out: number[] = [];
       const k = 2 / (period + 1);
@@ -467,24 +476,75 @@ export class TradingBot {
       return out;
     };
     const ema50 = ema(closes, 50);
-    const eNow = ema50[ema50.length - 1];
-    // Lookback 5 bars for slope
-    const ePrev = ema50[Math.max(0, ema50.length - 6)];
-    const slope = eNow - ePrev;
+    const ema200 = ema(closes, 200);
     const price = closes[closes.length - 1];
+    const e50 = ema50[ema50.length - 1];
+    const e200 = ema200[ema200.length - 1];
+    const ePrev = ema50[Math.max(0, ema50.length - 6)];
+    const slope = e50 - ePrev;
+    const atrArr = computeATR(highs, lows, closes, this.config.atrPeriod);
+    const atrNow = atrArr[atrArr.length - 1] || 0;
+    const slopeThreshold = Math.max(e50 * 0.0003, atrNow * 0.15);
 
-    const slopeThreshold = eNow * 0.0005; // 0.05% slope requirement
-
-    // 3. Slope + Location Confirmation
-    if (slope > slopeThreshold && price > eNow) {
-      return Trend.Bull;
+    const swingWindow = 2;
+    const swingHighs: number[] = [];
+    const swingLows: number[] = [];
+    for (let i = swingWindow; i < highs.length - swingWindow; i++) {
+      const h = highs[i];
+      const l = lows[i];
+      let isHigh = true;
+      let isLow = true;
+      for (let j = i - swingWindow; j <= i + swingWindow; j++) {
+        if (j === i) continue;
+        if (highs[j] > h) isHigh = false;
+        if (lows[j] < l) isLow = false;
+        if (!isHigh && !isLow) break;
+      }
+      if (isHigh) swingHighs.push(h);
+      if (isLow) swingLows.push(l);
     }
-    if (slope < -slopeThreshold && price < eNow) {
-      return Trend.Bear;
-    }
+    const lastHighs = swingHighs.slice(-2);
+    const lastLows = swingLows.slice(-2);
+    const structureBull =
+      lastHighs.length === 2 &&
+      lastLows.length === 2 &&
+      lastHighs[1] > lastHighs[0] &&
+      lastLows[1] > lastLows[0];
+    const structureBear =
+      lastHighs.length === 2 &&
+      lastLows.length === 2 &&
+      lastHighs[1] < lastHighs[0] &&
+      lastLows[1] < lastLows[0];
 
-    // Fallback
-    return Trend.Range;
+    let bullScore = 0;
+    let bearScore = 0;
+    if (price > e50) bullScore += 1;
+    else bearScore += 1;
+    if (e50 > e200) bullScore += 1;
+    else if (e50 < e200) bearScore += 1;
+    if (slope > slopeThreshold) bullScore += 1;
+    else if (slope < -slopeThreshold) bearScore += 1;
+    if (structureBull) bullScore += 1;
+    if (structureBear) bearScore += 1;
+
+    const score = Math.max(bullScore, bearScore);
+    let trend = Trend.Range;
+    if (bullScore >= 3 && bullScore > bearScore) trend = Trend.Bull;
+    else if (bearScore >= 3 && bearScore > bullScore) trend = Trend.Bear;
+    else if (currentAdx < this.config.adxThreshold) trend = Trend.Range;
+
+    return { trend, score, adx: currentAdx };
+  }
+
+  /**
+   * Determine the prevailing trend using EMA alignment + structure.
+   */
+  determineTrend(df: DataFrame): Trend {
+    return this.computeTrendMetrics(df).trend;
+  }
+
+  getTrendMetrics(df: DataFrame): { trend: Trend; score: number; adx: number } {
+    return this.computeTrendMetrics(df);
   }
 
   private isVolatileChaos(df: DataFrame): boolean {
@@ -675,7 +735,7 @@ export class TradingBot {
    * Scan for entry signals on the configured timeframes. Returns a signal
    * description or null.
    */
-  async scanForEntry(): Promise<{ side: "long" | "short"; entry: number; stopLoss: number } | null> {
+  async scanForEntry(): Promise<EntrySignal | null> {
     const now = Date.now();
     this.resetDaily(now);
     if (!this.withinSession(now)) return null;
@@ -694,7 +754,12 @@ export class TradingBot {
    * Open a new position and switch to MANAGE state. Calculates position
    * size based on risk management settings.
    */
-  enterPosition(side: "long" | "short", entry: number, stopLoss: number): void {
+  enterPosition(
+    side: "long" | "short",
+    entry: number,
+    stopLoss: number,
+    kind: EntryKind = "OTHER"
+  ): void {
     const profileRisk =
       this.config.strategyProfile === "trend"
         ? 0.05
@@ -741,6 +806,7 @@ export class TradingBot {
       highWaterMark: entry,
       lowWaterMark: entry,
       opened: Date.now(),
+      entryKind: kind,
       partialTaken: false,
       slDistance,
       pyramidLevel: 0,
@@ -764,12 +830,17 @@ export class TradingBot {
   /**
    * SAFE ENTRY: Wrapper to prevent Race Conditions
    */
-  safeEnterPosition(side: "long" | "short", entry: number, stopLoss: number): boolean {
+  safeEnterPosition(
+    side: "long" | "short",
+    entry: number,
+    stopLoss: number,
+    kind: EntryKind = "OTHER"
+  ): boolean {
     if (!this.canEnter()) {
       console.warn("[BotEngine] Entry Blocked: State is not SCAN or Position exists.");
       return false;
     }
-    this.enterPosition(side, entry, stopLoss);
+    this.enterPosition(side, entry, stopLoss, kind);
     return true;
   }
 
@@ -1042,7 +1113,7 @@ export class TradingBot {
     if (this.state === State.Scan) {
       const signal = await this.scanForEntry();
       if (signal) {
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss);
+        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind);
       }
     } else if (this.state === State.Manage) {
       await this.managePosition();
@@ -1061,7 +1132,7 @@ export class TradingBot {
     if (this.state === State.Scan) {
       const signal = this.scanForEntryFromFrames(ht, lt);
       if (signal) {
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss);
+        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind);
       }
     } else if (this.state === State.Manage) {
       this.managePositionWithFrames(ht, lt);
@@ -1071,7 +1142,7 @@ export class TradingBot {
   scanForEntryFromFrames(
     ht: DataFrame,
     lt: DataFrame,
-  ): { side: "long" | "short"; entry: number; stopLoss: number } | null {
+  ): EntrySignal | null {
     if (this.cooldownUntil && new Date() < this.cooldownUntil) return null;
 
     // 0. ABSOLUTE CHAOS GATE
@@ -1126,12 +1197,12 @@ export class TradingBot {
       if (zScore <= -zCut) {
         const entry = price;
         const stop = ensureStop("long", entry, price - this.config.atrEntryMultiplier * latestATR);
-        return { side: "long", entry, stopLoss: stop };
+        return { side: "long", entry, stopLoss: stop, kind: "MEAN_REVERSION" };
       }
       if (zScore >= zCut) {
         const entry = price;
         const stop = ensureStop("short", entry, price + this.config.atrEntryMultiplier * latestATR);
-        return { side: "short", entry, stopLoss: stop };
+        return { side: "short", entry, stopLoss: stop, kind: "MEAN_REVERSION" };
       }
       return null;
     }
@@ -1169,12 +1240,12 @@ export class TradingBot {
     if (trend === Trend.Bull && diffs.every((d) => d > 0)) {
       const entry = lastN[lastN.length - 1];
       const stop = ensureStop("long", entry, entry - this.config.atrEntryMultiplier * latestATR);
-      return { side: "long", entry, stopLoss: stop };
+      return { side: "long", entry, stopLoss: stop, kind: "MOMENTUM" };
     }
     if (trend === Trend.Bear && diffs.every((d) => d < 0)) {
       const entry = lastN[lastN.length - 1];
       const stop = ensureStop("short", entry, entry + this.config.atrEntryMultiplier * latestATR);
-      return { side: "short", entry, stopLoss: stop };
+      return { side: "short", entry, stopLoss: stop, kind: "MOMENTUM" };
     }
     const c0 = closes[closes.length - 1];
     const c1 = closes[closes.length - 2];
@@ -1183,12 +1254,12 @@ export class TradingBot {
     if (trend === Trend.Bull && c1 < emaPrev && c0 > emaNow) {
       const entry = c0;
       const stop = ensureStop("long", entry, Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR);
-      return { side: "long", entry, stopLoss: stop };
+      return { side: "long", entry, stopLoss: stop, kind: "PULLBACK" };
     }
     if (trend === Trend.Bear && c1 > emaPrev && c0 < emaNow) {
       const entry = c0;
       const stop = ensureStop("short", entry, Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR);
-      return { side: "short", entry, stopLoss: stop };
+      return { side: "short", entry, stopLoss: stop, kind: "PULLBACK" };
     }
     const lookback = strictness === "ultra" ? 5 : strictness === "relaxed" ? 8 : strictness === "test" ? 3 : 12;
     const recentHigh = Math.max(...highs.slice(-lookback));
@@ -1196,12 +1267,12 @@ export class TradingBot {
     if (trend === Trend.Bull && price > recentHigh) {
       const entry = price;
       const stop = ensureStop("long", entry, recentLow - this.config.swingBackoffAtr * latestATR);
-      return { side: "long", entry, stopLoss: stop };
+      return { side: "long", entry, stopLoss: stop, kind: "BREAKOUT" };
     }
     if (trend === Trend.Bear && price < recentLow) {
       const entry = price;
       const stop = ensureStop("short", entry, recentHigh + this.config.swingBackoffAtr * latestATR);
-      return { side: "short", entry, stopLoss: stop };
+      return { side: "short", entry, stopLoss: stop, kind: "BREAKOUT" };
     }
 
     // Note: Mean Reversion for Trend mode is REMOVED as requested.
@@ -1215,7 +1286,7 @@ export class TradingBot {
           trend === Trend.Bull
             ? ensureStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
             : ensureStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
-        return { side: trend === Trend.Bull ? "long" : "short", entry, stopLoss: stop };
+        return { side: trend === Trend.Bull ? "long" : "short", entry, stopLoss: stop, kind: "MOMENTUM" };
       }
     }
     if (isTest) {
@@ -1227,7 +1298,7 @@ export class TradingBot {
         dir === "long"
           ? ensureStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
           : ensureStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
-      return { side: dir as "long" | "short", entry, stopLoss: stop };
+      return { side: dir as "long" | "short", entry, stopLoss: stop, kind: "OTHER" };
     }
     return null;
   }
@@ -1330,7 +1401,7 @@ export type EngineSignal = {
   setupId?: string;
   entryType?: "LIMIT_MAKER_FIRST" | "LIMIT" | "CONDITIONAL";
   triggerPrice?: number;
-  kind?: "BREAKOUT" | "PULLBACK" | "MOMENTUM" | "MEAN_REVERSION" | "OTHER";
+  kind?: EntryKind;
   risk: number;
   message: string;
   createdAt: string;
@@ -1339,6 +1410,8 @@ export type EngineSignal = {
 export type EngineDecision = {
   state: State;
   trend: Trend;
+  trendScore?: number;
+  trendAdx?: number;
   signal?: EngineSignal | null;
   position?: Position | null;
   halted?: boolean;
@@ -1371,12 +1444,19 @@ export function evaluateStrategyForSymbol(
   const ht = resampleCandles(candles, tfBaseMin);
   const lt = resampleCandles(candles, tfSigMin);
   if (!ht.length || !lt.length) {
-    return { state: bot.getState(), trend: Trend.Range, halted: true };
+    return {
+      state: bot.getState(),
+      trend: Trend.Range,
+      trendScore: 0,
+      trendAdx: Number.NaN,
+      halted: true,
+    };
   }
   const prevState = bot.getState();
   const prevOpened = bot.getPosition()?.opened;
   bot.stepWithFrames(ht, lt);
-  const trend = bot.determineTrend(ht);
+  const trendMetrics = bot.getTrendMetrics(ht);
+  const trend = trendMetrics.trend;
   let signal: EngineSignal | null = null;
   const position = bot.getPosition();
   if (
@@ -1394,6 +1474,7 @@ export function evaluateStrategyForSymbol(
         sl: position.stopLoss,
         tp: position.initialTakeProfit,
       },
+      kind: position.entryKind ?? "OTHER",
       risk: 0.7,
       message: `Entered ${position.side} with SL ${position.stopLoss.toFixed(2)} | TP ${position.initialTakeProfit.toFixed(2)}`,
       createdAt: new Date().toISOString(),
@@ -1417,6 +1498,8 @@ export function evaluateStrategyForSymbol(
   return {
     state: bot.getState(),
     trend,
+    trendScore: trendMetrics.score,
+    trendAdx: trendMetrics.adx,
     signal,
     position,
     halted: bot.isHalted(),

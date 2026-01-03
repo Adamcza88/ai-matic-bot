@@ -11,8 +11,11 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 4;
 const MAX_POSITION_NOTIONAL_USD = 7;
+const TREND_GATE_STRONG_ADX = 25;
+const TREND_GATE_STRONG_SCORE = 3;
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
+    trendGateMode: "adaptive",
     strictRiskAdherence: true,
     pauseOnHighVolatility: false,
     avoidLowLiquidity: false,
@@ -52,6 +55,11 @@ function loadStoredSettings() {
         if (!parsed || typeof parsed !== "object")
             return null;
         const merged = { ...DEFAULT_SETTINGS, ...parsed };
+        if (merged.trendGateMode !== "adaptive" &&
+            merged.trendGateMode !== "follow" &&
+            merged.trendGateMode !== "reverse") {
+            merged.trendGateMode = "adaptive";
+        }
         if (!Number.isFinite(merged.maxOpenPositions) ||
             merged.maxOpenPositions < 3) {
             merged.maxOpenPositions = 3;
@@ -422,6 +430,52 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             engineOk,
         };
     }, [isSessionAllowed]);
+    const resolveTrendGate = useCallback((decision, signal) => {
+        const settings = settingsRef.current;
+        const trendRaw = String(decision?.trend ?? "");
+        const trend = trendRaw ? trendRaw.toUpperCase() : "—";
+        const adx = toNumber(decision?.trendAdx);
+        const score = toNumber(decision?.trendScore);
+        const strong = (Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
+            (Number.isFinite(score) && score >= TREND_GATE_STRONG_SCORE);
+        const modeSetting = settings.trendGateMode ?? "adaptive";
+        const mode = modeSetting === "adaptive"
+            ? strong
+                ? "FOLLOW"
+                : "REVERSE"
+            : modeSetting.toUpperCase();
+        const detailParts = [trend];
+        if (Number.isFinite(adx)) {
+            detailParts.push(`ADX ${formatNumber(adx, 1)}`);
+        }
+        if (Number.isFinite(score)) {
+            detailParts.push(`score ${formatNumber(score, 0)}`);
+        }
+        detailParts.push(`mode ${mode}${modeSetting === "adaptive" ? " (adaptive)" : ""}`);
+        const detail = detailParts.join(" | ");
+        if (!signal) {
+            return { ok: true, detail };
+        }
+        const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
+        const signalDir = sideRaw === "buy" ? "BULL" : "BEAR";
+        const kind = signal.kind ?? "OTHER";
+        const isMeanRev = kind === "MEAN_REVERSION";
+        let ok = true;
+        if (trend === "BULL") {
+            ok = mode === "FOLLOW"
+                ? signalDir === "BULL"
+                : isMeanRev && signalDir === "BEAR";
+        }
+        else if (trend === "BEAR") {
+            ok = mode === "FOLLOW"
+                ? signalDir === "BEAR"
+                : isMeanRev && signalDir === "BULL";
+        }
+        else {
+            ok = mode === "FOLLOW" ? false : isMeanRev;
+        }
+        return { ok, detail };
+    }, []);
     const resolveSymbolState = useCallback((symbol) => {
         const decision = decisionRef.current[symbol]?.decision;
         const state = String(decision?.state ?? "").toUpperCase();
@@ -470,7 +524,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             }
             return parts.join(" ") || "signal active";
         })();
+        const trendGate = resolveTrendGate(decision, signalActive ? decision?.signal ?? null : null);
         addGate("Signal", signalActive, signalDetail);
+        addGate("Trend bias", trendGate.ok, trendGate.detail);
         addGate("Engine ok", context.engineOk, "running");
         const sessionDetail = context.settings.enforceSessionHours
             ? `${String(context.settings.tradingStartHour).padStart(2, "0")}:00-${String(context.settings.tradingEndHour).padStart(2, "0")}:00`
@@ -496,6 +552,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (hardEnabled) {
             if (!context.engineOk && isGateEnabled("Engine ok")) {
                 hardReasons.push("Engine ok");
+            }
+            if (!trendGate.ok && isGateEnabled("Trend bias")) {
+                hardReasons.push("Trend bias");
             }
             if (!context.sessionOk && isGateEnabled("Session ok")) {
                 hardReasons.push("Session ok");
@@ -545,7 +604,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             feedAgeMs,
             feedAgeOk,
         };
-    }, [getSymbolContext, isGateEnabled]);
+    }, [getSymbolContext, isGateEnabled, resolveTrendGate]);
     const refreshDiagnosticsFromDecisions = useCallback(() => {
         const entries = Object.entries(decisionRef.current);
         if (!entries.length)
@@ -1057,11 +1116,15 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return;
         }
         const context = getSymbolContext(symbol, decision);
+        const trendGate = resolveTrendGate(decision, signal);
         const blockReasons = [];
         const hardEnabled = context.settings.enableHardGates !== false;
         if (hardEnabled) {
             if (!context.engineOk && isGateEnabled("Engine ok")) {
                 blockReasons.push("Engine ok");
+            }
+            if (!trendGate.ok && isGateEnabled("Trend bias")) {
+                blockReasons.push("Trend bias");
             }
             if (!context.sessionOk && isGateEnabled("Session ok")) {
                 blockReasons.push("Session ok");
@@ -1200,6 +1263,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         computeTrailingPlan,
         getSymbolContext,
         isGateEnabled,
+        resolveTrendGate,
     ]);
     useEffect(() => {
         handleDecisionRef.current = handleDecision;

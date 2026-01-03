@@ -113,6 +113,7 @@ export default function Dashboard({
     () => ({
       "ai-matic": {
         Signal: true,
+        "Trend bias": false,
         "Engine ok": true,
         "Session ok": true,
         "Confirm required": false,
@@ -126,6 +127,7 @@ export default function Dashboard({
       },
       "ai-matic-x": {
         Signal: true,
+        "Trend bias": false,
         "Engine ok": true,
         "Session ok": true,
         "Confirm required": false,
@@ -139,6 +141,7 @@ export default function Dashboard({
       },
       "ai-matic-scalp": {
         Signal: true,
+        "Trend bias": false,
         "Engine ok": true,
         "Session ok": true,
         "Confirm required": false,

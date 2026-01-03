@@ -62,6 +62,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const meta = profileCopy[local.riskMode];
     const AI_MATIC_PRESET_UI = {
         riskMode: "ai-matic",
+        trendGateMode: "adaptive",
         strictRiskAdherence: true,
         pauseOnHighVolatility: false,
         avoidLowLiquidity: false,
@@ -94,6 +95,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     };
     const AI_MATIC_X_PRESET_UI = {
         riskMode: "ai-matic-x",
+        trendGateMode: "adaptive",
         strictRiskAdherence: true,
         pauseOnHighVolatility: false,
         avoidLowLiquidity: false,
@@ -126,6 +128,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     };
     const AI_MATIC_SCALP_PRESET_UI = {
         riskMode: "ai-matic-scalp",
+        trendGateMode: "adaptive",
         strictRiskAdherence: true,
         pauseOnHighVolatility: false,
         avoidLowLiquidity: false,
@@ -186,7 +189,10 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                         enableSoftGates: !local.enableSoftGates,
                                                     }), className: `rounded-md border px-3 py-1 text-sm ${local.enableSoftGates
                                                         ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                                                        : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enableSoftGates ? "On" : "Off" })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Cheat Sheet" }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: local.strategyCheatSheetEnabled ? "On" : "Off" }), _jsx("div", { className: "text-xs text-slate-400 mt-1", children: "Prioritize saved entry setups (Limit/Conditional)." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
+                                                        : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enableSoftGates ? "On" : "Off" })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Trend Gate Mode" }), _jsxs("div", { className: "rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm space-y-2", children: [_jsxs("select", { value: local.trendGateMode, onChange: (e) => setLocal({
+                                                ...local,
+                                                trendGateMode: e.target.value,
+                                            }), className: "w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200", children: [_jsx("option", { value: "adaptive", children: "Adaptive" }), _jsx("option", { value: "follow", children: "Follow" }), _jsx("option", { value: "reverse", children: "Reverse" })] }), _jsx("div", { className: "text-xs text-slate-400", children: "Adaptive: follow when ADX >= 25 or score >= 3, otherwise reverse. Follow: only with trend direction. Reverse: only mean-reversion." })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Cheat Sheet" }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-slate-200 px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: local.strategyCheatSheetEnabled ? "On" : "Off" }), _jsx("div", { className: "text-xs text-slate-400 mt-1", children: "Prioritize saved entry setups (Limit/Conditional)." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
                                                 ...local,
                                                 strategyCheatSheetEnabled: !local.strategyCheatSheetEnabled,
                                             }), className: `rounded-md border px-3 py-1 text-sm ${local.strategyCheatSheetEnabled

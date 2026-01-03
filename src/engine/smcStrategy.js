@@ -1,4 +1,4 @@
-import { State, Trend, resampleCandles, } from "./botEngine";
+import { State, Trend, resampleCandles, computeADX, } from "./botEngine";
 import { CandlestickAnalyzer } from "./universal-candlestick-analyzer";
 import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet";
 const DISPLACEMENT_LOOKBACK = 10;
@@ -126,25 +126,41 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
         return {
             state: State.Scan,
             trend: Trend.Range,
+            trendScore: 0,
+            trendAdx: Number.NaN,
             halted: true,
         };
     }
     const h4Analyzer = new CandlestickAnalyzer(toAnalyzerCandles(h4));
     const h1Analyzer = new CandlestickAnalyzer(toAnalyzerCandles(h1));
+    const ltfAnalyzer = new CandlestickAnalyzer(toAnalyzerCandles(ltf15));
     const h4Structure = h4Analyzer.getMarketStructure();
     const h1Structure = h1Analyzer.getMarketStructure();
+    const ltfStructure = ltfAnalyzer.getMarketStructure();
     const bias = resolveBias(h4Structure.trend, h1Structure.trend);
     const trend = bias === "long" ? Trend.Bull : bias === "short" ? Trend.Bear : Trend.Range;
+    const adxPeriod = config.adxPeriod ?? 14;
+    const adxArr = computeADX(h1.map((c) => c.high), h1.map((c) => c.low), h1.map((c) => c.close), adxPeriod);
+    const trendAdx = adxArr[adxArr.length - 1];
+    const trendScore = bias
+        ? [
+            h4Structure.trend !== "range",
+            h1Structure.trend !== "range",
+            Boolean(bias),
+            (bias === "long" && ltfStructure.trend === "up") ||
+                (bias === "short" && ltfStructure.trend === "down"),
+        ].filter(Boolean).length
+        : 0;
     if (!bias) {
         return {
             state: State.Scan,
             trend,
+            trendScore,
+            trendAdx,
             signal: null,
             halted: false,
         };
     }
-    const ltfAnalyzer = new CandlestickAnalyzer(toAnalyzerCandles(ltf15));
-    const ltfStructure = ltfAnalyzer.getMarketStructure();
     const ltfPois = ltfAnalyzer.getPointsOfInterest();
     const ltfCandles = toAnalyzerCandles(ltf15);
     const desiredDirection = bias === "long" ? "bullish" : "bearish";
@@ -163,6 +179,8 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
         return {
             state: State.Scan,
             trend,
+            trendScore,
+            trendAdx,
             signal: null,
             halted: false,
         };
@@ -174,6 +192,8 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
         return {
             state: State.Scan,
             trend,
+            trendScore,
+            trendAdx,
             signal: null,
             halted: false,
         };
@@ -187,6 +207,8 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
         return {
             state: State.Scan,
             trend,
+            trendScore,
+            trendAdx,
             signal: null,
             halted: false,
         };
@@ -235,6 +257,8 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
     return {
         state: State.Scan,
         trend,
+        trendScore,
+        trendAdx,
         signal,
         halted: false,
     };

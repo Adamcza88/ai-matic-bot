@@ -8,6 +8,7 @@ export type Language = "en" | "cs";
 
 export interface AISettings {
   riskMode: "ai-matic" | "ai-matic-x" | "ai-matic-scalp";
+  trendGateMode: "adaptive" | "follow" | "reverse";
   strictRiskAdherence: boolean;
   pauseOnHighVolatility: boolean;
   avoidLowLiquidity: boolean;
