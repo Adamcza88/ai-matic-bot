@@ -68,13 +68,13 @@ export default function Dashboard({
     if (riskMode === "ai-matic-scalp") {
       return {
         label: "AI-MATIC-SCALP",
-        subtitle: "SMC/AMD (1h/15m/5m/1m)",
+        subtitle: "Scalpera Bot v2.0 (1h/1m)",
         symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-        timeframes: "HTF 1h · M15 · M5 · LTF 1m",
-        session: "London/NY killzones (Prague)",
-        risk: "1% equity (min 10 / cap 200) · margin 5/pos · max 3 pos",
-        entry: "Sweep → CHoCH → FVG → PostOnly LIMIT",
-        execution: "LIMIT(PostOnly) + SL server-side + TP1 1R",
+        timeframes: "HTF 1h · LTF 1m",
+        session: "08:00-12:00 & 13:00-17:00 UTC",
+        risk: "SL 1.3 ATR · TP 2.6 ATR · trailing after 1.1R · max 1 pos/symbol",
+        entry: "Trend-Pullback / Liquidity-Sweep (SMC + EMA + AI)",
+        execution: "Adaptive executor (Trend/Sweep) · no pyramiding · Bybit webhook",
       };
     }
     if (riskMode === "ai-matic-x") {
@@ -141,7 +141,7 @@ export default function Dashboard({
       },
       "ai-matic-scalp": {
         Signal: true,
-        "Trend bias": false,
+        "Trend bias": true,
         "Engine ok": true,
         "Session ok": true,
         "Confirm required": false,

@@ -30,6 +30,24 @@ export const STRATEGY_CHEAT_SHEET = [
             "Ignore LTF-only patterns without HTF context",
         ],
     },
+    {
+        id: "ai-matic-scalp-scalpera",
+        name: "AI-MATIC-SCALP Scalpera v2",
+        description: "Scalpera Bot AI Matic Edition v2.0 for mid-frequency intraday scalps (10-15 trades/day).",
+        entryType: "LIMIT_MAKER_FIRST",
+        side: "both",
+        priority: 3,
+        rules: [
+            "TrendScore fusion: EMA alignment * 0.4 + OI gradient * 0.3 + AI cone slope * 0.3",
+            "Bias: TrendScore > 0.65 => LONG, < 0.35 => SHORT, else WAIT",
+            "Volatility filter: ATR14/ATR50 < 0.5 => WAIT; > 1.5 => enter only on BOS",
+            "Micro-confirmation: 3/4 must pass (EMA8>21>50, FVG/OB + vol>SMA20*1.2, AI cone > 0.6, funding aligned)",
+            "Session windows: 08:00-12:00 UTC and 13:00-17:00 UTC, else session_filter=false",
+            "Cone-FVG overlay: if 60% MC paths end inside FVG => return bias; >70% outside => breakout bias",
+            "SentimentScore = funding*0.4 + oi_delta*0.4 + social*0.2 (LONG > 0.55, SHORT < 0.45)",
+            "Auto-learning: log EMA/FVG/OI/funding context and adjust weights every ~100 trades",
+        ],
+    },
 ];
 export function getCheatSheetSetup(id) {
     return STRATEGY_CHEAT_SHEET.find((setup) => setup.id === id) ?? null;

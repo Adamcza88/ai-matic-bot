@@ -293,23 +293,34 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   }
 
   // === 2) SET TRAILING STOP ONLY (Post-Order) ===
-  // Trailing stop is generally a position property, so we set it after a short delay
-  // to ensure the matching engine has indexed the new position.
+  // Trailing stop is a position-level setting: apply only after the position exists.
   if (order.trailingStop != null) {
     try {
-      // FIX 7: Wait for Position Confirmation (Mainnet Strictness)
-      console.log(`[createDemoOrder] Waiting for position to confirm before setting TS...`);
-      await waitForPosition({ apiKey: creds.apiKey, apiSecret: creds.apiSecret }, order.symbol, useTestnet, 3000);
+      const posRes = await getDemoPositions(creds, useTestnet);
+      const list = posRes?.result?.list || [];
+      const hasPosition = list.some(
+        (p) => String(p?.symbol ?? "") === String(order.symbol) && Number(p?.size ?? 0) > 0
+      );
 
-      const tsResult = await setTradingStop({
-        symbol: order.symbol,
-        trailingStop: order.trailingStop,
-        activePrice: order.trailingActivePrice,
-        positionIdx: 0,
-      }, creds, useTestnet);
+      if (!hasPosition) {
+        console.log(
+          `[createDemoOrder] Trailing stop deferred (no active position yet) for ${order.symbol}.`
+        );
+      } else {
+        const tsResult = await setTradingStop(
+          {
+            symbol: order.symbol,
+            trailingStop: order.trailingStop,
+            activePrice: order.trailingActivePrice,
+            positionIdx: 0,
+          },
+          creds,
+          useTestnet
+        );
 
-      console.log("Bybit TS response:", tsResult);
-      result.trailingStop = tsResult;
+        console.log("Bybit TS response:", tsResult);
+        result.trailingStop = tsResult;
+      }
     } catch (err) {
       console.error("Bybit TrailingStop error:", err.response?.data || err.message);
       // Don't fail the whole order if TS fails, but log strictly

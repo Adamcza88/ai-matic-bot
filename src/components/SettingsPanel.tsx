@@ -22,9 +22,12 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     return "lokální čas";
   })();
 
-  const tradingWindowLabel = `${String(local.tradingStartHour).padStart(2, "0")}:00–${String(
-    local.tradingEndHour
-  ).padStart(2, "0")}:00 (${tzLabel})`;
+  const tradingWindowLabel =
+    local.riskMode === "ai-matic-scalp"
+      ? "08:00–12:00 / 13:00–17:00 (UTC)"
+      : `${String(local.tradingStartHour).padStart(2, "0")}:00–${String(
+          local.tradingEndHour
+        ).padStart(2, "0")}:00 (${tzLabel})`;
 
   const profileCopy: Record<AISettings["riskMode"], { title: string; description: string; notes: string[] }> = {
     "ai-matic": {
@@ -62,12 +65,24 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       ],
     },
     "ai-matic-scalp": {
-      title: "AI-Matic-Scalp",
-      description: "SMC/AMD scalper (M1/M5) se session logikou (London/NY killzones) a limit-maker exekucí.",
+      title: "SCALPERA BOT AI MATIC EDITION",
+      description:
+        "Operational Implementation Guide v2.0 · Integrace AI Matic Intelligence Framework (Scalpera Systems, 2026).",
       notes: [
-        "Trading hours: řízeno killzones (London/NY)",
-        "Entry: Sweep → CHoCH → FVG → PostOnly LIMIT",
-        "TP1: 1R (50/50 split) + BE, runner přes trailing SL",
+        "Cil: spojit presnost SMC/ICT se silou AI Matic; adaptivni exekuce podle struktury, objemu, sentimentu a volatility.",
+        "Core SMC/ICT: BOS, CHOCH, OB, FVG; EMA 8/21/50/200; volume baseline SMA20.",
+        "AI layer: Trend Predictor (EMA stack + AI smer), Volatility Scanner (ATR + OI delta), Sentiment Engine (funding/OI/text/social), Price Cone (Monte Carlo 12-24h), Adaptive Executor (Trend/Sweep).",
+        "Pipeline: Bybit OHLCV+Orderbook, CoinGlass OI/Funding/LS ratio, Birdeye DEX volume + whales, AI Matic feed.",
+        "Signal format: {symbol, signal, confidence, mode, entry, sl, tp, validation, data_missing}.",
+        "Rezimy: Trend-Pullback (EMA8>21>50, FVG/OB retrace, volume > SMA20*1.2, AI cone + sentiment>0).",
+        "Rezimy: Liquidity-Sweep (sweep + rychly navrat, volume spike + negativni sentiment, OI delta + funding zmena).",
+        "Rezimy: Adaptive (AI prepina Trend/Sweep, confidence >60%).",
+        "Risk: SL 1.3 ATR(14) * volatility_factor; TP 2.6 ATR(14) * cone_direction; trailing po RRR 1.1; max 1 pozice/symbol; bez pyramidovani.",
+        "Predikce: price cone 12h/24h; bias >0.60 long, <0.40 short.",
+        "Validace: validation passed/failed; data_missing => WAIT.",
+        "Integrace: webhook Bybit + monitoring a adaptivni update.",
+        "Metriky: success rate 63-72%, RRR 1.8-2.2, drawdown max 2%/trade.",
+        "Modules: TrendPredictor, VolatilityScanner, SentimentEngine, PriceConeGenerator, AdaptiveExecutor.",
       ],
     },
   };
@@ -158,7 +173,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 3,
     entryStrictness: "ultra",
-    enforceSessionHours: false,
+    enforceSessionHours: true,
     haltOnDailyLoss: true,
     haltOnDrawdown: true,
     useDynamicPositionSizing: true,
@@ -170,8 +185,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     min24hVolume: 50,
     minProfitFactor: 1.0,
     minWinRate: 65,
-    tradingStartHour: 0,
-    tradingEndHour: 23,
+    tradingStartHour: 8,
+    tradingEndHour: 17,
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
   };
 

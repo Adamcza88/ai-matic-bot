@@ -41,13 +41,33 @@ export default async function handler(req, res) {
       });
     }
 
-    const { symbol, sl, tp, trailingStop, positionIdx, slTriggerBy, tpTriggerBy } = req.body || {};
+    const {
+      symbol,
+      sl,
+      tp,
+      trailingStop,
+      trailingActivePrice,
+      activePrice,
+      positionIdx,
+      slTriggerBy,
+      tpTriggerBy,
+    } = req.body || {};
     if (!symbol) {
       return res.status(400).json({ ok: false, error: "Missing symbol for protection" });
     }
 
+    const resolvedActivePrice = activePrice ?? trailingActivePrice;
     const data = await setTradingStop(
-      { symbol, sl, tp, trailingStop, positionIdx, slTriggerBy, tpTriggerBy },
+      {
+        symbol,
+        sl,
+        tp,
+        trailingStop,
+        activePrice: resolvedActivePrice,
+        positionIdx,
+        slTriggerBy,
+        tpTriggerBy,
+      },
       { apiKey, apiSecret },
       useTestnet
     );

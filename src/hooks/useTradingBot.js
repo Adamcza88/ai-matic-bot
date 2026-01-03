@@ -118,6 +118,7 @@ const TRAIL_SYMBOL_MODE = {
 const CHEAT_SHEET_SETUP_BY_RISK_MODE = {
     "ai-matic": "ai-matic-core",
     "ai-matic-x": "ai-matic-x-smc",
+    "ai-matic-scalp": "ai-matic-scalp-scalpera",
 };
 export function useTradingBot(mode, useTestnet = false, authToken) {
     const [settings, setSettings] = useState(() => loadStoredSettings() ?? DEFAULT_SETTINGS);
@@ -130,27 +131,39 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
             ...(cheatSheetSetupId ? { cheatSheetSetupId } : {}),
         };
-        if (settings.riskMode !== "ai-matic") {
-            return baseConfig;
+        if (settings.riskMode === "ai-matic") {
+            const strictness = settings.entryStrictness === "base"
+                ? "ultra"
+                : settings.entryStrictness;
+            return {
+                ...baseConfig,
+                baseTimeframe: "15m",
+                signalTimeframe: "1m",
+                entryStrictness: strictness,
+                adxThreshold: 20,
+                aggressiveAdxThreshold: 28,
+                minAtrFractionOfPrice: 0.0004,
+                atrEntryMultiplier: 1.6,
+                swingBackoffAtr: 0.6,
+                liquiditySweepVolumeMult: 1.0,
+                volExpansionAtrMult: 1.15,
+                volExpansionVolMult: 1.1,
+                cooldownBars: 0,
+            };
         }
-        const strictness = settings.entryStrictness === "base"
-            ? "ultra"
-            : settings.entryStrictness;
-        return {
-            ...baseConfig,
-            baseTimeframe: "15m",
-            signalTimeframe: "1m",
-            entryStrictness: strictness,
-            adxThreshold: 20,
-            aggressiveAdxThreshold: 28,
-            minAtrFractionOfPrice: 0.0004,
-            atrEntryMultiplier: 1.6,
-            swingBackoffAtr: 0.6,
-            liquiditySweepVolumeMult: 1.0,
-            volExpansionAtrMult: 1.15,
-            volExpansionVolMult: 1.1,
-            cooldownBars: 0,
-        };
+        if (settings.riskMode === "ai-matic-scalp") {
+            const strictness = settings.entryStrictness === "base"
+                ? "ultra"
+                : settings.entryStrictness;
+            return {
+                ...baseConfig,
+                strategyProfile: "scalp",
+                baseTimeframe: "1h",
+                signalTimeframe: "1m",
+                entryStrictness: strictness,
+            };
+        }
+        return baseConfig;
     }, [settings.entryStrictness, settings.riskMode, settings.strategyCheatSheetEnabled]);
     const [positions, setPositions] = useState(null);
     const [orders, setOrders] = useState(null);
@@ -179,6 +192,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const decisionRef = useRef({});
     const signalSeenRef = useRef(new Set());
     const intentPendingRef = useRef(new Set());
+    const trailingSyncRef = useRef(new Map());
     const settingsRef = useRef(settings);
     const walletRef = useRef(walletSnapshot);
     const handleDecisionRef = useRef(null);
@@ -220,6 +234,28 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const started = performance.now();
         const res = await fetch(url, {
             headers: { Authorization: `Bearer ${authToken}` },
+        });
+        const json = await res.json().catch(() => ({}));
+        const latency = Math.round(performance.now() - started);
+        setLastLatencyMs(latency);
+        if (!res.ok || json?.ok === false) {
+            throw new Error(json?.error || `HTTP_${res.status}`);
+        }
+        return json?.data ?? json;
+    }, [apiBase, authToken]);
+    const postJson = useCallback(async (path, body) => {
+        if (!authToken) {
+            throw new Error("missing_auth_token");
+        }
+        const url = `${apiBase}${path}`;
+        const started = performance.now();
+        const res = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify(body ?? {}),
         });
         const json = await res.json().catch(() => ({}));
         const latency = Math.round(performance.now() - started);
@@ -283,10 +319,17 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const isSessionAllowed = useCallback((now, next) => {
         if (!next.enforceSessionHours)
             return true;
-        const day = now.getDay();
+        const useUtc = next.riskMode === "ai-matic-scalp";
+        const day = useUtc ? now.getUTCDay() : now.getDay();
         if (Array.isArray(next.tradingDays) && next.tradingDays.length > 0) {
             if (!next.tradingDays.includes(day))
                 return false;
+        }
+        if (next.riskMode === "ai-matic-scalp") {
+            const hour = now.getUTCHours();
+            const inMorning = hour >= 8 && hour < 12;
+            const inAfternoon = hour >= 13 && hour < 17;
+            return inMorning || inAfternoon;
         }
         const start = Number(next.tradingStartHour);
         const end = Number(next.tradingEndHour);
@@ -401,6 +444,68 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return null;
         return { trailingStop: distance, trailingActivePrice: activePrice };
     }, []);
+    const syncTrailingProtection = useCallback(async (positions) => {
+        const now = Date.now();
+        const seenSymbols = new Set(positions.map((p) => String(p.symbol ?? "")).filter(Boolean));
+        for (const symbol of trailingSyncRef.current.keys()) {
+            if (!seenSymbols.has(symbol)) {
+                trailingSyncRef.current.delete(symbol);
+            }
+        }
+        for (const pos of positions) {
+            const symbol = String(pos.symbol ?? "");
+            if (!symbol)
+                continue;
+            const currentTrail = toNumber(pos.currentTrailingStop);
+            if (Number.isFinite(currentTrail) && currentTrail > 0) {
+                trailingSyncRef.current.delete(symbol);
+                continue;
+            }
+            const entry = toNumber(pos.entryPrice);
+            const sl = toNumber(pos.sl);
+            if (!Number.isFinite(entry) ||
+                !Number.isFinite(sl) ||
+                entry <= 0 ||
+                sl <= 0) {
+                continue;
+            }
+            const side = pos.side === "Sell" ? "Sell" : "Buy";
+            const plan = computeTrailingPlan(entry, sl, side, symbol);
+            if (!plan)
+                continue;
+            const lastAttempt = trailingSyncRef.current.get(symbol);
+            if (lastAttempt && now - lastAttempt < 60_000) {
+                continue;
+            }
+            trailingSyncRef.current.set(symbol, now);
+            try {
+                await postJson("/protection", {
+                    symbol,
+                    trailingStop: plan.trailingStop,
+                    trailingActivePrice: plan.trailingActivePrice,
+                    positionIdx: 0,
+                });
+                addLogEntries([
+                    {
+                        id: `trail:set:${symbol}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `${symbol} TS nastaven | aktivace ${formatNumber(plan.trailingActivePrice ?? Number.NaN, 6)} | distance ${formatNumber(plan.trailingStop ?? Number.NaN, 6)}`,
+                    },
+                ]);
+            }
+            catch (err) {
+                addLogEntries([
+                    {
+                        id: `trail:error:${symbol}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "ERROR",
+                        message: `${symbol} TS update failed: ${asErrorMessage(err)}`,
+                    },
+                ]);
+            }
+        }
+    }, [addLogEntries, computeTrailingPlan, postJson]);
     const getSymbolContext = useCallback((symbol, decision) => {
         const settings = settingsRef.current;
         const now = new Date();
@@ -522,6 +627,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             if (Number.isFinite(entry)) {
                 parts.push(`@ ${formatNumber(entry, 2)}`);
             }
+            if (sig.kind) {
+                parts.push(String(sig.kind).toUpperCase());
+            }
             return parts.join(" ") || "signal active";
         })();
         const trendGate = resolveTrendGate(decision, signalActive ? decision?.signal ?? null : null);
@@ -529,7 +637,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         addGate("Trend bias", trendGate.ok, trendGate.detail);
         addGate("Engine ok", context.engineOk, "running");
         const sessionDetail = context.settings.enforceSessionHours
-            ? `${String(context.settings.tradingStartHour).padStart(2, "0")}:00-${String(context.settings.tradingEndHour).padStart(2, "0")}:00`
+            ? context.settings.riskMode === "ai-matic-scalp"
+                ? "08:00-12:00 / 13:00-17:00 UTC"
+                : `${String(context.settings.tradingStartHour).padStart(2, "0")}:00-${String(context.settings.tradingEndHour).padStart(2, "0")}:00`
             : "24/7";
         addGate("Session ok", context.sessionOk, sessionDetail);
         addGate("Confirm required", !context.settings.requireConfirmationInAuto, "not required");
@@ -672,6 +782,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             setPositions(next);
             positionsRef.current = next;
             setLastSuccessAt(now);
+            void syncTrailingProtection(next);
             for (const [symbol, nextPos] of nextPositions.entries()) {
                 const prev = prevPositions.get(symbol);
                 if (!prev) {
@@ -878,7 +989,13 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             setSystemError(null);
         }
         fastPollRef.current = false;
-    }, [addLogEntries, fetchJson, refreshDiagnosticsFromDecisions, useTestnet]);
+    }, [
+        addLogEntries,
+        fetchJson,
+        refreshDiagnosticsFromDecisions,
+        syncTrailingProtection,
+        useTestnet,
+    ]);
     const refreshSlow = useCallback(async () => {
         if (slowPollRef.current)
             return;
@@ -1227,7 +1344,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                             id: `signal:trail:${signalId}`,
                             timestamp: new Date().toISOString(),
                             action: "STATUS",
-                            message: `${symbol} TS čeká na otevření pozice (Bybit vyžaduje aktivní pozici) | aktivace ${formatNumber(trailingPlan.trailingActivePrice ?? Number.NaN, 6)} | distance ${formatNumber(trailingPlan.trailingStop ?? Number.NaN, 6)}`,
+                            message: `${symbol} TS naplánován (aktivuje se po otevření pozice) | aktivace ${formatNumber(trailingPlan.trailingActivePrice ?? Number.NaN, 6)} | distance ${formatNumber(trailingPlan.trailingStop ?? Number.NaN, 6)}`,
                         },
                     ]);
                 }
