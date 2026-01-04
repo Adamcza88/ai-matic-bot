@@ -22,6 +22,7 @@ function isHeadingLine(line: string) {
     /^[A-Z]\s[-–]/.test(line) ||
     line.startsWith("KROK ") ||
     line.startsWith("ROZHODOVACÍ STROM") ||
+    line.startsWith("RODINA ") ||
     line.startsWith("CHEAT-SHEET") ||
     line.startsWith("CHECKLIST") ||
     line.startsWith("RYCHLÁ PAMĚŤOVKA") ||
