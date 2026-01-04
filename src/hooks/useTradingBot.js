@@ -58,8 +58,7 @@ function loadStoredSettings() {
             return null;
         const merged = { ...DEFAULT_SETTINGS, ...parsed };
         if (merged.trendGateMode !== "adaptive" &&
-            merged.trendGateMode !== "follow" &&
-            merged.trendGateMode !== "reverse") {
+            merged.trendGateMode !== "follow") {
             merged.trendGateMode = "adaptive";
         }
         if (!Number.isFinite(merged.maxOpenPositions) ||
@@ -549,11 +548,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const strong = (Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
             (Number.isFinite(score) && score >= TREND_GATE_STRONG_SCORE);
         const modeSetting = settings.trendGateMode ?? "adaptive";
-        const mode = modeSetting === "adaptive"
-            ? strong
-                ? "FOLLOW"
-                : "REVERSE"
-            : modeSetting.toUpperCase();
+        const normalizedMode = modeSetting === "reverse" ? "follow" : modeSetting;
+        const mode = normalizedMode === "adaptive"
+            ? "FOLLOW"
+            : normalizedMode.toUpperCase();
         const detailParts = [trend];
         if (Number.isFinite(adx)) {
             detailParts.push(`ADX ${formatNumber(adx, 1)}`);

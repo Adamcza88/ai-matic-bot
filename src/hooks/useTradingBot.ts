@@ -73,8 +73,7 @@ function loadStoredSettings(): AISettings | null {
     const merged = { ...DEFAULT_SETTINGS, ...parsed } as AISettings;
     if (
       merged.trendGateMode !== "adaptive" &&
-      merged.trendGateMode !== "follow" &&
-      merged.trendGateMode !== "reverse"
+      merged.trendGateMode !== "follow"
     ) {
       merged.trendGateMode = "adaptive";
     }
@@ -681,12 +680,12 @@ export function useTradingBot(
         (Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
         (Number.isFinite(score) && score >= TREND_GATE_STRONG_SCORE);
       const modeSetting = settings.trendGateMode ?? "adaptive";
+      const normalizedMode =
+        modeSetting === "reverse" ? "follow" : modeSetting;
       const mode =
-        modeSetting === "adaptive"
-          ? strong
-            ? "FOLLOW"
-            : "REVERSE"
-          : modeSetting.toUpperCase();
+        normalizedMode === "adaptive"
+          ? "FOLLOW"
+          : normalizedMode.toUpperCase();
       const detailParts = [trend];
       if (Number.isFinite(adx)) {
         detailParts.push(`ADX ${formatNumber(adx, 1)}`);

@@ -608,11 +608,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
               >
                 <option value="adaptive">Adaptive</option>
                 <option value="follow">Follow</option>
-                <option value="reverse">Reverse</option>
               </select>
               <div className="text-xs text-secondary-foreground/70">
-                Adaptive: follow when ADX &gt;= 25 or score &gt;= 3, otherwise reverse.
-                Follow: only with trend direction. Reverse: only mean-reversion.
+                Adaptive: vždy Follow (reverse je dočasně vypnutý).
+                Follow: pouze se směrem trendu.
               </div>
             </div>
           </div>
