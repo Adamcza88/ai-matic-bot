@@ -1,0 +1,344 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { TradingMode } from "@/types";
+import { ChevronDown } from "lucide-react";
+import Panel from "@/components/dashboard/Panel";
+
+type SignalsAccordionProps = {
+  allowedSymbols: string[];
+  scanDiagnostics: Record<string, any> | null;
+  scanLoaded: boolean;
+  lastScanTs: number | null;
+  checklistEnabled: Record<string, boolean>;
+  toggleChecklist: (name: string) => void;
+  resetChecklist: () => void;
+  mode: TradingMode;
+};
+
+const MODE_LABELS: Record<TradingMode, string> = {
+  [TradingMode.OFF]: "Manual",
+  [TradingMode.AUTO_ON]: "Auto",
+  [TradingMode.SIGNAL_ONLY]: "Signal",
+  [TradingMode.BACKTEST]: "Backtest",
+  [TradingMode.PAPER]: "Paper",
+};
+
+function gateSummary(
+  diag: any,
+  gates: any[],
+  scanLoaded: boolean,
+  checklistEnabled: Record<string, boolean>
+) {
+  if (!scanLoaded || !diag) {
+    return { label: "Gate: —", blocked: false };
+  }
+  const hardEnabled = diag?.hardEnabled !== false;
+  const softEnabled = diag?.softEnabled !== false;
+  const hardBlocked = Boolean(diag?.hardBlocked);
+  const softBlocked = softEnabled && diag?.qualityPass === false;
+  const execBlocked = diag?.executionAllowed === false;
+  const gatesBlocked = gates.some(
+    (g) => (checklistEnabled[g.name] ?? true) && g?.ok === false
+  );
+  const blocked =
+    (hardEnabled && hardBlocked) || softBlocked || execBlocked || gatesBlocked;
+  return {
+    label: blocked ? "Gate: BLOCKED" : "Gate: PASS",
+    blocked,
+  };
+}
+
+function gateLabel(name: string, detail?: string) {
+  if (name === "Confirm required") {
+    if (detail === "not required") return "Confirm: No";
+    if (detail === "required") return "Confirm: Yes";
+    return "Confirm";
+  }
+  if (name === "Exec allowed") {
+    return "Execution allowed";
+  }
+  return name;
+}
+
+export default function SignalsAccordion({
+  allowedSymbols,
+  scanDiagnostics,
+  scanLoaded,
+  lastScanTs,
+  checklistEnabled,
+  toggleChecklist,
+  resetChecklist,
+  mode,
+}: SignalsAccordionProps) {
+  const lastScanLabel = lastScanTs
+    ? new Date(lastScanTs).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
+    : "—";
+
+  return (
+    <Panel
+      title="Signal checklist"
+      description={`Last scan: ${lastScanLabel}`}
+      action={
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={resetChecklist}
+          className="h-8 text-xs"
+        >
+          Reset gates
+        </Button>
+      }
+    >
+      <div className="space-y-3">
+        {allowedSymbols.map((symbol) => {
+          const diag = scanDiagnostics?.[symbol];
+          const gates = Array.isArray(diag?.gates) ? diag.gates : [];
+          const hardEnabled = diag?.hardEnabled !== false;
+          const softEnabled = diag?.softEnabled !== false;
+          const hardBlocked = diag?.hardBlocked;
+          const qualityScore = diag?.qualityScore;
+          const qualityThreshold = diag?.qualityThreshold;
+          const qualityPass = diag?.qualityPass;
+          const breakdown = diag?.qualityBreakdown;
+          const breakdownOrder = [
+            "HTF",
+            "Pullback",
+            "Break",
+            "ATR",
+            "Spread",
+            "Freshness",
+          ];
+          const breakdownParts = breakdown
+            ? breakdownOrder
+                .map((key) => {
+                  const value = breakdown[key];
+                  return Number.isFinite(value)
+                    ? `${key} ${Math.round(value)}`
+                    : null;
+                })
+                .filter((entry): entry is string => Boolean(entry))
+            : [];
+          const signalLabel = !scanLoaded
+            ? "Loading"
+            : diag?.signalActive
+              ? "Active"
+              : "Idle";
+          const signalClass = !scanLoaded
+            ? "border-border/60 text-muted-foreground"
+            : diag?.signalActive
+              ? "border-emerald-500/50 text-emerald-400"
+              : "border-border/60 text-muted-foreground";
+          const execLabel =
+            diag?.executionAllowed === true
+              ? "Yes"
+              : diag?.executionAllowed === false
+                ? diag?.executionReason ?? "Blocked"
+                : diag?.executionReason ?? "N/A";
+          const feedAgeMs = diag?.feedAgeMs;
+          const feedAgeOk = diag?.feedAgeOk;
+          const feedAgeLabel =
+            feedAgeOk == null ? "—" : feedAgeOk ? "OK" : "Fail";
+          const feedAgeValue =
+            feedAgeMs != null && Number.isFinite(feedAgeMs)
+              ? `${feedAgeMs} ms`
+              : "—";
+          const summary = gateSummary(
+            diag,
+            gates,
+            scanLoaded,
+            checklistEnabled
+          );
+
+          return (
+            <details
+              key={symbol}
+              className="group rounded-lg border border-border/60 bg-background/40"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="font-mono text-sm">{symbol}</span>
+                  <Badge variant="outline" className={summary.blocked ? "border-red-500/50 text-red-400" : "border-emerald-500/50 text-emerald-400"}>
+                    {summary.label}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={
+                      feedAgeOk === false
+                        ? "border-red-500/50 text-red-400"
+                        : "border-border/60 text-muted-foreground"
+                    }
+                  >
+                    Feed age {feedAgeLabel} · {feedAgeValue}
+                  </Badge>
+                  <Badge variant="outline" className="border-border/60 text-muted-foreground">
+                    Mode {MODE_LABELS[mode]}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Badge variant="outline" className={signalClass}>
+                    {signalLabel}
+                  </Badge>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+                </div>
+              </summary>
+              <div className="border-t border-border/60 px-4 py-3 text-xs">
+                {!scanLoaded ? (
+                  <div className="text-muted-foreground">
+                    Loading diagnostics...
+                  </div>
+                ) : gates.length === 0 ? (
+                  <div className="text-muted-foreground">
+                    No scan data for this symbol.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            hardEnabled
+                              ? hardBlocked
+                                ? "bg-red-400"
+                                : "bg-emerald-400"
+                              : "bg-slate-600"
+                          }`}
+                        />
+                        <span className={hardEnabled ? "text-foreground" : "text-muted-foreground"}>
+                          Hard gate: {hardEnabled ? (hardBlocked ? "BLOCKED" : "PASS") : "OFF"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            softEnabled
+                              ? qualityPass
+                                ? "bg-emerald-400"
+                                : "bg-amber-400"
+                              : "bg-slate-600"
+                          }`}
+                        />
+                        <span className={softEnabled ? "text-foreground" : "text-muted-foreground"}>
+                          Soft score:{" "}
+                          {softEnabled
+                            ? qualityScore != null
+                              ? `${qualityScore} / ${qualityThreshold ?? "—"}`
+                              : "—"
+                            : "OFF"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {gates.map((gate: any) => (
+                        <button
+                          key={gate.name}
+                          type="button"
+                          onClick={() => toggleChecklist(gate.name)}
+                          className="flex items-center gap-2 text-left"
+                          title="Toggle gate enforcement for this check."
+                        >
+                          <span
+                            className={`h-2 w-2 rounded-full ${
+                              gate.ok ? "bg-emerald-400" : "bg-slate-600"
+                            }`}
+                          />
+                          <span
+                            className={
+                              checklistEnabled[gate.name]
+                                ? "text-foreground"
+                                : "text-muted-foreground"
+                            }
+                          >
+                            {(() => {
+                              const label = gateLabel(gate.name, gate.detail);
+                              const detail =
+                                gate.ok && gate.detail
+                                  ? gate.detail === "not required"
+                                    ? "No"
+                                    : gate.detail
+                                  : "";
+                              if (!detail || gate.name === "Confirm required") {
+                                return label;
+                              }
+                              return `${label}: ${detail}`;
+                            })()}
+                          </span>
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => toggleChecklist("Exec allowed")}
+                        className="flex items-center gap-2 text-left"
+                        title="Toggle gate enforcement for this check."
+                      >
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            diag?.executionAllowed === true
+                              ? "bg-emerald-400"
+                              : diag?.executionAllowed === false
+                                ? "bg-amber-400"
+                                : "bg-slate-600"
+                          }`}
+                        />
+                        <span
+                          className={
+                            checklistEnabled["Exec allowed"]
+                              ? "text-foreground"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          Execution allowed ({execLabel})
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleChecklist("Feed age")}
+                        className="flex items-center gap-2 text-left"
+                        title="Toggle gate enforcement for this check."
+                      >
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            feedAgeOk == null
+                              ? "bg-slate-600"
+                              : feedAgeOk
+                                ? "bg-emerald-400"
+                                : "bg-red-400"
+                          }`}
+                        />
+                        <span
+                          className={
+                            checklistEnabled["Feed age"]
+                              ? "text-foreground"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          Feed age {feedAgeLabel}:{" "}
+                          {feedAgeMs != null && Number.isFinite(feedAgeMs)
+                            ? `${feedAgeMs} ms`
+                            : "—"}
+                        </span>
+                      </button>
+                    </div>
+                    {(breakdownParts.length > 0 || diag?.qualityTopReason) && (
+                      <div className="text-[11px] text-muted-foreground">
+                        {breakdownParts.length > 0 && (
+                          <div>Score: {breakdownParts.join(" · ")}</div>
+                        )}
+                        {diag?.qualityTopReason && (
+                          <div>Top reason: {diag.qualityTopReason}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}

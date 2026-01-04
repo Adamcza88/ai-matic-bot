@@ -71,7 +71,9 @@ export default function App() {
     if (!auth.user) return;
     if (!supabase) {
       const missing = SERVICE_OPTIONS.map((s) => s.label);
-      setKeysError("Supabase není nakonfigurované (VITE_SUPABASE_URL/KEY). Nelze načíst API klíče.");
+      setKeysError(
+        "Supabase is not configured (VITE_SUPABASE_URL/KEY). Unable to load API keys."
+      );
       setMissingServices(missing);
       setShowKeyPanel(true);
       return;
@@ -223,11 +225,11 @@ export default function App() {
           <div>
             <div className="font-bold text-red-400">
               {missingServices.length === 1
-                ? "Chybí API klíč"
-                : "Chybí některé API klíče"}
+                ? "Missing API key"
+                : "Missing API keys"}
             </div>
             <div className="text-sm text-red-300/80">
-              Je potřeba doplnit: {missingServices.join(", ")}
+              Please add: {missingServices.join(", ")}
             </div>
             {keysError && (
               <div className="text-amber-400 mt-1.5 text-xs">{keysError}</div>
@@ -238,7 +240,7 @@ export default function App() {
             onClick={() => setShowKeyPanel(true)}
             className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-none"
           >
-            Otevřít nastavení
+            Open settings
           </Button>
         </div>
       )}
