@@ -151,6 +151,12 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     };
     const meta = profileCopy[local.riskMode];
     const cheatBlocks = useMemo(() => buildCheatBlocks(meta.notes), [meta.notes]);
+    const profileSummary = {
+        "ai-matic": "TF stack 1h/15m/5m/1m + POI (OB/FVG/Breaker/Liquidity). Struktura a pullbacky jsou klíčové.",
+        "ai-matic-x": "HTF SMC bias (4h/1h) + LTF 15m/1m CHOCH/MSS. Smart‑money filtrace a přísnější vstupy.",
+        "ai-matic-scalp": "Rychlé intraday scalpy: SMC/EMA + AI signály, kratší čas držení, pevné řízení rizika.",
+        "ai-matic-tree": "Decision‑tree přístup: 1h kontext, 5m exekuce, jasné ANO/NE podle checklistu.",
+    };
     const AI_MATIC_PRESET_UI = {
         riskMode: "ai-matic",
         trendGateMode: "adaptive",
@@ -259,7 +265,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         const preset = presets[mode];
         setLocal(preset);
     };
-    return (_jsx("div", { className: "fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50", children: _jsxs("div", { className: "w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto", children: [_jsxs("div", { className: "flex flex-col space-y-1.5 mb-6", children: [_jsx("h2", { className: "text-lg font-semibold leading-none tracking-tight", children: "Settings" }), _jsx("p", { className: "text-sm text-muted-foreground", children: "Zvolen\u00FD profil nastav\u00ED v\u00FDchoz\u00ED parametry; vybran\u00E9 podm\u00EDnky m\u016F\u017Ee\u0161 p\u0159epnout." })] }), _jsxs("div", { className: "grid gap-4 py-4", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Profile" }), _jsxs("div", { className: "flex gap-2", children: [_jsx("button", { onClick: () => applyPreset("ai-matic"), className: `flex-1 rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic"
+    return (_jsx("div", { className: "fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50", children: _jsxs("div", { className: "w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto", children: [_jsxs("div", { className: "flex flex-col space-y-1.5 mb-6", children: [_jsx("h2", { className: "text-lg font-semibold leading-none tracking-tight", children: "Settings" }), !local.strategyCheatSheetEnabled ? (_jsxs("div", { className: "rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200", children: [_jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-400", children: "Strategie (bez Cheat Sheet)" }), _jsx("div", { children: profileSummary[local.riskMode] })] })) : null, _jsx("p", { className: "text-sm text-muted-foreground", children: "Zvolen\u00FD profil nastav\u00ED v\u00FDchoz\u00ED parametry; vybran\u00E9 podm\u00EDnky m\u016F\u017Ee\u0161 p\u0159epnout." })] }), _jsxs("div", { className: "grid gap-4 py-4", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Profile" }), _jsxs("div", { className: "flex gap-2", children: [_jsx("button", { onClick: () => applyPreset("ai-matic"), className: `flex-1 rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic"
                                                 ? "bg-emerald-600 text-white"
                                                 : "bg-slate-800 text-secondary-foreground"}`, children: "AI-Matic" }), _jsx("button", { onClick: () => applyPreset("ai-matic-x"), className: `flex-1 rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic-x"
                                                 ? "bg-emerald-600 text-white"

@@ -166,6 +166,16 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     () => buildCheatBlocks(meta.notes),
     [meta.notes]
   );
+  const profileSummary: Record<AISettings["riskMode"], string> = {
+    "ai-matic":
+      "TF stack 1h/15m/5m/1m + POI (OB/FVG/Breaker/Liquidity). Struktura a pullbacky jsou klíčové.",
+    "ai-matic-x":
+      "HTF SMC bias (4h/1h) + LTF 15m/1m CHOCH/MSS. Smart‑money filtrace a přísnější vstupy.",
+    "ai-matic-scalp":
+      "Rychlé intraday scalpy: SMC/EMA + AI signály, kratší čas držení, pevné řízení rizika.",
+    "ai-matic-tree":
+      "Decision‑tree přístup: 1h kontext, 5m exekuce, jasné ANO/NE podle checklistu.",
+  };
 
   const AI_MATIC_PRESET_UI: AISettings = {
     riskMode: "ai-matic",
@@ -322,6 +332,14 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           <h2 className="text-lg font-semibold leading-none tracking-tight">
             Settings
           </h2>
+          {!local.strategyCheatSheetEnabled ? (
+            <div className="rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200">
+              <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                Strategie (bez Cheat Sheet)
+              </div>
+              <div>{profileSummary[local.riskMode]}</div>
+            </div>
+          ) : null}
           <p className="text-sm text-muted-foreground">
             Zvolený profil nastaví výchozí parametry; vybrané podmínky můžeš přepnout.
           </p>
