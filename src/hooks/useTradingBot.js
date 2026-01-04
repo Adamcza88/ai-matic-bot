@@ -107,7 +107,7 @@ const FIXED_QTY_BY_SYMBOL = {
     ADAUSDT: 995,
 };
 const TRAIL_PROFILE_BY_RISK_MODE = {
-    "ai-matic": { activateR: 1.0, lockR: 0.6 },
+    "ai-matic": { activateR: 1.0, lockR: 0.6, retracementRate: 0.003 },
     "ai-matic-x": { activateR: 1.0, lockR: 0.6 },
     "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
 };
@@ -142,6 +142,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 baseTimeframe: "15m",
                 signalTimeframe: "1m",
                 entryStrictness: strictness,
+                partialSteps: [{ r: 1.0, exitFraction: 0.5 }],
                 adxThreshold: 20,
                 aggressiveAdxThreshold: 28,
                 minAtrFractionOfPrice: 0.0004,
@@ -437,7 +438,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             TRAIL_PROFILE_BY_RISK_MODE["ai-matic"];
         const activateR = profile.activateR;
         const lockR = profile.lockR;
-        const distance = Math.abs(activateR - lockR) * r;
+        const retracementRate = profile.retracementRate;
+        const distance = Number.isFinite(retracementRate)
+            ? entry * retracementRate
+            : Math.abs(activateR - lockR) * r;
         if (!Number.isFinite(distance) || distance <= 0)
             return null;
         const dir = side === "Buy" ? 1 : -1;
