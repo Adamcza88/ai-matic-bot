@@ -152,11 +152,30 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const meta = profileCopy[local.riskMode];
     const cheatBlocks = useMemo(() => buildCheatBlocks(meta.notes), [meta.notes]);
     const profileSummary = {
-        "ai-matic": "TF stack 1h/15m/5m/1m + POI (OB/FVG/Breaker/Liquidity). Struktura a pullbacky jsou klíčové.",
-        "ai-matic-x": "HTF SMC bias (4h/1h) + LTF 15m/1m CHOCH/MSS. Smart‑money filtrace a přísnější vstupy.",
-        "ai-matic-scalp": "Rychlé intraday scalpy: SMC/EMA + AI signály, kratší čas držení, pevné řízení rizika.",
-        "ai-matic-tree": "Decision‑tree přístup: 1h kontext, 5m exekuce, jasné ANO/NE podle checklistu.",
+        "ai-matic": "AI‑MATIC core (15m/1m): POI + struktura, pullbacky a řízení přes R‑multiple.",
+        "ai-matic-x": "AI‑MATIC‑X (1h/5m): SMC bias + smart‑money filtrace, přísnější vstupy.",
+        "ai-matic-scalp": "Scalp profil (1h/1m): rychlé intraday vstupy, krátké držení, disciplinované řízení rizika.",
+        "ai-matic-tree": "AI‑MATIC‑TREE (15m/1m): decision‑tree overlay nad AI‑MATIC core enginem.",
     };
+    const statusItems = [
+        {
+            label: "Cheat Sheet",
+            value: local.strategyCheatSheetEnabled ? "On" : "Off",
+        },
+        { label: "Hard gates", value: local.enableHardGates ? "On" : "Off" },
+        { label: "Soft gates", value: local.enableSoftGates ? "On" : "Off" },
+        { label: "Strict risk", value: local.strictRiskAdherence ? "On" : "Off" },
+        { label: "Max daily loss", value: local.haltOnDailyLoss ? "On" : "Off" },
+        { label: "Max drawdown", value: local.haltOnDrawdown ? "On" : "Off" },
+        {
+            label: "Trading hours",
+            value: local.enforceSessionHours
+                ? tradingWindowLabel
+                : `Off (${tzLabel})`,
+        },
+        { label: "Trend gate", value: local.trendGateMode },
+        { label: "Max pos", value: String(local.maxOpenPositions) },
+    ];
     const AI_MATIC_PRESET_UI = {
         riskMode: "ai-matic",
         trendGateMode: "adaptive",
@@ -265,7 +284,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         const preset = presets[mode];
         setLocal(preset);
     };
-    return (_jsx("div", { className: "fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50", children: _jsxs("div", { className: "w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto", children: [_jsxs("div", { className: "flex flex-col space-y-1.5 mb-6", children: [_jsx("h2", { className: "text-lg font-semibold leading-none tracking-tight", children: "Settings" }), !local.strategyCheatSheetEnabled ? (_jsxs("div", { className: "rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200", children: [_jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-400", children: "Strategie (bez Cheat Sheet)" }), _jsx("div", { children: profileSummary[local.riskMode] })] })) : null, _jsx("p", { className: "text-sm text-muted-foreground", children: "Zvolen\u00FD profil nastav\u00ED v\u00FDchoz\u00ED parametry; vybran\u00E9 podm\u00EDnky m\u016F\u017Ee\u0161 p\u0159epnout." })] }), _jsxs("div", { className: "grid gap-4 py-4", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Profile" }), _jsxs("div", { className: "flex gap-2", children: [_jsx("button", { onClick: () => applyPreset("ai-matic"), className: `flex-1 rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic"
+    return (_jsx("div", { className: "fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50", children: _jsxs("div", { className: "w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto", children: [_jsxs("div", { className: "flex flex-col space-y-1.5 mb-6", children: [_jsx("h2", { className: "text-lg font-semibold leading-none tracking-tight", children: "Settings" }), _jsxs("div", { className: "rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200", children: [_jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-400", children: "Strategie (aktuální stav)" }), _jsx("div", { children: profileSummary[local.riskMode] }), _jsx("div", { className: "mt-2 flex flex-wrap gap-2 text-[11px] text-slate-400", children: statusItems.map((item) => (_jsxs("span", { className: "rounded-full border border-slate-800 bg-slate-950/40 px-2 py-0.5", children: [item.label, ": ", item.value] }, item.label))) })] }), _jsx("p", { className: "text-sm text-muted-foreground", children: "Zvolen\u00FD profil nastav\u00ED v\u00FDchoz\u00ED parametry; vybran\u00E9 podm\u00EDnky m\u016F\u017Ee\u0161 p\u0159epnout." })] }), _jsxs("div", { className: "grid gap-4 py-4", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Profile" }), _jsxs("div", { className: "flex gap-2", children: [_jsx("button", { onClick: () => applyPreset("ai-matic"), className: `flex-1 rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic"
                                                 ? "bg-emerald-600 text-white"
                                                 : "bg-slate-800 text-secondary-foreground"}`, children: "AI-Matic" }), _jsx("button", { onClick: () => applyPreset("ai-matic-x"), className: `flex-1 rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic-x"
                                                 ? "bg-emerald-600 text-white"
@@ -286,7 +305,22 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                         enableSoftGates: !local.enableSoftGates,
                                                     }), className: `rounded-md border px-3 py-1 text-sm ${local.enableSoftGates
                                                         ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                                                        : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enableSoftGates ? "On" : "Off" })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Trend Gate Mode" }), _jsxs("div", { className: "rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2", children: [_jsxs("select", { value: local.trendGateMode, onChange: (e) => setLocal({
+                                                        : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enableSoftGates ? "On" : "Off" })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Risk Stops" }), _jsxs("div", { className: "grid gap-2", children: [_jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: "Strict risk adherence" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "Vynucuje risk protokol (R limit, stopky, žádné obcházení)." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
+                                                ...local,
+                                                strictRiskAdherence: !local.strictRiskAdherence,
+                                            }), className: `rounded-md border px-3 py-1 text-sm ${local.strictRiskAdherence
+                                                ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.strictRiskAdherence ? "On" : "Off" })] }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: "Max daily loss gate" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "Blokuje vstupy po dosažení denní ztráty." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
+                                                ...local,
+                                                haltOnDailyLoss: !local.haltOnDailyLoss,
+                                            }), className: `rounded-md border px-3 py-1 text-sm ${local.haltOnDailyLoss
+                                                ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.haltOnDailyLoss ? "On" : "Off" })] }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: "Max drawdown gate" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "Blokuje vstupy po překročení max drawdownu." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
+                                                ...local,
+                                                haltOnDrawdown: !local.haltOnDrawdown,
+                                            }), className: `rounded-md border px-3 py-1 text-sm ${local.haltOnDrawdown
+                                                ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.haltOnDrawdown ? "On" : "Off" })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Trend Gate Mode" }), _jsxs("div", { className: "rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2", children: [_jsxs("select", { value: local.trendGateMode, onChange: (e) => setLocal({
                                                 ...local,
                                                 trendGateMode: e.target.value,
                                             }), className: "w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200", children: [_jsx("option", { value: "adaptive", children: "Adaptive" }), _jsx("option", { value: "follow", children: "Follow" }), _jsx("option", { value: "reverse", children: "Reverse" })] }), _jsx("div", { className: "text-xs text-secondary-foreground/70", children: "Adaptive: follow when ADX >= 25 or score >= 3, otherwise reverse. Follow: only with trend direction. Reverse: only mean-reversion." })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Cheat Sheet" }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: local.strategyCheatSheetEnabled ? "On" : "Off" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "Prioritize saved entry setups (Limit/Conditional)." })] }), _jsx("button", { type: "button", onClick: () => setLocal({

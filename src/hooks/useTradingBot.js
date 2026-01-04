@@ -133,10 +133,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
             ...(cheatSheetSetupId ? { cheatSheetSetupId } : {}),
         };
-        if (settings.riskMode === "ai-matic") {
-            const strictness = settings.entryStrictness === "base"
-                ? "ultra"
-                : settings.entryStrictness;
+        const strictness = settings.entryStrictness === "base"
+            ? "ultra"
+            : settings.entryStrictness;
+        if (settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree") {
             return {
                 ...baseConfig,
                 baseTimeframe: "15m",
@@ -155,9 +155,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             };
         }
         if (settings.riskMode === "ai-matic-scalp") {
-            const strictness = settings.entryStrictness === "base"
-                ? "ultra"
-                : settings.entryStrictness;
             return {
                 ...baseConfig,
                 strategyProfile: "scalp",

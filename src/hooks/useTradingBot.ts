@@ -172,11 +172,11 @@ export function useTradingBot(
       useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
       ...(cheatSheetSetupId ? { cheatSheetSetupId } : {}),
     };
-    if (settings.riskMode === "ai-matic") {
-      const strictness =
-        settings.entryStrictness === "base"
-          ? "ultra"
-          : settings.entryStrictness;
+    const strictness =
+      settings.entryStrictness === "base"
+        ? "ultra"
+        : settings.entryStrictness;
+    if (settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree") {
       return {
         ...baseConfig,
         baseTimeframe: "15m",
@@ -192,18 +192,6 @@ export function useTradingBot(
         volExpansionAtrMult: 1.15,
         volExpansionVolMult: 1.1,
         cooldownBars: 0,
-      };
-    }
-    if (settings.riskMode === "ai-matic-tree") {
-      const strictness =
-        settings.entryStrictness === "base"
-          ? "ultra"
-          : settings.entryStrictness;
-      return {
-        ...baseConfig,
-        baseTimeframe: "1h",
-        signalTimeframe: "5m",
-        entryStrictness: strictness,
       };
     }
     if (settings.riskMode === "ai-matic-scalp") {

@@ -168,14 +168,33 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   );
   const profileSummary: Record<AISettings["riskMode"], string> = {
     "ai-matic":
-      "TF stack 1h/15m/5m/1m + POI (OB/FVG/Breaker/Liquidity). Struktura a pullbacky jsou klíčové.",
+      "AI‑MATIC core (15m/1m): POI + struktura, pullbacky a řízení přes R‑multiple.",
     "ai-matic-x":
-      "HTF SMC bias (4h/1h) + LTF 15m/1m CHOCH/MSS. Smart‑money filtrace a přísnější vstupy.",
+      "AI‑MATIC‑X (1h/5m): SMC bias + smart‑money filtrace, přísnější vstupy.",
     "ai-matic-scalp":
-      "Rychlé intraday scalpy: SMC/EMA + AI signály, kratší čas držení, pevné řízení rizika.",
+      "Scalp profil (1h/1m): rychlé intraday vstupy, krátké držení, disciplinované řízení rizika.",
     "ai-matic-tree":
-      "Decision‑tree přístup: 1h kontext, 5m exekuce, jasné ANO/NE podle checklistu.",
+      "AI‑MATIC‑TREE (15m/1m): decision‑tree overlay nad AI‑MATIC core enginem.",
   };
+  const statusItems = [
+    {
+      label: "Cheat Sheet",
+      value: local.strategyCheatSheetEnabled ? "On" : "Off",
+    },
+    { label: "Hard gates", value: local.enableHardGates ? "On" : "Off" },
+    { label: "Soft gates", value: local.enableSoftGates ? "On" : "Off" },
+    { label: "Strict risk", value: local.strictRiskAdherence ? "On" : "Off" },
+    { label: "Max daily loss", value: local.haltOnDailyLoss ? "On" : "Off" },
+    { label: "Max drawdown", value: local.haltOnDrawdown ? "On" : "Off" },
+    {
+      label: "Trading hours",
+      value: local.enforceSessionHours
+        ? tradingWindowLabel
+        : `Off (${tzLabel})`,
+    },
+    { label: "Trend gate", value: local.trendGateMode },
+    { label: "Max pos", value: String(local.maxOpenPositions) },
+  ];
 
   const AI_MATIC_PRESET_UI: AISettings = {
     riskMode: "ai-matic",
@@ -288,7 +307,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    strategyCheatSheetEnabled: true,
+    strategyCheatSheetEnabled: false,
     enableHardGates: true,
     enableSoftGates: true,
     baseRiskPerTrade: 0.01,
@@ -332,14 +351,22 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           <h2 className="text-lg font-semibold leading-none tracking-tight">
             Settings
           </h2>
-          {!local.strategyCheatSheetEnabled ? (
-            <div className="rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200">
-              <div className="text-[11px] uppercase tracking-wide text-slate-400">
-                Strategie (bez Cheat Sheet)
-              </div>
-              <div>{profileSummary[local.riskMode]}</div>
+          <div className="rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200">
+            <div className="text-[11px] uppercase tracking-wide text-slate-400">
+              Strategie (aktuální stav)
             </div>
-          ) : null}
+            <div>{profileSummary[local.riskMode]}</div>
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-400">
+              {statusItems.map((item) => (
+                <span
+                  key={item.label}
+                  className="rounded-full border border-slate-800 bg-slate-950/40 px-2 py-0.5"
+                >
+                  {item.label}: {item.value}
+                </span>
+              ))}
+            </div>
+          </div>
           <p className="text-sm text-muted-foreground">
             Zvolený profil nastaví výchozí parametry; vybrané podmínky můžeš přepnout.
           </p>
@@ -476,6 +503,88 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                   }`}
                 >
                   {local.enableSoftGates ? "On" : "Off"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              Risk Stops
+            </label>
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
+                <div>
+                  <div className="font-medium">Strict risk adherence</div>
+                  <div className="text-xs text-secondary-foreground/70 mt-1">
+                    Vynucuje risk protokol (R limit, stopky, žádné obcházení).
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLocal({
+                      ...local,
+                      strictRiskAdherence: !local.strictRiskAdherence,
+                    })
+                  }
+                  className={`rounded-md border px-3 py-1 text-sm ${
+                    local.strictRiskAdherence
+                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                      : "border-slate-700 bg-slate-900/40 text-slate-200"
+                  }`}
+                >
+                  {local.strictRiskAdherence ? "On" : "Off"}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
+                <div>
+                  <div className="font-medium">Max daily loss gate</div>
+                  <div className="text-xs text-secondary-foreground/70 mt-1">
+                    Blokuje vstupy po dosažení denní ztráty.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLocal({
+                      ...local,
+                      haltOnDailyLoss: !local.haltOnDailyLoss,
+                    })
+                  }
+                  className={`rounded-md border px-3 py-1 text-sm ${
+                    local.haltOnDailyLoss
+                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                      : "border-slate-700 bg-slate-900/40 text-slate-200"
+                  }`}
+                >
+                  {local.haltOnDailyLoss ? "On" : "Off"}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
+                <div>
+                  <div className="font-medium">Max drawdown gate</div>
+                  <div className="text-xs text-secondary-foreground/70 mt-1">
+                    Blokuje vstupy po překročení max drawdownu.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLocal({
+                      ...local,
+                      haltOnDrawdown: !local.haltOnDrawdown,
+                    })
+                  }
+                  className={`rounded-md border px-3 py-1 text-sm ${
+                    local.haltOnDrawdown
+                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                      : "border-slate-700 bg-slate-900/40 text-slate-200"
+                  }`}
+                >
+                  {local.haltOnDrawdown ? "On" : "Off"}
                 </button>
               </div>
             </div>
