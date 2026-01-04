@@ -1,14 +1,19 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useState } from "react";
 const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
+const KEYCAP_HEADING = /^[0-9]\uFE0F?\u20E3/;
 function isHeadingLine(line) {
-    return (/^\d+\)/.test(line) ||
+    return (KEYCAP_HEADING.test(line) ||
+        /^\d+\)/.test(line) ||
         /^[A-Z]\)/.test(line) ||
         /^[A-Z]\s[-–]/.test(line) ||
         line.startsWith("KROK ") ||
         line.startsWith("ROZHODOVACÍ STROM") ||
+        line.startsWith("CHEAT-SHEET") ||
         line.startsWith("CHECKLIST") ||
         line.startsWith("RYCHLÁ PAMĚŤOVKA") ||
+        line.startsWith("VIZUÁLNÍ ZKRATKA") ||
+        line.startsWith("JAK S TÍM PRACOVAT") ||
         line.startsWith("FINÁLNÍ PRINCIP") ||
         line.startsWith("PROVOZNÍ"));
 }
