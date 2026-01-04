@@ -1,7 +1,75 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
+function isHeadingLine(line) {
+    return (/^\d+\)/.test(line) ||
+        /^[A-Z]\)/.test(line) ||
+        /^[A-Z]\s[-–]/.test(line) ||
+        line.startsWith("KROK ") ||
+        line.startsWith("ROZHODOVACÍ STROM") ||
+        line.startsWith("CHECKLIST") ||
+        line.startsWith("RYCHLÁ PAMĚŤOVKA") ||
+        line.startsWith("FINÁLNÍ PRINCIP") ||
+        line.startsWith("PROVOZNÍ"));
+}
+function buildCheatBlocks(notes) {
+    const blocks = [];
+    let current = { lines: [] };
+    for (const line of notes) {
+        if (isHeadingLine(line)) {
+            if (current.title || current.lines.length)
+                blocks.push(current);
+            current = { title: line, lines: [] };
+        }
+        else {
+            current.lines.push(line);
+        }
+    }
+    if (current.title || current.lines.length)
+        blocks.push(current);
+    return blocks;
+}
+function extractImageUrl(line) {
+    var _a;
+    const match = line.match(IMAGE_LINE);
+    return (_a = match === null || match === void 0 ? void 0 : match[1]) !== null && _a !== void 0 ? _a : null;
+}
+function compactLine(line, maxLen = 140) {
+    let text = line;
+    text = text.replace(/^CO TO ZNAMENÁ:\s*/i, "CO: ");
+    text = text.replace(/^JAK TO POZNÁŠ[^:]*:\s*/i, "VIDÍŠ: ");
+    text = text.replace(/^JAK TO VIDÍŠ:\s*/i, "VIDÍŠ: ");
+    text = text.replace(/^JAK TO URČÍŠ:\s*/i, "URČÍŠ: ");
+    text = text.replace(/^CO DĚLÁŠ:\s*/i, "AKCE: ");
+    text = text.replace(/^SIGNÁLY:\s*/i, "SIGNÁLY: ");
+    text = text.replace(/^.*?NA CO SI DÁT POZOR:\s*/i, "POZOR: ");
+    text = text.replace(/^.*?NEJDŮLEŽITĚJŠÍ:\s*/i, "POINT: ");
+    if (text.length > maxLen)
+        return `${text.slice(0, maxLen - 1)}…`;
+    return text;
+}
+function renderCheatBlocks(cheatBlocks, compactCheatSheet) {
+    return cheatBlocks.map((block, blockIndex) => {
+        const rawLines = compactCheatSheet
+            ? block.lines.filter((line) => !extractImageUrl(line))
+            : block.lines;
+        const visibleLines = compactCheatSheet ? rawLines.slice(0, 3) : rawLines;
+        const hiddenCount = rawLines.length - visibleLines.length;
+        return _jsxs("div", { className: block.title
+                ? "rounded-md border border-slate-800 bg-slate-950/40 p-2"
+                : "", children: [block.title ? (_jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-300", children: block.title })) : null, _jsx("ul", { className: "mt-1 space-y-1 text-xs leading-relaxed", children: visibleLines.map((line, lineIndex) => {
+                    const imageUrl = extractImageUrl(line);
+                    if (imageUrl) {
+                        const host = imageUrl.replace(/^https?:\/\//, "").split("/")[0];
+                        return (_jsx("li", { children: _jsx("a", { href: imageUrl, target: "_blank", rel: "noreferrer", className: "text-sky-300 underline underline-offset-2", children: `Image reference (${host})` }) }, `${blockIndex}-${lineIndex}`));
+                    }
+                    return (_jsx("li", { children: compactCheatSheet ? compactLine(line) : line }, `${blockIndex}-${lineIndex}`));
+                }) }), compactCheatSheet && hiddenCount > 0 ? (_jsxs("div", { className: "mt-1 text-[11px] text-slate-500", children: ["+", hiddenCount, " dalších"] })) : null] }, `${block.title || "block"}-${blockIndex}`);
+    });
+}
 const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const [local, setLocal] = useState(settings);
+    const [compactCheatSheet, setCompactCheatSheet] = useState(true);
     useEffect(() => {
         setLocal(settings);
     }, [settings]);
@@ -76,6 +144,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         },
     };
     const meta = profileCopy[local.riskMode];
+    const cheatBlocks = useMemo(() => buildCheatBlocks(meta.notes), [meta.notes]);
     const AI_MATIC_PRESET_UI = {
         riskMode: "ai-matic",
         trendGateMode: "adaptive",
@@ -213,7 +282,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                 strategyCheatSheetEnabled: !local.strategyCheatSheetEnabled,
                                             }), className: `rounded-md border px-3 py-1 text-sm ${local.strategyCheatSheetEnabled
                                                 ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.strategyCheatSheetEnabled ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Max Positions" }), _jsx("div", { className: "rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: local.maxOpenPositions })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsx("ul", { className: "list-disc list-inside space-y-1 text-slate-400", children: meta.notes.map((n) => (_jsx("li", { children: n }, n))) }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Max positions", " ", local.maxOpenPositions] })] })] }), _jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:justify-end mt-6", children: [_jsx("button", { type: "button", onClick: () => {
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.strategyCheatSheetEnabled ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Max Positions" }), _jsx("div", { className: "rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: local.maxOpenPositions })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsxs("div", { className: "flex items-center justify-between text-xs text-slate-500", children: [_jsxs("div", { children: ["View: ", compactCheatSheet ? "Compact" : "Detail"] }), _jsx("button", { type: "button", onClick: () => setCompactCheatSheet((v) => !v), className: `rounded-md border px-2 py-1 text-[11px] ${compactCheatSheet ? "border-slate-700 bg-slate-900/60 text-slate-200" : "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"}`, children: compactCheatSheet ? "Compact" : "Detail" })] }), _jsx("div", { className: "space-y-3 text-slate-400", children: renderCheatBlocks(cheatBlocks, compactCheatSheet) }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Max positions", " ", local.maxOpenPositions] })] })] }), _jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:justify-end mt-6", children: [_jsx("button", { type: "button", onClick: () => {
                                 onUpdateSettings(local);
                                 onClose();
                             }, className: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-emerald-600 text-white hover:bg-emerald-500 h-10 px-4 py-2 w-full sm:w-auto", children: "Save" }), _jsx("button", { onClick: onClose, className: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full sm:w-auto", children: "Close" })] })] }) }));

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AISettings } from "../types";
 
 interface Props {
@@ -9,8 +9,61 @@ interface Props {
   onClose: () => void;
 }
 
+type CheatBlock = { title?: string; lines: string[] };
+
+const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
+
+function isHeadingLine(line: string) {
+  return (
+    /^\d+\)/.test(line) ||
+    /^[A-Z]\)/.test(line) ||
+    /^[A-Z]\s[-–]/.test(line) ||
+    line.startsWith("KROK ") ||
+    line.startsWith("ROZHODOVACÍ STROM") ||
+    line.startsWith("CHECKLIST") ||
+    line.startsWith("RYCHLÁ PAMĚŤOVKA") ||
+    line.startsWith("FINÁLNÍ PRINCIP") ||
+    line.startsWith("PROVOZNÍ")
+  );
+}
+
+function buildCheatBlocks(notes: string[]): CheatBlock[] {
+  const blocks: CheatBlock[] = [];
+  let current: CheatBlock = { lines: [] };
+  for (const line of notes) {
+    if (isHeadingLine(line)) {
+      if (current.title || current.lines.length) blocks.push(current);
+      current = { title: line, lines: [] };
+    } else {
+      current.lines.push(line);
+    }
+  }
+  if (current.title || current.lines.length) blocks.push(current);
+  return blocks;
+}
+
+function extractImageUrl(line: string): string | null {
+  const match = line.match(IMAGE_LINE);
+  return match?.[1] ?? null;
+}
+
+function compactLine(line: string, maxLen = 140): string {
+  let text = line;
+  text = text.replace(/^CO TO ZNAMENÁ:\s*/i, "CO: ");
+  text = text.replace(/^JAK TO POZNÁŠ[^:]*:\s*/i, "VIDÍŠ: ");
+  text = text.replace(/^JAK TO VIDÍŠ:\s*/i, "VIDÍŠ: ");
+  text = text.replace(/^JAK TO URČÍŠ:\s*/i, "URČÍŠ: ");
+  text = text.replace(/^CO DĚLÁŠ:\s*/i, "AKCE: ");
+  text = text.replace(/^SIGNÁLY:\s*/i, "SIGNÁLY: ");
+  text = text.replace(/^.*?NA CO SI DÁT POZOR:\s*/i, "POZOR: ");
+  text = text.replace(/^.*?NEJDŮLEŽITĚJŠÍ:\s*/i, "POINT: ");
+  if (text.length > maxLen) return `${text.slice(0, maxLen - 1)}…`;
+  return text;
+}
+
 const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose }) => {
   const [local, setLocal] = useState(settings);
+  const [compactCheatSheet, setCompactCheatSheet] = useState(true);
 
   useEffect(() => {
     setLocal(settings);
@@ -103,6 +156,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     },
   };
   const meta = profileCopy[local.riskMode];
+  const cheatBlocks = useMemo(
+    () => buildCheatBlocks(meta.notes),
+    [meta.notes]
+  );
 
   const AI_MATIC_PRESET_UI: AISettings = {
     riskMode: "ai-matic",
@@ -469,11 +526,81 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           <div className="mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
             <div className="font-semibold text-white">{meta.title}</div>
             <div className="text-slate-300">{meta.description}</div>
-            <ul className="list-disc list-inside space-y-1 text-slate-400">
-              {meta.notes.map((n) => (
-              <li key={n}>{n}</li>
-            ))}
-          </ul>
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <div>
+                View: {compactCheatSheet ? "Compact" : "Detail"}
+              </div>
+              <button
+                type="button"
+                onClick={() => setCompactCheatSheet((v) => !v)}
+                className={`rounded-md border px-2 py-1 text-[11px] ${
+                  compactCheatSheet
+                    ? "border-slate-700 bg-slate-900/60 text-slate-200"
+                    : "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                }`}
+              >
+                {compactCheatSheet ? "Compact" : "Detail"}
+              </button>
+            </div>
+            <div className="space-y-3 text-slate-400">
+              {cheatBlocks.map((block, blockIndex) => {
+                const rawLines = compactCheatSheet
+                  ? block.lines.filter((line) => !extractImageUrl(line))
+                  : block.lines;
+                const visibleLines = compactCheatSheet
+                  ? rawLines.slice(0, 3)
+                  : rawLines;
+                const hiddenCount = rawLines.length - visibleLines.length;
+                return (
+                  <div
+                    key={`${block.title ?? "block"}-${blockIndex}`}
+                    className={
+                      block.title
+                        ? "rounded-md border border-slate-800 bg-slate-950/40 p-2"
+                        : ""
+                    }
+                  >
+                    {block.title ? (
+                      <div className="text-[11px] uppercase tracking-wide text-slate-300">
+                        {block.title}
+                      </div>
+                    ) : null}
+                    <ul className="mt-1 space-y-1 text-xs leading-relaxed">
+                      {visibleLines.map((line, lineIndex) => {
+                        const imageUrl = extractImageUrl(line);
+                        if (imageUrl) {
+                          const host = imageUrl
+                            .replace(/^https?:\/\//, "")
+                            .split("/")[0];
+                          return (
+                            <li key={`${blockIndex}-${lineIndex}`}>
+                              <a
+                                href={imageUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-sky-300 underline underline-offset-2"
+                              >
+                                Image reference ({host})
+                              </a>
+                            </li>
+                          );
+                        }
+                        return (
+                          <li key={`${blockIndex}-${lineIndex}`}>
+                            {compactCheatSheet ? compactLine(line) : line}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    {compactCheatSheet && hiddenCount > 0 ? (
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        +{hiddenCount} dalších
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
           <div className="text-xs text-slate-500">
             Parametry: Hours {local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`} • Max positions{" "}
             {local.maxOpenPositions}
