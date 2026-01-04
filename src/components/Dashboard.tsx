@@ -87,6 +87,18 @@ export default function Dashboard({
         execution: "PostOnly LIMIT · timeout 1×1m",
       };
     }
+    if (riskMode === "ai-matic-tree") {
+      return {
+        label: "AI-MATIC TREE",
+        subtitle: "Decision Tree – Market → Action (5m execution / 1h context)",
+        symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
+        timeframes: "1h context · 5m execution",
+        session: "Bybit Linear Perpetuals · ~40 markets scan",
+        risk: "Risk ON: 1R · Risk OFF: 0.25R · max 5 trades/day",
+        entry: "Families 1–6 · A-setup required",
+        execution: "Checklist B management · Kill switch -3R",
+      };
+    }
     return {
       label: "AI-MATIC",
       subtitle: "AI-MATIC (1h/15m/5m/1m)",
@@ -125,6 +137,20 @@ export default function Dashboard({
         "Feed age": true,
       },
       "ai-matic-x": {
+        Signal: true,
+        "Trend bias": false,
+        "Engine ok": true,
+        "Session ok": true,
+        "Confirm required": false,
+        "Max positions": true,
+        "Position clear": true,
+        "Orders clear": true,
+        "SL set": true,
+        "TP set": true,
+        "Exec allowed": true,
+        "Feed age": true,
+      },
+      "ai-matic-tree": {
         Signal: true,
         "Trend bias": false,
         "Engine ok": true,

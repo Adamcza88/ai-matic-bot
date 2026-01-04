@@ -137,6 +137,7 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
   "ai-matic": { activateR: 1.0, lockR: 0.6 },
   "ai-matic-x": { activateR: 1.0, lockR: 0.6 },
   "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
+  "ai-matic-tree": { activateR: 1.0, lockR: 0.6 },
 };
 const TRAIL_SYMBOL_MODE: Partial<Record<Symbol, "on" | "off">> = {
   SOLUSDT: "on",
@@ -150,6 +151,7 @@ const CHEAT_SHEET_SETUP_BY_RISK_MODE: Partial<
   "ai-matic": "ai-matic-core",
   "ai-matic-x": "ai-matic-x-smart-money-combo",
   "ai-matic-scalp": "ai-matic-scalp-scalpera",
+  "ai-matic-tree": "ai-matic-decision-tree",
 };
 
 
@@ -189,6 +191,18 @@ export function useTradingBot(
         volExpansionAtrMult: 1.15,
         volExpansionVolMult: 1.1,
         cooldownBars: 0,
+      };
+    }
+    if (settings.riskMode === "ai-matic-tree") {
+      const strictness =
+        settings.entryStrictness === "base"
+          ? "ultra"
+          : settings.entryStrictness;
+      return {
+        ...baseConfig,
+        baseTimeframe: "1h",
+        signalTimeframe: "5m",
+        entryStrictness: strictness,
       };
     }
     if (settings.riskMode === "ai-matic-scalp") {
@@ -519,7 +533,9 @@ export function useTradingBot(
       const settings = settingsRef.current;
       const symbolMode = TRAIL_SYMBOL_MODE[symbol];
       const forceTrail =
-        settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-x";
+        settings.riskMode === "ai-matic" ||
+        settings.riskMode === "ai-matic-x" ||
+        settings.riskMode === "ai-matic-tree";
       if (symbolMode === "off") return null;
       if (!forceTrail && !settings.lockProfitsWithTrail && symbolMode !== "on") {
         return null;

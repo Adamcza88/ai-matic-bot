@@ -88,6 +88,19 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         "Modules: TrendPredictor, VolatilityScanner, SentimentEngine, PriceConeGenerator, AdaptiveExecutor.",
       ],
     },
+    "ai-matic-tree": {
+      title: "AI-Matic Tree (Market → Akce)",
+      description:
+        "Rozhodovací strom A + Rodiny C + Checklist B + Risk protokol D (Bybit Linear, 5m/1h).",
+      notes: [
+        "Bybit Linear Perpetuals · primární TF 5m · kontext 1h · scan ~40 trhů",
+        "Strom A: Kontext → Režim trhu → Směr → Risk ON/OFF → High/Low Prob → Akce",
+        "Rodiny 1–6: Trend Pullback, Trend Continuation, Range Fade, Range→Trend, Reversal (omezeně), No Trade",
+        "Checklist B: invalidace → režim → logický target → trend zdravý → čas → risk off → hold",
+        "Risk protokol: Risk ON 1R; Risk OFF 0.25R; max 5 obchodů/den; max 2 pozice",
+        "Absolutní zákazy: žádné přidávání; žádná změna plánu v otevřeném obchodu",
+      ],
+    },
   };
   const meta = profileCopy[local.riskMode];
 
@@ -193,10 +206,45 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
   };
 
+  const AI_MATIC_TREE_PRESET_UI: AISettings = {
+    riskMode: "ai-matic-tree",
+    trendGateMode: "adaptive",
+    strictRiskAdherence: true,
+    pauseOnHighVolatility: false,
+    avoidLowLiquidity: false,
+    useTrendFollowing: true,
+    smcScalpMode: true,
+    useLiquiditySweeps: false,
+    strategyCheatSheetEnabled: true,
+    enableHardGates: true,
+    enableSoftGates: true,
+    baseRiskPerTrade: 0.01,
+    maxPortfolioRiskPercent: 0.2,
+    maxAllocatedCapitalPercent: 1.0,
+    maxOpenPositions: 2,
+    entryStrictness: "base",
+    enforceSessionHours: false,
+    haltOnDailyLoss: true,
+    haltOnDrawdown: true,
+    useDynamicPositionSizing: true,
+    lockProfitsWithTrail: true,
+    requireConfirmationInAuto: false,
+    positionSizingMultiplier: 1.0,
+    customInstructions: "",
+    customStrategy: "",
+    min24hVolume: 50,
+    minProfitFactor: 1.0,
+    minWinRate: 65,
+    tradingStartHour: 0,
+    tradingEndHour: 23,
+    tradingDays: [0, 1, 2, 3, 4, 5, 6],
+  };
+
   const presets: Record<AISettings["riskMode"], AISettings> = {
     "ai-matic": AI_MATIC_PRESET_UI,
     "ai-matic-x": AI_MATIC_X_PRESET_UI,
     "ai-matic-scalp": AI_MATIC_SCALP_PRESET_UI,
+    "ai-matic-tree": AI_MATIC_TREE_PRESET_UI,
   };
 
   const applyPreset = (mode: AISettings["riskMode"]) => {
@@ -221,10 +269,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Strategy Profile
             </label>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => applyPreset("ai-matic")}
-                className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
+                className={`rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic"
                     ? "bg-emerald-600 text-white"
                     : "bg-slate-800 text-secondary-foreground"
@@ -234,7 +282,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
               </button>
               <button
                 onClick={() => applyPreset("ai-matic-x")}
-                className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
+                className={`rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic-x"
                     ? "bg-emerald-600 text-white"
                     : "bg-slate-800 text-secondary-foreground"
@@ -244,13 +292,23 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
               </button>
               <button
                 onClick={() => applyPreset("ai-matic-scalp")}
-                className={`flex-1 rounded-md border border-input px-3 py-2 text-sm ${
+                className={`rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic-scalp"
                     ? "bg-emerald-600 text-white"
                     : "bg-slate-800 text-secondary-foreground"
                 }`}
               >
                 AI-Matic-Scalp
+              </button>
+              <button
+                onClick={() => applyPreset("ai-matic-tree")}
+                className={`rounded-md border border-input px-3 py-2 text-sm ${
+                  local.riskMode === "ai-matic-tree"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-800 text-secondary-foreground"
+                }`}
+              >
+                AI-Matic-Tree
               </button>
             </div>
           </div>
