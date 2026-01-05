@@ -11,7 +11,6 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 4;
 const MAX_POSITION_NOTIONAL_USD = 7;
-const MAX_ORDERS_PER_POSITION = 3;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
@@ -527,8 +526,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             const size = toNumber(p.size ?? p.qty);
             return Number.isFinite(size) && size > 0;
         });
-        const symbolOrdersCount = ordersRef.current.filter((o) => String(o.symbol ?? "") === symbol).length;
-        const ordersClearOk = symbolOrdersCount < MAX_ORDERS_PER_POSITION;
+        const openOrdersCount = ordersRef.current.length;
+        const maxOrders = Number.isFinite(maxPositions) && maxPositions > 0
+            ? maxPositions * 2
+            : Number.POSITIVE_INFINITY;
+        const ordersClearOk = !Number.isFinite(maxOrders) || openOrdersCount < maxOrders;
         const engineOk = !(decision?.halted ?? false);
         return {
             settings,
@@ -536,9 +538,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             sessionOk,
             maxPositionsOk,
             maxPositions,
+            maxOrders,
             openPositionsCount,
             hasPosition,
-            symbolOrdersCount,
+            openOrdersCount,
             ordersClearOk,
             engineOk,
         };
@@ -654,7 +657,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             : `open ${context.openPositionsCount}`;
         addGate("Max positions", context.maxPositionsOk, maxPositionsDetail);
         addGate("Position clear", !context.hasPosition, "no open position");
-        const ordersDetail = `open ${context.symbolOrdersCount}/${MAX_ORDERS_PER_POSITION}`;
+        const ordersDetail = Number.isFinite(context.maxOrders)
+            ? `open ${context.openOrdersCount}/${context.maxOrders}`
+            : `open ${context.openOrdersCount}/no limit`;
         addGate("Orders clear", context.ordersClearOk, ordersDetail);
         const slOk = context.hasPosition && Number.isFinite(sl) && sl > 0;
         const tpOk = context.hasPosition && Number.isFinite(tp) && tp > 0;
