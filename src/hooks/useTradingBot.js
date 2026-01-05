@@ -138,8 +138,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree") {
             return {
                 ...baseConfig,
-                baseTimeframe: "15m",
-                signalTimeframe: "1m",
+                baseTimeframe: "1h",
+                signalTimeframe: "5m",
                 entryStrictness: strictness,
                 partialSteps: [{ r: 1.0, exitFraction: 0.5 }],
                 adxThreshold: 20,

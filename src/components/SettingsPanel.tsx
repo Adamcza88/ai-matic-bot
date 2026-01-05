@@ -93,7 +93,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       title: "AI-Matic",
       description: "TF stack + POI analyzer (OB/FVG/Breaker/Liquidity) s prioritou.",
       notes: [
-        "TF stack: 1H kontext, 15M mikro, 5M signál, 1M potvrzení/řízení",
+        "TF stack: 1H kontext, 5M signál/řízení",
         "FVG: 3-svíčková imbalance (priority 1)",
         "OB: poslední opačná svíčka před impulsem (priority 2)",
         "Breaker: mitigace OB + close za extremem (priority 3)",
@@ -168,13 +168,13 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   );
   const profileSummary: Record<AISettings["riskMode"], string> = {
     "ai-matic":
-      "AI‑MATIC core (15m/1m): POI + struktura, pullbacky a řízení přes R‑multiple.",
+      "AI‑MATIC core (1h/5m): POI + struktura, pullbacky a řízení přes R‑multiple.",
     "ai-matic-x":
       "AI‑MATIC‑X (1h/5m): SMC bias + smart‑money filtrace, přísnější vstupy.",
     "ai-matic-scalp":
       "Scalp profil (1h/1m): rychlé intraday vstupy, krátké držení, disciplinované řízení rizika.",
     "ai-matic-tree":
-      "AI‑MATIC‑TREE (15m/1m): decision‑tree overlay nad AI‑MATIC core enginem.",
+      "AI‑MATIC‑TREE (1h/5m): decision‑tree overlay nad AI‑MATIC core enginem.",
   };
   const statusItems = [
     {

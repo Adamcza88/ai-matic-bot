@@ -57,13 +57,13 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         }
         return {
             label: "AI-MATIC",
-            subtitle: "AI-MATIC (1h/15m/5m/1m)",
+            subtitle: "AI-MATIC (1h/5m)",
             symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-            timeframes: "1h/15m/5m/1m + POI analyzer",
+            timeframes: "1h/5m + POI analyzer",
             session: "POI: Breaker > OB > FVG > Liquidity",
             risk: "4 USDT / trade · 8 USDT total · max 3 pos",
             entry: "FVG/OB/Breaker + liquidity pools (0.2% tol, min 3 touches)",
-            execution: "Swing window 7 · 1m potvrzení + SL/TS management",
+            execution: "Swing window 7 · 5m management + SL/TS",
         };
     }, [riskMode]);
     const allowedSymbols = bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length

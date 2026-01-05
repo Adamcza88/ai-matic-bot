@@ -7,7 +7,7 @@ export const STRATEGY_CHEAT_SHEET = [
         side: "both",
         priority: 1,
         rules: [
-            "TF stack: 1h context, 15m micro, 5m signal, 1m confirmation/management",
+            "TF stack: 1h context, 5m signal/management",
             "FVG: 3-svickova imbalance detekce (priority 1)",
             "OB: posledni opacna svicka pred impulsem (priority 2)",
             "Breaker: mitigace OB + close za extremem (priority 3)",
