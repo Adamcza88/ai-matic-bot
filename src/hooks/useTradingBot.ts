@@ -77,11 +77,13 @@ function loadStoredSettings(): AISettings | null {
     ) {
       merged.trendGateMode = "adaptive";
     }
-    if (
-      !Number.isFinite(merged.maxOpenPositions) ||
-      merged.maxOpenPositions < 3
-    ) {
-      merged.maxOpenPositions = 3;
+    if (!Number.isFinite(merged.maxOpenPositions)) {
+      merged.maxOpenPositions = DEFAULT_SETTINGS.maxOpenPositions;
+    } else {
+      merged.maxOpenPositions = Math.max(
+        0,
+        Math.round(merged.maxOpenPositions)
+      );
     }
     return merged;
   } catch {

@@ -650,8 +650,26 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             <label className="text-sm font-medium leading-none">
               Max Positions
             </label>
-            <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-              {local.maxOpenPositions}
+            <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={local.maxOpenPositions}
+                onChange={(event) => {
+                  const next = event.currentTarget.valueAsNumber;
+                  setLocal({
+                    ...local,
+                    maxOpenPositions: Number.isFinite(next)
+                      ? Math.max(0, Math.round(next))
+                      : 0,
+                  });
+                }}
+                className="w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
+              />
+              <span className="text-xs text-secondary-foreground/70">
+                0 = bez limitu
+              </span>
             </div>
           </div>
 
