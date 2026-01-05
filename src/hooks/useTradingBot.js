@@ -1381,13 +1381,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         intentPendingRef.current.clear();
         decisionRef.current = {};
         setScanDiagnostics(null);
-        const decisionFn = settingsRef.current.riskMode === "ai-matic-x"
-            ? evaluateSmcStrategyForSymbol
-            : undefined;
-        const maxCandles = settingsRef.current.riskMode === "ai-matic-x" ? 3000 : undefined;
-        const backfill = settingsRef.current.riskMode === "ai-matic-x"
+        const riskMode = settingsRef.current.riskMode;
+        const isSmc = riskMode === "ai-matic-x";
+        const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
+        const decisionFn = isSmc ? evaluateSmcStrategyForSymbol : undefined;
+        const maxCandles = isSmc ? 3000 : isAiMatic ? 5000 : undefined;
+        const backfill = isSmc
             ? { enabled: true, interval: "1", lookbackMinutes: 1440, limit: 1000 }
-            : undefined;
+            : isAiMatic
+                ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
+                : undefined;
         const stop = startPriceFeed(WATCH_SYMBOLS, (symbol, decision) => {
             handleDecisionRef.current?.(symbol, decision);
         }, {
