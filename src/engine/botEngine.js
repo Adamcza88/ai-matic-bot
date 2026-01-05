@@ -709,28 +709,45 @@ export class TradingBot {
      * Compute a swing‑structure stop. For longs it returns the last swing low
      * minus a buffer; for shorts the last swing high plus a buffer.
      */
-    computeSwingStop(df, side) {
+    computeSwingStop(df, side, window = 1) {
         const highs = df.map((c) => c.high);
         const lows = df.map((c) => c.low);
         const closes = df.map((c) => c.close);
         const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
         const atr = atrArray[atrArray.length - 1];
+        const swingWindow = Math.max(1, Math.floor(window));
         if (side === "long") {
             // find latest local minimum: price lower than its neighbours
-            for (let i = lows.length - 2; i > 0; i--) {
-                if (lows[i] < lows[i - 1] && lows[i] < lows[i + 1]) {
-                    return lows[i] - this.config.swingBackoffAtr * atr;
+            for (let i = lows.length - 1 - swingWindow; i >= swingWindow; i--) {
+                let isLow = true;
+                for (let j = i - swingWindow; j <= i + swingWindow; j++) {
+                    if (j === i)
+                        continue;
+                    if (lows[j] < lows[i]) {
+                        isLow = false;
+                        break;
+                    }
                 }
+                if (isLow)
+                    return lows[i] - this.config.swingBackoffAtr * atr;
             }
             // fallback: last low
             return lows[lows.length - 1] - this.config.swingBackoffAtr * atr;
         }
         else {
             // find latest local maximum
-            for (let i = highs.length - 2; i > 0; i--) {
-                if (highs[i] > highs[i - 1] && highs[i] > highs[i + 1]) {
-                    return highs[i] + this.config.swingBackoffAtr * atr;
+            for (let i = highs.length - 1 - swingWindow; i >= swingWindow; i--) {
+                let isHigh = true;
+                for (let j = i - swingWindow; j <= i + swingWindow; j++) {
+                    if (j === i)
+                        continue;
+                    if (highs[j] > highs[i]) {
+                        isHigh = false;
+                        break;
+                    }
                 }
+                if (isHigh)
+                    return highs[i] + this.config.swingBackoffAtr * atr;
             }
             return highs[highs.length - 1] + this.config.swingBackoffAtr * atr;
         }
@@ -988,8 +1005,8 @@ export class TradingBot {
         const entryStopMode = this.config.entryStopMode ?? "atr";
         const swingStops = entryStopMode === "swing"
             ? {
-                long: this.computeSwingStop(lt, "long"),
-                short: this.computeSwingStop(lt, "short"),
+                long: this.computeSwingStop(lt, "long", 2),
+                short: this.computeSwingStop(lt, "short", 2),
             }
             : null;
         const resolveEntryStop = (side, entry, fallback) => ensureStop(side, entry, swingStops ? swingStops[side] : fallback);
