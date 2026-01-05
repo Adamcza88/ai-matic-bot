@@ -187,6 +187,7 @@ export function useTradingBot(
         minAtrFractionOfPrice: 0.0004,
         atrEntryMultiplier: 1.6,
         entryStopMode: "swing",
+        entrySwingBackoffAtr: 1.0,
         swingBackoffAtr: 0.6,
         liquiditySweepVolumeMult: 1.0,
         volExpansionAtrMult: 1.15,

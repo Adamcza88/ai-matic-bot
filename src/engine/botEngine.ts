@@ -158,6 +158,7 @@ export interface BotConfig {
   aggressiveAdxThreshold: number;
   atrEntryMultiplier: number;
   entryStopMode?: "atr" | "swing";
+  entrySwingBackoffAtr?: number;
   atrTrailMultiplier: number;
   minAtrFractionOfPrice: number;
   swingBackoffAtr: number;
@@ -893,6 +894,7 @@ export class TradingBot {
     df: DataFrame,
     side: "long" | "short",
     window = 1,
+    backoffAtr = this.config.swingBackoffAtr,
   ): number {
     const highs = df.map((c) => c.high);
     const lows = df.map((c) => c.low);
@@ -911,10 +913,10 @@ export class TradingBot {
             break;
           }
         }
-        if (isLow) return lows[i] - this.config.swingBackoffAtr * atr;
+        if (isLow) return lows[i] - backoffAtr * atr;
       }
       // fallback: last low
-      return lows[lows.length - 1] - this.config.swingBackoffAtr * atr;
+      return lows[lows.length - 1] - backoffAtr * atr;
     } else {
       // find latest local maximum
       for (let i = highs.length - 1 - swingWindow; i >= swingWindow; i--) {
@@ -926,9 +928,9 @@ export class TradingBot {
             break;
           }
         }
-        if (isHigh) return highs[i] + this.config.swingBackoffAtr * atr;
+        if (isHigh) return highs[i] + backoffAtr * atr;
       }
-      return highs[highs.length - 1] + this.config.swingBackoffAtr * atr;
+      return highs[highs.length - 1] + backoffAtr * atr;
     }
   }
 
@@ -1183,11 +1185,13 @@ export class TradingBot {
     const ensureStop = (side: "long" | "short", entry: number, stop: number) =>
       this.enforceMinimumStop(entry, stop, side, latestATR);
     const entryStopMode = this.config.entryStopMode ?? "atr";
+    const entryBackoffAtr =
+      this.config.entrySwingBackoffAtr ?? this.config.swingBackoffAtr;
     const swingStops =
       entryStopMode === "swing"
         ? {
-            long: this.computeSwingStop(lt, "long", 2),
-            short: this.computeSwingStop(lt, "short", 2),
+            long: this.computeSwingStop(lt, "long", 2, entryBackoffAtr),
+            short: this.computeSwingStop(lt, "short", 2, entryBackoffAtr),
           }
         : null;
     const resolveEntryStop = (
