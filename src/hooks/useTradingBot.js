@@ -146,6 +146,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 aggressiveAdxThreshold: 28,
                 minAtrFractionOfPrice: 0.0004,
                 atrEntryMultiplier: 1.6,
+                entryStopMode: "swing",
                 swingBackoffAtr: 0.6,
                 liquiditySweepVolumeMult: 1.0,
                 volExpansionAtrMult: 1.15,

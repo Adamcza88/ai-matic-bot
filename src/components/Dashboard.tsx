@@ -90,7 +90,7 @@ export default function Dashboard({
     if (riskMode === "ai-matic-tree") {
       return {
         label: "AI-MATIC TREE",
-        subtitle: "Decision Tree – Market → Action (5m execution / 1h context)",
+        subtitle: "Decision Tree – Market → Action (1h context / 5m execution)",
         symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
         timeframes: "1h context · 5m execution",
         session: "Bybit Linear Perpetuals · ~40 markets scan",

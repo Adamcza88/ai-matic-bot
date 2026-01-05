@@ -173,7 +173,7 @@ export const STRATEGY_CHEAT_SHEET: StrategyCheatSheetSetup[] = [
     id: "ai-matic-decision-tree",
     name: "AI-MATIC Decision Tree – Market → Akce",
     description:
-      "Rozhodovací strom A + Checklist B + Rodiny C + Risk protokol D pro Bybit Linear (5m/1h).",
+      "Rozhodovací strom A + Checklist B + Rodiny C + Risk protokol D pro Bybit Linear (1h/5m).",
     entryType: "LIMIT_MAKER_FIRST",
     side: "both",
     priority: 2,

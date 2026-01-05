@@ -109,6 +109,7 @@ export const defaultConfig = {
     adxThreshold: 25,
     aggressiveAdxThreshold: 35,
     atrEntryMultiplier: 2,
+    entryStopMode: "atr",
     atrTrailMultiplier: 2,
     minAtrFractionOfPrice: 0.0006,
     swingBackoffAtr: 0.7,
@@ -984,6 +985,14 @@ export class TradingBot {
         const latestATR = atrArray[atrArray.length - 1];
         const price = closes[closes.length - 1];
         const ensureStop = (side, entry, stop) => this.enforceMinimumStop(entry, stop, side, latestATR);
+        const entryStopMode = this.config.entryStopMode ?? "atr";
+        const swingStops = entryStopMode === "swing"
+            ? {
+                long: this.computeSwingStop(lt, "long"),
+                short: this.computeSwingStop(lt, "short"),
+            }
+            : null;
+        const resolveEntryStop = (side, entry, fallback) => ensureStop(side, entry, swingStops ? swingStops[side] : fallback);
         const conf = this.computeConfluence(ht, lt, trend);
         if (this.config.strategyProfile === "scalp" && conf.score < 3 && !conf.liquiditySweep)
             return null;
@@ -1018,12 +1027,12 @@ export class TradingBot {
             const zScore = (price - ema50[ema50.length - 1]) / (latestATR || 1e-8);
             if (zScore <= -zCut) {
                 const entry = price;
-                const stop = ensureStop("long", entry, price - this.config.atrEntryMultiplier * latestATR);
+                const stop = resolveEntryStop("long", entry, price - this.config.atrEntryMultiplier * latestATR);
                 return { side: "long", entry, stopLoss: stop, kind: "MEAN_REVERSION" };
             }
             if (zScore >= zCut) {
                 const entry = price;
-                const stop = ensureStop("short", entry, price + this.config.atrEntryMultiplier * latestATR);
+                const stop = resolveEntryStop("short", entry, price + this.config.atrEntryMultiplier * latestATR);
                 return { side: "short", entry, stopLoss: stop, kind: "MEAN_REVERSION" };
             }
             return null;
@@ -1061,12 +1070,12 @@ export class TradingBot {
         const diffs = lastN.slice(1).map((v, i) => v - lastN[i]);
         if (trend === Trend.Bull && diffs.every((d) => d > 0)) {
             const entry = lastN[lastN.length - 1];
-            const stop = ensureStop("long", entry, entry - this.config.atrEntryMultiplier * latestATR);
+            const stop = resolveEntryStop("long", entry, entry - this.config.atrEntryMultiplier * latestATR);
             return { side: "long", entry, stopLoss: stop, kind: "MOMENTUM" };
         }
         if (trend === Trend.Bear && diffs.every((d) => d < 0)) {
             const entry = lastN[lastN.length - 1];
-            const stop = ensureStop("short", entry, entry + this.config.atrEntryMultiplier * latestATR);
+            const stop = resolveEntryStop("short", entry, entry + this.config.atrEntryMultiplier * latestATR);
             return { side: "short", entry, stopLoss: stop, kind: "MOMENTUM" };
         }
         const c0 = closes[closes.length - 1];
@@ -1075,12 +1084,12 @@ export class TradingBot {
         const emaPrev = ema20[ema20.length - 2];
         if (trend === Trend.Bull && c1 < emaPrev && c0 > emaNow) {
             const entry = c0;
-            const stop = ensureStop("long", entry, Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR);
+            const stop = resolveEntryStop("long", entry, Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR);
             return { side: "long", entry, stopLoss: stop, kind: "PULLBACK" };
         }
         if (trend === Trend.Bear && c1 > emaPrev && c0 < emaNow) {
             const entry = c0;
-            const stop = ensureStop("short", entry, Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR);
+            const stop = resolveEntryStop("short", entry, Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR);
             return { side: "short", entry, stopLoss: stop, kind: "PULLBACK" };
         }
         const lookback = strictness === "ultra" ? 5 : strictness === "relaxed" ? 8 : strictness === "test" ? 3 : 12;
@@ -1088,12 +1097,12 @@ export class TradingBot {
         const recentLow = Math.min(...lows.slice(-lookback));
         if (trend === Trend.Bull && price > recentHigh) {
             const entry = price;
-            const stop = ensureStop("long", entry, recentLow - this.config.swingBackoffAtr * latestATR);
+            const stop = resolveEntryStop("long", entry, recentLow - this.config.swingBackoffAtr * latestATR);
             return { side: "long", entry, stopLoss: stop, kind: "BREAKOUT" };
         }
         if (trend === Trend.Bear && price < recentLow) {
             const entry = price;
-            const stop = ensureStop("short", entry, recentHigh + this.config.swingBackoffAtr * latestATR);
+            const stop = resolveEntryStop("short", entry, recentHigh + this.config.swingBackoffAtr * latestATR);
             return { side: "short", entry, stopLoss: stop, kind: "BREAKOUT" };
         }
         // Note: Mean Reversion for Trend mode is REMOVED as requested.
@@ -1103,8 +1112,8 @@ export class TradingBot {
             if (emaBias) {
                 const entry = price;
                 const stop = trend === Trend.Bull
-                    ? ensureStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
-                    : ensureStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
+                    ? resolveEntryStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
+                    : resolveEntryStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
                 return { side: trend === Trend.Bull ? "long" : "short", entry, stopLoss: stop, kind: "MOMENTUM" };
             }
         }
@@ -1114,8 +1123,8 @@ export class TradingBot {
             const dir = (last[last.length - 1] ?? 0) - (last[0] ?? 0) >= 0 ? "long" : "short";
             const entry = price;
             const stop = dir === "long"
-                ? ensureStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
-                : ensureStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
+                ? resolveEntryStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
+                : resolveEntryStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
             return { side: dir, entry, stopLoss: stop, kind: "OTHER" };
         }
         return null;

@@ -148,6 +148,18 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                 "Modules: TrendPredictor, VolatilityScanner, SentimentEngine, PriceConeGenerator, AdaptiveExecutor.",
             ],
         },
+        "ai-matic-tree": {
+            title: "AI-Matic Tree (Market → Akce)",
+            description: "Rozhodovací strom A + Rodiny C + Checklist B + Risk protokol D (Bybit Linear, 1h/5m).",
+            notes: [
+                "Bybit Linear Perpetuals · kontext 1h · exekuce 5m · scan ~40 trhů",
+                "Strom A: Kontext → Režim trhu → Směr → Risk ON/OFF → High/Low Prob → Akce",
+                "Rodiny 1–6: Trend Pullback, Trend Continuation, Range Fade, Range→Trend, Reversal (omezeně), No Trade",
+                "Checklist B: invalidace → režim → logický target → trend zdravý → čas → risk off → hold",
+                "Risk protokol: Risk ON 1R; Risk OFF 0.25R; max 5 obchodů/den; max 2 pozice",
+                "Absolutní zákazy: žádné přidávání; žádná změna plánu v otevřeném obchodu",
+            ],
+        },
     };
     const meta = profileCopy[local.riskMode];
     const cheatBlocks = useMemo(() => buildCheatBlocks(meta.notes), [meta.notes]);

@@ -150,9 +150,9 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     "ai-matic-tree": {
       title: "AI-Matic Tree (Market → Akce)",
       description:
-        "Rozhodovací strom A + Rodiny C + Checklist B + Risk protokol D (Bybit Linear, 5m/1h).",
+        "Rozhodovací strom A + Rodiny C + Checklist B + Risk protokol D (Bybit Linear, 1h/5m).",
       notes: [
-        "Bybit Linear Perpetuals · primární TF 5m · kontext 1h · scan ~40 trhů",
+        "Bybit Linear Perpetuals · kontext 1h · exekuce 5m · scan ~40 trhů",
         "Strom A: Kontext → Režim trhu → Směr → Risk ON/OFF → High/Low Prob → Akce",
         "Rodiny 1–6: Trend Pullback, Trend Continuation, Range Fade, Range→Trend, Reversal (omezeně), No Trade",
         "Checklist B: invalidace → režim → logický target → trend zdravý → čas → risk off → hold",
