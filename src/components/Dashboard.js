@@ -217,7 +217,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     const maxOpenPositions = portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
     const openPositionsCount = positionsLoaded ? activePositions.length : 0;
     const openOrdersCount = ordersLoaded ? exchangeOrders.length : 0;
-    const maxOpenOrders = Math.max(maxOpenPositions, 1);
+    const maxOpenOrders = Math.max(Number.isFinite(maxOpenPositions) ? maxOpenPositions * 2 : 0, 1);
     const totalCapital = portfolioState?.totalCapital ?? portfolioState?.totalEquity;
     const allocated = portfolioState?.allocatedCapital;
     const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";

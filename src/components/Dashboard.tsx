@@ -274,7 +274,10 @@ export default function Dashboard({
     portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
   const openPositionsCount = positionsLoaded ? activePositions.length : 0;
   const openOrdersCount = ordersLoaded ? exchangeOrders.length : 0;
-  const maxOpenOrders = Math.max(maxOpenPositions, 1);
+  const maxOpenOrders = Math.max(
+    Number.isFinite(maxOpenPositions) ? maxOpenPositions * 2 : 0,
+    1
+  );
   const totalCapital =
     portfolioState?.totalCapital ?? portfolioState?.totalEquity;
   const allocated = portfolioState?.allocatedCapital;
@@ -301,7 +304,6 @@ export default function Dashboard({
         maxOpenPositions={maxOpenPositions}
         openOrders={openOrdersCount}
         maxOpenOrders={maxOpenOrders}
-        engineStatus={engineStatus}
       />
 
       <Tabs defaultValue="overview" className="space-y-4">
