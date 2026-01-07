@@ -998,12 +998,14 @@ export function useTradingBot(
           const unrealized = toNumber(
             p?.unrealisedPnl ?? p?.unrealizedPnl
           );
-          const openedAt = toIso(
-            p?.createdTime ?? p?.created_at ?? p?.openTime ?? p?.updatedTime
-          );
-          const updatedAt = toIso(
-            p?.updatedTime ?? p?.updated_at ?? p?.createdTime
-          );
+          const openEpoch = toEpoch(p?.openTime);
+          const updatedEpoch = toEpoch(p?.updatedTime ?? p?.updated_at);
+          const openedAt = Number.isFinite(openEpoch)
+            ? new Date(openEpoch).toISOString()
+            : "";
+          const updatedAt = Number.isFinite(updatedEpoch)
+            ? new Date(updatedEpoch).toISOString()
+            : "";
           const triggerFromPos = toNumber(
             p?.triggerPrice ?? p?.trigger_price
           );
