@@ -1040,7 +1040,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                             continue;
                         cancelingOrdersRef.current.add(key);
                         try {
-                            await fetch(`${apiBase}/cancel`, {
+                            const res = await fetch(`${apiBase}/cancel`, {
                                 method: "POST",
                                 headers: {
                                     "Content-Type": "application/json",
@@ -1052,6 +1052,17 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                                     orderLinkId: order.orderLinkId || undefined,
                                 }),
                             });
+                            const json = await res.json().catch(() => ({}));
+                            if (res.ok && json?.ok !== false) {
+                                addLogEntries([
+                                    {
+                                        id: `order-prune:${key}:${Date.now()}`,
+                                        timestamp: new Date().toISOString(),
+                                        action: "STATUS",
+                                        message: `ORDER PRUNE (NEW) ${order.symbol} ${order.side} ${key}`,
+                                    },
+                                ]);
+                            }
                         }
                         catch {
                             // ignore cancel errors in enforcement loop
