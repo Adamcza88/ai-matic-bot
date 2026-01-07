@@ -47,6 +47,12 @@ export default function Dashboard({
 
   const dailyPnl = portfolioState?.dailyPnl;
   const positionsLoaded = Array.isArray(activePositions);
+  const openPositionsPnl = positionsLoaded
+    ? activePositions.reduce((sum, position) => {
+        const pnl = Number(position?.unrealizedPnl);
+        return Number.isFinite(pnl) ? sum + pnl : sum;
+      }, 0)
+    : undefined;
   const ordersLoaded = Array.isArray(testnetOrders);
   const tradesLoaded = Array.isArray(testnetTrades);
   const logsLoaded = Array.isArray(logEntries);
@@ -300,6 +306,7 @@ export default function Dashboard({
         totalCapital={totalCapital}
         allocated={allocated}
         dailyPnl={dailyPnl}
+        openPositionsPnl={openPositionsPnl}
         openPositions={openPositionsCount}
         maxOpenPositions={maxOpenPositions}
         openOrders={openOrdersCount}
