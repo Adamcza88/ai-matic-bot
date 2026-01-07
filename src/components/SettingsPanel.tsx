@@ -517,7 +517,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 <div>
                   <div className="font-medium">Strict risk adherence</div>
                   <div className="text-xs text-secondary-foreground/70 mt-1">
-                    Vynucuje risk protokol (R limit, stopky, žádné obcházení).
+                    Vynucuje risk protokol: R limit (max ztráta v R), povinné stopky a žádné obcházení pravidel.
                   </div>
                 </div>
                 <button
@@ -608,10 +608,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
               >
                 <option value="adaptive">Adaptive</option>
                 <option value="follow">Follow</option>
+                <option value="reverse">Reverse</option>
               </select>
               <div className="text-xs text-secondary-foreground/70">
-                Adaptive: vždy Follow (reverse je dočasně vypnutý).
-                Follow: pouze se směrem trendu.
+                Trend Gate filtruje vstupy podle směru trendu z HTF 1h. Adaptive: přepíná Follow/Reverse podle síly trendu (ADX/score); Reverse jen při slabém trendu a mean‑reversion signálu. Follow: pouze se směrem 1h trendu.
               </div>
             </div>
           </div>

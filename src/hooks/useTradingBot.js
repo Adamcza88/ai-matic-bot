@@ -14,6 +14,8 @@ const MAX_POSITION_NOTIONAL_USD = 7;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
+const TREND_GATE_REVERSE_ADX = 22;
+const TREND_GATE_REVERSE_SCORE = 2;
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
     trendGateMode: "adaptive",
@@ -57,7 +59,8 @@ function loadStoredSettings() {
             return null;
         const merged = { ...DEFAULT_SETTINGS, ...parsed };
         if (merged.trendGateMode !== "adaptive" &&
-            merged.trendGateMode !== "follow") {
+            merged.trendGateMode !== "follow" &&
+            merged.trendGateMode !== "reverse") {
             merged.trendGateMode = "adaptive";
         }
         if (!Number.isFinite(merged.maxOpenPositions)) {
@@ -555,17 +558,25 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     }, [isSessionAllowed]);
     const resolveTrendGate = useCallback((decision, signal) => {
         const settings = settingsRef.current;
-        const trendRaw = String(decision?.trend ?? "");
+        const trendRaw = String(decision?.trendH1 ?? decision?.trend ?? "");
         const trend = trendRaw ? trendRaw.toUpperCase() : "—";
         const adx = toNumber(decision?.trendAdx);
         const score = toNumber(decision?.trendScore);
         const strong = (Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
             (Number.isFinite(score) && score >= TREND_GATE_STRONG_SCORE);
         const modeSetting = settings.trendGateMode ?? "adaptive";
-        const normalizedMode = modeSetting === "reverse" ? "follow" : modeSetting;
-        const mode = normalizedMode === "adaptive"
-            ? "FOLLOW"
-            : normalizedMode.toUpperCase();
+        const reverseAllowed = (Number.isFinite(adx) ? adx <= TREND_GATE_REVERSE_ADX : false) &&
+            (Number.isFinite(score) ? score <= TREND_GATE_REVERSE_SCORE : false);
+        let mode = "FOLLOW";
+        if (modeSetting === "adaptive") {
+            mode = reverseAllowed && !strong ? "REVERSE" : "FOLLOW";
+        }
+        else if (modeSetting === "reverse") {
+            mode = reverseAllowed ? "REVERSE" : "FOLLOW";
+        }
+        else {
+            mode = "FOLLOW";
+        }
         const detailParts = [trend];
         if (Number.isFinite(adx)) {
             detailParts.push(`ADX ${formatNumber(adx, 1)}`);

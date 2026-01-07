@@ -1255,6 +1255,7 @@ export function evaluateStrategyForSymbol(symbol, candles, config = {}) {
         return {
             state: bot.getState(),
             trend: Trend.Range,
+            trendH1: Trend.Range,
             trendScore: 0,
             trendAdx: Number.NaN,
             halted: true,
@@ -1303,6 +1304,7 @@ export function evaluateStrategyForSymbol(symbol, candles, config = {}) {
     return {
         state: bot.getState(),
         trend,
+        trendH1: trend,
         trendScore: trendMetrics.score,
         trendAdx: trendMetrics.adx,
         signal,

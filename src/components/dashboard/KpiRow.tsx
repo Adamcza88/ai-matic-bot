@@ -56,7 +56,7 @@ export default function KpiRow({
         </div>
       </div>
       <div className="rounded-lg border border-border/60 bg-card/60 p-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <div className="text-xs text-muted-foreground">Open positions</div>
             <div className="mt-2 text-lg font-semibold tabular-nums">

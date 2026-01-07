@@ -174,6 +174,7 @@ export function evaluateSmcStrategyForSymbol(
     return {
       state: State.Scan,
       trend: Trend.Range,
+      trendH1: Trend.Range,
       trendScore: 0,
       trendAdx: Number.NaN,
       halted: true,
@@ -189,6 +190,12 @@ export function evaluateSmcStrategyForSymbol(
   const bias = resolveBias(h4Structure.trend, h1Structure.trend);
   const trend =
     bias === "long" ? Trend.Bull : bias === "short" ? Trend.Bear : Trend.Range;
+  const trendH1 =
+    h1Structure.trend === "up"
+      ? Trend.Bull
+      : h1Structure.trend === "down"
+        ? Trend.Bear
+        : Trend.Range;
   const adxPeriod = config.adxPeriod ?? 14;
   const adxArr = computeADX(
     h1.map((c) => c.high),
@@ -211,6 +218,7 @@ export function evaluateSmcStrategyForSymbol(
     return {
       state: State.Scan,
       trend,
+      trendH1,
       trendScore,
       trendAdx,
       signal: null,
@@ -237,6 +245,7 @@ export function evaluateSmcStrategyForSymbol(
     return {
       state: State.Scan,
       trend,
+      trendH1,
       trendScore,
       trendAdx,
       signal: null,
@@ -251,6 +260,7 @@ export function evaluateSmcStrategyForSymbol(
     return {
       state: State.Scan,
       trend,
+      trendH1,
       trendScore,
       trendAdx,
       signal: null,
@@ -268,6 +278,7 @@ export function evaluateSmcStrategyForSymbol(
     return {
       state: State.Scan,
       trend,
+      trendH1,
       trendScore,
       trendAdx,
       signal: null,
@@ -330,6 +341,7 @@ export function evaluateSmcStrategyForSymbol(
   return {
     state: State.Scan,
     trend,
+    trendH1,
     trendScore,
     trendAdx,
     signal,
