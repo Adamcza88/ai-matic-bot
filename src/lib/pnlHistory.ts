@@ -90,3 +90,14 @@ export function mergePnlRecords(records: AssetPnlRecord[]): AssetPnlMap {
   persistPnlHistory(next);
   return next;
 }
+
+export function resetPnlHistoryMap(symbols: string[]): AssetPnlMap {
+  const now = new Date().toISOString();
+  const next: AssetPnlMap = {};
+  const unique = Array.from(new Set(symbols.filter(Boolean)));
+  for (const symbol of unique) {
+    next[symbol] = [{ symbol, pnl: 0, timestamp: now }];
+  }
+  persistPnlHistory(next);
+  return next;
+}

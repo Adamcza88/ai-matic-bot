@@ -17,7 +17,11 @@ import type {
   TestnetOrder,
   TestnetTrade,
 } from "../types";
-import { loadPnlHistory, mergePnlRecords } from "../lib/pnlHistory";
+import {
+  loadPnlHistory,
+  mergePnlRecords,
+  resetPnlHistoryMap,
+} from "../lib/pnlHistory";
 import type { AssetPnlMap } from "../lib/pnlHistory";
 
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
@@ -1816,8 +1820,25 @@ export function useTradingBot(
   }, [closedPnlRecords, positions, settings.maxOpenPositions, walletSnapshot]);
 
   const resetPnlHistory = useCallback(() => {
-    void refreshSlow();
-  }, [refreshSlow]);
+    const symbols = new Set<string>();
+    if (assetPnlHistory) {
+      Object.keys(assetPnlHistory).forEach((symbol) => {
+        if (symbol) symbols.add(symbol);
+      });
+    }
+    if (Array.isArray(positions)) {
+      positions.forEach((pos) => {
+        if (pos.symbol) symbols.add(pos.symbol);
+      });
+    }
+    if (symbols.size === 0) {
+      WATCH_SYMBOLS.forEach((symbol) => symbols.add(symbol));
+    }
+    const next = resetPnlHistoryMap(Array.from(symbols));
+    setAssetPnlHistory(next);
+    setClosedPnlRecords([]);
+    pnlSeenRef.current = new Set();
+  }, [assetPnlHistory, positions]);
 
   const manualClosePosition = useCallback(
     async (pos: ActivePosition) => {

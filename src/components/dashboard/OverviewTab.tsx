@@ -172,7 +172,7 @@ export default function OverviewTab({
               onClick={resetPnlHistory}
               className="h-8 text-xs"
             >
-              Refresh
+              Reset
             </Button>
           }
         >
