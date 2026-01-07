@@ -14,6 +14,7 @@ import {
   getWalletBalance,
   listClosedPnl,
   setTradingStop,
+  cancelOrder,
 } from "./bybitClient.js";
 import { reconcileState } from "./reconcile.js";
 
@@ -211,6 +212,53 @@ app.post("/api/:env/protection", async (req, res) => {
     });
   } catch (err) {
     return sendError(res, 500, err?.message || "Protection error", {
+      latencyMs: Date.now() - startTs,
+      env,
+      endpoint,
+    });
+  }
+});
+
+// ===========================================
+// POST /api/:env/cancel
+// ===========================================
+app.post("/api/:env/cancel", async (req, res) => {
+  const startTs = Date.now();
+  const endpoint = req.originalUrl;
+  const env = req.params.env === "main" ? "mainnet" : "testnet";
+
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return sendError(res, 401, "Missing Authorization header", {
+        env,
+        endpoint,
+      });
+    }
+    const userId = authHeader.replace("Bearer ", "");
+    const creds = await getUserApiKeys(userId, env);
+
+    const { symbol, orderId, orderLinkId } = req.body || {};
+    if (!symbol || (!orderId && !orderLinkId)) {
+      return sendError(res, 400, "Missing symbol and (orderId or orderLinkId)", {
+        env,
+        endpoint,
+      });
+    }
+
+    const result = await cancelOrder(
+      { symbol, orderId, orderLinkId },
+      creds,
+      env === "testnet"
+    );
+
+    return sendResponse(res, result, {
+      latencyMs: Date.now() - startTs,
+      env,
+      endpoint,
+    });
+  } catch (err) {
+    return sendError(res, 500, err?.message || "Cancel error", {
       latencyMs: Date.now() - startTs,
       env,
       endpoint,

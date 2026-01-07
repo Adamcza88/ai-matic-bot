@@ -1029,6 +1029,9 @@ export function useTradingBot(
           const price = toNumber(o?.price);
           const triggerPrice = toNumber(o?.triggerPrice ?? o?.trigger_price);
           const orderId = String(o?.orderId ?? o?.orderID ?? o?.id ?? "");
+          const orderLinkId = String(
+            o?.orderLinkId ?? o?.order_link_id ?? o?.orderLinkID ?? ""
+          );
           const symbol = String(o?.symbol ?? "");
           const side = String(o?.side ?? "Buy");
           const status = String(o?.orderStatus ?? o?.order_status ?? o?.status ?? "");
@@ -1038,6 +1041,7 @@ export function useTradingBot(
           const reduceOnly = Boolean(o?.reduceOnly ?? o?.reduce_only ?? o?.reduce);
           const entry = {
             orderId,
+            orderLinkId: orderLinkId || undefined,
             symbol,
             side: side as "Buy" | "Sell",
             qty: Number.isFinite(qty) ? qty : Number.NaN,
@@ -1853,16 +1857,21 @@ export function useTradingBot(
   const cancelOrder = useCallback(
     async (order: TestnetOrder) => {
       if (!authToken) throw new Error("missing_auth_token");
-      if (!order?.symbol || !order?.orderId) {
-        throw new Error("missing_order_id");
-      }
+      if (!order?.symbol) throw new Error("missing_order_symbol");
+      const orderId = order?.orderId || "";
+      const orderLinkId = order?.orderLinkId || "";
+      if (!orderId && !orderLinkId) throw new Error("missing_order_id");
       const res = await fetch(`${apiBase}/cancel`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${authToken}`,
         },
-        body: JSON.stringify({ symbol: order.symbol, orderId: order.orderId }),
+        body: JSON.stringify({
+          symbol: order.symbol,
+          orderId: orderId || undefined,
+          orderLinkId: orderLinkId || undefined,
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.ok === false) {

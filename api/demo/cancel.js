@@ -17,7 +17,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const useTestnet = req.query.net === "testnet";
+    const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
@@ -61,4 +61,3 @@ export default async function handler(req, res) {
     });
   }
 }
-

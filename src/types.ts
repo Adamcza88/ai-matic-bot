@@ -223,6 +223,7 @@ export interface EntryHistoryRecord {
 
 export interface TestnetOrder {
   orderId: string;
+  orderLinkId?: string;
   symbol: string;
   side: "Buy" | "Sell";
   qty: number;
