@@ -221,14 +221,14 @@ export default function PositionsTable({
                                 {formatNumber(row.raw.trailingStop ?? row.raw.currentTrailingStop)}
                               </span>
                             </span>
-                            <span>
-                              Opened:{" "}
-                              <span className="font-mono text-foreground">
-                                {row.raw.openedAt
-                                  ? new Date(row.raw.openedAt).toLocaleString()
-                                  : "—"}
+                            {row.raw.openedAt ? (
+                              <span>
+                                Opened:{" "}
+                                <span className="font-mono text-foreground">
+                                  {new Date(row.raw.openedAt).toLocaleString()}
+                                </span>
                               </span>
-                            </span>
+                            ) : null}
                             <span>
                               RRR:{" "}
                               <span className="font-mono text-foreground">
