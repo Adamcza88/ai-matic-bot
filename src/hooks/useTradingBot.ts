@@ -1182,70 +1182,100 @@ export function useTradingBot(
           return entry;
         })
         .filter((o: TestnetOrder) => Boolean(o.orderId || o.orderLinkId));
-      const latestBySymbol = new Map<
+      const isProtectionOrder = (order: TestnetOrder) => {
+        const stopType = String(order.stopOrderType ?? "").toLowerCase();
+        const filter = String(order.orderFilter ?? "").toLowerCase();
+        return (
+          order.reduceOnly ||
+          filter === "tpsl" ||
+          stopType === "takeprofit" ||
+          stopType === "stoploss" ||
+          stopType === "trailingstop"
+        );
+      };
+      const isNewEntryOrder = (order: TestnetOrder) => {
+        if (isProtectionOrder(order)) return false;
+        const status = String(order.status ?? "").toLowerCase();
+        return status === "new" || status === "created";
+      };
+      const latestNewBySymbol = new Map<
         string,
         { order: TestnetOrder; ts: number }
       >();
       for (const order of mapped) {
+        if (!isNewEntryOrder(order)) continue;
         const ts = toEpoch(order.createdTime);
         const resolvedTs = Number.isFinite(ts) ? ts : 0;
-        const prev = latestBySymbol.get(order.symbol);
+        const prev = latestNewBySymbol.get(order.symbol);
         if (!prev || resolvedTs >= prev.ts) {
-          latestBySymbol.set(order.symbol, {
+          latestNewBySymbol.set(order.symbol, {
             order,
             ts: resolvedTs,
           });
         }
       }
-      const next = Array.from(latestBySymbol.values()).map((v) => v.order);
+      const latestNewIds = new Map<
+        string,
+        { orderId: string; orderLinkId?: string }
+      >();
+      for (const [symbol, data] of latestNewBySymbol.entries()) {
+        latestNewIds.set(symbol, {
+          orderId: data.order.orderId,
+          orderLinkId: data.order.orderLinkId,
+        });
+      }
+      const next = mapped.filter((order) => {
+        if (!isNewEntryOrder(order)) return true;
+        const latest = latestNewIds.get(order.symbol);
+        if (!latest) return true;
+        return (
+          (latest.orderId && order.orderId === latest.orderId) ||
+          (latest.orderLinkId && order.orderLinkId === latest.orderLinkId)
+        );
+      });
       setOrders(next);
       ordersRef.current = next;
       setOrdersError(null);
       setLastSuccessAt(now);
-      if (authToken && mapped.length > next.length) {
-        const latestIds = new Map<string, { orderId: string; orderLinkId?: string }>();
-        for (const [symbol, data] of latestBySymbol.entries()) {
-          latestIds.set(symbol, {
-            orderId: data.order.orderId,
-            orderLinkId: data.order.orderLinkId,
-          });
-        }
-        const cancelTargets = mapped.filter((order) => {
-          const latest = latestIds.get(order.symbol);
-          if (!latest) return false;
-          const isLatest =
-            (latest.orderId && order.orderId === latest.orderId) ||
-            (latest.orderLinkId &&
-              order.orderLinkId === latest.orderLinkId);
-          return !isLatest;
-        });
-        if (cancelTargets.length) {
-          void (async () => {
-            for (const order of cancelTargets) {
-              const key = order.orderId || order.orderLinkId;
-              if (!key || cancelingOrdersRef.current.has(key)) continue;
-              cancelingOrdersRef.current.add(key);
-              try {
-                await fetch(`${apiBase}/cancel`, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${authToken}`,
-                  },
-                  body: JSON.stringify({
-                    symbol: order.symbol,
-                    orderId: order.orderId || undefined,
-                    orderLinkId: order.orderLinkId || undefined,
-                  }),
-                });
-              } catch {
-                // ignore cancel errors in enforcement loop
-              } finally {
-                cancelingOrdersRef.current.delete(key);
-              }
+      const cancelTargets =
+        authToken
+          ? mapped.filter((order) => {
+              if (!isNewEntryOrder(order)) return false;
+              const latest = latestNewIds.get(order.symbol);
+              if (!latest) return false;
+              const isLatest =
+                (latest.orderId && order.orderId === latest.orderId) ||
+                (latest.orderLinkId &&
+                  order.orderLinkId === latest.orderLinkId);
+              return !isLatest;
+            })
+          : [];
+      if (cancelTargets.length) {
+        void (async () => {
+          for (const order of cancelTargets) {
+            const key = order.orderId || order.orderLinkId;
+            if (!key || cancelingOrdersRef.current.has(key)) continue;
+            cancelingOrdersRef.current.add(key);
+            try {
+              await fetch(`${apiBase}/cancel`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${authToken}`,
+                },
+                body: JSON.stringify({
+                  symbol: order.symbol,
+                  orderId: order.orderId || undefined,
+                  orderLinkId: order.orderLinkId || undefined,
+                }),
+              });
+            } catch {
+              // ignore cancel errors in enforcement loop
+            } finally {
+              cancelingOrdersRef.current.delete(key);
             }
-          })();
-        }
+          }
+        })();
       }
 
       for (const [orderId, nextOrder] of nextOrders.entries()) {
