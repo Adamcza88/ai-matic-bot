@@ -198,7 +198,15 @@ export default function OverviewTab({
                 })
                 .map(([symbol, records]) => {
                   const latest = records[0];
+                  const resetRecord = records.find((r) => r.note === "RESET");
+                  const baselineTs = resetRecord?.timestamp
+                    ? Date.parse(resetRecord.timestamp)
+                    : Number.NEGATIVE_INFINITY;
                   const sum = records.reduce((acc, r) => {
+                    const ts = Date.parse(r.timestamp);
+                    if (Number.isFinite(baselineTs) && Number.isFinite(ts)) {
+                      if (ts < baselineTs) return acc;
+                    }
                     return Number.isFinite(r.pnl) ? acc + r.pnl : acc;
                   }, 0);
                   const latestPnl =

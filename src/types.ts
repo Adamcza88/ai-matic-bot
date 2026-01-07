@@ -109,6 +109,7 @@ export type ActivePosition = {
   // Price & PnL
   entryPrice: number;
   avgEntryPrice?: number;
+  triggerPrice?: number;
   unrealizedPnl?: number;
   pnl?: number;          // Backward compat alias
   pnlValue?: number;     // Backward compat alias

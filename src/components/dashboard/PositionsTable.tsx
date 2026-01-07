@@ -44,6 +44,15 @@ export default function PositionsTable({
       const upnl = Number(p.unrealizedPnl ?? p.pnl ?? p.pnlValue);
       const slMissing = !Number.isFinite(sl) || (sl as number) <= 0;
       const tpMissing = !Number.isFinite(tp) || tp <= 0;
+      const entryValue = Number.isFinite(p.entryPrice)
+        ? p.entryPrice
+        : Number.isFinite(p.triggerPrice)
+          ? p.triggerPrice
+          : Number.NaN;
+      const entryLabel =
+        Number.isFinite(p.entryPrice) || !Number.isFinite(p.triggerPrice)
+          ? null
+          : "trg";
       const protectionLabel =
         slMissing && tpMissing
           ? "TP/SL pending"
@@ -56,6 +65,14 @@ export default function PositionsTable({
         slMissing || tpMissing
           ? "border-amber-500/50 text-amber-300"
           : "border-emerald-500/50 text-emerald-400";
+      const updateLabel = (() => {
+        if (p.lastUpdateReason) return p.lastUpdateReason;
+        if (!p.timestamp) return "—";
+        const parsed = Date.parse(p.timestamp);
+        return Number.isFinite(parsed)
+          ? new Date(parsed).toLocaleString()
+          : "—";
+      })();
       return {
         key: p.positionId || p.id || p.symbol,
         raw: p,
@@ -64,6 +81,9 @@ export default function PositionsTable({
         sl,
         tp,
         upnl,
+        entryValue,
+        entryLabel,
+        updateLabel,
         protectionLabel,
         protectionClass,
       };
@@ -129,22 +149,33 @@ export default function PositionsTable({
                         </div>
                       </td>
                       <td className="py-3">
-                        <Badge
-                          variant="outline"
-                          className={
-                            row.isBuy
-                              ? "border-emerald-500/50 text-emerald-400"
-                              : "border-red-500/50 text-red-400"
-                          }
-                        >
-                          {String(row.raw.side ?? "").toUpperCase()}
-                        </Badge>
-                      </td>
+                      <Badge
+                        variant="outline"
+                        className={
+                          row.isBuy
+                            ? "border-emerald-500/50 text-emerald-400"
+                            : "border-red-500/50 text-red-400"
+                        }
+                      >
+                        {row.isBuy ? "LONG" : "SHORT"}
+                      </Badge>
+                    </td>
                       <td className="py-3 text-right font-mono tabular-nums">
                         {formatNumber(row.size)}
                       </td>
                       <td className="py-3 text-right font-mono tabular-nums">
-                        {formatNumber(row.raw.entryPrice)}
+                        {Number.isFinite(row.entryValue) ? (
+                          <div className="flex items-center justify-end gap-1">
+                            {row.entryLabel && (
+                              <span className="text-[10px] uppercase text-muted-foreground">
+                                {row.entryLabel}
+                              </span>
+                            )}
+                            <span>{formatNumber(row.entryValue)}</span>
+                          </div>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td
                         className={`py-3 text-right font-mono tabular-nums ${
@@ -209,7 +240,7 @@ export default function PositionsTable({
                             <span>
                               Update:{" "}
                               <span className="text-foreground">
-                                {row.raw.lastUpdateReason ?? "—"}
+                                {row.updateLabel}
                               </span>
                             </span>
                           </div>

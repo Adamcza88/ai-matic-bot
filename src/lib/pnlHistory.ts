@@ -96,7 +96,7 @@ export function resetPnlHistoryMap(symbols: string[]): AssetPnlMap {
   const next: AssetPnlMap = {};
   const unique = Array.from(new Set(symbols.filter(Boolean)));
   for (const symbol of unique) {
-    next[symbol] = [{ symbol, pnl: 0, timestamp: now }];
+    next[symbol] = [{ symbol, pnl: 0, timestamp: now, note: "RESET" }];
   }
   persistPnlHistory(next);
   return next;

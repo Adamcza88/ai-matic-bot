@@ -107,10 +107,21 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : Number.NaN;
 }
 
+function toEpoch(value: unknown) {
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0) {
+    return n < 1e12 ? n * 1000 : n;
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
+  }
+  return Number.NaN;
+}
+
 function toIso(ts: unknown) {
-  const n = Number(ts);
-  if (!Number.isFinite(n) || n <= 0) return "";
-  return new Date(n).toISOString();
+  const epoch = toEpoch(ts);
+  return Number.isFinite(epoch) ? new Date(epoch).toISOString() : "";
 }
 
 function formatNumber(value: number, digits = 4) {
@@ -123,6 +134,36 @@ function asErrorMessage(err: unknown) {
 
 function extractList(data: any) {
   return data?.result?.list ?? data?.list ?? [];
+}
+
+type EntryFallback = { triggerPrice?: number; price?: number; ts: number };
+
+function buildEntryFallback(list: any[]) {
+  const map = new Map<string, EntryFallback>();
+  for (const o of list) {
+    const symbol = String(o?.symbol ?? "");
+    const side = String(o?.side ?? "");
+    if (!symbol || !side) continue;
+    const reduceOnly = Boolean(o?.reduceOnly ?? o?.reduce_only ?? o?.reduce);
+    if (reduceOnly) continue;
+    const triggerPrice = toNumber(o?.triggerPrice ?? o?.trigger_price);
+    const price = toNumber(o?.price);
+    if (!Number.isFinite(triggerPrice) && !Number.isFinite(price)) continue;
+    const ts = toEpoch(
+      o?.createdTime ?? o?.created_at ?? o?.updatedTime ?? o?.updated_at
+    );
+    const entry: EntryFallback = {
+      triggerPrice: Number.isFinite(triggerPrice) ? triggerPrice : undefined,
+      price: Number.isFinite(price) ? price : undefined,
+      ts: Number.isFinite(ts) ? ts : 0,
+    };
+    const key = `${symbol}:${side}`;
+    const prev = map.get(key);
+    if (!prev || entry.ts >= prev.ts) {
+      map.set(key, entry);
+    }
+  }
+  return map;
 }
 
 type ClosedPnlRecord = { symbol: string; pnl: number; ts: number };
@@ -934,6 +975,10 @@ export function useTradingBot(
     let sawError = false;
     const newLogs: LogEntry[] = [];
     const [positionsRes, ordersRes, executionsRes] = results;
+    const entryFallbackByKey =
+      ordersRes.status === "fulfilled"
+        ? buildEntryFallback(extractList(ordersRes.value))
+        : new Map<string, EntryFallback>();
 
     if (positionsRes.status === "fulfilled") {
       const list = extractList(positionsRes.value);
@@ -946,29 +991,77 @@ export function useTradingBot(
           const sideRaw = String(p?.side ?? "");
           const side =
             sideRaw.toLowerCase() === "buy" ? "Buy" : "Sell";
-          const entryPrice = toNumber(p?.entryPrice ?? p?.avgEntryPrice);
+          const symbol = String(p?.symbol ?? "");
+          const entryPrice = toNumber(
+            p?.entryPrice ?? p?.avgEntryPrice ?? p?.avgPrice
+          );
           const unrealized = toNumber(
             p?.unrealisedPnl ?? p?.unrealizedPnl
           );
-          const openedAt = toIso(p?.createdTime ?? p?.updatedTime);
-          nextPositions.set(String(p?.symbol ?? ""), { size, side });
+          const openedAt = toIso(
+            p?.createdTime ?? p?.created_at ?? p?.openTime ?? p?.updatedTime
+          );
+          const updatedAt = toIso(
+            p?.updatedTime ?? p?.updated_at ?? p?.createdTime
+          );
+          const triggerFromPos = toNumber(
+            p?.triggerPrice ?? p?.trigger_price
+          );
+          const sl = toNumber(p?.stopLoss ?? p?.sl);
+          const tp = toNumber(p?.takeProfit ?? p?.tp);
+          const trailingStop = toNumber(
+            p?.trailingStop ??
+              p?.trailingStopDistance ??
+              p?.trailingStopPrice ??
+              p?.trailPrice
+          );
+          const fallback =
+            entryFallbackByKey.get(`${symbol}:${side}`) ?? null;
+          const triggerPrice = Number.isFinite(triggerFromPos)
+            ? triggerFromPos
+            : fallback?.triggerPrice;
+          const resolvedEntry = Number.isFinite(entryPrice)
+            ? entryPrice
+            : Number.isFinite(triggerPrice)
+              ? triggerPrice
+              : Number.isFinite(fallback?.price)
+                ? (fallback?.price as number)
+                : Number.NaN;
+          const rrr =
+            Number.isFinite(resolvedEntry) &&
+            Number.isFinite(sl) &&
+            Number.isFinite(tp) &&
+            resolvedEntry !== sl
+              ? Math.abs(tp - resolvedEntry) /
+                Math.abs(resolvedEntry - sl)
+              : Number.NaN;
+          nextPositions.set(symbol, { size, side });
           return {
             positionId: String(p?.positionId ?? `${p?.symbol}-${sideRaw}`),
             id: String(p?.positionId ?? ""),
-            symbol: String(p?.symbol ?? ""),
+            symbol,
             side,
             qty: size,
             size,
-            entryPrice: Number.isFinite(entryPrice) ? entryPrice : Number.NaN,
-            sl: toNumber(p?.stopLoss ?? p?.sl) || undefined,
-            tp: toNumber(p?.takeProfit ?? p?.tp) || undefined,
+            entryPrice: Number.isFinite(resolvedEntry)
+              ? resolvedEntry
+              : Number.NaN,
+            triggerPrice: Number.isFinite(triggerPrice)
+              ? triggerPrice
+              : undefined,
+            sl: Number.isFinite(sl) ? sl : undefined,
+            tp: Number.isFinite(tp) ? tp : undefined,
             currentTrailingStop:
-              toNumber(p?.trailingStop ?? p?.trailingStopDistance) ||
-              undefined,
+              Number.isFinite(trailingStop) && trailingStop > 0
+                ? trailingStop
+                : undefined,
             unrealizedPnl: Number.isFinite(unrealized)
               ? unrealized
               : Number.NaN,
             openedAt: openedAt || "",
+            rrr: Number.isFinite(rrr) ? rrr : undefined,
+            lastUpdateReason: String(p?.lastUpdateReason ?? "") || undefined,
+            timestamp: updatedAt || openedAt || "",
             env: useTestnet ? "testnet" : "mainnet",
           } satisfies ActivePosition;
         })
