@@ -19,6 +19,7 @@ type OrdersPanelProps = {
   trades: TestnetTrade[];
   tradesLoaded: boolean;
   useTestnet: boolean;
+  onCancelOrder: (order: TestnetOrder) => Promise<boolean> | void;
 };
 
 type FilterMode = "all" | "symbol" | "last1h";
@@ -31,6 +32,38 @@ function parseTimestamp(value?: string) {
   return Number.isFinite(numeric) ? numeric : NaN;
 }
 
+function asErrorMessage(err: unknown) {
+  return err instanceof Error ? err.message : String(err ?? "unknown_error");
+}
+
+function getOrderTypeBadge(order: TestnetOrder) {
+  const stopType = String(order.stopOrderType ?? "").trim().toLowerCase();
+  const orderType = String(order.orderType ?? "").trim().toLowerCase();
+  const typeHint = `${stopType} ${orderType}`.trim();
+  if (!typeHint) return null;
+  if (
+    stopType === "tp" ||
+    stopType === "takeprofit" ||
+    typeHint.includes("takeprofit")
+  ) {
+    return {
+      label: "TP",
+      className: "border-emerald-500/50 text-emerald-400",
+    };
+  }
+  if (
+    stopType === "sl" ||
+    stopType === "stoploss" ||
+    typeHint.includes("stoploss")
+  ) {
+    return {
+      label: "SL",
+      className: "border-red-500/50 text-red-400",
+    };
+  }
+  return null;
+}
+
 export default function OrdersPanel({
   orders,
   ordersLoaded,
@@ -39,9 +72,12 @@ export default function OrdersPanel({
   trades,
   tradesLoaded,
   useTestnet,
+  onCancelOrder,
 }: OrdersPanelProps) {
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [closingOrderId, setClosingOrderId] = useState<string | null>(null);
 
   const symbolOptions = useMemo(() => {
     const symbols = new Set<string>();
@@ -85,6 +121,18 @@ export default function OrdersPanel({
       return true;
     });
   }, [trades, filterMode, selectedSymbol]);
+
+  const handleCancel = async (order: TestnetOrder) => {
+    setActionError(null);
+    setClosingOrderId(order.orderId);
+    try {
+      await onCancelOrder(order);
+    } catch (err) {
+      setActionError(asErrorMessage(err));
+    } finally {
+      setClosingOrderId((prev) => (prev === order.orderId ? null : prev));
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -172,6 +220,12 @@ export default function OrdersPanel({
           )}
         </div>
 
+        {actionError && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">
+            Order action failed: {actionError}
+          </div>
+        )}
+
         {ordersError ? (
           <div className="rounded-lg border border-red-500/30 bg-red-500/5 py-6 text-center text-xs text-red-400">
             Orders API failed: {ordersError}
@@ -218,10 +272,56 @@ export default function OrdersPanel({
                       {Number.isFinite(order.qty) ? order.qty : "—"}
                     </td>
                     <td className="py-3 text-right font-mono tabular-nums">
-                      {Number.isFinite(order.price) ? order.price : "mkt"}
+                      {(() => {
+                        const price =
+                          typeof order.price === "number" &&
+                          Number.isFinite(order.price) &&
+                          order.price > 0
+                            ? order.price
+                            : null;
+                        const trigger =
+                          typeof order.triggerPrice === "number" &&
+                          Number.isFinite(order.triggerPrice) &&
+                          order.triggerPrice > 0
+                            ? order.triggerPrice
+                            : null;
+                        if (price) {
+                          return (
+                            <div className="flex flex-col items-end">
+                              <span>{price}</span>
+                              {trigger && (
+                                <span className="text-[10px] uppercase text-muted-foreground">
+                                  trg {trigger}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        }
+                        if (trigger) {
+                          return (
+                            <div className="flex items-center justify-end gap-1">
+                              <span className="text-[10px] uppercase text-muted-foreground">
+                                trg
+                              </span>
+                              <span>{trigger}</span>
+                            </div>
+                          );
+                        }
+                        return "mkt";
+                      })()}
                     </td>
                     <td className="py-3 text-xs text-muted-foreground">
-                      {order.status}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {(() => {
+                          const badge = getOrderTypeBadge(order);
+                          return badge ? (
+                            <Badge variant="outline" className={badge.className}>
+                              {badge.label}
+                            </Badge>
+                          ) : null;
+                        })()}
+                        <span>{order.status || "—"}</span>
+                      </div>
                     </td>
                     <td className="py-3 text-xs text-muted-foreground">
                       {order.createdTime
@@ -229,7 +329,17 @@ export default function OrdersPanel({
                         : "—"}
                     </td>
                     <td className="py-3 text-right text-xs text-muted-foreground">
-                      —
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 whitespace-nowrap border-sky-500/40 text-xs text-sky-300 hover:bg-sky-500/10 hover:text-white"
+                        onClick={() => handleCancel(order)}
+                        disabled={closingOrderId === order.orderId}
+                      >
+                        {closingOrderId === order.orderId
+                          ? "Closing..."
+                          : "Close position"}
+                      </Button>
                     </td>
                   </tr>
                 ))}

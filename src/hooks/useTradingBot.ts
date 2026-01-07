@@ -1027,16 +1027,26 @@ export function useTradingBot(
         .map((o: any) => {
           const qty = toNumber(o?.qty ?? o?.orderQty ?? o?.leavesQty);
           const price = toNumber(o?.price);
+          const triggerPrice = toNumber(o?.triggerPrice ?? o?.trigger_price);
           const orderId = String(o?.orderId ?? o?.orderID ?? o?.id ?? "");
           const symbol = String(o?.symbol ?? "");
           const side = String(o?.side ?? "Buy");
           const status = String(o?.orderStatus ?? o?.order_status ?? o?.status ?? "");
+          const orderType = String(o?.orderType ?? o?.order_type ?? "");
+          const stopOrderType = String(o?.stopOrderType ?? o?.stop_order_type ?? "");
+          const orderFilter = String(o?.orderFilter ?? o?.order_filter ?? "");
+          const reduceOnly = Boolean(o?.reduceOnly ?? o?.reduce_only ?? o?.reduce);
           const entry = {
             orderId,
             symbol,
             side: side as "Buy" | "Sell",
             qty: Number.isFinite(qty) ? qty : Number.NaN,
             price: Number.isFinite(price) ? price : null,
+            triggerPrice: Number.isFinite(triggerPrice) ? triggerPrice : null,
+            orderType: orderType || undefined,
+            stopOrderType: stopOrderType || undefined,
+            orderFilter: orderFilter || undefined,
+            reduceOnly,
             status,
             createdTime: toIso(o?.createdTime ?? o?.created_at) || "",
           } as TestnetOrder;
@@ -1840,6 +1850,30 @@ export function useTradingBot(
     [apiBase, authToken, refreshFast]
   );
 
+  const cancelOrder = useCallback(
+    async (order: TestnetOrder) => {
+      if (!authToken) throw new Error("missing_auth_token");
+      if (!order?.symbol || !order?.orderId) {
+        throw new Error("missing_order_id");
+      }
+      const res = await fetch(`${apiBase}/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ symbol: order.symbol, orderId: order.orderId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `cancel_failed:${res.status}`);
+      }
+      await refreshFast();
+      return true;
+    },
+    [apiBase, authToken, refreshFast]
+  );
+
   const updateSettings = useCallback((next: AISettings) => {
     setSettings(next);
   }, []);
@@ -1858,6 +1892,7 @@ export function useTradingBot(
     resetPnlHistory,
     scanDiagnostics,
     manualClosePosition,
+    cancelOrder,
     dynamicSymbols: null,
     settings,
     updateSettings,

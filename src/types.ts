@@ -227,6 +227,11 @@ export interface TestnetOrder {
   side: "Buy" | "Sell";
   qty: number;
   price: number | null;
+  triggerPrice?: number | null;
+  orderType?: string;
+  stopOrderType?: string;
+  orderFilter?: string;
+  reduceOnly?: boolean;
   status: string;
   createdTime: string;
 }

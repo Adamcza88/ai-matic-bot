@@ -40,6 +40,7 @@ export default function Dashboard({
     resetPnlHistory,
     scanDiagnostics,
     manualClosePosition,
+    cancelOrder,
     dynamicSymbols,
     updateGateOverrides,
   } = bot;
@@ -355,6 +356,7 @@ export default function Dashboard({
             trades={exchangeTrades}
             tradesLoaded={tradesLoaded}
             useTestnet={useTestnet}
+            onCancelOrder={cancelOrder}
           />
         </TabsContent>
         <TabsContent value="logs">

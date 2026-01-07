@@ -71,7 +71,7 @@ export default function App() {
             return;
         if (!supabase) {
             const missing = SERVICE_OPTIONS.map((s) => s.label);
-            setKeysError("Supabase není nakonfigurované (VITE_SUPABASE_URL/KEY). Nelze načíst API klíče.");
+            setKeysError("Supabase is not configured (VITE_SUPABASE_URL/KEY). Unable to load API keys.");
             setMissingServices(missing);
             setShowKeyPanel(true);
             return;
@@ -134,6 +134,6 @@ export default function App() {
                                         auth.signOut();
                                     }
                                 }, className: "text-muted-foreground hover:text-foreground hover:bg-accent", children: [_jsx(LogOut, { className: "w-4 h-4 mr-2" }), "Sign out"] })] })] }), missingServices.length > 0 && !showKeyPanel && (_jsxs("div", { className: "mb-6 p-4 rounded-xl border border-red-500/30 bg-red-500/10 flex items-center justify-between gap-4", children: [_jsxs("div", { children: [_jsx("div", { className: "font-bold text-red-400", children: missingServices.length === 1
-                                    ? "Chybí API klíč"
-                                    : "Chybí některé API klíče" }), _jsxs("div", { className: "text-sm text-red-300/80", children: ["Je pot\u0159eba doplnit: ", missingServices.join(", ")] }), keysError && (_jsx("div", { className: "text-amber-400 mt-1.5 text-xs", children: keysError }))] }), _jsx(Button, { size: "sm", onClick: () => setShowKeyPanel(true), className: "bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-none", children: "Otev\u0159\u00EDt nastaven\u00ED" })] })), showKeyPanel && (_jsx(ApiKeysManager, { userId: isGuest ? "guest" : auth.user?.id ?? "", onKeysUpdated: refreshKeyStatus })), _jsx(Dashboard, { mode: mode, setMode: setMode, useTestnet: useTestnet, setUseTestnet: setUseTestnet, bot: bot })] }));
+                                    ? "Missing API key"
+                                    : "Missing API keys" }), _jsxs("div", { className: "text-sm text-red-300/80", children: ["Please add: ", missingServices.join(", ")] }), keysError && (_jsx("div", { className: "text-amber-400 mt-1.5 text-xs", children: keysError }))] }), _jsx(Button, { size: "sm", onClick: () => setShowKeyPanel(true), className: "bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-none", children: "Open settings" })] })), showKeyPanel && (_jsx(ApiKeysManager, { userId: isGuest ? "guest" : auth.user?.id ?? "", onKeysUpdated: refreshKeyStatus })), _jsx(Dashboard, { mode: mode, setMode: setMode, useTestnet: useTestnet, setUseTestnet: setUseTestnet, bot: bot })] }));
 }
