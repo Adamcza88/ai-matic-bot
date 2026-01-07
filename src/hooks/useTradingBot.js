@@ -5,7 +5,7 @@ import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import { evaluateSmcStrategyForSymbol } from "../engine/smcStrategy";
 import { TradingMode } from "../types";
-import { loadPnlHistory, mergePnlRecords } from "../lib/pnlHistory";
+import { loadPnlHistory, mergePnlRecords, resetPnlHistoryMap, } from "../lib/pnlHistory";
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
@@ -14,8 +14,8 @@ const MAX_POSITION_NOTIONAL_USD = 7;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
-const TREND_GATE_REVERSE_ADX = 22;
-const TREND_GATE_REVERSE_SCORE = 2;
+const TREND_GATE_REVERSE_ADX = 19;
+const TREND_GATE_REVERSE_SCORE = 1;
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
     trendGateMode: "adaptive",
@@ -87,11 +87,20 @@ function toNumber(value) {
     const n = Number(value);
     return Number.isFinite(n) ? n : Number.NaN;
 }
+function toEpoch(value) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) {
+        return n < 1e12 ? n * 1000 : n;
+    }
+    if (typeof value === "string") {
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) ? parsed : Number.NaN;
+    }
+    return Number.NaN;
+}
 function toIso(ts) {
-    const n = Number(ts);
-    if (!Number.isFinite(n) || n <= 0)
-        return "";
-    return new Date(n).toISOString();
+    const epoch = toEpoch(ts);
+    return Number.isFinite(epoch) ? new Date(epoch).toISOString() : "";
 }
 function formatNumber(value, digits = 4) {
     return Number.isFinite(value) ? value.toFixed(digits) : "";
@@ -101,6 +110,34 @@ function asErrorMessage(err) {
 }
 function extractList(data) {
     return data?.result?.list ?? data?.list ?? [];
+}
+function buildEntryFallback(list) {
+    const map = new Map();
+    for (const o of list) {
+        const symbol = String(o?.symbol ?? "");
+        const side = String(o?.side ?? "");
+        if (!symbol || !side)
+            continue;
+        const reduceOnly = Boolean(o?.reduceOnly ?? o?.reduce_only ?? o?.reduce);
+        if (reduceOnly)
+            continue;
+        const triggerPrice = toNumber(o?.triggerPrice ?? o?.trigger_price);
+        const price = toNumber(o?.price);
+        if (!Number.isFinite(triggerPrice) && !Number.isFinite(price))
+            continue;
+        const ts = toEpoch(o?.createdTime ?? o?.created_at ?? o?.updatedTime ?? o?.updated_at);
+        const entry = {
+            triggerPrice: Number.isFinite(triggerPrice) ? triggerPrice : undefined,
+            price: Number.isFinite(price) ? price : undefined,
+            ts: Number.isFinite(ts) ? ts : 0,
+        };
+        const key = `${symbol}:${side}`;
+        const prev = map.get(key);
+        if (!prev || entry.ts >= prev.ts) {
+            map.set(key, entry);
+        }
+    }
+    return map;
 }
 const WATCH_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 const FIXED_QTY_BY_SYMBOL = {
@@ -199,6 +236,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const modeRef = useRef(mode);
     const positionsRef = useRef([]);
     const ordersRef = useRef([]);
+    const cancelingOrdersRef = useRef(new Set());
     const decisionRef = useRef({});
     const signalSeenRef = useRef(new Set());
     const intentPendingRef = useRef(new Set());
@@ -771,6 +809,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         let sawError = false;
         const newLogs = [];
         const [positionsRes, ordersRes, executionsRes] = results;
+        const entryFallbackByKey = ordersRes.status === "fulfilled"
+            ? buildEntryFallback(extractList(ordersRes.value))
+            : new Map();
         if (positionsRes.status === "fulfilled") {
             const list = extractList(positionsRes.value);
             const prevPositions = positionSnapshotRef.current;
@@ -782,26 +823,68 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     return null;
                 const sideRaw = String(p?.side ?? "");
                 const side = sideRaw.toLowerCase() === "buy" ? "Buy" : "Sell";
-                const entryPrice = toNumber(p?.entryPrice ?? p?.avgEntryPrice);
+                const symbol = String(p?.symbol ?? "");
+                const entryPrice = toNumber(p?.entryPrice ?? p?.avgEntryPrice ?? p?.avgPrice);
                 const unrealized = toNumber(p?.unrealisedPnl ?? p?.unrealizedPnl);
-                const openedAt = toIso(p?.createdTime ?? p?.updatedTime);
-                nextPositions.set(String(p?.symbol ?? ""), { size, side });
+                const openEpoch = toEpoch(p?.openTime);
+                const updatedEpoch = toEpoch(p?.updatedTime ?? p?.updated_at);
+                const openedAt = Number.isFinite(openEpoch)
+                    ? new Date(openEpoch).toISOString()
+                    : "";
+                const updatedAt = Number.isFinite(updatedEpoch)
+                    ? new Date(updatedEpoch).toISOString()
+                    : "";
+                const triggerFromPos = toNumber(p?.triggerPrice ?? p?.trigger_price);
+                const sl = toNumber(p?.stopLoss ?? p?.sl);
+                const tp = toNumber(p?.takeProfit ?? p?.tp);
+                const trailingStop = toNumber(p?.trailingStop ??
+                    p?.trailingStopDistance ??
+                    p?.trailingStopPrice ??
+                    p?.trailPrice);
+                const fallback = entryFallbackByKey.get(`${symbol}:${side}`) ?? null;
+                const triggerPrice = Number.isFinite(triggerFromPos)
+                    ? triggerFromPos
+                    : fallback?.triggerPrice;
+                const resolvedEntry = Number.isFinite(entryPrice)
+                    ? entryPrice
+                    : Number.isFinite(triggerPrice)
+                        ? triggerPrice
+                        : Number.isFinite(fallback?.price)
+                            ? fallback?.price
+                            : Number.NaN;
+                const rrr = Number.isFinite(resolvedEntry) &&
+                    Number.isFinite(sl) &&
+                    Number.isFinite(tp) &&
+                    resolvedEntry !== sl
+                    ? Math.abs(tp - resolvedEntry) /
+                        Math.abs(resolvedEntry - sl)
+                    : Number.NaN;
+                nextPositions.set(symbol, { size, side });
                 return {
                     positionId: String(p?.positionId ?? `${p?.symbol}-${sideRaw}`),
                     id: String(p?.positionId ?? ""),
-                    symbol: String(p?.symbol ?? ""),
+                    symbol,
                     side,
                     qty: size,
                     size,
-                    entryPrice: Number.isFinite(entryPrice) ? entryPrice : Number.NaN,
-                    sl: toNumber(p?.stopLoss ?? p?.sl) || undefined,
-                    tp: toNumber(p?.takeProfit ?? p?.tp) || undefined,
-                    currentTrailingStop: toNumber(p?.trailingStop ?? p?.trailingStopDistance) ||
-                        undefined,
+                    entryPrice: Number.isFinite(resolvedEntry)
+                        ? resolvedEntry
+                        : Number.NaN,
+                    triggerPrice: Number.isFinite(triggerPrice)
+                        ? triggerPrice
+                        : undefined,
+                    sl: Number.isFinite(sl) ? sl : undefined,
+                    tp: Number.isFinite(tp) ? tp : undefined,
+                    currentTrailingStop: Number.isFinite(trailingStop) && trailingStop > 0
+                        ? trailingStop
+                        : undefined,
                     unrealizedPnl: Number.isFinite(unrealized)
                         ? unrealized
                         : Number.NaN,
                     openedAt: openedAt || "",
+                    rrr: Number.isFinite(rrr) ? rrr : undefined,
+                    lastUpdateReason: String(p?.lastUpdateReason ?? "") || undefined,
+                    timestamp: updatedAt || openedAt || "",
                     env: useTestnet ? "testnet" : "mainnet",
                 };
             })
@@ -846,12 +929,13 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             const list = extractList(ordersRes.value);
             const prevOrders = orderSnapshotRef.current;
             const nextOrders = new Map();
-            const next = list
+            const mapped = list
                 .map((o) => {
                 const qty = toNumber(o?.qty ?? o?.orderQty ?? o?.leavesQty);
                 const price = toNumber(o?.price);
                 const triggerPrice = toNumber(o?.triggerPrice ?? o?.trigger_price);
                 const orderId = String(o?.orderId ?? o?.orderID ?? o?.id ?? "");
+                const orderLinkId = String(o?.orderLinkId ?? o?.order_link_id ?? o?.orderLinkID ?? "");
                 const symbol = String(o?.symbol ?? "");
                 const side = String(o?.side ?? "Buy");
                 const status = String(o?.orderStatus ?? o?.order_status ?? o?.status ?? "");
@@ -861,6 +945,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 const reduceOnly = Boolean(o?.reduceOnly ?? o?.reduce_only ?? o?.reduce);
                 const entry = {
                     orderId,
+                    orderLinkId: orderLinkId || undefined,
                     symbol,
                     side: side,
                     qty: Number.isFinite(qty) ? qty : Number.NaN,
@@ -873,8 +958,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     status,
                     createdTime: toIso(o?.createdTime ?? o?.created_at) || "",
                 };
-                if (orderId) {
-                    nextOrders.set(orderId, {
+                if (orderId || orderLinkId) {
+                    nextOrders.set(orderId || orderLinkId, {
                         status,
                         qty: Number.isFinite(qty) ? qty : Number.NaN,
                         price: Number.isFinite(price) ? price : null,
@@ -884,11 +969,72 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 }
                 return entry;
             })
-                .filter((o) => Boolean(o.orderId));
+                .filter((o) => Boolean(o.orderId || o.orderLinkId));
+            const latestBySymbol = new Map();
+            for (const order of mapped) {
+                const ts = toEpoch(order.createdTime);
+                const resolvedTs = Number.isFinite(ts) ? ts : 0;
+                const prev = latestBySymbol.get(order.symbol);
+                if (!prev || resolvedTs >= prev.ts) {
+                    latestBySymbol.set(order.symbol, {
+                        order,
+                        ts: resolvedTs,
+                    });
+                }
+            }
+            const next = Array.from(latestBySymbol.values()).map((v) => v.order);
             setOrders(next);
             ordersRef.current = next;
             setOrdersError(null);
             setLastSuccessAt(now);
+            if (authToken && mapped.length > next.length) {
+                const latestIds = new Map();
+                for (const [symbol, data] of latestBySymbol.entries()) {
+                    latestIds.set(symbol, {
+                        orderId: data.order.orderId,
+                        orderLinkId: data.order.orderLinkId,
+                    });
+                }
+                const cancelTargets = mapped.filter((order) => {
+                    const latest = latestIds.get(order.symbol);
+                    if (!latest)
+                        return false;
+                    const isLatest = (latest.orderId && order.orderId === latest.orderId) ||
+                        (latest.orderLinkId &&
+                            order.orderLinkId === latest.orderLinkId);
+                    return !isLatest;
+                });
+                if (cancelTargets.length) {
+                    void (async () => {
+                        for (const order of cancelTargets) {
+                            const key = order.orderId || order.orderLinkId;
+                            if (!key || cancelingOrdersRef.current.has(key))
+                                continue;
+                            cancelingOrdersRef.current.add(key);
+                            try {
+                                await fetch(`${apiBase}/cancel`, {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type": "application/json",
+                                        Authorization: `Bearer ${authToken}`,
+                                    },
+                                    body: JSON.stringify({
+                                        symbol: order.symbol,
+                                        orderId: order.orderId || undefined,
+                                        orderLinkId: order.orderLinkId || undefined,
+                                    }),
+                                });
+                            }
+                            catch {
+                                // ignore cancel errors in enforcement loop
+                            }
+                            finally {
+                                cancelingOrdersRef.current.delete(key);
+                            }
+                        }
+                    })();
+                }
+            }
             for (const [orderId, nextOrder] of nextOrders.entries()) {
                 const prev = prevOrders.get(orderId);
                 if (!prev) {
@@ -1028,6 +1174,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         fastPollRef.current = false;
     }, [
         addLogEntries,
+        apiBase,
+        authToken,
         fetchJson,
         refreshDiagnosticsFromDecisions,
         syncTrailingProtection,
@@ -1566,8 +1714,27 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         };
     }, [closedPnlRecords, positions, settings.maxOpenPositions, walletSnapshot]);
     const resetPnlHistory = useCallback(() => {
-        void refreshSlow();
-    }, [refreshSlow]);
+        const symbols = new Set();
+        if (assetPnlHistory) {
+            Object.keys(assetPnlHistory).forEach((symbol) => {
+                if (symbol)
+                    symbols.add(symbol);
+            });
+        }
+        if (Array.isArray(positions)) {
+            positions.forEach((pos) => {
+                if (pos.symbol)
+                    symbols.add(pos.symbol);
+            });
+        }
+        if (symbols.size === 0) {
+            WATCH_SYMBOLS.forEach((symbol) => symbols.add(symbol));
+        }
+        const next = resetPnlHistoryMap(Array.from(symbols));
+        setAssetPnlHistory(next);
+        setClosedPnlRecords([]);
+        pnlSeenRef.current = new Set();
+    }, [assetPnlHistory, positions]);
     const manualClosePosition = useCallback(async (pos) => {
         if (!authToken)
             throw new Error("missing_auth_token");
@@ -1602,16 +1769,23 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const cancelOrder = useCallback(async (order) => {
         if (!authToken)
             throw new Error("missing_auth_token");
-        if (!order?.symbol || !order?.orderId) {
+        if (!order?.symbol)
+            throw new Error("missing_order_symbol");
+        const orderId = order?.orderId || "";
+        const orderLinkId = order?.orderLinkId || "";
+        if (!orderId && !orderLinkId)
             throw new Error("missing_order_id");
-        }
         const res = await fetch(`${apiBase}/cancel`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${authToken}`,
             },
-            body: JSON.stringify({ symbol: order.symbol, orderId: order.orderId }),
+            body: JSON.stringify({
+                symbol: order.symbol,
+                orderId: orderId || undefined,
+                orderLinkId: orderLinkId || undefined,
+            }),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok || json?.ok === false) {

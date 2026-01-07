@@ -29,6 +29,14 @@ export default function PositionsTable({ positions, positionsLoaded, onClosePosi
             const upnl = Number(p.unrealizedPnl ?? p.pnl ?? p.pnlValue);
             const slMissing = !Number.isFinite(sl) || sl <= 0;
             const tpMissing = !Number.isFinite(tp) || tp <= 0;
+            const entryValue = Number.isFinite(p.entryPrice)
+                ? p.entryPrice
+                : Number.isFinite(p.triggerPrice)
+                    ? p.triggerPrice
+                    : Number.NaN;
+            const entryLabel = Number.isFinite(p.entryPrice) || !Number.isFinite(p.triggerPrice)
+                ? null
+                : "trg";
             const protectionLabel = slMissing && tpMissing
                 ? "TP/SL pending"
                 : slMissing
@@ -39,6 +47,16 @@ export default function PositionsTable({ positions, positionsLoaded, onClosePosi
             const protectionClass = slMissing || tpMissing
                 ? "border-amber-500/50 text-amber-300"
                 : "border-emerald-500/50 text-emerald-400";
+            const updateLabel = (() => {
+                if (p.lastUpdateReason)
+                    return p.lastUpdateReason;
+                if (!p.timestamp)
+                    return "—";
+                const parsed = Date.parse(p.timestamp);
+                return Number.isFinite(parsed)
+                    ? new Date(parsed).toLocaleString()
+                    : "—";
+            })();
             return {
                 key: p.positionId || p.id || p.symbol,
                 raw: p,
@@ -47,6 +65,9 @@ export default function PositionsTable({ positions, positionsLoaded, onClosePosi
                 sl,
                 tp,
                 upnl,
+                entryValue,
+                entryLabel,
+                updateLabel,
                 protectionLabel,
                 protectionClass,
             };
@@ -61,7 +82,7 @@ export default function PositionsTable({ positions, positionsLoaded, onClosePosi
                                                                 ? "Collapse position details"
                                                                 : "Expand position details", children: expanded ? (_jsx(ChevronDown, { className: "h-4 w-4" })) : (_jsx(ChevronRight, { className: "h-4 w-4" })) }), _jsx("span", { className: "font-mono", children: row.raw.symbol })] }) }), _jsx("td", { className: "py-3", children: _jsx(Badge, { variant: "outline", className: row.isBuy
                                                         ? "border-emerald-500/50 text-emerald-400"
-                                                        : "border-red-500/50 text-red-400", children: String(row.raw.side ?? "").toUpperCase() }) }), _jsx("td", { className: "py-3 text-right font-mono tabular-nums", children: formatNumber(row.size) }), _jsx("td", { className: "py-3 text-right font-mono tabular-nums", children: formatNumber(row.raw.entryPrice) }), _jsx("td", { className: `py-3 text-right font-mono tabular-nums ${Number.isFinite(row.upnl)
+                                                        : "border-red-500/50 text-red-400", children: row.isBuy ? "LONG" : "SHORT" }) }), _jsx("td", { className: "py-3 text-right font-mono tabular-nums", children: formatNumber(row.size) }), _jsx("td", { className: "py-3 text-right font-mono tabular-nums", children: Number.isFinite(row.entryValue) ? (_jsxs("div", { className: "flex items-center justify-end gap-1", children: [row.entryLabel && (_jsx("span", { className: "text-[10px] uppercase text-muted-foreground", children: row.entryLabel })), _jsx("span", { children: formatNumber(row.entryValue) })] })) : ("—") }), _jsx("td", { className: `py-3 text-right font-mono tabular-nums ${Number.isFinite(row.upnl)
                                                     ? row.upnl >= 0
                                                         ? "text-emerald-400"
                                                         : "text-red-400"
@@ -71,6 +92,6 @@ export default function PositionsTable({ positions, positionsLoaded, onClosePosi
                                                                     ? new Date(row.raw.openedAt).toLocaleString()
                                                                     : "—" })] }), _jsxs("span", { children: ["RRR:", " ", _jsx("span", { className: "font-mono text-foreground", children: Number.isFinite(row.raw.rrr)
                                                                     ? row.raw.rrr?.toFixed(2)
-                                                                    : "—" })] }), _jsxs("span", { children: ["Update:", " ", _jsx("span", { className: "text-foreground", children: row.raw.lastUpdateReason ?? "—" })] })] }) }) }))] }, row.key));
+                                                                    : "—" })] }), _jsxs("span", { children: ["Update:", " ", _jsx("span", { className: "text-foreground", children: row.updateLabel })] })] }) }) }))] }, row.key));
                         }) })] }) })) }));
 }

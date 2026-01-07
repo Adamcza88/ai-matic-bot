@@ -80,3 +80,13 @@ export function mergePnlRecords(records) {
     persistPnlHistory(next);
     return next;
 }
+export function resetPnlHistoryMap(symbols) {
+    const now = new Date().toISOString();
+    const next = {};
+    const unique = Array.from(new Set(symbols.filter(Boolean)));
+    for (const symbol of unique) {
+        next[symbol] = [{ symbol, pnl: 0, timestamp: now, note: "RESET" }];
+    }
+    persistPnlHistory(next);
+    return next;
+}

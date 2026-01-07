@@ -32,8 +32,8 @@ const MAX_POSITION_NOTIONAL_USD = 7;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
-const TREND_GATE_REVERSE_ADX = 22;
-const TREND_GATE_REVERSE_SCORE = 2;
+const TREND_GATE_REVERSE_ADX = 19;
+const TREND_GATE_REVERSE_SCORE = 1;
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -298,6 +298,7 @@ export function useTradingBot(
   const modeRef = useRef<TradingMode | undefined>(mode);
   const positionsRef = useRef<ActivePosition[]>([]);
   const ordersRef = useRef<TestnetOrder[]>([]);
+  const cancelingOrdersRef = useRef<Set<string>>(new Set());
   const decisionRef = useRef<
     Record<string, { decision: PriceFeedDecision; ts: number }>
   >({});
@@ -1130,9 +1131,15 @@ export function useTradingBot(
       const prevOrders = orderSnapshotRef.current;
       const nextOrders = new Map<
         string,
-        { status: string; qty: number; price: number | null; side: string; symbol: string }
+        {
+          status: string;
+          qty: number;
+          price: number | null;
+          side: string;
+          symbol: string;
+        }
       >();
-      const next = list
+      const mapped = list
         .map((o: any) => {
           const qty = toNumber(o?.qty ?? o?.orderQty ?? o?.leavesQty);
           const price = toNumber(o?.price);
@@ -1163,8 +1170,8 @@ export function useTradingBot(
             status,
             createdTime: toIso(o?.createdTime ?? o?.created_at) || "",
           } as TestnetOrder;
-          if (orderId) {
-            nextOrders.set(orderId, {
+          if (orderId || orderLinkId) {
+            nextOrders.set(orderId || orderLinkId, {
               status,
               qty: Number.isFinite(qty) ? qty : Number.NaN,
               price: Number.isFinite(price) ? price : null,
@@ -1174,11 +1181,72 @@ export function useTradingBot(
           }
           return entry;
         })
-        .filter((o: TestnetOrder) => Boolean(o.orderId));
+        .filter((o: TestnetOrder) => Boolean(o.orderId || o.orderLinkId));
+      const latestBySymbol = new Map<
+        string,
+        { order: TestnetOrder; ts: number }
+      >();
+      for (const order of mapped) {
+        const ts = toEpoch(order.createdTime);
+        const resolvedTs = Number.isFinite(ts) ? ts : 0;
+        const prev = latestBySymbol.get(order.symbol);
+        if (!prev || resolvedTs >= prev.ts) {
+          latestBySymbol.set(order.symbol, {
+            order,
+            ts: resolvedTs,
+          });
+        }
+      }
+      const next = Array.from(latestBySymbol.values()).map((v) => v.order);
       setOrders(next);
       ordersRef.current = next;
       setOrdersError(null);
       setLastSuccessAt(now);
+      if (authToken && mapped.length > next.length) {
+        const latestIds = new Map<string, { orderId: string; orderLinkId?: string }>();
+        for (const [symbol, data] of latestBySymbol.entries()) {
+          latestIds.set(symbol, {
+            orderId: data.order.orderId,
+            orderLinkId: data.order.orderLinkId,
+          });
+        }
+        const cancelTargets = mapped.filter((order) => {
+          const latest = latestIds.get(order.symbol);
+          if (!latest) return false;
+          const isLatest =
+            (latest.orderId && order.orderId === latest.orderId) ||
+            (latest.orderLinkId &&
+              order.orderLinkId === latest.orderLinkId);
+          return !isLatest;
+        });
+        if (cancelTargets.length) {
+          void (async () => {
+            for (const order of cancelTargets) {
+              const key = order.orderId || order.orderLinkId;
+              if (!key || cancelingOrdersRef.current.has(key)) continue;
+              cancelingOrdersRef.current.add(key);
+              try {
+                await fetch(`${apiBase}/cancel`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${authToken}`,
+                  },
+                  body: JSON.stringify({
+                    symbol: order.symbol,
+                    orderId: order.orderId || undefined,
+                    orderLinkId: order.orderLinkId || undefined,
+                  }),
+                });
+              } catch {
+                // ignore cancel errors in enforcement loop
+              } finally {
+                cancelingOrdersRef.current.delete(key);
+              }
+            }
+          })();
+        }
+      }
 
       for (const [orderId, nextOrder] of nextOrders.entries()) {
         const prev = prevOrders.get(orderId);
@@ -1335,6 +1403,8 @@ export function useTradingBot(
     fastPollRef.current = false;
   }, [
     addLogEntries,
+    apiBase,
+    authToken,
     fetchJson,
     refreshDiagnosticsFromDecisions,
     syncTrailingProtection,
