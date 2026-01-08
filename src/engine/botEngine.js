@@ -1,4 +1,5 @@
 import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet";
+import { computeRsi } from "./ta";
 export var Trend;
 (function (Trend) {
     Trend["Bull"] = "bull";
@@ -140,6 +141,10 @@ export const defaultConfig = {
     liquiditySweepVolumeMult: 1.05,
     volExpansionAtrMult: 1.3,
     volExpansionVolMult: 1.2,
+    pullbackEmaPeriod: 20,
+    pullbackRsiPeriod: 14,
+    pullbackRsiMin: 45,
+    pullbackRsiMax: 55,
 };
 /**
  * Utility function: Compute Average True Range (ATR).
@@ -1082,7 +1087,8 @@ export class TradingBot {
             });
             return out;
         };
-        const ema20 = ema(20);
+        const pullbackEmaPeriod = this.config.pullbackEmaPeriod ?? 20;
+        const ema20 = ema(pullbackEmaPeriod);
         const momentumLen = strictness === "base" ? 3 : 2;
         const lastN = closes.slice(-momentumLen);
         const diffs = lastN.slice(1).map((v, i) => v - lastN[i]);
@@ -1100,12 +1106,19 @@ export class TradingBot {
         const c1 = closes[closes.length - 2];
         const emaNow = ema20[ema20.length - 1];
         const emaPrev = ema20[ema20.length - 2];
-        if (trend === Trend.Bull && c1 < emaPrev && c0 > emaNow) {
+        const rsiPeriod = this.config.pullbackRsiPeriod ?? 14;
+        const rsiArr = computeRsi(closes, rsiPeriod);
+        const rsiNow = rsiArr[rsiArr.length - 1];
+        const rsiMin = this.config.pullbackRsiMin ?? 0;
+        const rsiMax = this.config.pullbackRsiMax ?? 100;
+        const rsiOkLong = !Number.isFinite(rsiNow) || rsiNow >= rsiMin;
+        const rsiOkShort = !Number.isFinite(rsiNow) || rsiNow <= rsiMax;
+        if (trend === Trend.Bull && c1 < emaPrev && c0 > emaNow && rsiOkLong) {
             const entry = c0;
             const stop = resolveEntryStop("long", entry, Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR);
             return { side: "long", entry, stopLoss: stop, kind: "PULLBACK" };
         }
-        if (trend === Trend.Bear && c1 > emaPrev && c0 < emaNow) {
+        if (trend === Trend.Bear && c1 > emaPrev && c0 < emaNow && rsiOkShort) {
             const entry = c0;
             const stop = resolveEntryStop("short", entry, Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR);
             return { side: "short", entry, stopLoss: stop, kind: "PULLBACK" };

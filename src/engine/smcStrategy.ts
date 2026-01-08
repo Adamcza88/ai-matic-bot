@@ -31,6 +31,9 @@ const LTF_MIN_BARS = 20;
 const LIQUIDITY_LOOKBACK = 60;
 const LIQUIDITY_TOUCHES = 2;
 const LIQUIDITY_TOLERANCE_MULT = 0.15;
+const BOS_VOLUME_MULT = 1.1;
+const BOS_VOLUME_LOOKBACK = 20;
+const FVG_DISTANCE_PCT = 0.015;
 
 function toAnalyzerCandles(candles: EngineCandle[]): AnalyzerCandle[] {
   return candles.map((c) => ({
@@ -47,6 +50,13 @@ function averageRange(candles: EngineCandle[], lookback: number): number {
   const slice = candles.slice(-lookback);
   if (!slice.length) return Number.NaN;
   const sum = slice.reduce((acc, c) => acc + (c.high - c.low), 0);
+  return sum / slice.length;
+}
+
+function averageVolume(candles: EngineCandle[], lookback: number): number {
+  const slice = candles.slice(-lookback);
+  if (!slice.length) return Number.NaN;
+  const sum = slice.reduce((acc, c) => acc + (c.volume ?? 0), 0);
   return sum / slice.length;
 }
 
@@ -88,6 +98,81 @@ function isPoiMitigated(poi: { high: number; low: number; time: number }, candle
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function resolveBosLevel(structure: { lastHH: number | null; lastLL: number | null; lastLH: number | null; lastHL: number | null }, bias: Bias): number | null {
+  if (!bias) return null;
+  if (bias === "long") return structure.lastHH ?? structure.lastLH ?? null;
+  return structure.lastLL ?? structure.lastHL ?? null;
+}
+
+function isNearFvg(
+  price: number,
+  fvg: { high: number; low: number },
+  distancePct: number
+): boolean {
+  if (!Number.isFinite(price)) return false;
+  if (price >= fvg.low && price <= fvg.high) return true;
+  const mid = (fvg.high + fvg.low) / 2;
+  return Math.abs(price - mid) / price <= distancePct;
+}
+
+function confirmBosAndFvg(args: {
+  bias: Bias;
+  ltf: EngineCandle[];
+  h1Pois: { type: string; direction: string; high: number; low: number }[];
+  ltfPois: { type: string; direction: string; high: number; low: number }[];
+  ltfStructure: { lastHH: number | null; lastLL: number | null; lastLH: number | null; lastHL: number | null };
+  h1Structure: { lastHH: number | null; lastLL: number | null; lastLH: number | null; lastHL: number | null };
+  price: number;
+  config: Partial<BotConfig>;
+}): { ok: boolean; tags: string[] } {
+  const tags: string[] = [];
+  const { bias, ltf, ltfStructure, h1Structure, h1Pois, ltfPois, price, config } = args;
+  if (!bias || !ltf.length) return { ok: false, tags: ["BOS_INVALID"] };
+
+  const bosLevel = resolveBosLevel(ltfStructure, bias) ?? resolveBosLevel(h1Structure, bias);
+  if (!Number.isFinite(bosLevel ?? Number.NaN)) {
+    return { ok: false, tags: ["BOS_LEVEL_MISSING"] };
+  }
+  const last = ltf[ltf.length - 1];
+  const broke = bias === "long" ? last.close > bosLevel : last.close < bosLevel;
+  if (!broke) return { ok: false, tags: ["BOS_NOT_BROKEN"] };
+  const falseBreakout =
+    bias === "long"
+      ? last.high > bosLevel && last.close <= bosLevel
+      : last.low < bosLevel && last.close >= bosLevel;
+  if (falseBreakout) return { ok: false, tags: ["BOS_FALSE_BREAKOUT"] };
+
+  const volLookback = config.smcBosVolumePeriod ?? BOS_VOLUME_LOOKBACK;
+  const volMult = config.smcBosVolumeMult ?? BOS_VOLUME_MULT;
+  const avgVol = averageVolume(ltf, volLookback);
+  if (
+    Number.isFinite(last.volume) &&
+    Number.isFinite(avgVol) &&
+    avgVol > 0 &&
+    last.volume < avgVol * volMult
+  ) {
+    return { ok: false, tags: ["BOS_LOW_VOLUME"] };
+  }
+  tags.push("BOS_OK");
+
+  const desiredDirection = bias === "long" ? "bullish" : "bearish";
+  const distancePct = config.smcFvgDistancePct ?? FVG_DISTANCE_PCT;
+  const htfFvgOk = h1Pois
+    .filter((p) => p.type === "FVG" && p.direction === desiredDirection)
+    .some((p) => isNearFvg(price, p, distancePct));
+  const ltfFvgOk = ltfPois
+    .filter((p) => p.type === "FVG" && p.direction === desiredDirection)
+    .some((p) => isNearFvg(price, p, distancePct));
+  const requireFvg = config.smcFvgRequireHtf ?? true;
+  if (requireFvg && !(htfFvgOk && ltfFvgOk)) {
+    return { ok: false, tags: ["FVG_MISSING"] };
+  }
+  if (htfFvgOk) tags.push("FVG_HTF_OK");
+  if (ltfFvgOk) tags.push("FVG_LTF_OK");
+
+  return { ok: true, tags };
 }
 
 function detectLiquidityPools(
@@ -227,6 +312,7 @@ export function evaluateSmcStrategyForSymbol(
   }
 
   const ltfPois = ltfAnalyzer.getPointsOfInterest();
+  const h1Pois = h1Analyzer.getPointsOfInterest();
   const ltfCandles = toAnalyzerCandles(ltf15);
   const desiredDirection = bias === "long" ? "bullish" : "bearish";
 
@@ -257,6 +343,28 @@ export function evaluateSmcStrategyForSymbol(
   const inPoiZone = last1m.low <= poi.high && last1m.high >= poi.low;
   const displacementOk = isDisplacement(ltf1, bias);
   if (!inPoiZone || !displacementOk) {
+    return {
+      state: State.Scan,
+      trend,
+      trendH1,
+      trendScore,
+      trendAdx,
+      signal: null,
+      halted: false,
+    };
+  }
+
+  const bosAndFvg = confirmBosAndFvg({
+    bias,
+    ltf: ltf15,
+    ltfStructure,
+    h1Structure,
+    ltfPois,
+    h1Pois,
+    price: last1m.close,
+    config,
+  });
+  if (!bosAndFvg.ok) {
     return {
       state: State.Scan,
       trend,

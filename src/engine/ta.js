@@ -40,6 +40,37 @@ export function computeAtr(candles, period) {
     return out;
 }
 /**
+ * Computes Relative Strength Index (RSI) for a series of values.
+ */
+export function computeRsi(values, period) {
+    if (!values.length)
+        return [];
+    const out = new Array(values.length).fill(Number.NaN);
+    if (values.length <= period)
+        return out;
+    let gain = 0;
+    let loss = 0;
+    for (let i = 1; i <= period; i++) {
+        const diff = values[i] - values[i - 1];
+        if (diff >= 0)
+            gain += diff;
+        else
+            loss -= diff;
+    }
+    let avgGain = gain / period;
+    let avgLoss = loss / period;
+    out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    for (let i = period + 1; i < values.length; i++) {
+        const diff = values[i] - values[i - 1];
+        const up = diff > 0 ? diff : 0;
+        const down = diff < 0 ? -diff : 0;
+        avgGain = (avgGain * (period - 1) + up) / period;
+        avgLoss = (avgLoss * (period - 1) + down) / period;
+        out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    }
+    return out;
+}
+/**
  * Finds all pivot high points in a series of candles.
  * A pivot high is a candle whose high is greater than the highs of `left` candles to the left and `right` candles to the right.
  */

@@ -4,7 +4,9 @@ import { sendIntent } from "../api/botApi";
 import { EntryType, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
+import { evaluateStrategyForSymbol } from "../engine/botEngine";
 import { evaluateSmcStrategyForSymbol } from "../engine/smcStrategy";
+import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import type { PriceFeedDecision } from "../engine/priceFeed";
 import type { BotConfig } from "../engine/botEngine";
 import { TradingMode } from "../types";
@@ -34,6 +36,11 @@ const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
 const TREND_GATE_REVERSE_ADX = 19;
 const TREND_GATE_REVERSE_SCORE = 1;
+const CORRELATION_WAVE_WINDOW_MS = 60 * 60_000;
+const CORRELATION_GROUPS: Symbol[][] = [
+  ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
+];
+const HTF_TIMEFRAMES_MIN = [60, 240, 1440];
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -305,6 +312,7 @@ export function useTradingBot(
   const signalSeenRef = useRef<Set<string>>(new Set());
   const intentPendingRef = useRef<Set<string>>(new Set());
   const trailingSyncRef = useRef<Map<string, number>>(new Map());
+  const correlationWaveRef = useRef<Map<string, number>>(new Map());
   const settingsRef = useRef<AISettings>(settings);
   const walletRef = useRef<typeof walletSnapshot | null>(walletSnapshot);
   const handleDecisionRef = useRef<
@@ -728,19 +736,28 @@ export function useTradingBot(
       signal?: PriceFeedDecision["signal"] | null
     ) => {
       const settings = settingsRef.current;
-      const trendRaw = String(
-        (decision as any)?.trendH1 ?? decision?.trend ?? ""
-      );
+      const htfTrend = (decision as any)?.htfTrend;
+      const htfConsensus =
+        typeof htfTrend?.consensus === "string" ? htfTrend.consensus : "";
+      const trendRaw = htfConsensus ||
+        String((decision as any)?.trendH1 ?? decision?.trend ?? "");
       const trend = trendRaw ? trendRaw.toUpperCase() : "—";
       const adx = toNumber((decision as any)?.trendAdx);
-      const score = toNumber((decision as any)?.trendScore);
+      const htfScore = toNumber(htfTrend?.score);
+      const score = Number.isFinite(htfScore)
+        ? htfScore
+        : toNumber((decision as any)?.trendScore);
+      const alignedCount = toNumber(htfTrend?.alignedCount);
+      const htfStrong = Number.isFinite(alignedCount) && alignedCount >= 2;
       const strong =
         (Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
-        (Number.isFinite(score) && score >= TREND_GATE_STRONG_SCORE);
+        (Number.isFinite(score) && score >= TREND_GATE_STRONG_SCORE) ||
+        htfStrong;
       const modeSetting = settings.trendGateMode ?? "adaptive";
       const reverseAllowed =
         (Number.isFinite(adx) ? adx <= TREND_GATE_REVERSE_ADX : false) &&
-        (Number.isFinite(score) ? score <= TREND_GATE_REVERSE_SCORE : false);
+        (Number.isFinite(score) ? score <= TREND_GATE_REVERSE_SCORE : false) &&
+        !htfStrong;
       let mode: "FOLLOW" | "REVERSE" = "FOLLOW";
       if (modeSetting === "adaptive") {
         mode = reverseAllowed && !strong ? "REVERSE" : "FOLLOW";
@@ -750,11 +767,33 @@ export function useTradingBot(
         mode = "FOLLOW";
       }
       const detailParts = [trend];
+      if (htfConsensus) {
+        const total = Array.isArray(htfTrend?.byTimeframe)
+          ? htfTrend.byTimeframe.length
+          : 0;
+        const countLabel =
+          Number.isFinite(alignedCount) && total > 0
+            ? ` (${alignedCount}/${total})`
+            : "";
+        detailParts.push(`HTF ${htfConsensus.toUpperCase()}${countLabel}`);
+      }
       if (Number.isFinite(adx)) {
         detailParts.push(`ADX ${formatNumber(adx, 1)}`);
       }
       if (Number.isFinite(score)) {
         detailParts.push(`score ${formatNumber(score, 0)}`);
+      }
+      if (Array.isArray(htfTrend?.byTimeframe)) {
+        const tfLabel = (tf: number) => {
+          if (tf >= 1440) return `${Math.round(tf / 1440)}D`;
+          if (tf >= 60) return `${Math.round(tf / 60)}H`;
+          return `${tf}m`;
+        };
+        const tfParts = htfTrend.byTimeframe.map((entry: any) => {
+          const dir = String(entry?.result?.direction ?? "none").toUpperCase();
+          return `${tfLabel(Number(entry?.timeframeMin ?? 0))} ${dir}`;
+        });
+        if (tfParts.length) detailParts.push(tfParts.join(" · "));
       }
       detailParts.push(
         `mode ${mode}${modeSetting === "adaptive" ? " (adaptive)" : ""}`
@@ -782,6 +821,37 @@ export function useTradingBot(
         ok = mode === "FOLLOW" ? false : isMeanRev;
       }
       return { ok, detail };
+    },
+    []
+  );
+
+  const resolveCorrelationGate = useCallback(
+    (symbol: string, now = Date.now()) => {
+      const group =
+        CORRELATION_GROUPS.find((g) => g.includes(symbol as Symbol)) ?? [];
+      const peers = group.filter((s) => s !== symbol);
+      if (!peers.length) {
+        return { ok: true, detail: "no correlated peers" };
+      }
+      const openSymbols = new Set<string>();
+      positionsRef.current.forEach((p) => {
+        if (p.symbol) openSymbols.add(String(p.symbol));
+      });
+      ordersRef.current.forEach((o) => {
+        if (o.symbol) openSymbols.add(String(o.symbol));
+      });
+      const activePeers = peers.filter((p) => openSymbols.has(p));
+      if (activePeers.length) {
+        return { ok: false, detail: `open ${activePeers.join(", ")}` };
+      }
+      const recentPeers = peers.filter((p) => {
+        const ts = correlationWaveRef.current.get(p) ?? 0;
+        return ts > 0 && now - ts <= CORRELATION_WAVE_WINDOW_MS;
+      });
+      if (recentPeers.length) {
+        return { ok: false, detail: `recent wave ${recentPeers.join(", ")}` };
+      }
+      return { ok: true, detail: "clear" };
     },
     []
   );
@@ -867,6 +937,8 @@ export function useTradingBot(
         ? `open ${context.openOrdersCount}/${context.maxOrders}`
         : `open ${context.openOrdersCount}/no limit`;
       addGate("Orders clear", context.ordersClearOk, ordersDetail);
+      const correlationGate = resolveCorrelationGate(symbol, Date.now());
+      addGate("Correlation", correlationGate.ok, correlationGate.detail);
       const slOk =
         context.hasPosition && Number.isFinite(sl) && sl > 0;
       const tpOk =
@@ -907,6 +979,9 @@ export function useTradingBot(
         if (feedAgeOk === false && isGateEnabled("Feed age")) {
           hardReasons.push("Feed age");
         }
+        if (!correlationGate.ok && isGateEnabled("Correlation")) {
+          hardReasons.push("Correlation");
+        }
         if (
           context.settings.requireConfirmationInAuto &&
           isGateEnabled("Confirm required")
@@ -945,7 +1020,7 @@ export function useTradingBot(
         feedAgeOk,
       };
     },
-    [getSymbolContext, isGateEnabled, resolveTrendGate]
+    [getSymbolContext, isGateEnabled, resolveCorrelationGate, resolveTrendGate]
   );
 
   const refreshDiagnosticsFromDecisions = useCallback(() => {
@@ -1630,6 +1705,7 @@ export function useTradingBot(
     } as const;
 
     await sendIntent(intent, { authToken, useTestnet });
+    correlationWaveRef.current.set(signal.symbol, Date.now());
   }
 
   const handleDecision = useCallback(
@@ -1722,6 +1798,7 @@ export function useTradingBot(
 
       const context = getSymbolContext(symbol, decision);
       const trendGate = resolveTrendGate(decision, signal);
+      const correlationGate = resolveCorrelationGate(symbol, now);
       const blockReasons: string[] = [];
       const hardEnabled = context.settings.enableHardGates !== false;
       if (hardEnabled) {
@@ -1730,6 +1807,9 @@ export function useTradingBot(
         }
         if (!trendGate.ok && isGateEnabled("Trend bias")) {
           blockReasons.push("Trend bias");
+        }
+        if (!correlationGate.ok && isGateEnabled("Correlation")) {
+          blockReasons.push("Correlation");
         }
         if (!context.sessionOk && isGateEnabled("Session ok")) {
           blockReasons.push("Session ok");
@@ -1863,6 +1943,7 @@ export function useTradingBot(
       computeNotionalForSignal,
       getSymbolContext,
       isGateEnabled,
+      resolveCorrelationGate,
       resolveTrendGate,
     ]
   );
@@ -1882,7 +1963,19 @@ export function useTradingBot(
     const riskMode = settingsRef.current.riskMode;
     const isSmc = riskMode === "ai-matic-x";
     const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
-    const decisionFn = isSmc ? evaluateSmcStrategyForSymbol : undefined;
+    const decisionFn = (
+      symbol: string,
+      candles: Parameters<typeof evaluateStrategyForSymbol>[1],
+      config?: Partial<BotConfig>
+    ) => {
+      const baseDecision = isSmc
+        ? evaluateSmcStrategyForSymbol(symbol, candles, config)
+        : evaluateStrategyForSymbol(symbol, candles, config);
+      const htfTrend = evaluateHTFMultiTrend(candles, {
+        timeframesMin: HTF_TIMEFRAMES_MIN,
+      });
+      return { ...baseDecision, htfTrend };
+    };
     const maxCandles = isSmc ? 3000 : isAiMatic ? 5000 : undefined;
     const backfill = isSmc
       ? { enabled: true, interval: "1", lookbackMinutes: 1440, limit: 1000 }
