@@ -154,10 +154,10 @@ const FIXED_QTY_BY_SYMBOL = {
     ADAUSDT: 995,
 };
 const TRAIL_PROFILE_BY_RISK_MODE = {
-    "ai-matic": { activateR: 1.0, lockR: 0.6, retracementRate: 0.003 },
-    "ai-matic-x": { activateR: 1.0, lockR: 0.6 },
-    "ai-matic-scalp": { activateR: 1.2, lockR: 0.4 },
-    "ai-matic-tree": { activateR: 1.0, lockR: 0.6 },
+    "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
+    "ai-matic-x": { activateR: 0.5, lockR: 0.3 },
+    "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
+    "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
 };
 const TRAIL_SYMBOL_MODE = {
     SOLUSDT: "on",
@@ -712,6 +712,40 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }
         return { ok: true, detail: "clear" };
     }, []);
+    const resolveQualityScore = useCallback((decision, signalActive) => {
+        const adx = toNumber(decision?.trendAdx);
+        const trendScore = toNumber(decision?.trendScore);
+        const htfTrend = decision?.htfTrend;
+        const alignedCount = toNumber(htfTrend?.alignedCount);
+        const tfCount = Array.isArray(htfTrend?.byTimeframe)
+            ? htfTrend.byTimeframe.length
+            : 0;
+        const hasTrendScore = Number.isFinite(trendScore);
+        const hasAdx = Number.isFinite(adx);
+        const hasHtf = tfCount > 0 && Number.isFinite(alignedCount);
+        const trendPoints = hasTrendScore
+            ? Math.min(4, Math.max(0, trendScore))
+            : 0;
+        const adxPoints = hasAdx
+            ? adx >= 30
+                ? 3
+                : adx >= 20
+                    ? 2
+                    : adx >= 15
+                        ? 1
+                        : 0
+            : 0;
+        const htfPoints = hasHtf ? Math.min(alignedCount, tfCount) : 0;
+        const maxPoints = (hasTrendScore ? 4 : 0) + (hasAdx ? 3 : 0) + (hasHtf ? tfCount : 0);
+        if (!maxPoints) {
+            return { score: null, threshold: null, pass: undefined };
+        }
+        const normalized = ((trendPoints + adxPoints + htfPoints) / maxPoints) * 10;
+        const score = Math.round(normalized * 10) / 10;
+        const threshold = 6;
+        const pass = score >= threshold;
+        return { score, threshold, pass };
+    }, []);
     const resolveSymbolState = useCallback((symbol) => {
         const decision = decisionRef.current[symbol]?.decision;
         const state = String(decision?.state ?? "").toUpperCase();
@@ -738,6 +772,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const feedAgeMs = lastTick > 0 ? Math.max(0, Date.now() - lastTick) : null;
         const feedAgeOk = feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
         const signalActive = Boolean(decision?.signal);
+        const quality = resolveQualityScore(decision, signalActive);
         const pos = positionsRef.current.find((p) => p.symbol === symbol);
         const sl = toNumber(pos?.sl);
         const tp = toNumber(pos?.tp);
@@ -845,11 +880,20 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     ? "Waiting for signal"
                     : "Exec allowed (OFF)",
             gates,
+            qualityScore: quality.score,
+            qualityThreshold: quality.threshold,
+            qualityPass: quality.pass,
             lastScanTs,
             feedAgeMs,
             feedAgeOk,
         };
-    }, [getSymbolContext, isGateEnabled, resolveCorrelationGate, resolveTrendGate]);
+    }, [
+        getSymbolContext,
+        isGateEnabled,
+        resolveCorrelationGate,
+        resolveQualityScore,
+        resolveTrendGate,
+    ]);
     const refreshDiagnosticsFromDecisions = useCallback(() => {
         const entries = Object.entries(decisionRef.current);
         if (!entries.length)
