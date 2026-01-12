@@ -53,12 +53,12 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         if (riskMode === "ai-matic-x") {
             return {
                 label: "AI-MATIC-X",
-                subtitle: "SMC HTF/LTF (4h/1h/15m/1m)",
+                subtitle: "SMC HTF/LTF (bull 12h/4h→1h/5m · bear 1d/4h→1h/15m)",
                 symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-                timeframes: "HTF 4h · 1h · LTF 15m · 1m",
+                timeframes: "Bull: HTF 12h/4h · LTF 1h/5m · Bear: HTF 1d/4h · LTF 1h/15m",
                 session: "24/7",
                 risk: "4 USDT / trade · 8 USDT total (after 3 losses: 2/4 for 60m) · max 3 pos",
-                entry: "HTF bias + POI (OB/FVG/Breaker/Liquidity) → LTF CHOCH/MSS + displacement pullback",
+                entry: "HTF bias + POI (bull 12h/4h, bear 1d/4h) → LTF 1h/(5m/15m) CHOCH/MSS + displacement pullback",
                 execution: "PostOnly LIMIT · timeout 1×1m",
             };
         }

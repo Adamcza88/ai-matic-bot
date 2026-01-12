@@ -5,6 +5,8 @@ const DISPLACEMENT_LOOKBACK = 10;
 const DISPLACEMENT_BODY_MULT = 1.4;
 const DISPLACEMENT_RANGE_MULT = 1.2;
 const H4_MIN_BARS = 5;
+const H12_MIN_BARS = 5;
+const D1_MIN_BARS = 5;
 const H1_MIN_BARS = 8;
 const LTF_MIN_BARS = 20;
 const LIQUIDITY_LOOKBACK = 60;
@@ -89,10 +91,10 @@ function isNearFvg(price, fvg, distancePct) {
 }
 function confirmBosAndFvg(args) {
     const tags = [];
-    const { bias, ltf, ltfStructure, h1Structure, h1Pois, ltfPois, price, config } = args;
+    const { bias, ltf, ltfStructure, htfStructure, htfPois, ltfPois, price, config } = args;
     if (!bias || !ltf.length)
         return { ok: false, tags: ["BOS_INVALID"] };
-    const bosLevel = resolveBosLevel(ltfStructure, bias) ?? resolveBosLevel(h1Structure, bias);
+    const bosLevel = resolveBosLevel(ltfStructure, bias) ?? resolveBosLevel(htfStructure, bias);
     if (!Number.isFinite(bosLevel ?? Number.NaN)) {
         return { ok: false, tags: ["BOS_LEVEL_MISSING"] };
     }
@@ -117,7 +119,7 @@ function confirmBosAndFvg(args) {
     tags.push("BOS_OK");
     const desiredDirection = bias === "long" ? "bullish" : "bearish";
     const distancePct = config.smcFvgDistancePct ?? FVG_DISTANCE_PCT;
-    const htfFvgOk = h1Pois
+    const htfFvgOk = htfPois
         .filter((p) => p.type === "FVG" && p.direction === desiredDirection)
         .some((p) => isNearFvg(price, p, distancePct));
     const ltfFvgOk = ltfPois
@@ -186,14 +188,16 @@ function selectLiquidityTarget(pools, bias, entry) {
     return null;
 }
 export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
-    const ltf1 = resampleCandles(candles, 1);
+    const ltf5 = resampleCandles(candles, 5);
     const ltf15 = resampleCandles(candles, 15);
     const h1 = resampleCandles(candles, 60);
     const h4 = resampleCandles(candles, 240);
-    if (h4.length < H4_MIN_BARS ||
-        h1.length < H1_MIN_BARS ||
-        ltf15.length < H1_MIN_BARS ||
-        ltf1.length < LTF_MIN_BARS) {
+    const h12 = resampleCandles(candles, 720);
+    const d1 = resampleCandles(candles, 1440);
+    const hasCoreFrames = h4.length >= H4_MIN_BARS && h1.length >= H1_MIN_BARS;
+    const hasBullishFrames = hasCoreFrames && h12.length >= H12_MIN_BARS && ltf5.length >= LTF_MIN_BARS;
+    const hasBearishFrames = hasCoreFrames && d1.length >= D1_MIN_BARS && ltf15.length >= LTF_MIN_BARS;
+    if (!hasBullishFrames && !hasBearishFrames) {
         return {
             state: State.Scan,
             trend: Trend.Range,
@@ -205,11 +209,46 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
     }
     const h4Analyzer = new CandlestickAnalyzer(toAnalyzerCandles(h4));
     const h1Analyzer = new CandlestickAnalyzer(toAnalyzerCandles(h1));
-    const ltfAnalyzer = new CandlestickAnalyzer(toAnalyzerCandles(ltf15));
     const h4Structure = h4Analyzer.getMarketStructure();
     const h1Structure = h1Analyzer.getMarketStructure();
+    const h12Structure = hasBullishFrames
+        ? new CandlestickAnalyzer(toAnalyzerCandles(h12)).getMarketStructure()
+        : null;
+    const d1Structure = hasBearishFrames
+        ? new CandlestickAnalyzer(toAnalyzerCandles(d1)).getMarketStructure()
+        : null;
+    const bullishBias = h12Structure
+        ? resolveBias(h12Structure.trend, h4Structure.trend)
+        : null;
+    const bearishBias = d1Structure
+        ? resolveBias(d1Structure.trend, h4Structure.trend)
+        : null;
+    const scenario = bullishBias === "long"
+        ? "bullish"
+        : bearishBias === "short"
+            ? "bearish"
+            : null;
+    const bias = scenario === "bullish" ? "long" : scenario === "bearish" ? "short" : null;
+    const htfHighStructure = scenario === "bullish"
+        ? h12Structure
+        : scenario === "bearish"
+            ? d1Structure
+            : null;
+    if (!bias || !scenario || !htfHighStructure) {
+        return {
+            state: State.Scan,
+            trend: Trend.Range,
+            trendH1: Trend.Range,
+            trendScore: 0,
+            trendAdx: Number.NaN,
+            signal: null,
+            halted: false,
+        };
+    }
+    const ltfContext = h1;
+    const ltfEntry = scenario === "bullish" ? ltf5 : ltf15;
+    const ltfAnalyzer = new CandlestickAnalyzer(toAnalyzerCandles(ltfContext));
     const ltfStructure = ltfAnalyzer.getMarketStructure();
-    const bias = resolveBias(h4Structure.trend, h1Structure.trend);
     const trend = bias === "long" ? Trend.Bull : bias === "short" ? Trend.Bear : Trend.Range;
     const trendH1 = h1Structure.trend === "up"
         ? Trend.Bull
@@ -221,9 +260,9 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
     const trendAdx = adxArr[adxArr.length - 1];
     const trendScore = bias
         ? [
+            htfHighStructure.trend !== "range",
             h4Structure.trend !== "range",
             h1Structure.trend !== "range",
-            Boolean(bias),
             (bias === "long" && ltfStructure.trend === "up") ||
                 (bias === "short" && ltfStructure.trend === "down"),
         ].filter(Boolean).length
@@ -240,8 +279,8 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
         };
     }
     const ltfPois = ltfAnalyzer.getPointsOfInterest();
-    const h1Pois = h1Analyzer.getPointsOfInterest();
-    const ltfCandles = toAnalyzerCandles(ltf15);
+    const h4Pois = h4Analyzer.getPointsOfInterest();
+    const ltfCandles = toAnalyzerCandles(ltfContext);
     const desiredDirection = bias === "long" ? "bullish" : "bearish";
     const validPois = ltfPois
         .filter((p) => p.direction === desiredDirection)
@@ -265,9 +304,9 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
             halted: false,
         };
     }
-    const last1m = ltf1[ltf1.length - 1];
-    const inPoiZone = last1m.low <= poi.high && last1m.high >= poi.low;
-    const displacementOk = isDisplacement(ltf1, bias);
+    const lastEntry = ltfEntry[ltfEntry.length - 1];
+    const inPoiZone = lastEntry.low <= poi.high && lastEntry.high >= poi.low;
+    const displacementOk = isDisplacement(ltfEntry, bias);
     if (!inPoiZone || !displacementOk) {
         return {
             state: State.Scan,
@@ -281,12 +320,12 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
     }
     const bosAndFvg = confirmBosAndFvg({
         bias,
-        ltf: ltf15,
+        ltf: ltfContext,
         ltfStructure,
-        h1Structure,
+        htfStructure: h4Structure,
         ltfPois,
-        h1Pois,
-        price: last1m.close,
+        htfPois: h4Pois,
+        price: lastEntry.close,
         config,
     });
     if (!bosAndFvg.ok) {
@@ -300,9 +339,9 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
             halted: false,
         };
     }
-    const entry = clamp(last1m.close, poi.low, poi.high);
-    const avgRange15 = averageRange(ltf15, 8);
-    const buffer = Number.isFinite(avgRange15) && avgRange15 > 0 ? avgRange15 * 0.1 : 0;
+    const entry = clamp(lastEntry.close, poi.low, poi.high);
+    const avgRangeLtf = averageRange(ltfContext, 8);
+    const buffer = Number.isFinite(avgRangeLtf) && avgRangeLtf > 0 ? avgRangeLtf * 0.1 : 0;
     const stop = bias === "long" ? poi.low - buffer : poi.high + buffer;
     const r = Math.abs(entry - stop);
     if (!Number.isFinite(r) || r <= 0) {
@@ -316,10 +355,10 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
             halted: false,
         };
     }
-    const liquidityTolerance = Number.isFinite(avgRange15) && avgRange15 > 0
-        ? avgRange15 * LIQUIDITY_TOLERANCE_MULT
+    const liquidityTolerance = Number.isFinite(avgRangeLtf) && avgRangeLtf > 0
+        ? avgRangeLtf * LIQUIDITY_TOLERANCE_MULT
         : 0;
-    const liquidityPools = detectLiquidityPools(ltf15, LIQUIDITY_LOOKBACK, liquidityTolerance, LIQUIDITY_TOUCHES);
+    const liquidityPools = detectLiquidityPools(ltfContext, LIQUIDITY_LOOKBACK, liquidityTolerance, LIQUIDITY_TOUCHES);
     const liquidityTp = selectLiquidityTarget(liquidityPools, bias, entry);
     let tp = liquidityTp ??
         (bias === "long"
@@ -340,7 +379,7 @@ export function evaluateSmcStrategyForSymbol(symbol, candles, config = {}) {
         },
         kind: "PULLBACK",
         risk: 0.7,
-        message: `SMC ${bias} pullback into ${poi.type} | HTF ${h4Structure.trend}/${h1Structure.trend}`,
+        message: `SMC ${bias} pullback into ${poi.type} | HTF ${scenario === "bullish" ? "12h/4h" : "1d/4h"} (${htfHighStructure.trend}/${h4Structure.trend}) · LTF ${scenario === "bullish" ? "1h/5m" : "1h/15m"}`,
         createdAt: new Date().toISOString(),
     };
     if (config.useStrategyCheatSheet) {

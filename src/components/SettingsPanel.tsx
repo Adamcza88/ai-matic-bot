@@ -104,23 +104,23 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     },
     "ai-matic-x": {
       title: "AI-Matic-X",
-      description: "SMC profil s HTF 4h/1h biasem a POI (OB/FVG/Breaker/Liquidity) a LTF 15m/1m entry přes CHOCH/MSS a displacement pullback.",
+      description: "SMC profil s HTF 12h/4h (bull) nebo 1d/4h (bear) biasem a LTF 1h/5m (bull) nebo 1h/15m (bear) entry přes CHOCH/MSS a displacement pullback.",
       notes: [
         "Trading hours: Off",
         "Páry: top 5 USDT dle 24h volume",
-        "HTF: 4h + 1h structure (HH/HL, LH/LL) + swing points",
+        "HTF: Bull 12h + 4h / Bear 1d + 4h structure (HH/HL, LH/LL) + swing points",
         "POI: Order blocky, FVG, breaker blocks, liquidity pools",
-        "LTF: 15m + 1m displacement + CHOCH/MSS + mitigace",
+        "LTF: 1h context + 5m (bull) / 15m (bear) displacement + CHOCH/MSS + mitigace",
         "Entry: pullback do HTF POI po inducement sweep; ignoruj LTF bez HTF",
         "Smart Money combo: OB + liquidity, sweep/inducement, break & retest, FVG",
         "Checklist gate: min 7/10 potvrzeni (EMA 8/21/50, pattern, volume, BTC, OB, sweep, retest, FVG, VP/SR, CoinGlass)",
         "LONG: EMA9 > EMA21 (M5), ADX>22, ATR <70% prům.20, cena nad VWAP; SL pod low, TP 1.8× ATR",
-        "LONG: Pullback k EMA50 na M15 + higher low, ADX>20; entry break high, SL pod EMA50",
-        "LONG: Momentum <30 na M1 + bullish engulfing; rychlý scalp",
+        "LONG: Pullback k EMA50 na 1h + higher low, ADX>20; entry break high, SL pod EMA50",
+        "LONG: Momentum <30 na M5 + bullish engulfing; rychlý scalp",
         "LONG: Breakout nad resistance s ATR expanzí +20% a ADX>25",
-        "SHORT: EMA9 < EMA21 (M5), ADX>22, ATR <70% prům.20, cena pod VWAP; SL nad high",
-        "SHORT: Pullback k EMA50 na M15 + lower high, ADX>20; entry break low, SL nad EMA50",
-        "SHORT: Momentum >70 na M1 + bearish engulfing",
+        "SHORT: EMA9 < EMA21 (M15), ADX>22, ATR <70% prům.20, cena pod VWAP; SL nad high",
+        "SHORT: Pullback k EMA50 na 1h + lower high, ADX>20; entry break low, SL nad EMA50",
+        "SHORT: Momentum >70 na M15 + bearish engulfing",
         "SHORT: Breakdown pod support s ATR expanzí a ADX>25",
         "Filtrace: žádný vstup proti HTF biasu (např. 1h EMA200)",
         "Relaxed: 70%+ confidence (2+ indikátorů) · Auto‑On vždy s TP/SL + trailing",
@@ -170,7 +170,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     "ai-matic":
       "AI‑MATIC core (1h/5m): POI + struktura, pullbacky a řízení přes R‑multiple.",
     "ai-matic-x":
-      "AI‑MATIC‑X (1h/5m): SMC bias + smart‑money filtrace, přísnější vstupy.",
+      "AI‑MATIC‑X (bull 12h/4h→1h/5m · bear 1d/4h→1h/15m): SMC bias + smart‑money filtrace, přísnější vstupy.",
     "ai-matic-scalp":
       "Scalp profil (1h/1m): rychlé intraday vstupy, krátké držení, disciplinované řízení rizika.",
     "ai-matic-tree":

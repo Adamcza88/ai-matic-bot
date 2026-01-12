@@ -34,14 +34,15 @@ export const STRATEGY_CHEAT_SHEET: StrategyCheatSheetSetup[] = [
     id: "ai-matic-x-smc",
     name: "AI-MATIC-X SMC Hierarchy",
     description:
-      "HTF 4h/1h bias + POI with LTF 15m/1m CHOCH/MSS and displacement pullback entries.",
+      "Bull: HTF 12h/4h bias + LTF 1h/5m CHOCH/MSS; Bear: HTF 1d/4h bias + LTF 1h/15m entries.",
     entryType: "LIMIT_MAKER_FIRST",
     side: "both",
     priority: 2,
     rules: [
-      "HTF 4h/1h structure defines bias (HH/HL vs LH/LL)",
+      "Bullish: HTF 12h/4h structure defines bias (HH/HL)",
+      "Bearish: HTF 1d/4h structure defines bias (LH/LL)",
       "HTF key swings + POI zones: OB, FVG, Breaker, Liquidity pools",
-      "LTF 15m/1m displacement toward HTF bias",
+      "LTF: 1h context + 5m (bull) / 15m (bear) displacement toward HTF bias",
       "LTF CHOCH confirms shift; MSS break + mitigation",
       "LTF OB/FVG aligns with HTF POI before entry",
       "Entry on pullback into HTF POI after inducement sweep",
