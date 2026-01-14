@@ -591,6 +591,17 @@ export class TradingBot {
             return null;
         if (this.cooldownUntil && new Date() < this.cooldownUntil)
             return null;
+        if (this.config.aiMaticMultiTf) {
+            const htfTf = this.config.aiMaticHtfTimeframe ?? this.config.baseTimeframe;
+            const midTf = this.config.aiMaticMidTimeframe ?? "15m";
+            const ltfTf = this.config.aiMaticEntryTimeframe ?? this.config.signalTimeframe;
+            const execTf = this.config.aiMaticExecTimeframe ?? this.config.signalTimeframe;
+            const ht = await this.fetchOHLCV(htfTf);
+            const mid = await this.fetchOHLCV(midTf);
+            const lt = await this.fetchOHLCV(ltfTf);
+            const exec = await this.fetchOHLCV(execTf);
+            return this.scanForEntryFromMultiFrames(ht, mid, lt, exec);
+        }
         // Fetch data
         const ht = await this.fetchOHLCV(this.config.baseTimeframe);
         const lt = await this.fetchOHLCV(this.config.signalTimeframe);
@@ -893,6 +904,37 @@ export class TradingBot {
             }
         }
     }
+    isMidPullbackOk(df, trend) {
+        if (trend === Trend.Range)
+            return true;
+        if (df.length < 3)
+            return false;
+        const closes = df.map((c) => c.close);
+        const ema = (series, period) => {
+            const out = [];
+            const k = 2 / (period + 1);
+            series.forEach((p, i) => {
+                if (i === 0)
+                    out.push(p);
+                else
+                    out.push(out[i - 1] + k * (p - out[i - 1]));
+            });
+            return out;
+        };
+        const emaPeriod = this.config.pullbackEmaPeriod ?? 20;
+        const emaArr = ema(closes, emaPeriod);
+        const emaNow = emaArr[emaArr.length - 1];
+        if (!Number.isFinite(emaNow))
+            return false;
+        const last = df[df.length - 1];
+        if (trend === Trend.Bull) {
+            return last.low <= emaNow || last.close <= emaNow;
+        }
+        if (trend === Trend.Bear) {
+            return last.high >= emaNow || last.close >= emaNow;
+        }
+        return true;
+    }
     computeConfluence(ht, lt, trend) {
         const liquiditySweep = this.isLiquiditySweep(ht);
         const volExpansion = this.isVolatilityExpansion(lt);
@@ -951,6 +993,14 @@ export class TradingBot {
     async managePosition() {
         if (!this.position)
             return;
+        if (this.config.aiMaticMultiTf) {
+            const htfTf = this.config.aiMaticHtfTimeframe ?? this.config.baseTimeframe;
+            const execTf = this.config.aiMaticExecTimeframe ?? this.config.signalTimeframe;
+            const ht = await this.fetchOHLCV(htfTf);
+            const exec = await this.fetchOHLCV(execTf);
+            this.handleManage(ht, exec);
+            return;
+        }
         const ht = await this.fetchOHLCV(this.config.baseTimeframe);
         const lt = await this.fetchOHLCV(this.config.signalTimeframe);
         this.handleManage(ht, lt);
@@ -989,6 +1039,77 @@ export class TradingBot {
         else if (this.state === State.Manage) {
             this.managePositionWithFrames(ht, lt);
         }
+    }
+    /**
+     * Deterministická varianta – používá HTF/MTF/LTF + exekuci.
+     */
+    stepWithMultiFrames(ht, mid, lt, exec) {
+        const now = exec[exec.length - 1]?.openTime ?? Date.now();
+        this.resetDaily(now);
+        if (!this.withinSession(now) || this.riskHalted()) {
+            return;
+        }
+        if (this.state === State.Scan) {
+            const signal = this.scanForEntryFromMultiFrames(ht, mid, lt, exec);
+            if (signal) {
+                this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind);
+            }
+        }
+        else if (this.state === State.Manage) {
+            this.managePositionWithFrames(ht, exec);
+        }
+    }
+    scanForEntryFromMultiFrames(ht, mid, lt, exec) {
+        if (this.cooldownUntil && new Date() < this.cooldownUntil)
+            return null;
+        if (!ht.length || !mid.length || !lt.length || !exec.length)
+            return null;
+        const htfTrend = this.determineTrend(ht);
+        const midTrend = this.determineTrend(mid);
+        const candidate = this.scanForEntryFromFrames(ht, lt);
+        if (!candidate)
+            return null;
+        if (!Number.isFinite(candidate.stopLoss))
+            return null;
+        if (htfTrend === Trend.Bull && candidate.side !== "long")
+            return null;
+        if (htfTrend === Trend.Bear && candidate.side !== "short")
+            return null;
+        if (htfTrend !== Trend.Range) {
+            if (htfTrend === Trend.Bull && midTrend === Trend.Bear)
+                return null;
+            if (htfTrend === Trend.Bear && midTrend === Trend.Bull)
+                return null;
+            if ((candidate.kind === "PULLBACK" ||
+                candidate.kind === "MEAN_REVERSION") &&
+                !this.isMidPullbackOk(mid, htfTrend)) {
+                return null;
+            }
+        }
+        const entry = exec[exec.length - 1].close;
+        if (candidate.side === "long" && entry <= candidate.stopLoss)
+            return null;
+        if (candidate.side === "short" && entry >= candidate.stopLoss)
+            return null;
+        const highs = exec.map((c) => c.high);
+        const lows = exec.map((c) => c.low);
+        const closes = exec.map((c) => c.close);
+        const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
+        const latestATR = atrArray[atrArray.length - 1] || 0;
+        let stop = this.enforceMinimumStop(entry, candidate.stopLoss, candidate.side, latestATR);
+        if (candidate.side === "long" && stop >= entry) {
+            stop = entry - Math.max(this.config.minStopPercent * entry, latestATR);
+        }
+        if (candidate.side === "short" && stop <= entry) {
+            stop = entry + Math.max(this.config.minStopPercent * entry, latestATR);
+        }
+        stop = this.enforceMinimumStop(entry, stop, candidate.side, latestATR);
+        return {
+            side: candidate.side,
+            entry,
+            stopLoss: stop,
+            kind: candidate.kind,
+        };
     }
     scanForEntryFromFrames(ht, lt) {
         if (this.cooldownUntil && new Date() < this.cooldownUntil)
@@ -1255,16 +1376,16 @@ function ensureBot(symbol, config) {
 }
 /**
  * Hlavní vstup pro UI / feed: z nižšího TF (např. 1m) resampluje na
- * baseTimeframe/signalTimeframe, spustí stavový automat a vrátí signál.
+ * baseTimeframe/signalTimeframe (nebo AI‑MATIC multi‑TF), spustí stavový
+ * automat a vrátí signál.
  */
 export function evaluateStrategyForSymbol(symbol, candles, config = {}) {
     const bot = ensureBot(symbol, config);
     const botConfig = bot.getConfig();
-    const tfBaseMin = timeframeToMinutes(botConfig.baseTimeframe);
-    const tfSigMin = timeframeToMinutes(botConfig.signalTimeframe);
+    const useMultiTf = botConfig.aiMaticMultiTf;
+    const tfBaseMin = timeframeToMinutes(botConfig.aiMaticHtfTimeframe ?? botConfig.baseTimeframe);
     const ht = resampleCandles(candles, tfBaseMin);
-    const lt = resampleCandles(candles, tfSigMin);
-    if (!ht.length || !lt.length) {
+    if (!ht.length) {
         return {
             state: bot.getState(),
             trend: Trend.Range,
@@ -1276,7 +1397,40 @@ export function evaluateStrategyForSymbol(symbol, candles, config = {}) {
     }
     const prevState = bot.getState();
     const prevOpened = bot.getPosition()?.opened;
-    bot.stepWithFrames(ht, lt);
+    if (useMultiTf) {
+        const tfMidMin = timeframeToMinutes(botConfig.aiMaticMidTimeframe ?? "15m");
+        const tfLtfMin = timeframeToMinutes(botConfig.aiMaticEntryTimeframe ?? botConfig.signalTimeframe);
+        const tfExecMin = timeframeToMinutes(botConfig.aiMaticExecTimeframe ?? botConfig.signalTimeframe);
+        const mid = resampleCandles(candles, tfMidMin);
+        const lt = resampleCandles(candles, tfLtfMin);
+        const exec = resampleCandles(candles, tfExecMin);
+        if (!mid.length || !lt.length || !exec.length) {
+            return {
+                state: bot.getState(),
+                trend: Trend.Range,
+                trendH1: Trend.Range,
+                trendScore: 0,
+                trendAdx: Number.NaN,
+                halted: true,
+            };
+        }
+        bot.stepWithMultiFrames(ht, mid, lt, exec);
+    }
+    else {
+        const tfSigMin = timeframeToMinutes(botConfig.signalTimeframe);
+        const lt = resampleCandles(candles, tfSigMin);
+        if (!lt.length) {
+            return {
+                state: bot.getState(),
+                trend: Trend.Range,
+                trendH1: Trend.Range,
+                trendScore: 0,
+                trendAdx: Number.NaN,
+                halted: true,
+            };
+        }
+        bot.stepWithFrames(ht, lt);
+    }
     const trendMetrics = bot.getTrendMetrics(ht);
     const trend = trendMetrics.trend;
     let signal = null;

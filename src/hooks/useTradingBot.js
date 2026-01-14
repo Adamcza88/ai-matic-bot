@@ -190,6 +190,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 ...baseConfig,
                 baseTimeframe: "1h",
                 signalTimeframe: "5m",
+                aiMaticMultiTf: true,
+                aiMaticHtfTimeframe: "1h",
+                aiMaticMidTimeframe: "15m",
+                aiMaticEntryTimeframe: "5m",
+                aiMaticExecTimeframe: "1m",
                 entryStrictness: strictness,
                 partialSteps: [{ r: 1.0, exitFraction: 0.5 }],
                 adxThreshold: 20,
@@ -606,11 +611,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const settings = settingsRef.current;
         const htfTrend = decision?.htfTrend;
         const htfConsensus = typeof htfTrend?.consensus === "string" ? htfTrend.consensus : "";
-        const trendRaw = htfConsensus || String(decision?.trendH1 ?? decision?.trend ?? "");
+        const trendRaw = htfConsensus ||
+            String(decision?.trendH1 ?? decision?.trend ?? "");
         const trend = trendRaw ? trendRaw.toUpperCase() : "—";
         const adx = toNumber(decision?.trendAdx);
         const htfScore = toNumber(htfTrend?.score);
-        const score = Number.isFinite(htfScore) ? htfScore : toNumber(decision?.trendScore);
+        const score = Number.isFinite(htfScore)
+            ? htfScore
+            : toNumber(decision?.trendScore);
         const alignedCount = toNumber(htfTrend?.alignedCount);
         const htfStrong = Number.isFinite(alignedCount) && alignedCount >= 2;
         const strong = (Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
@@ -632,7 +640,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }
         const detailParts = [trend];
         if (htfConsensus) {
-            const total = Array.isArray(htfTrend?.byTimeframe) ? htfTrend.byTimeframe.length : 0;
+            const total = Array.isArray(htfTrend?.byTimeframe)
+                ? htfTrend.byTimeframe.length
+                : 0;
             const countLabel = Number.isFinite(alignedCount) && total > 0
                 ? ` (${alignedCount}/${total})`
                 : "";

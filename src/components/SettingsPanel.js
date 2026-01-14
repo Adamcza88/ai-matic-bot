@@ -73,9 +73,12 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const profileCopy = {
         "ai-matic": {
             title: "AI-Matic",
-            description: "TF stack + POI analyzer (OB/FVG/Breaker/Liquidity) s prioritou.",
+            description: "TF stack (HTF 1h/15m + LTF 5m/1m) + POI analyzer (OB/FVG/Breaker/Liquidity) s prioritou.",
             notes: [
-                "TF stack: 1H kontext, 5M signál/řízení",
+                "HTF 1h: Určuje směr trhu. Nikdy neobchoduj proti němu.",
+                "HTF 15m: Sleduj mini OB, přesnější korekce/pullbacky.",
+                "LTF 5m: Vstupní patterny, potvrzení objemů, Smart Money kontext.",
+                "LTF 1m: Absolutní přesnost vstupu, exekuce, správa SL/TS.",
                 "FVG: 3-svíčková imbalance (priority 1)",
                 "OB: poslední opačná svíčka před impulsem (priority 2)",
                 "Breaker: mitigace OB + close za extremem (priority 3)",
@@ -144,7 +147,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const meta = profileCopy[local.riskMode];
     const cheatBlocks = useMemo(() => buildCheatBlocks(meta.notes), [meta.notes]);
     const profileSummary = {
-        "ai-matic": "AI‑MATIC core (1h/5m): POI + struktura, pullbacky a řízení přes R‑multiple.",
+        "ai-matic": "AI‑MATIC core (1h/15m/5m/1m): POI + struktura, pullbacky a řízení přes R‑multiple.",
         "ai-matic-x": "AI‑MATIC‑X (bull 12h/4h→1h/5m · bear 1d/4h→1h/15m): SMC bias + smart‑money filtrace, přísnější vstupy.",
         "ai-matic-scalp": "Scalp profil (1h/1m): rychlé intraday vstupy, krátké držení, disciplinované řízení rizika.",
         "ai-matic-tree": "AI‑MATIC‑TREE (1h/5m): decision‑tree overlay nad AI‑MATIC core enginem.",

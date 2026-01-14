@@ -108,9 +108,9 @@ export default function Dashboard({
     }
     return {
       label: "AI-MATIC",
-      subtitle: "AI-MATIC (1h/5m)",
+      subtitle: "AI-MATIC (HTF 1h/15m · LTF 5m/1m)",
       symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-      timeframes: "1h/5m + POI analyzer",
+      timeframes: "HTF 1h · 15m · LTF 5m · 1m",
       session: "POI: Breaker > OB > FVG > Liquidity",
       risk: "4 USDT / trade · 8 USDT total · max 3 pos",
       entry: "FVG/OB/Breaker + liquidity pools (0.2% tol, min 3 touches)",

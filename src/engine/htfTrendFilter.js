@@ -2,9 +2,7 @@ import { computeEma, findPivotsHigh, findPivotsLow } from "./ta";
 export function evaluateHTFTrend(candles, lookbackOrOpts = 2) {
     const tags = [];
     const opts = typeof lookbackOrOpts === "number" ? undefined : lookbackOrOpts;
-    const lookback = typeof lookbackOrOpts === "number"
-        ? lookbackOrOpts
-        : lookbackOrOpts?.lookback ?? 2;
+    const lookback = typeof lookbackOrOpts === "number" ? lookbackOrOpts : lookbackOrOpts?.lookback ?? 2;
     const emaPeriod = opts?.emaPeriod ?? 200;
     const minBars = opts?.minBars ?? Math.max(lookback * 2 + 2, emaPeriod);
     const slopeLookback = Math.max(1, opts?.slopeLookback ?? 6);
@@ -78,14 +76,13 @@ export function normalizeDirection(dir) {
         return "short";
     return "none";
 }
-
 function resampleCandles(candles, timeframeMin) {
     if (!candles.length)
         return [];
-    const bucketMs = timeframeMin * 60000;
+    const bucketMs = timeframeMin * 60_000;
     const buckets = new Map();
     candles.forEach((c, idx) => {
-        const ts = Number.isFinite(c.openTime) ? c.openTime : idx * 60000;
+        const ts = Number.isFinite(c.openTime) ? c.openTime : idx * 60_000;
         const key = Math.floor(ts / bucketMs) * bucketMs;
         if (!buckets.has(key))
             buckets.set(key, []);
@@ -108,7 +105,6 @@ function resampleCandles(candles, timeframeMin) {
     });
     return out;
 }
-
 export function evaluateHTFMultiTrend(candles, opts) {
     const timeframes = opts?.timeframesMin ?? [60, 240, 1440];
     const emaByTf = opts?.emaByTimeframe ?? { 60: 200, 240: 120, 1440: 60 };

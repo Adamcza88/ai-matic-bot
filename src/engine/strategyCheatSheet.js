@@ -2,12 +2,15 @@ export const STRATEGY_CHEAT_SHEET = [
     {
         id: "ai-matic-core",
         name: "AI-MATIC Core Entry",
-        description: "AI-MATIC TF stack + POI analyzer (OB/FVG/Breaker/Liquidity) with priority sorting.",
+        description: "AI-MATIC TF stack (HTF 1h/15m + LTF 5m/1m) + POI analyzer (OB/FVG/Breaker/Liquidity) with priority sorting.",
         entryType: "LIMIT_MAKER_FIRST",
         side: "both",
         priority: 1,
         rules: [
-            "TF stack: 1h context, 5m signal/management",
+            "HTF 1h: Určuje směr trhu. Nikdy neobchoduj proti němu.",
+            "HTF 15m: Sleduj mini OB, přesnější korekce/pullbacky.",
+            "LTF 5m: Vstupní patterny, potvrzení objemů, Smart Money kontext.",
+            "LTF 1m: Absolutní přesnost vstupu, exekuce, správa SL/TS.",
             "FVG: 3-svickova imbalance detekce (priority 1)",
             "OB: posledni opacna svicka pred impulsem (priority 2)",
             "Breaker: mitigace OB + close za extremem (priority 3)",
