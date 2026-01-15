@@ -60,6 +60,7 @@ const DEFAULT_SETTINGS: AISettings = {
   haltOnDrawdown: true,
   useDynamicPositionSizing: true,
   lockProfitsWithTrail: true,
+  autoRefreshEnabled: false,
   baseRiskPerTrade: 0,
   maxAllocatedCapitalPercent: 1.0,
   maxPortfolioRiskPercent: 0.2,
@@ -89,6 +90,9 @@ function loadStoredSettings(): AISettings | null {
       merged.trendGateMode !== "reverse"
     ) {
       merged.trendGateMode = "adaptive";
+    }
+    if (typeof merged.autoRefreshEnabled !== "boolean") {
+      merged.autoRefreshEnabled = DEFAULT_SETTINGS.autoRefreshEnabled;
     }
     if (!Number.isFinite(merged.maxOpenPositions)) {
       merged.maxOpenPositions = DEFAULT_SETTINGS.maxOpenPositions;

@@ -14,6 +14,7 @@ import Logo from "./components/Logo";
 
 // Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
 const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
+const AUTO_REFRESH_INTERVAL_MS = 3 * 60_000;
 
 export default function App() {
   const auth = useAuth();
@@ -66,6 +67,14 @@ export default function App() {
     if (isGuest) return "Guest";
     return auth.user?.email ?? "";
   }, [auth.user, isGuest]);
+
+  useEffect(() => {
+    if (!bot.settings?.autoRefreshEnabled) return;
+    const timer = window.setInterval(() => {
+      window.location.reload();
+    }, AUTO_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [bot.settings?.autoRefreshEnabled]);
 
   const refreshKeyStatus = useCallback(async () => {
     if (!auth.user) return;

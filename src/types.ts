@@ -24,6 +24,7 @@ export interface AISettings {
   haltOnDrawdown: boolean;
   useDynamicPositionSizing: boolean;
   lockProfitsWithTrail: boolean;
+  autoRefreshEnabled: boolean;
   baseRiskPerTrade: number;
   maxAllocatedCapitalPercent: number;
   maxPortfolioRiskPercent: number;

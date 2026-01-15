@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AISettings } from "../types";
 
 interface Props {
@@ -13,6 +13,31 @@ type CheatBlock = { title?: string; lines: string[] };
 
 const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
 const KEYCAP_HEADING = /^[0-9]\uFE0F?\u20E3/;
+const PROFILE_SETTINGS_STORAGE_KEY = "ai-matic-profile-settings";
+
+type ProfileSettingsMap = Partial<Record<AISettings["riskMode"], AISettings>>;
+
+function loadProfileSettingsMap(): ProfileSettingsMap {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(PROFILE_SETTINGS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed as ProfileSettingsMap;
+  } catch {
+    return {};
+  }
+}
+
+function persistProfileSettingsMap(map: ProfileSettingsMap) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(PROFILE_SETTINGS_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+}
 
 function isHeadingLine(line: string) {
   return (
@@ -70,6 +95,9 @@ function compactLine(line: string, maxLen = 140): string {
 const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose }) => {
   const [local, setLocal] = useState(settings);
   const [compactCheatSheet, setCompactCheatSheet] = useState(true);
+  const profileSettingsRef = useRef<ProfileSettingsMap>(
+    loadProfileSettingsMap()
+  );
 
   useEffect(() => {
     setLocal(settings);
@@ -204,6 +232,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         ? tradingWindowLabel
         : `Off (${tzLabel})`,
     },
+    {
+      label: "Auto-refresh",
+      value: local.autoRefreshEnabled ? "On" : "Off",
+    },
     { label: "Trend gate", value: local.trendGateMode },
     { label: "Max pos", value: String(local.maxOpenPositions) },
   ];
@@ -230,6 +262,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     haltOnDrawdown: true,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
+    autoRefreshEnabled: false,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -264,6 +297,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     haltOnDrawdown: true,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
+    autoRefreshEnabled: false,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -298,6 +332,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     haltOnDrawdown: true,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
+    autoRefreshEnabled: false,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -332,6 +367,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     haltOnDrawdown: true,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
+    autoRefreshEnabled: false,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -351,9 +387,36 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     "ai-matic-tree": AI_MATIC_TREE_PRESET_UI,
   };
 
-  const applyPreset = (mode: AISettings["riskMode"]) => {
+  const stashProfileSettings = (
+    mode: AISettings["riskMode"],
+    next: AISettings
+  ) => {
+    profileSettingsRef.current = {
+      ...profileSettingsRef.current,
+      [mode]: next,
+    };
+    persistProfileSettingsMap(profileSettingsRef.current);
+  };
+
+  const resolveProfileSettings = (mode: AISettings["riskMode"]) => {
     const preset = presets[mode];
-    setLocal(preset);
+    const saved = profileSettingsRef.current[mode];
+    if (!saved) return preset;
+    const merged: AISettings = { ...preset, ...saved, riskMode: mode };
+    if (!Array.isArray(merged.tradingDays)) {
+      merged.tradingDays = preset.tradingDays;
+    }
+    if (!Number.isFinite(merged.maxOpenPositions)) {
+      merged.maxOpenPositions = preset.maxOpenPositions;
+    } else {
+      merged.maxOpenPositions = Math.max(0, Math.round(merged.maxOpenPositions));
+    }
+    return merged;
+  };
+
+  const applyPreset = (mode: AISettings["riskMode"]) => {
+    stashProfileSettings(local.riskMode, local);
+    setLocal(resolveProfileSettings(mode));
   };
 
   return (
@@ -459,6 +522,38 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 }`}
               >
                 {local.enforceSessionHours ? "On" : "Off"}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              Auto-refresh
+            </label>
+            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
+              <div>
+                <div className="font-medium">
+                  {local.autoRefreshEnabled ? "On" : "Off"}
+                </div>
+                <div className="text-xs text-secondary-foreground/70 mt-1">
+                  Obnoví aplikaci každé 3 minuty.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setLocal({
+                    ...local,
+                    autoRefreshEnabled: !local.autoRefreshEnabled,
+                  })
+                }
+                className={`rounded-md border px-3 py-1 text-sm ${
+                  local.autoRefreshEnabled
+                    ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                    : "border-slate-700 bg-slate-900/40 text-slate-200"
+                }`}
+              >
+                {local.autoRefreshEnabled ? "On" : "Off"}
               </button>
             </div>
           </div>
@@ -774,6 +869,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           <button
             type="button"
             onClick={() => {
+              stashProfileSettings(local.riskMode, local);
               onUpdateSettings(local);
               onClose();
             }}
