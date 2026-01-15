@@ -41,6 +41,9 @@ const CORRELATION_GROUPS: Symbol[][] = [
   ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
 ];
 const HTF_TIMEFRAMES_MIN = [60, 240, 1440];
+const AI_MATIC_HTF_TIMEFRAMES_MIN = [60, 15];
+const AI_MATIC_LTF_TIMEFRAMES_MIN = [5, 1];
+const SCALP_LTF_TIMEFRAMES_MIN = [1];
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -746,11 +749,30 @@ export function useTradingBot(
     ) => {
       const settings = settingsRef.current;
       const htfTrend = (decision as any)?.htfTrend;
-      const htfConsensus =
+      const ltfTrend = (decision as any)?.ltfTrend;
+      const htfConsensusRaw =
         typeof htfTrend?.consensus === "string" ? htfTrend.consensus : "";
-      const trendRaw = htfConsensus ||
+      const htfConsensus =
+        htfConsensusRaw === "bull" || htfConsensusRaw === "bear"
+          ? htfConsensusRaw
+          : "";
+      const ltfConsensus =
+        typeof ltfTrend?.consensus === "string" ? ltfTrend.consensus : "";
+      const normalizeTrend = (value: string) => {
+        const upper = value.trim().toUpperCase();
+        if (!upper || upper === "—") return "—";
+        if (upper.startsWith("BULL") || upper === "UP") return "BULL";
+        if (upper.startsWith("BEAR") || upper === "DOWN") return "BEAR";
+        if (upper.startsWith("RANGE") || upper === "NONE" || upper === "NEUTRAL") {
+          return "RANGE";
+        }
+        return upper;
+      };
+      const trendRaw =
+        htfConsensus ||
         String((decision as any)?.trendH1 ?? decision?.trend ?? "");
-      const trend = trendRaw ? trendRaw.toUpperCase() : "—";
+      const htfDir = normalizeTrend(trendRaw);
+      let ltfDir = normalizeTrend(ltfConsensus);
       const adx = toNumber((decision as any)?.trendAdx);
       const htfScore = toNumber(htfTrend?.score);
       const score = Number.isFinite(htfScore)
@@ -775,7 +797,24 @@ export function useTradingBot(
       } else {
         mode = "FOLLOW";
       }
-      const detailParts = [trend];
+      if (ltfDir === "RANGE" && Array.isArray(ltfTrend?.byTimeframe)) {
+        const dirs = ltfTrend.byTimeframe.map((entry: any) =>
+          String(entry?.result?.direction ?? "none").toLowerCase()
+        );
+        const hasBull = dirs.includes("bull");
+        const hasBear = dirs.includes("bear");
+        if (hasBull && hasBear) ltfDir = "MIXED";
+      }
+      const ltfActive = ltfDir === "BULL" || ltfDir === "BEAR";
+      const ltfConflicted = ltfDir === "MIXED";
+      const ltfMatchesTrend =
+        (!ltfActive && !ltfConflicted) || ltfDir === htfDir;
+      const ltfMatchesSignal = (signalDir: "BULL" | "BEAR") =>
+        (!ltfActive && !ltfConflicted) || ltfDir === signalDir;
+      const detailParts = [`HTF ${htfDir}`];
+      if (ltfConsensus) {
+        detailParts.push(`LTF ${ltfDir}`);
+      }
       if (htfConsensus) {
         const total = Array.isArray(htfTrend?.byTimeframe)
           ? htfTrend.byTimeframe.length
@@ -784,7 +823,7 @@ export function useTradingBot(
           Number.isFinite(alignedCount) && total > 0
             ? ` (${alignedCount}/${total})`
             : "";
-        detailParts.push(`HTF ${htfConsensus.toUpperCase()}${countLabel}`);
+        detailParts.push(`Consensus ${htfConsensus.toUpperCase()}${countLabel}`);
       }
       if (Number.isFinite(adx)) {
         detailParts.push(`ADX ${formatNumber(adx, 1)}`);
@@ -802,7 +841,19 @@ export function useTradingBot(
           const dir = String(entry?.result?.direction ?? "none").toUpperCase();
           return `${tfLabel(Number(entry?.timeframeMin ?? 0))} ${dir}`;
         });
-        if (tfParts.length) detailParts.push(tfParts.join(" · "));
+        if (tfParts.length) detailParts.push(`HTF ${tfParts.join(" · ")}`);
+      }
+      if (Array.isArray(ltfTrend?.byTimeframe)) {
+        const tfLabel = (tf: number) => {
+          if (tf >= 1440) return `${Math.round(tf / 1440)}D`;
+          if (tf >= 60) return `${Math.round(tf / 60)}H`;
+          return `${tf}m`;
+        };
+        const tfParts = ltfTrend.byTimeframe.map((entry: any) => {
+          const dir = String(entry?.result?.direction ?? "none").toUpperCase();
+          return `${tfLabel(Number(entry?.timeframeMin ?? 0))} ${dir}`;
+        });
+        if (tfParts.length) detailParts.push(`LTF ${tfParts.join(" · ")}`);
       }
       detailParts.push(
         `mode ${mode}${modeSetting === "adaptive" ? " (adaptive)" : ""}`
@@ -818,16 +869,16 @@ export function useTradingBot(
       const kind = signal.kind ?? "OTHER";
       const isMeanRev = kind === "MEAN_REVERSION";
       let ok = true;
-      if (trend === "BULL") {
+      if (htfDir === "BULL") {
         ok = mode === "FOLLOW"
-          ? signalDir === "BULL"
-          : isMeanRev && signalDir === "BEAR";
-      } else if (trend === "BEAR") {
+          ? signalDir === "BULL" && ltfMatchesTrend
+          : isMeanRev && signalDir === "BEAR" && ltfMatchesSignal(signalDir);
+      } else if (htfDir === "BEAR") {
         ok = mode === "FOLLOW"
-          ? signalDir === "BEAR"
-          : isMeanRev && signalDir === "BULL";
+          ? signalDir === "BEAR" && ltfMatchesTrend
+          : isMeanRev && signalDir === "BULL" && ltfMatchesSignal(signalDir);
       } else {
-        ok = mode === "FOLLOW" ? false : isMeanRev;
+        ok = mode === "FOLLOW" ? false : isMeanRev && ltfMatchesSignal(signalDir);
       }
       return { ok, detail };
     },
@@ -2028,6 +2079,7 @@ export function useTradingBot(
     const riskMode = settingsRef.current.riskMode;
     const isSmc = riskMode === "ai-matic-x";
     const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
+    const isScalp = riskMode === "ai-matic-scalp";
     const decisionFn = (
       symbol: string,
       candles: Parameters<typeof evaluateStrategyForSymbol>[1],
@@ -2036,10 +2088,23 @@ export function useTradingBot(
       const baseDecision = isSmc
         ? evaluateSmcStrategyForSymbol(symbol, candles, config)
         : evaluateStrategyForSymbol(symbol, candles, config);
+      const htfTimeframes = isAiMatic
+        ? AI_MATIC_HTF_TIMEFRAMES_MIN
+        : HTF_TIMEFRAMES_MIN;
+      const ltfTimeframes = isAiMatic
+        ? AI_MATIC_LTF_TIMEFRAMES_MIN
+        : isScalp
+          ? SCALP_LTF_TIMEFRAMES_MIN
+          : null;
       const htfTrend = evaluateHTFMultiTrend(candles, {
-        timeframesMin: HTF_TIMEFRAMES_MIN,
+        timeframesMin: htfTimeframes,
       });
-      return { ...baseDecision, htfTrend };
+      const ltfTrend = ltfTimeframes
+        ? evaluateHTFMultiTrend(candles, {
+            timeframesMin: ltfTimeframes,
+          })
+        : null;
+      return { ...baseDecision, htfTrend, ltfTrend };
     };
     const maxCandles = isSmc ? 3000 : isAiMatic ? 5000 : undefined;
     const backfill = isSmc
