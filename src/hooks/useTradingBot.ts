@@ -816,8 +816,12 @@ export function useTradingBot(
         (!ltfActive && !ltfConflicted) || ltfDir === signalDir;
       const isAiMaticProfile =
         settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree";
-      const trendLabel = (dir: string) =>
-        dir === "BULL" || dir === "BEAR" ? "trend" : "range";
+      const trendLabel = (dir: string) => {
+        if (dir === "BULL") return "Bull";
+        if (dir === "BEAR") return "Bear";
+        if (dir === "MIXED") return "Mixed";
+        return "Range";
+      };
       const detailParts = isAiMaticProfile
         ? [
             `HTF / 1hod ${trendLabel(htfDir)}`,
