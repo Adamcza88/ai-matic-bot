@@ -69,7 +69,7 @@ export var State;
     State["Manage"] = "MANAGE";
 })(State || (State = {}));
 function applyProfileOverrides(cfg) {
-    if (cfg.strategyProfile !== "scalp") {
+    if (cfg.strategyProfile !== "ai-matic-scalp") {
         return { ...cfg, maxOpenPositions: Math.min(cfg.maxOpenPositions, 3) };
     }
     const scalpRisk = Math.min(Math.max(cfg.riskPerTrade, 0.01), 0.02);
@@ -101,7 +101,7 @@ export const defaultConfig = {
     signalTimeframe: "5m",
     targetTradesPerDay: 100,
     riskPerTrade: 0.04,
-    strategyProfile: "trend",
+    strategyProfile: "ai-matic",
     entryStrictness: "ultra",
     useStrategyCheatSheet: false,
     accountBalance: 200000,
@@ -488,16 +488,16 @@ export class TradingBot {
         if (!this.position)
             return;
         const tpMap = {
-            trend: 2.2,
-            swing: 1.8,
-            intraday: 1.6,
-            scalp: 1.4,
+            "ai-matic": 2.2,
+            "ai-matic-tree": 2.2,
+            "ai-matic-x": 1.6,
+            "ai-matic-scalp": 1.4,
         };
         const widthMap = {
-            trend: 1.1,
-            swing: 0.8,
-            intraday: 0.6,
-            scalp: 0.4,
+            "ai-matic": 1.1,
+            "ai-matic-tree": 1.1,
+            "ai-matic-x": 0.6,
+            "ai-matic-scalp": 0.4,
         };
         const profile = this.config.strategyProfile;
         const tpR = tpMap[profile] ?? 1.4;
@@ -613,13 +613,13 @@ export class TradingBot {
      * size based on risk management settings.
      */
     enterPosition(side, entry, stopLoss, kind = "OTHER") {
-        const profileRisk = this.config.strategyProfile === "trend"
+        const profileRisk = this.config.strategyProfile === "ai-matic"
             ? 0.05
-            : this.config.strategyProfile === "scalp"
+            : this.config.strategyProfile === "ai-matic-scalp"
                 ? 0.015
-                : this.config.strategyProfile === "intraday"
+                : this.config.strategyProfile === "ai-matic-x"
                     ? 0.03
-                    : 0.04;
+                    : 0.05;
         const riskPct = Math.min(this.config.maxRiskPerTradeCap, Math.max(profileRisk, this.config.riskPerTrade));
         const slDistance = computeRisk(entry, stopLoss);
         // Calculate size using PURE function
@@ -635,10 +635,10 @@ export class TradingBot {
             return;
         }
         const rrMap = {
-            trend: 2.2,
-            scalp: 1.4,
-            swing: 1.8,
-            intraday: 1.6,
+            "ai-matic": 2.2,
+            "ai-matic-tree": 2.2,
+            "ai-matic-x": 1.6,
+            "ai-matic-scalp": 1.4,
         };
         const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
         this.position = {
@@ -1138,13 +1138,13 @@ export class TradingBot {
             : null;
         const resolveEntryStop = (side, entry, fallback) => ensureStop(side, entry, swingStops ? swingStops[side] : fallback);
         const conf = this.computeConfluence(ht, lt, trend);
-        if (this.config.strategyProfile === "scalp" && conf.score < 3 && !conf.liquiditySweep)
+        if (this.config.strategyProfile === "ai-matic-scalp" && conf.score < 3 && !conf.liquiditySweep)
             return null;
         const strictness = this.config.entryStrictness ??
-            (this.config.strategyProfile === "intraday"
-                ? "ultra"
-                : this.config.strategyProfile === "scalp"
-                    ? "relaxed"
+            (this.config.strategyProfile === "ai-matic-scalp"
+                ? "relaxed"
+                : this.config.strategyProfile === "ai-matic-x"
+                    ? "ultra"
                     : "base");
         const isTest = strictness === "test";
         // REGIME GATE: Trend vs Range logic

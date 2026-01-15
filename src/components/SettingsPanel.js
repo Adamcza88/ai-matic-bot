@@ -1,8 +1,39 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../constants/symbols";
 const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
 const KEYCAP_HEADING = /^[0-9]\uFE0F?\u20E3/;
+const PROFILE_SETTINGS_STORAGE_KEY = "ai-matic-profile-settings";
 const MAX_OPEN_POSITIONS_CAP = 100;
+const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * 4;
+const MIN_AUTO_REFRESH_MINUTES = 1;
+const DEFAULT_AUTO_REFRESH_MINUTES = 3;
+function loadProfileSettingsMap() {
+    if (typeof localStorage === "undefined")
+        return {};
+    try {
+        const raw = localStorage.getItem(PROFILE_SETTINGS_STORAGE_KEY);
+        if (!raw)
+            return {};
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object")
+            return {};
+        return parsed;
+    }
+    catch {
+        return {};
+    }
+}
+function persistProfileSettingsMap(map) {
+    if (typeof localStorage === "undefined")
+        return;
+    try {
+        localStorage.setItem(PROFILE_SETTINGS_STORAGE_KEY, JSON.stringify(map));
+    }
+    catch {
+        // ignore storage errors
+    }
+}
 function isHeadingLine(line) {
     return (KEYCAP_HEADING.test(line) ||
         /^\d+\)/.test(line) ||
@@ -57,6 +88,7 @@ function compactLine(line, maxLen = 140) {
 const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const [local, setLocal] = useState(settings);
     const [compactCheatSheet, setCompactCheatSheet] = useState(true);
+    const profileSettingsRef = useRef(loadProfileSettingsMap());
     useEffect(() => {
         setLocal(settings);
     }, [settings]);
@@ -178,8 +210,16 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                 ? tradingWindowLabel
                 : `Off (${tzLabel})`,
         },
+        {
+            label: "Auto-refresh",
+            value: local.autoRefreshEnabled
+                ? `${local.autoRefreshMinutes}m`
+                : "Off",
+        },
         { label: "Trend gate", value: local.trendGateMode },
         { label: "Max pos", value: String(local.maxOpenPositions) },
+        { label: "Max orders", value: String(local.maxOpenOrders) },
+        { label: "Symbols", value: local.selectedSymbols.join(", ") },
     ];
     const AI_MATIC_PRESET_UI = {
         riskMode: "ai-matic",
@@ -197,12 +237,16 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
         maxOpenPositions: 3,
+        maxOpenOrders: 12,
+        selectedSymbols: [...SUPPORTED_SYMBOLS],
         entryStrictness: "base",
         enforceSessionHours: true,
         haltOnDailyLoss: true,
         haltOnDrawdown: true,
         useDynamicPositionSizing: true,
         lockProfitsWithTrail: true,
+        autoRefreshEnabled: false,
+        autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
         requireConfirmationInAuto: false,
         positionSizingMultiplier: 1.0,
         customInstructions: "",
@@ -230,12 +274,16 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
         maxOpenPositions: 3,
+        maxOpenOrders: 12,
+        selectedSymbols: [...SUPPORTED_SYMBOLS],
         entryStrictness: "ultra",
         enforceSessionHours: false,
         haltOnDailyLoss: true,
         haltOnDrawdown: true,
         useDynamicPositionSizing: true,
         lockProfitsWithTrail: true,
+        autoRefreshEnabled: false,
+        autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
         requireConfirmationInAuto: false,
         positionSizingMultiplier: 1.0,
         customInstructions: "",
@@ -263,12 +311,16 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
         maxOpenPositions: 3,
+        maxOpenOrders: 12,
+        selectedSymbols: [...SUPPORTED_SYMBOLS],
         entryStrictness: "ultra",
         enforceSessionHours: true,
         haltOnDailyLoss: true,
         haltOnDrawdown: true,
         useDynamicPositionSizing: true,
         lockProfitsWithTrail: true,
+        autoRefreshEnabled: false,
+        autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
         requireConfirmationInAuto: false,
         positionSizingMultiplier: 1.0,
         customInstructions: "",
@@ -296,12 +348,16 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
         maxOpenPositions: 2,
+        maxOpenOrders: 8,
+        selectedSymbols: [...SUPPORTED_SYMBOLS],
         entryStrictness: "base",
         enforceSessionHours: false,
         haltOnDailyLoss: true,
         haltOnDrawdown: true,
         useDynamicPositionSizing: true,
         lockProfitsWithTrail: true,
+        autoRefreshEnabled: false,
+        autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
         requireConfirmationInAuto: false,
         positionSizingMultiplier: 1.0,
         customInstructions: "",
@@ -319,9 +375,50 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         "ai-matic-scalp": AI_MATIC_SCALP_PRESET_UI,
         "ai-matic-tree": AI_MATIC_TREE_PRESET_UI,
     };
-    const applyPreset = (mode) => {
+    const stashProfileSettings = (mode, next) => {
+        profileSettingsRef.current = {
+            ...profileSettingsRef.current,
+            [mode]: next,
+        };
+        persistProfileSettingsMap(profileSettingsRef.current);
+    };
+    const resolveProfileSettings = (mode) => {
         const preset = presets[mode];
-        setLocal(preset);
+        const saved = profileSettingsRef.current[mode];
+        if (!saved)
+            return preset;
+        const merged = { ...preset, ...saved, riskMode: mode };
+        if (!Array.isArray(merged.tradingDays)) {
+            merged.tradingDays = preset.tradingDays;
+        }
+        if (!Number.isFinite(merged.maxOpenPositions)) {
+            merged.maxOpenPositions = preset.maxOpenPositions;
+        }
+        else {
+            merged.maxOpenPositions = Math.min(MAX_OPEN_POSITIONS_CAP, Math.max(0, Math.round(merged.maxOpenPositions)));
+        }
+        if (!Number.isFinite(merged.maxOpenOrders)) {
+            merged.maxOpenOrders = preset.maxOpenOrders;
+        }
+        else {
+            merged.maxOpenOrders = Math.min(MAX_OPEN_ORDERS_CAP, Math.max(0, Math.round(merged.maxOpenOrders)));
+        }
+        if (!Number.isFinite(merged.autoRefreshMinutes)) {
+            merged.autoRefreshMinutes = preset.autoRefreshMinutes;
+        }
+        else {
+            merged.autoRefreshMinutes = Math.max(MIN_AUTO_REFRESH_MINUTES, Math.round(merged.autoRefreshMinutes));
+        }
+        const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
+        merged.selectedSymbols =
+            selectedSymbols.length > 0
+                ? selectedSymbols
+                : [...preset.selectedSymbols];
+        return merged;
+    };
+    const applyPreset = (mode) => {
+        stashProfileSettings(local.riskMode, local);
+        setLocal(resolveProfileSettings(mode));
     };
     return (_jsx("div", { className: "fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50", children: _jsxs("div", { className: "w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto", children: [_jsxs("div", { className: "flex flex-col space-y-1.5 mb-6", children: [_jsx("h2", { className: "text-lg font-semibold leading-none tracking-tight", children: "Settings" }), _jsxs("div", { className: "rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200", children: [_jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-400", children: "Strategie (aktu\u00E1ln\u00ED stav)" }), _jsx("div", { children: profileSummary[local.riskMode] }), _jsx("div", { className: "mt-2 flex flex-wrap gap-2 text-[11px] text-slate-400", children: statusItems.map((item) => (_jsxs("span", { className: "rounded-full border border-slate-800 bg-slate-950/40 px-2 py-0.5", children: [item.label, ": ", item.value] }, item.label))) })] }), _jsx("p", { className: "text-sm text-muted-foreground", children: "Zvolen\u00FD profil nastav\u00ED v\u00FDchoz\u00ED parametry; vybran\u00E9 podm\u00EDnky m\u016F\u017Ee\u0161 p\u0159epnout." })] }), _jsxs("div", { className: "grid gap-4 py-4", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Profile" }), _jsxs("div", { className: "grid grid-cols-2 gap-2", children: [_jsx("button", { onClick: () => applyPreset("ai-matic"), className: `rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic"
                                                 ? "bg-emerald-600 text-white"
@@ -336,7 +433,20 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                 enforceSessionHours: !local.enforceSessionHours,
                                             }), className: `rounded-md border px-3 py-1 text-sm ${local.enforceSessionHours
                                                 ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enforceSessionHours ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Gates" }), _jsxs("div", { className: "grid gap-2", children: [_jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: "Hard podm\u00EDnky" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "P\u0159\u00EDsn\u00E9 blokace vstupu (spread hard, impulse, stale BBO)." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enforceSessionHours ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Auto-refresh" }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: local.autoRefreshEnabled ? "On" : "Off" }), _jsxs("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: ["Obnov\u00ED aplikaci ka\u017Ed\u00FDch ", local.autoRefreshMinutes, " min."] })] }), _jsxs("div", { className: "flex items-center gap-2", children: [_jsx("input", { type: "number", min: MIN_AUTO_REFRESH_MINUTES, step: 1, value: local.autoRefreshMinutes, onChange: (event) => {
+                                                        const next = event.currentTarget.valueAsNumber;
+                                                        setLocal({
+                                                            ...local,
+                                                            autoRefreshMinutes: Number.isFinite(next)
+                                                                ? Math.max(MIN_AUTO_REFRESH_MINUTES, Math.round(next))
+                                                                : DEFAULT_AUTO_REFRESH_MINUTES,
+                                                        });
+                                                    }, className: "w-16 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-right text-slate-200" }), _jsx("button", { type: "button", onClick: () => setLocal({
+                                                        ...local,
+                                                        autoRefreshEnabled: !local.autoRefreshEnabled,
+                                                    }), className: `rounded-md border px-3 py-1 text-sm ${local.autoRefreshEnabled
+                                                        ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                                                        : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.autoRefreshEnabled ? "On" : "Off" })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Gates" }), _jsxs("div", { className: "grid gap-2", children: [_jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: "Hard podm\u00EDnky" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "P\u0159\u00EDsn\u00E9 blokace vstupu (spread hard, impulse, stale BBO)." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
                                                         ...local,
                                                         enableHardGates: !local.enableHardGates,
                                                     }), className: `rounded-md border px-3 py-1 text-sm ${local.enableHardGates
@@ -369,15 +479,42 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                 strategyCheatSheetEnabled: !local.strategyCheatSheetEnabled,
                                             }), className: `rounded-md border px-3 py-1 text-sm ${local.strategyCheatSheetEnabled
                                                 ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.strategyCheatSheetEnabled ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Max Positions" }), _jsxs("div", { className: "flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm", children: [_jsx("input", { type: "number", min: 0, step: 1, value: local.maxOpenPositions, onChange: (event) => {
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.strategyCheatSheetEnabled ? "On" : "Off" })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Max Positions" }), _jsxs("div", { className: "flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm", children: [_jsx("input", { type: "number", min: 0, max: MAX_OPEN_POSITIONS_CAP, step: 1, value: local.maxOpenPositions, onChange: (event) => {
                                                 const next = event.currentTarget.valueAsNumber;
                                                 setLocal({
                                                     ...local,
-                                            maxOpenPositions: Number.isFinite(next)
-                                                ? Math.min(MAX_OPEN_POSITIONS_CAP, Math.max(0, Math.round(next)))
-                                                : 0,
-                                        });
-                                    }, className: "w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200", max: MAX_OPEN_POSITIONS_CAP }), _jsx("span", { className: "text-xs text-secondary-foreground/70", children: "0-100 pozic (0 = žádná pozice)" })] })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsxs("div", { className: "flex items-center justify-between text-xs text-slate-500", children: [_jsxs("div", { children: ["View: ", compactCheatSheet ? "Compact" : "Detail"] }), _jsx("button", { type: "button", onClick: () => setCompactCheatSheet((v) => !v), className: `rounded-md border px-2 py-1 text-[11px] ${compactCheatSheet
+                                                    maxOpenPositions: Number.isFinite(next)
+                                                        ? Math.min(MAX_OPEN_POSITIONS_CAP, Math.max(0, Math.round(next)))
+                                                        : 0,
+                                                });
+                                            }, className: "w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200" }), _jsx("span", { className: "text-xs text-secondary-foreground/70", children: "0-100 pozic (0 = \u017E\u00E1dn\u00E1 pozice)" })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Max Orders" }), _jsxs("div", { className: "flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm", children: [_jsx("input", { type: "number", min: 0, max: MAX_OPEN_ORDERS_CAP, step: 1, value: local.maxOpenOrders, onChange: (event) => {
+                                                const next = event.currentTarget.valueAsNumber;
+                                                setLocal({
+                                                    ...local,
+                                                    maxOpenOrders: Number.isFinite(next)
+                                                        ? Math.min(MAX_OPEN_ORDERS_CAP, Math.max(0, Math.round(next)))
+                                                        : 0,
+                                                });
+                                            }, className: "w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200" }), _jsxs("span", { className: "text-xs text-secondary-foreground/70", children: ["0-", MAX_OPEN_ORDERS_CAP, " order\u016F (0 = \u017E\u00E1dn\u00E1 objedn\u00E1vka)"] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none", children: "Trading Symbols" }), _jsx("div", { className: "flex flex-wrap gap-2 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm", children: SUPPORTED_SYMBOLS.map((symbol) => {
+                                        const active = local.selectedSymbols.includes(symbol);
+                                        return (_jsx("button", { type: "button", onClick: () => {
+                                                const next = new Set(local.selectedSymbols);
+                                                if (next.has(symbol)) {
+                                                    if (next.size === 1)
+                                                        return;
+                                                    next.delete(symbol);
+                                                }
+                                                else {
+                                                    next.add(symbol);
+                                                }
+                                                setLocal({
+                                                    ...local,
+                                                    selectedSymbols: SUPPORTED_SYMBOLS.filter((s) => next.has(s)),
+                                                });
+                                            }, className: `rounded-md border px-3 py-1 text-xs font-medium ${active
+                                                ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: symbol }, symbol));
+                                    }) }), _jsx("span", { className: "text-xs text-secondary-foreground/70", children: "Vyber, kter\u00E9 coiny bot skenuje a obchoduje." })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsxs("div", { className: "flex items-center justify-between text-xs text-slate-500", children: [_jsxs("div", { children: ["View: ", compactCheatSheet ? "Compact" : "Detail"] }), _jsx("button", { type: "button", onClick: () => setCompactCheatSheet((v) => !v), className: `rounded-md border px-2 py-1 text-[11px] ${compactCheatSheet
                                                 ? "border-slate-700 bg-slate-900/60 text-slate-200"
                                                 : "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"}`, children: compactCheatSheet ? "Compact" : "Detail" })] }), _jsx("div", { className: "space-y-3 text-slate-400", children: cheatBlocks.map((block, blockIndex) => {
                                         const rawLines = compactCheatSheet
@@ -399,7 +536,8 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                         }
                                                         return (_jsx("li", { children: compactCheatSheet ? compactLine(line) : line }, `${blockIndex}-${lineIndex}`));
                                                     }) }), compactCheatSheet && hiddenCount > 0 ? (_jsxs("div", { className: "mt-1 text-[11px] text-slate-500", children: ["+", hiddenCount, " dal\u0161\u00EDch"] })) : null] }, `${block.title ?? "block"}-${blockIndex}`));
-                                    }) }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Max positions", " ", local.maxOpenPositions] })] })] }), _jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:justify-end mt-6", children: [_jsx("button", { type: "button", onClick: () => {
+                                    }) }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Max positions", " ", local.maxOpenPositions, " \u2022 Max orders ", local.maxOpenOrders] })] })] }), _jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:justify-end mt-6", children: [_jsx("button", { type: "button", onClick: () => {
+                                stashProfileSettings(local.riskMode, local);
                                 onUpdateSettings(local);
                                 onClose();
                             }, className: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-emerald-600 text-white hover:bg-emerald-500 h-10 px-4 py-2 w-full sm:w-auto", children: "Save" }), _jsx("button", { onClick: onClose, className: "inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full sm:w-auto", children: "Close" })] })] }) }));

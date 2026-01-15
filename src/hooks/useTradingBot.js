@@ -7,6 +7,7 @@ import { evaluateStrategyForSymbol } from "../engine/botEngine";
 import { evaluateSmcStrategyForSymbol } from "../engine/smcStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { TradingMode } from "../types";
+import { SUPPORTED_SYMBOLS, filterSupportedSymbols, } from "../constants/symbols";
 import { loadPnlHistory, mergePnlRecords, resetPnlHistoryMap, } from "../lib/pnlHistory";
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
@@ -22,10 +23,12 @@ const TREND_GATE_STRONG_SCORE = 3;
 const TREND_GATE_REVERSE_ADX = 19;
 const TREND_GATE_REVERSE_SCORE = 1;
 const CORRELATION_WAVE_WINDOW_MS = 60 * 60_000;
-const CORRELATION_GROUPS = [
-    ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-];
+const CORRELATION_GROUPS = [SUPPORTED_SYMBOLS];
 const HTF_TIMEFRAMES_MIN = [60, 240, 1440];
+const AI_MATIC_HTF_TIMEFRAMES_MIN = [60, 15];
+const AI_MATIC_LTF_TIMEFRAMES_MIN = [5, 1];
+const SCALP_LTF_TIMEFRAMES_MIN = [1];
+const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
     trendGateMode: "adaptive",
@@ -44,10 +47,14 @@ const DEFAULT_SETTINGS = {
     haltOnDrawdown: true,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
+    autoRefreshEnabled: false,
+    autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
     baseRiskPerTrade: 0,
     maxAllocatedCapitalPercent: 1.0,
     maxPortfolioRiskPercent: 0.2,
     maxOpenPositions: 3,
+    maxOpenOrders: 12,
+    selectedSymbols: [...SUPPORTED_SYMBOLS],
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -73,12 +80,32 @@ function loadStoredSettings() {
             merged.trendGateMode !== "reverse") {
             merged.trendGateMode = "adaptive";
         }
+        if (typeof merged.autoRefreshEnabled !== "boolean") {
+            merged.autoRefreshEnabled = DEFAULT_SETTINGS.autoRefreshEnabled;
+        }
+        if (!Number.isFinite(merged.autoRefreshMinutes)) {
+            merged.autoRefreshMinutes = DEFAULT_SETTINGS.autoRefreshMinutes;
+        }
+        else {
+            merged.autoRefreshMinutes = Math.max(1, Math.round(merged.autoRefreshMinutes));
+        }
         if (!Number.isFinite(merged.maxOpenPositions)) {
             merged.maxOpenPositions = DEFAULT_SETTINGS.maxOpenPositions;
         }
         else {
             merged.maxOpenPositions = Math.min(MAX_OPEN_POSITIONS_CAP, Math.max(0, Math.round(merged.maxOpenPositions)));
         }
+        if (!Number.isFinite(merged.maxOpenOrders)) {
+            merged.maxOpenOrders = DEFAULT_SETTINGS.maxOpenOrders;
+        }
+        else {
+            merged.maxOpenOrders = Math.min(MAX_OPEN_ORDERS_CAP, Math.max(0, Math.round(merged.maxOpenOrders)));
+        }
+        const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
+        merged.selectedSymbols =
+            selectedSymbols.length > 0
+                ? selectedSymbols
+                : [...DEFAULT_SETTINGS.selectedSymbols];
         return merged;
     }
     catch {
@@ -149,7 +176,6 @@ function buildEntryFallback(list) {
     }
     return map;
 }
-const WATCH_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 const FIXED_QTY_BY_SYMBOL = {
     BTCUSDT: 0.005,
     ETHUSDT: 0.15,
@@ -174,9 +200,19 @@ const CHEAT_SHEET_SETUP_BY_RISK_MODE = {
     "ai-matic-scalp": "ai-matic-scalp-scalpera",
     "ai-matic-tree": "ai-matic-decision-tree",
 };
+const PROFILE_BY_RISK_MODE = {
+    "ai-matic": "AI-MATIC",
+    "ai-matic-x": "AI-MATIC-X",
+    "ai-matic-scalp": "AI-MATIC-SCALP",
+    "ai-matic-tree": "AI-MATIC-TREE",
+};
 export function useTradingBot(mode, useTestnet = false, authToken) {
     const [settings, setSettings] = useState(() => loadStoredSettings() ?? DEFAULT_SETTINGS);
     const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
+    const activeSymbols = useMemo(() => {
+        const next = filterSupportedSymbols(settings.selectedSymbols);
+        return next.length > 0 ? next : [...SUPPORTED_SYMBOLS];
+    }, [settings.selectedSymbols]);
     const engineConfig = useMemo(() => {
         const cheatSheetSetupId = settings.strategyCheatSheetEnabled
             ? CHEAT_SHEET_SETUP_BY_RISK_MODE[settings.riskMode]
@@ -191,6 +227,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree") {
             return {
                 ...baseConfig,
+                strategyProfile: settings.riskMode === "ai-matic" ? "ai-matic" : "ai-matic-tree",
                 baseTimeframe: "1h",
                 signalTimeframe: "5m",
                 aiMaticMultiTf: true,
@@ -219,10 +256,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 : settings.entryStrictness;
             return {
                 ...baseConfig,
-                strategyProfile: "scalp",
+                strategyProfile: "ai-matic-scalp",
                 baseTimeframe: "1h",
                 signalTimeframe: "1m",
                 entryStrictness: strictness,
+            };
+        }
+        if (settings.riskMode === "ai-matic-x") {
+            return {
+                ...baseConfig,
+                strategyProfile: "ai-matic-x",
             };
         }
         return baseConfig;
@@ -593,12 +636,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return Number.isFinite(size) && size > 0;
         });
         const openOrdersCount = ordersRef.current.length;
-        const maxOrders = Number.isFinite(maxPositions)
-            ? maxPositions > 0
-                ? Math.min(maxPositions * ORDERS_PER_POSITION, MAX_OPEN_ORDERS_CAP)
-                : 0
-            : MAX_OPEN_ORDERS_CAP;
-        const ordersClearOk = !Number.isFinite(maxOrders) || openOrdersCount < maxOrders;
+        const maxOrders = toNumber(settings.maxOpenOrders);
+        const ordersClearOk = !Number.isFinite(maxOrders)
+            ? true
+            : maxOrders > 0
+                ? openOrdersCount < maxOrders
+                : false;
         const engineOk = !(decision?.halted ?? false);
         return {
             settings,
@@ -617,10 +660,29 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const resolveTrendGate = useCallback((decision, signal) => {
         const settings = settingsRef.current;
         const htfTrend = decision?.htfTrend;
-        const htfConsensus = typeof htfTrend?.consensus === "string" ? htfTrend.consensus : "";
-        const trendRaw = htfConsensus ||
+        const ltfTrend = decision?.ltfTrend;
+        const htfConsensusRaw = typeof htfTrend?.consensus === "string" ? htfTrend.consensus : "";
+        const htfConsensus = htfConsensusRaw === "bull" || htfConsensusRaw === "bear"
+            ? htfConsensusRaw
+            : "";
+        const ltfConsensus = typeof ltfTrend?.consensus === "string" ? ltfTrend.consensus : "";
+        const normalizeTrend = (value) => {
+            const upper = value.trim().toUpperCase();
+            if (!upper || upper === "—")
+                return "—";
+            if (upper.startsWith("BULL") || upper === "UP")
+                return "BULL";
+            if (upper.startsWith("BEAR") || upper === "DOWN")
+                return "BEAR";
+            if (upper.startsWith("RANGE") || upper === "NONE" || upper === "NEUTRAL") {
+                return "RANGE";
+            }
+            return upper;
+        };
+        const trendRaw = htfConsensusRaw ||
             String(decision?.trendH1 ?? decision?.trend ?? "");
-        const trend = trendRaw ? trendRaw.toUpperCase() : "—";
+        const htfDir = normalizeTrend(trendRaw);
+        let ltfDir = normalizeTrend(ltfConsensus);
         const adx = toNumber(decision?.trendAdx);
         const htfScore = toNumber(htfTrend?.score);
         const score = Number.isFinite(htfScore)
@@ -645,23 +707,52 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         else {
             mode = "FOLLOW";
         }
-        const detailParts = [trend];
-        if (htfConsensus) {
+        if (ltfDir === "RANGE" && Array.isArray(ltfTrend?.byTimeframe)) {
+            const dirs = ltfTrend.byTimeframe.map((entry) => String(entry?.result?.direction ?? "none").toLowerCase());
+            const hasBull = dirs.includes("bull");
+            const hasBear = dirs.includes("bear");
+            if (hasBull && hasBear)
+                ltfDir = "MIXED";
+        }
+        const hasLtf = Array.isArray(ltfTrend?.byTimeframe) && ltfTrend.byTimeframe.length > 0;
+        const htfIsTrend = htfDir === "BULL" || htfDir === "BEAR";
+        const ltfIsTrend = ltfDir === "BULL" || ltfDir === "BEAR";
+        const ltfMatchesSignal = (signalDir) => !hasLtf || (ltfIsTrend && ltfDir === signalDir);
+        const isAiMaticProfile = settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree";
+        const trendLabel = (dir) => {
+            if (dir === "BULL")
+                return "Bull";
+            if (dir === "BEAR")
+                return "Bear";
+            if (dir === "MIXED")
+                return "Mixed";
+            return "Range";
+        };
+        const detailParts = isAiMaticProfile
+            ? [
+                `HTF / 1hod ${trendLabel(htfDir)}`,
+                `LTF / 5min ${trendLabel(ltfDir)}`,
+            ]
+            : [`HTF ${htfDir}`];
+        if (!isAiMaticProfile && ltfConsensus) {
+            detailParts.push(`LTF ${ltfDir}`);
+        }
+        if (!isAiMaticProfile && htfConsensus) {
             const total = Array.isArray(htfTrend?.byTimeframe)
                 ? htfTrend.byTimeframe.length
                 : 0;
             const countLabel = Number.isFinite(alignedCount) && total > 0
                 ? ` (${alignedCount}/${total})`
                 : "";
-            detailParts.push(`HTF ${htfConsensus.toUpperCase()}${countLabel}`);
+            detailParts.push(`Consensus ${htfConsensus.toUpperCase()}${countLabel}`);
         }
-        if (Number.isFinite(adx)) {
+        if (!isAiMaticProfile && Number.isFinite(adx)) {
             detailParts.push(`ADX ${formatNumber(adx, 1)}`);
         }
-        if (Number.isFinite(score)) {
+        if (!isAiMaticProfile && Number.isFinite(score)) {
             detailParts.push(`score ${formatNumber(score, 0)}`);
         }
-        if (Array.isArray(htfTrend?.byTimeframe)) {
+        if (!isAiMaticProfile && Array.isArray(htfTrend?.byTimeframe)) {
             const tfLabel = (tf) => {
                 if (tf >= 1440)
                     return `${Math.round(tf / 1440)}D`;
@@ -674,9 +765,26 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 return `${tfLabel(Number(entry?.timeframeMin ?? 0))} ${dir}`;
             });
             if (tfParts.length)
-                detailParts.push(tfParts.join(" · "));
+                detailParts.push(`HTF ${tfParts.join(" · ")}`);
         }
-        detailParts.push(`mode ${mode}${modeSetting === "adaptive" ? " (adaptive)" : ""}`);
+        if (!isAiMaticProfile && Array.isArray(ltfTrend?.byTimeframe)) {
+            const tfLabel = (tf) => {
+                if (tf >= 1440)
+                    return `${Math.round(tf / 1440)}D`;
+                if (tf >= 60)
+                    return `${Math.round(tf / 60)}H`;
+                return `${tf}m`;
+            };
+            const tfParts = ltfTrend.byTimeframe.map((entry) => {
+                const dir = String(entry?.result?.direction ?? "none").toUpperCase();
+                return `${tfLabel(Number(entry?.timeframeMin ?? 0))} ${dir}`;
+            });
+            if (tfParts.length)
+                detailParts.push(`LTF ${tfParts.join(" · ")}`);
+        }
+        if (!isAiMaticProfile) {
+            detailParts.push(`mode ${mode}${modeSetting === "adaptive" ? " (adaptive)" : ""}`);
+        }
         const detail = detailParts.join(" | ");
         if (!signal) {
             return { ok: true, detail };
@@ -685,19 +793,19 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const signalDir = sideRaw === "buy" ? "BULL" : "BEAR";
         const kind = signal.kind ?? "OTHER";
         const isMeanRev = kind === "MEAN_REVERSION";
-        let ok = true;
-        if (trend === "BULL") {
-            ok = mode === "FOLLOW"
-                ? signalDir === "BULL"
-                : isMeanRev && signalDir === "BEAR";
+        if (!htfIsTrend) {
+            return { ok: false, detail };
         }
-        else if (trend === "BEAR") {
-            ok = mode === "FOLLOW"
-                ? signalDir === "BEAR"
-                : isMeanRev && signalDir === "BULL";
+        if (hasLtf && !ltfIsTrend) {
+            return { ok: false, detail };
+        }
+        const ltfOk = ltfMatchesSignal(signalDir);
+        let ok = false;
+        if (mode === "FOLLOW") {
+            ok = signalDir === htfDir && ltfOk;
         }
         else {
-            ok = mode === "FOLLOW" ? false : isMeanRev;
+            ok = isMeanRev && signalDir !== htfDir && ltfOk;
         }
         return { ok, detail };
     }, []);
@@ -833,7 +941,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const ordersDetail = Number.isFinite(context.maxOrders)
             ? `open ${context.openOrdersCount}/${context.maxOrders}`
             : `open ${context.openOrdersCount}/no limit`;
-        addGate("Orders clear", context.ordersClearOk, ordersDetail);
+        addGate("Max orders", context.ordersClearOk, ordersDetail);
         const correlationGate = resolveCorrelationGate(symbol, Date.now());
         addGate("Correlation", correlationGate.ok, correlationGate.detail);
         const slOk = context.hasPosition && Number.isFinite(sl) && sl > 0;
@@ -859,8 +967,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             if (context.hasPosition && isGateEnabled("Position clear")) {
                 hardReasons.push("Position clear");
             }
-            if (!context.ordersClearOk && isGateEnabled("Orders clear")) {
-                hardReasons.push("Orders clear");
+            if (!context.ordersClearOk && isGateEnabled("Max orders")) {
+                hardReasons.push("Max orders");
             }
             if (feedAgeOk === false && isGateEnabled("Feed age")) {
                 hardReasons.push("Feed age");
@@ -1495,7 +1603,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const intent = {
             intentId: crypto.randomUUID(),
             createdAt: Date.now(),
-            profile: "AI-MATIC",
+            profile: PROFILE_BY_RISK_MODE[settingsRef.current.riskMode] ?? "AI-MATIC",
             symbol: signal.symbol,
             side: signal.side,
             entryType: signal.entryType,
@@ -1613,8 +1721,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             if (context.hasPosition && isGateEnabled("Position clear")) {
                 blockReasons.push("Position clear");
             }
-            if (!context.ordersClearOk && isGateEnabled("Orders clear")) {
-                blockReasons.push("Orders clear");
+            if (!context.ordersClearOk && isGateEnabled("Max orders")) {
+                blockReasons.push("Max orders");
             }
             if (context.settings.requireConfirmationInAuto &&
                 isGateEnabled("Confirm required")) {
@@ -1743,14 +1851,28 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const riskMode = settingsRef.current.riskMode;
         const isSmc = riskMode === "ai-matic-x";
         const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
+        const isScalp = riskMode === "ai-matic-scalp";
         const decisionFn = (symbol, candles, config) => {
             const baseDecision = isSmc
                 ? evaluateSmcStrategyForSymbol(symbol, candles, config)
                 : evaluateStrategyForSymbol(symbol, candles, config);
+            const htfTimeframes = isAiMatic
+                ? AI_MATIC_HTF_TIMEFRAMES_MIN
+                : HTF_TIMEFRAMES_MIN;
+            const ltfTimeframes = isAiMatic
+                ? AI_MATIC_LTF_TIMEFRAMES_MIN
+                : isScalp
+                    ? SCALP_LTF_TIMEFRAMES_MIN
+                    : null;
             const htfTrend = evaluateHTFMultiTrend(candles, {
-                timeframesMin: HTF_TIMEFRAMES_MIN,
+                timeframesMin: htfTimeframes,
             });
-            return { ...baseDecision, htfTrend };
+            const ltfTrend = ltfTimeframes
+                ? evaluateHTFMultiTrend(candles, {
+                    timeframesMin: ltfTimeframes,
+                })
+                : null;
+            return { ...baseDecision, htfTrend, ltfTrend };
         };
         const maxCandles = isSmc ? 3000 : isAiMatic ? 5000 : undefined;
         const backfill = isSmc
@@ -1758,7 +1880,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             : isAiMatic
                 ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
                 : undefined;
-        const stop = startPriceFeed(WATCH_SYMBOLS, (symbol, decision) => {
+        const stop = startPriceFeed(activeSymbols, (symbol, decision) => {
             handleDecisionRef.current?.(symbol, decision);
         }, {
             useTestnet,
@@ -1785,7 +1907,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         return () => {
             stop();
         };
-    }, [addLogEntries, authToken, engineConfig, feedEpoch, useTestnet]);
+    }, [activeSymbols, addLogEntries, authToken, engineConfig, feedEpoch, useTestnet]);
     useEffect(() => {
         if (!authToken)
             return;
@@ -1813,7 +1935,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             lastHeartbeatRef.current = now;
             const scan = [];
             const manage = [];
-            for (const symbol of WATCH_SYMBOLS) {
+            for (const symbol of activeSymbols) {
                 const state = resolveSymbolState(symbol);
                 if (state === "MANAGE")
                     manage.push(symbol);
@@ -1840,7 +1962,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         return () => {
             clearInterval(heartbeatId);
         };
-    }, [addLogEntries, authToken, resolveSymbolState]);
+    }, [activeSymbols, addLogEntries, authToken, resolveSymbolState]);
     const systemState = useMemo(() => {
         const hasSuccess = Boolean(lastSuccessAt);
         const status = !authToken
@@ -1911,13 +2033,13 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             });
         }
         if (symbols.size === 0) {
-            WATCH_SYMBOLS.forEach((symbol) => symbols.add(symbol));
+            activeSymbols.forEach((symbol) => symbols.add(symbol));
         }
         const next = resetPnlHistoryMap(Array.from(symbols));
         setAssetPnlHistory(next);
         setClosedPnlRecords([]);
         pnlSeenRef.current = new Set();
-    }, [assetPnlHistory, positions]);
+    }, [activeSymbols, assetPnlHistory, positions]);
     const manualClosePosition = useCallback(async (pos) => {
         if (!authToken)
             throw new Error("missing_auth_token");

@@ -1,7 +1,7 @@
 // hooks/useTradingBot.ts
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendIntent } from "../api/botApi";
-import { EntryType, Symbol } from "../api/types";
+import { EntryType, Profile, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import { evaluateStrategyForSymbol } from "../engine/botEngine";
@@ -245,6 +245,13 @@ const CHEAT_SHEET_SETUP_BY_RISK_MODE: Partial<
   "ai-matic-tree": "ai-matic-decision-tree",
 };
 
+const PROFILE_BY_RISK_MODE: Record<AISettings["riskMode"], Profile> = {
+  "ai-matic": "AI-MATIC",
+  "ai-matic-x": "AI-MATIC-X",
+  "ai-matic-scalp": "AI-MATIC-SCALP",
+  "ai-matic-tree": "AI-MATIC-TREE",
+};
+
 
 export function useTradingBot(
   mode?: TradingMode,
@@ -274,6 +281,8 @@ export function useTradingBot(
     if (settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree") {
       return {
         ...baseConfig,
+        strategyProfile:
+          settings.riskMode === "ai-matic" ? "ai-matic" : "ai-matic-tree",
         baseTimeframe: "1h",
         signalTimeframe: "5m",
         aiMaticMultiTf: true,
@@ -303,10 +312,16 @@ export function useTradingBot(
           : settings.entryStrictness;
       return {
         ...baseConfig,
-        strategyProfile: "scalp",
+        strategyProfile: "ai-matic-scalp",
         baseTimeframe: "1h",
         signalTimeframe: "1m",
         entryStrictness: strictness,
+      };
+    }
+    if (settings.riskMode === "ai-matic-x") {
+      return {
+        ...baseConfig,
+        strategyProfile: "ai-matic-x",
       };
     }
     return baseConfig;
@@ -1856,7 +1871,7 @@ export function useTradingBot(
     const intent = {
       intentId: crypto.randomUUID(),
       createdAt: Date.now(),
-      profile: "AI-MATIC",
+      profile: PROFILE_BY_RISK_MODE[settingsRef.current.riskMode] ?? "AI-MATIC",
       symbol: signal.symbol,
       side: signal.side,
       entryType: signal.entryType,

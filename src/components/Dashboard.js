@@ -85,9 +85,11 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             execution: "Swing window 7 · 5m management + SL/TS",
         };
     }, [riskMode]);
-    const allowedSymbols = bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
-        ? dynamicSymbols
-        : profileMeta.symbols;
+    const selectedSymbols = bot.settings?.selectedSymbols?.length ? bot.settings.selectedSymbols : null;
+    const allowedSymbols = selectedSymbols ??
+        (bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
+            ? dynamicSymbols
+            : profileMeta.symbols);
     const exchangeOrders = ordersLoaded ? testnetOrders : [];
     const exchangeTrades = tradesLoaded ? testnetTrades : [];
     const refreshOrders = refreshTestnetOrders;
@@ -100,7 +102,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             "Confirm required": false,
             "Max positions": true,
             "Position clear": true,
-            "Orders clear": true,
+            "Max orders": true,
             "SL set": true,
             "TP set": true,
             "Exec allowed": true,
@@ -114,7 +116,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             "Confirm required": false,
             "Max positions": true,
             "Position clear": true,
-            "Orders clear": true,
+            "Max orders": true,
             "SL set": true,
             "TP set": true,
             "Exec allowed": true,
@@ -128,7 +130,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             "Confirm required": false,
             "Max positions": true,
             "Position clear": true,
-            "Orders clear": true,
+            "Max orders": true,
             "SL set": true,
             "TP set": true,
             "Exec allowed": true,
@@ -142,7 +144,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             "Confirm required": false,
             "Max positions": true,
             "Position clear": true,
-            "Orders clear": true,
+            "Max orders": true,
             "SL set": true,
             "TP set": true,
             "Exec allowed": true,
@@ -156,7 +158,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     const CHECKLIST_ALIASES = useMemo(() => ({
         "Feed age": ["BBO age", "BBO fresh"],
         "Position clear": ["Position open"],
-        "Orders clear": ["Open orders"],
+        "Max orders": ["Orders clear", "Open orders"],
         "Session ok": ["Session"],
         "Confirm required": ["CONFIRM_REQUIRED"],
     }), []);
@@ -223,9 +225,10 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     const maxOpenPositions = portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
     const openPositionsCount = positionsLoaded ? activePositions.length : 0;
     const openOrdersCount = ordersLoaded ? exchangeOrders.length : 0;
-    const maxOpenOrders = Number.isFinite(maxOpenPositions)
-        ? Math.min(Math.max(maxOpenPositions * 4, 0), 400)
-        : 400;
+    const maxOpenOrders = bot.settings?.maxOpenOrders ??
+        (Number.isFinite(maxOpenPositions)
+            ? Math.min(Math.max(maxOpenPositions * 4, 0), 400)
+            : 400);
     const totalCapital = portfolioState?.totalCapital ?? portfolioState?.totalEquity;
     const allocated = portfolioState?.allocatedCapital;
     const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";

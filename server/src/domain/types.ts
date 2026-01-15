@@ -3,10 +3,16 @@ export type Side = "Buy" | "Sell";
 
 export type EntryType = "LIMIT_MAKER_FIRST" | "LIMIT" | "MARKET_DISABLED";
 
+export type Profile =
+  | "AI-MATIC"
+  | "AI-MATIC-X"
+  | "AI-MATIC-SCALP"
+  | "AI-MATIC-TREE";
+
 export type TradeIntent = {
   intentId: string; // UUID
   createdAt: number; // ms
-  profile: "AI-MATIC";
+  profile: Profile;
   symbol: Symbol;
   side: Side;
 

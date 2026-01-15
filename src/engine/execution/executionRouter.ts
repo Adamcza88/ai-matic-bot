@@ -1,7 +1,11 @@
 // Execution router: maps strategy signals to concrete order instructions
 // (Market vs Limit vs Stop-Limit) with TP/SL/trailing derived from profile.
 
-export type StrategyProfile = "scalp" | "intraday" | "swing" | "trend" | "coach";
+export type StrategyProfile =
+  | "ai-matic"
+  | "ai-matic-x"
+  | "ai-matic-scalp"
+  | "ai-matic-tree";
 export type Side = "Buy" | "Sell";
 export type SignalKind = "BREAKOUT" | "PULLBACK" | "MOMENTUM" | "MEAN_REVERSION" | "OTHER";
 export type ExecMode = "MARKET" | "LIMIT" | "STOP_LIMIT";
@@ -31,8 +35,8 @@ export interface ProfileConfig {
   limitChaseMaxBps: number;
 }
 
-export const PROFILE: Record<Exclude<StrategyProfile, "coach">, ProfileConfig> = {
-  scalp: {
+export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
+  "ai-matic-scalp": {
     tpR: 1.4,
     trailLockR: 0.4,
     trailActivateR: 1.2,
@@ -40,7 +44,7 @@ export const PROFILE: Record<Exclude<StrategyProfile, "coach">, ProfileConfig> =
     marketDistanceBps: 10,
     limitChaseMaxBps: 25,
   },
-  intraday: {
+  "ai-matic-x": {
     tpR: 1.6,
     trailLockR: 0.6,
     trailActivateR: 1.4,
@@ -48,15 +52,15 @@ export const PROFILE: Record<Exclude<StrategyProfile, "coach">, ProfileConfig> =
     marketDistanceBps: 12,
     limitChaseMaxBps: 35,
   },
-  swing: {
-    tpR: 1.8,
-    trailLockR: 0.8,
-    trailActivateR: 1.6,
-    stopLimitBufferBps: 10,
-    marketDistanceBps: 15,
-    limitChaseMaxBps: 50,
+  "ai-matic": {
+    tpR: 2.2,
+    trailLockR: 1.1,
+    trailActivateR: 2.0,
+    stopLimitBufferBps: 12,
+    marketDistanceBps: 18,
+    limitChaseMaxBps: 70,
   },
-  trend: {
+  "ai-matic-tree": {
     tpR: 2.2,
     trailLockR: 1.1,
     trailActivateR: 2.0,
@@ -115,7 +119,7 @@ export function decideExecutionPlan(
   profile: StrategyProfile,
   qty: number
 ): OrderPlan {
-  const cfg = profile === "coach" ? PROFILE.intraday : PROFILE[profile];
+  const cfg = PROFILE[profile];
   const { tp, r } = buildTpFromR(sig, cfg.tpR);
   const trailing = buildTrailing(sig, cfg, r);
   const distBps = bpsDistance(market.last, sig.entry);

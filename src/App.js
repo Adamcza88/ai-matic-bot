@@ -14,6 +14,7 @@ import { LogOut, Moon, Settings, Sun, User } from "lucide-react";
 import Logo from "./components/Logo";
 // Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
 const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
+const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 export default function App() {
     const auth = useAuth();
     const [mode, setMode] = useState(() => {
@@ -66,6 +67,18 @@ export default function App() {
             return "Guest";
         return auth.user?.email ?? "";
     }, [auth.user, isGuest]);
+    useEffect(() => {
+        if (!bot.settings?.autoRefreshEnabled)
+            return;
+        const minutesRaw = Number(bot.settings?.autoRefreshMinutes);
+        const minutes = Number.isFinite(minutesRaw) && minutesRaw > 0
+            ? minutesRaw
+            : DEFAULT_AUTO_REFRESH_MINUTES;
+        const timer = window.setInterval(() => {
+            window.location.reload();
+        }, minutes * 60_000);
+        return () => window.clearInterval(timer);
+    }, [bot.settings?.autoRefreshEnabled, bot.settings?.autoRefreshMinutes]);
     const refreshKeyStatus = useCallback(async () => {
         if (!auth.user)
             return;

@@ -1,6 +1,6 @@
 // src/types.ts
 
-import type { Symbol } from "./api/types";
+import type { Profile, Symbol } from "./api/types";
 
 // ===== UI TYPY (Theme / Language / Settings) =====
 
@@ -93,8 +93,8 @@ export type PendingSignal = {
   id: string;
   symbol: string;
   intent: TradeIntent;
-   profile?: "trend" | "scalp" | "swing" | "intraday" | "coach";
-   kind?: "BREAKOUT" | "PULLBACK" | "MOMENTUM" | "MEAN_REVERSION" | "OTHER";
+  profile?: Profile;
+  kind?: "BREAKOUT" | "PULLBACK" | "MOMENTUM" | "MEAN_REVERSION" | "OTHER";
   risk: number;
   message: string;
   createdAt: string;

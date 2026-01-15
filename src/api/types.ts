@@ -2,10 +2,16 @@ export type Symbol = "BTCUSDT" | "ETHUSDT" | "SOLUSDT" | "ADAUSDT";
 export type Side = "Buy" | "Sell";
 export type EntryType = "LIMIT_MAKER_FIRST" | "LIMIT" | "CONDITIONAL" | "MARKET_DISABLED";
 
+export type Profile =
+  | "AI-MATIC"
+  | "AI-MATIC-X"
+  | "AI-MATIC-SCALP"
+  | "AI-MATIC-TREE";
+
 export type TradeIntent = {
   intentId: string;
   createdAt: number;
-  profile: "AI-MATIC";
+  profile: Profile;
   symbol: Symbol;
   side: Side;
   entryType: EntryType;

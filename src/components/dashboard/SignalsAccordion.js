@@ -116,7 +116,8 @@ export default function SignalsAccordion({ allowedSymbols, scanDiagnostics, scan
                                                             ? "text-foreground"
                                                             : "text-muted-foreground", children: (() => {
                                                             const label = gateLabel(gate.name, gate.detail);
-                                                            const detail = gate.ok && gate.detail
+                                                            const allowDetail = gate.name === "Trend bias";
+                                                            const detail = (gate.ok || allowDetail) && gate.detail
                                                                 ? gate.detail === "not required"
                                                                     ? "No"
                                                                     : gate.detail
