@@ -118,10 +118,13 @@ export default function Dashboard({
     };
   }, [riskMode]);
 
+  const selectedSymbols =
+    bot.settings?.selectedSymbols?.length ? bot.settings.selectedSymbols : null;
   const allowedSymbols =
-    bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
+    selectedSymbols ??
+    (bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
       ? dynamicSymbols
-      : profileMeta.symbols;
+      : profileMeta.symbols);
 
   const exchangeOrders = ordersLoaded ? testnetOrders : [];
   const exchangeTrades = tradesLoaded ? testnetTrades : [];
@@ -137,7 +140,7 @@ export default function Dashboard({
         "Confirm required": false,
         "Max positions": true,
         "Position clear": true,
-        "Orders clear": true,
+        "Max orders": true,
         "SL set": true,
         "TP set": true,
         "Exec allowed": true,
@@ -151,7 +154,7 @@ export default function Dashboard({
         "Confirm required": false,
         "Max positions": true,
         "Position clear": true,
-        "Orders clear": true,
+        "Max orders": true,
         "SL set": true,
         "TP set": true,
         "Exec allowed": true,
@@ -165,7 +168,7 @@ export default function Dashboard({
         "Confirm required": false,
         "Max positions": true,
         "Position clear": true,
-        "Orders clear": true,
+        "Max orders": true,
         "SL set": true,
         "TP set": true,
         "Exec allowed": true,
@@ -179,7 +182,7 @@ export default function Dashboard({
         "Confirm required": false,
         "Max positions": true,
         "Position clear": true,
-        "Orders clear": true,
+        "Max orders": true,
         "SL set": true,
         "TP set": true,
         "Exec allowed": true,
@@ -198,7 +201,7 @@ export default function Dashboard({
     () => ({
       "Feed age": ["BBO age", "BBO fresh"],
       "Position clear": ["Position open"],
-      "Orders clear": ["Open orders"],
+      "Max orders": ["Orders clear", "Open orders"],
       "Session ok": ["Session"],
       "Confirm required": ["CONFIRM_REQUIRED"],
     }),
@@ -280,9 +283,11 @@ export default function Dashboard({
     portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
   const openPositionsCount = positionsLoaded ? activePositions.length : 0;
   const openOrdersCount = ordersLoaded ? exchangeOrders.length : 0;
-  const maxOpenOrders = Number.isFinite(maxOpenPositions)
-    ? Math.min(Math.max(maxOpenPositions * 4, 0), 400)
-    : 400;
+  const maxOpenOrders =
+    bot.settings?.maxOpenOrders ??
+    (Number.isFinite(maxOpenPositions)
+      ? Math.min(Math.max(maxOpenPositions * 4, 0), 400)
+      : 400);
   const totalCapital =
     portfolioState?.totalCapital ?? portfolioState?.totalEquity;
   const allocated = portfolioState?.allocatedCapital;

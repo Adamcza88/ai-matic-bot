@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import type { Symbol } from "../api/types";
+import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../constants/symbols";
 import { AISettings } from "../types";
 
 interface Props {
@@ -15,6 +17,9 @@ const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
 const KEYCAP_HEADING = /^[0-9]\uFE0F?\u20E3/;
 const PROFILE_SETTINGS_STORAGE_KEY = "ai-matic-profile-settings";
 const MAX_OPEN_POSITIONS_CAP = 100;
+const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * 4;
+const MIN_AUTO_REFRESH_MINUTES = 1;
+const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 
 type ProfileSettingsMap = Partial<Record<AISettings["riskMode"], AISettings>>;
 
@@ -235,10 +240,14 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     },
     {
       label: "Auto-refresh",
-      value: local.autoRefreshEnabled ? "On" : "Off",
+      value: local.autoRefreshEnabled
+        ? `${local.autoRefreshMinutes}m`
+        : "Off",
     },
     { label: "Trend gate", value: local.trendGateMode },
     { label: "Max pos", value: String(local.maxOpenPositions) },
+    { label: "Max orders", value: String(local.maxOpenOrders) },
+    { label: "Symbols", value: local.selectedSymbols.join(", ") },
   ];
 
   const AI_MATIC_PRESET_UI: AISettings = {
@@ -257,6 +266,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 3,
+    maxOpenOrders: 12,
+    selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "base",
     enforceSessionHours: true,
     haltOnDailyLoss: true,
@@ -264,6 +275,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
+    autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -292,6 +304,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 3,
+    maxOpenOrders: 12,
+    selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "ultra",
     enforceSessionHours: false,
     haltOnDailyLoss: true,
@@ -299,6 +313,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
+    autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -327,6 +342,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 3,
+    maxOpenOrders: 12,
+    selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "ultra",
     enforceSessionHours: true,
     haltOnDailyLoss: true,
@@ -334,6 +351,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
+    autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -362,6 +380,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     maxPortfolioRiskPercent: 0.2,
     maxAllocatedCapitalPercent: 1.0,
     maxOpenPositions: 2,
+    maxOpenOrders: 8,
+    selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "base",
     enforceSessionHours: false,
     haltOnDailyLoss: true,
@@ -369,6 +389,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
+    autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
     customInstructions: "",
@@ -415,6 +436,27 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         Math.max(0, Math.round(merged.maxOpenPositions))
       );
     }
+    if (!Number.isFinite(merged.maxOpenOrders)) {
+      merged.maxOpenOrders = preset.maxOpenOrders;
+    } else {
+      merged.maxOpenOrders = Math.min(
+        MAX_OPEN_ORDERS_CAP,
+        Math.max(0, Math.round(merged.maxOpenOrders))
+      );
+    }
+    if (!Number.isFinite(merged.autoRefreshMinutes)) {
+      merged.autoRefreshMinutes = preset.autoRefreshMinutes;
+    } else {
+      merged.autoRefreshMinutes = Math.max(
+        MIN_AUTO_REFRESH_MINUTES,
+        Math.round(merged.autoRefreshMinutes)
+      );
+    }
+    const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
+    merged.selectedSymbols =
+      selectedSymbols.length > 0
+        ? selectedSymbols
+        : [...preset.selectedSymbols];
     return merged;
   };
 
@@ -540,25 +582,46 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                   {local.autoRefreshEnabled ? "On" : "Off"}
                 </div>
                 <div className="text-xs text-secondary-foreground/70 mt-1">
-                  Obnoví aplikaci každé 3 minuty.
+                  Obnoví aplikaci každých {local.autoRefreshMinutes} min.
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setLocal({
-                    ...local,
-                    autoRefreshEnabled: !local.autoRefreshEnabled,
-                  })
-                }
-                className={`rounded-md border px-3 py-1 text-sm ${
-                  local.autoRefreshEnabled
-                    ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                    : "border-slate-700 bg-slate-900/40 text-slate-200"
-                }`}
-              >
-                {local.autoRefreshEnabled ? "On" : "Off"}
-              </button>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={MIN_AUTO_REFRESH_MINUTES}
+                  step={1}
+                  value={local.autoRefreshMinutes}
+                  onChange={(event) => {
+                    const next = event.currentTarget.valueAsNumber;
+                    setLocal({
+                      ...local,
+                      autoRefreshMinutes: Number.isFinite(next)
+                        ? Math.max(
+                            MIN_AUTO_REFRESH_MINUTES,
+                            Math.round(next)
+                          )
+                        : DEFAULT_AUTO_REFRESH_MINUTES,
+                    });
+                  }}
+                  className="w-16 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-right text-slate-200"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLocal({
+                      ...local,
+                      autoRefreshEnabled: !local.autoRefreshEnabled,
+                    })
+                  }
+                  className={`rounded-md border px-3 py-1 text-sm ${
+                    local.autoRefreshEnabled
+                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                      : "border-slate-700 bg-slate-900/40 text-slate-200"
+                  }`}
+                >
+                  {local.autoRefreshEnabled ? "On" : "Off"}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -788,6 +851,79 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             </div>
           </div>
 
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none">
+              Max Orders
+            </label>
+            <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
+              <input
+                type="number"
+                min={0}
+                max={MAX_OPEN_ORDERS_CAP}
+                step={1}
+                value={local.maxOpenOrders}
+                onChange={(event) => {
+                  const next = event.currentTarget.valueAsNumber;
+                  setLocal({
+                    ...local,
+                    maxOpenOrders: Number.isFinite(next)
+                      ? Math.min(
+                          MAX_OPEN_ORDERS_CAP,
+                          Math.max(0, Math.round(next))
+                        )
+                      : 0,
+                  });
+                }}
+                className="w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
+              />
+              <span className="text-xs text-secondary-foreground/70">
+                0-{MAX_OPEN_ORDERS_CAP} orderů (0 = žádná objednávka)
+              </span>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none">
+              Trading Symbols
+            </label>
+            <div className="flex flex-wrap gap-2 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
+              {SUPPORTED_SYMBOLS.map((symbol) => {
+                const active = local.selectedSymbols.includes(symbol);
+                return (
+                  <button
+                    key={symbol}
+                    type="button"
+                    onClick={() => {
+                      const next = new Set<Symbol>(local.selectedSymbols);
+                      if (next.has(symbol)) {
+                        if (next.size === 1) return;
+                        next.delete(symbol);
+                      } else {
+                        next.add(symbol);
+                      }
+                      setLocal({
+                        ...local,
+                        selectedSymbols: SUPPORTED_SYMBOLS.filter((s) =>
+                          next.has(s)
+                        ),
+                      });
+                    }}
+                    className={`rounded-md border px-3 py-1 text-xs font-medium ${
+                      active
+                        ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                        : "border-slate-700 bg-slate-900/40 text-slate-200"
+                    }`}
+                  >
+                    {symbol}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="text-xs text-secondary-foreground/70">
+              Vyber, které coiny bot skenuje a obchoduje.
+            </span>
+          </div>
+
           <div className="mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
             <div className="font-semibold text-white">{meta.title}</div>
             <div className="text-slate-300">{meta.description}</div>
@@ -868,7 +1004,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             </div>
           <div className="text-xs text-slate-500">
             Parametry: Hours {local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`} • Max positions{" "}
-            {local.maxOpenPositions}
+            {local.maxOpenPositions} • Max orders {local.maxOpenOrders}
           </div>
         </div>
       </div>

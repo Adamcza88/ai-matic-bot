@@ -1,5 +1,7 @@
 // src/types.ts
 
+import type { Symbol } from "./api/types";
+
 // ===== UI TYPY (Theme / Language / Settings) =====
 
 export type Theme = "dark" | "light";
@@ -25,10 +27,13 @@ export interface AISettings {
   useDynamicPositionSizing: boolean;
   lockProfitsWithTrail: boolean;
   autoRefreshEnabled: boolean;
+  autoRefreshMinutes: number;
   baseRiskPerTrade: number;
   maxAllocatedCapitalPercent: number;
   maxPortfolioRiskPercent: number;
   maxOpenPositions: number;
+  maxOpenOrders: number;
+  selectedSymbols: Symbol[];
   requireConfirmationInAuto: boolean;
   positionSizingMultiplier: number;
   customInstructions: string;

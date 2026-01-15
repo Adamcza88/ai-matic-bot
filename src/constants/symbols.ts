@@ -1,0 +1,16 @@
+import type { Symbol } from "../api/types";
+
+export const SUPPORTED_SYMBOLS: Symbol[] = [
+  "BTCUSDT",
+  "ETHUSDT",
+  "SOLUSDT",
+  "ADAUSDT",
+];
+
+export function filterSupportedSymbols(value: unknown): Symbol[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set<string>(SUPPORTED_SYMBOLS);
+  return value
+    .map((item) => String(item).toUpperCase())
+    .filter((item): item is Symbol => allowed.has(item));
+}

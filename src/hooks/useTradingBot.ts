@@ -10,6 +10,10 @@ import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import type { PriceFeedDecision } from "../engine/priceFeed";
 import type { BotConfig } from "../engine/botEngine";
 import { TradingMode } from "../types";
+import {
+  SUPPORTED_SYMBOLS,
+  filterSupportedSymbols,
+} from "../constants/symbols";
 import type {
   AISettings,
   ActivePosition,
@@ -40,13 +44,12 @@ const TREND_GATE_STRONG_SCORE = 3;
 const TREND_GATE_REVERSE_ADX = 19;
 const TREND_GATE_REVERSE_SCORE = 1;
 const CORRELATION_WAVE_WINDOW_MS = 60 * 60_000;
-const CORRELATION_GROUPS: Symbol[][] = [
-  ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
-];
+const CORRELATION_GROUPS: Symbol[][] = [SUPPORTED_SYMBOLS];
 const HTF_TIMEFRAMES_MIN = [60, 240, 1440];
 const AI_MATIC_HTF_TIMEFRAMES_MIN = [60, 15];
 const AI_MATIC_LTF_TIMEFRAMES_MIN = [5, 1];
 const SCALP_LTF_TIMEFRAMES_MIN = [1];
+const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -67,10 +70,13 @@ const DEFAULT_SETTINGS: AISettings = {
   useDynamicPositionSizing: true,
   lockProfitsWithTrail: true,
   autoRefreshEnabled: false,
+  autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
   baseRiskPerTrade: 0,
   maxAllocatedCapitalPercent: 1.0,
   maxPortfolioRiskPercent: 0.2,
   maxOpenPositions: 3,
+  maxOpenOrders: 12,
+  selectedSymbols: [...SUPPORTED_SYMBOLS],
   requireConfirmationInAuto: false,
   positionSizingMultiplier: 1.0,
   customInstructions: "",
@@ -100,6 +106,14 @@ function loadStoredSettings(): AISettings | null {
     if (typeof merged.autoRefreshEnabled !== "boolean") {
       merged.autoRefreshEnabled = DEFAULT_SETTINGS.autoRefreshEnabled;
     }
+    if (!Number.isFinite(merged.autoRefreshMinutes)) {
+      merged.autoRefreshMinutes = DEFAULT_SETTINGS.autoRefreshMinutes;
+    } else {
+      merged.autoRefreshMinutes = Math.max(
+        1,
+        Math.round(merged.autoRefreshMinutes)
+      );
+    }
     if (!Number.isFinite(merged.maxOpenPositions)) {
       merged.maxOpenPositions = DEFAULT_SETTINGS.maxOpenPositions;
     } else {
@@ -108,6 +122,19 @@ function loadStoredSettings(): AISettings | null {
         Math.max(0, Math.round(merged.maxOpenPositions))
       );
     }
+    if (!Number.isFinite(merged.maxOpenOrders)) {
+      merged.maxOpenOrders = DEFAULT_SETTINGS.maxOpenOrders;
+    } else {
+      merged.maxOpenOrders = Math.min(
+        MAX_OPEN_ORDERS_CAP,
+        Math.max(0, Math.round(merged.maxOpenOrders))
+      );
+    }
+    const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
+    merged.selectedSymbols =
+      selectedSymbols.length > 0
+        ? selectedSymbols
+        : [...DEFAULT_SETTINGS.selectedSymbols];
     return merged;
   } catch {
     return null;
@@ -187,7 +214,6 @@ function buildEntryFallback(list: any[]) {
 }
 
 type ClosedPnlRecord = { symbol: string; pnl: number; ts: number };
-const WATCH_SYMBOLS: Symbol[] = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
 const FIXED_QTY_BY_SYMBOL: Record<Symbol, number> = {
   BTCUSDT: 0.005,
   ETHUSDT: 0.15,
@@ -229,6 +255,10 @@ export function useTradingBot(
     () => loadStoredSettings() ?? DEFAULT_SETTINGS
   );
   const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
+  const activeSymbols = useMemo<Symbol[]>(() => {
+    const next = filterSupportedSymbols(settings.selectedSymbols);
+    return next.length > 0 ? next : [...SUPPORTED_SYMBOLS];
+  }, [settings.selectedSymbols]);
   const engineConfig = useMemo<Partial<BotConfig>>(() => {
     const cheatSheetSetupId = settings.strategyCheatSheetEnabled
       ? CHEAT_SHEET_SETUP_BY_RISK_MODE[settings.riskMode]
@@ -722,13 +752,12 @@ export function useTradingBot(
         return Number.isFinite(size) && size > 0;
       });
       const openOrdersCount = ordersRef.current.length;
-      const maxOrders = Number.isFinite(maxPositions)
-        ? maxPositions > 0
-          ? Math.min(maxPositions * ORDERS_PER_POSITION, MAX_OPEN_ORDERS_CAP)
-          : 0
-        : MAX_OPEN_ORDERS_CAP;
-      const ordersClearOk =
-        !Number.isFinite(maxOrders) || openOrdersCount < maxOrders;
+      const maxOrders = toNumber(settings.maxOpenOrders);
+      const ordersClearOk = !Number.isFinite(maxOrders)
+        ? true
+        : maxOrders > 0
+          ? openOrdersCount < maxOrders
+          : false;
       const engineOk = !(decision?.halted ?? false);
       return {
         settings,
@@ -774,7 +803,7 @@ export function useTradingBot(
         return upper;
       };
       const trendRaw =
-        htfConsensus ||
+        htfConsensusRaw ||
         String((decision as any)?.trendH1 ?? decision?.trend ?? "");
       const htfDir = normalizeTrend(trendRaw);
       let ltfDir = normalizeTrend(ltfConsensus);
@@ -810,12 +839,12 @@ export function useTradingBot(
         const hasBear = dirs.includes("bear");
         if (hasBull && hasBear) ltfDir = "MIXED";
       }
-      const ltfActive = ltfDir === "BULL" || ltfDir === "BEAR";
-      const ltfConflicted = ltfDir === "MIXED";
-      const ltfMatchesTrend =
-        (!ltfActive && !ltfConflicted) || ltfDir === htfDir;
+      const hasLtf =
+        Array.isArray(ltfTrend?.byTimeframe) && ltfTrend.byTimeframe.length > 0;
+      const htfIsTrend = htfDir === "BULL" || htfDir === "BEAR";
+      const ltfIsTrend = ltfDir === "BULL" || ltfDir === "BEAR";
       const ltfMatchesSignal = (signalDir: "BULL" | "BEAR") =>
-        (!ltfActive && !ltfConflicted) || ltfDir === signalDir;
+        !hasLtf || (ltfIsTrend && ltfDir === signalDir);
       const isAiMaticProfile =
         settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree";
       const trendLabel = (dir: string) => {
@@ -888,17 +917,18 @@ export function useTradingBot(
       const signalDir = sideRaw === "buy" ? "BULL" : "BEAR";
       const kind = signal.kind ?? "OTHER";
       const isMeanRev = kind === "MEAN_REVERSION";
-      let ok = true;
-      if (htfDir === "BULL") {
-        ok = mode === "FOLLOW"
-          ? signalDir === "BULL" && ltfMatchesTrend
-          : isMeanRev && signalDir === "BEAR" && ltfMatchesSignal(signalDir);
-      } else if (htfDir === "BEAR") {
-        ok = mode === "FOLLOW"
-          ? signalDir === "BEAR" && ltfMatchesTrend
-          : isMeanRev && signalDir === "BULL" && ltfMatchesSignal(signalDir);
+      if (!htfIsTrend) {
+        return { ok: false, detail };
+      }
+      if (hasLtf && !ltfIsTrend) {
+        return { ok: false, detail };
+      }
+      const ltfOk = ltfMatchesSignal(signalDir);
+      let ok = false;
+      if (mode === "FOLLOW") {
+        ok = signalDir === htfDir && ltfOk;
       } else {
-        ok = mode === "FOLLOW" ? false : isMeanRev && ltfMatchesSignal(signalDir);
+        ok = isMeanRev && signalDir !== htfDir && ltfOk;
       }
       return { ok, detail };
     },
@@ -1063,7 +1093,7 @@ export function useTradingBot(
       const ordersDetail = Number.isFinite(context.maxOrders)
         ? `open ${context.openOrdersCount}/${context.maxOrders}`
         : `open ${context.openOrdersCount}/no limit`;
-      addGate("Orders clear", context.ordersClearOk, ordersDetail);
+      addGate("Max orders", context.ordersClearOk, ordersDetail);
       const correlationGate = resolveCorrelationGate(symbol, Date.now());
       addGate("Correlation", correlationGate.ok, correlationGate.detail);
       const slOk =
@@ -1100,8 +1130,8 @@ export function useTradingBot(
         if (context.hasPosition && isGateEnabled("Position clear")) {
           hardReasons.push("Position clear");
         }
-        if (!context.ordersClearOk && isGateEnabled("Orders clear")) {
-          hardReasons.push("Orders clear");
+        if (!context.ordersClearOk && isGateEnabled("Max orders")) {
+          hardReasons.push("Max orders");
         }
         if (feedAgeOk === false && isGateEnabled("Feed age")) {
           hardReasons.push("Feed age");
@@ -1956,8 +1986,8 @@ export function useTradingBot(
         if (context.hasPosition && isGateEnabled("Position clear")) {
           blockReasons.push("Position clear");
         }
-        if (!context.ordersClearOk && isGateEnabled("Orders clear")) {
-          blockReasons.push("Orders clear");
+        if (!context.ordersClearOk && isGateEnabled("Max orders")) {
+          blockReasons.push("Max orders");
         }
         if (
           context.settings.requireConfirmationInAuto &&
@@ -2133,7 +2163,7 @@ export function useTradingBot(
         ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
         : undefined;
     const stop = startPriceFeed(
-      WATCH_SYMBOLS,
+      activeSymbols,
       (symbol, decision) => {
         handleDecisionRef.current?.(symbol, decision);
       },
@@ -2165,7 +2195,7 @@ export function useTradingBot(
     return () => {
       stop();
     };
-  }, [addLogEntries, authToken, engineConfig, feedEpoch, useTestnet]);
+  }, [activeSymbols, addLogEntries, authToken, engineConfig, feedEpoch, useTestnet]);
 
   useEffect(() => {
     if (!authToken) return;
@@ -2194,7 +2224,7 @@ export function useTradingBot(
 
       const scan: string[] = [];
       const manage: string[] = [];
-      for (const symbol of WATCH_SYMBOLS) {
+      for (const symbol of activeSymbols) {
         const state = resolveSymbolState(symbol);
         if (state === "MANAGE") manage.push(symbol);
         else scan.push(symbol);
@@ -2220,7 +2250,7 @@ export function useTradingBot(
     return () => {
       clearInterval(heartbeatId);
     };
-  }, [addLogEntries, authToken, resolveSymbolState]);
+  }, [activeSymbols, addLogEntries, authToken, resolveSymbolState]);
 
   const systemState = useMemo<SystemState>(() => {
     const hasSuccess = Boolean(lastSuccessAt);
@@ -2291,13 +2321,13 @@ export function useTradingBot(
       });
     }
     if (symbols.size === 0) {
-      WATCH_SYMBOLS.forEach((symbol) => symbols.add(symbol));
+      activeSymbols.forEach((symbol) => symbols.add(symbol));
     }
     const next = resetPnlHistoryMap(Array.from(symbols));
     setAssetPnlHistory(next);
     setClosedPnlRecords([]);
     pnlSeenRef.current = new Set();
-  }, [assetPnlHistory, positions]);
+  }, [activeSymbols, assetPnlHistory, positions]);
 
   const manualClosePosition = useCallback(
     async (pos: ActivePosition) => {
