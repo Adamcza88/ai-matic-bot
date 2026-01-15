@@ -814,11 +814,20 @@ export function useTradingBot(
         (!ltfActive && !ltfConflicted) || ltfDir === htfDir;
       const ltfMatchesSignal = (signalDir: "BULL" | "BEAR") =>
         (!ltfActive && !ltfConflicted) || ltfDir === signalDir;
-      const detailParts = [`HTF ${htfDir}`];
-      if (ltfConsensus) {
+      const isAiMaticProfile =
+        settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree";
+      const trendLabel = (dir: string) =>
+        dir === "BULL" || dir === "BEAR" ? "trend" : "range";
+      const detailParts = isAiMaticProfile
+        ? [
+            `HTF / 1hod ${trendLabel(htfDir)}`,
+            `LTF / 5min ${trendLabel(ltfDir)}`,
+          ]
+        : [`HTF ${htfDir}`];
+      if (!isAiMaticProfile && ltfConsensus) {
         detailParts.push(`LTF ${ltfDir}`);
       }
-      if (htfConsensus) {
+      if (!isAiMaticProfile && htfConsensus) {
         const total = Array.isArray(htfTrend?.byTimeframe)
           ? htfTrend.byTimeframe.length
           : 0;
@@ -828,13 +837,13 @@ export function useTradingBot(
             : "";
         detailParts.push(`Consensus ${htfConsensus.toUpperCase()}${countLabel}`);
       }
-      if (Number.isFinite(adx)) {
+      if (!isAiMaticProfile && Number.isFinite(adx)) {
         detailParts.push(`ADX ${formatNumber(adx, 1)}`);
       }
-      if (Number.isFinite(score)) {
+      if (!isAiMaticProfile && Number.isFinite(score)) {
         detailParts.push(`score ${formatNumber(score, 0)}`);
       }
-      if (Array.isArray(htfTrend?.byTimeframe)) {
+      if (!isAiMaticProfile && Array.isArray(htfTrend?.byTimeframe)) {
         const tfLabel = (tf: number) => {
           if (tf >= 1440) return `${Math.round(tf / 1440)}D`;
           if (tf >= 60) return `${Math.round(tf / 60)}H`;
@@ -846,7 +855,7 @@ export function useTradingBot(
         });
         if (tfParts.length) detailParts.push(`HTF ${tfParts.join(" · ")}`);
       }
-      if (Array.isArray(ltfTrend?.byTimeframe)) {
+      if (!isAiMaticProfile && Array.isArray(ltfTrend?.byTimeframe)) {
         const tfLabel = (tf: number) => {
           if (tf >= 1440) return `${Math.round(tf / 1440)}D`;
           if (tf >= 60) return `${Math.round(tf / 60)}H`;
@@ -858,9 +867,11 @@ export function useTradingBot(
         });
         if (tfParts.length) detailParts.push(`LTF ${tfParts.join(" · ")}`);
       }
-      detailParts.push(
-        `mode ${mode}${modeSetting === "adaptive" ? " (adaptive)" : ""}`
-      );
+      if (!isAiMaticProfile) {
+        detailParts.push(
+          `mode ${mode}${modeSetting === "adaptive" ? " (adaptive)" : ""}`
+        );
+      }
       const detail = detailParts.join(" | ");
 
       if (!signal) {
