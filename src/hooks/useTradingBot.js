@@ -13,6 +13,9 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 4;
 const MAX_POSITION_NOTIONAL_USD = 7;
+const MAX_OPEN_POSITIONS_CAP = 100;
+const ORDERS_PER_POSITION = 4;
+const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
@@ -74,7 +77,7 @@ function loadStoredSettings() {
             merged.maxOpenPositions = DEFAULT_SETTINGS.maxOpenPositions;
         }
         else {
-            merged.maxOpenPositions = Math.max(0, Math.round(merged.maxOpenPositions));
+            merged.maxOpenPositions = Math.min(MAX_OPEN_POSITIONS_CAP, Math.max(0, Math.round(merged.maxOpenPositions)));
         }
         return merged;
     }
@@ -578,9 +581,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const sessionOk = isSessionAllowed(now, settings);
         const maxPositions = toNumber(settings.maxOpenPositions);
         const openPositionsCount = positionsRef.current.length;
-        const maxPositionsOk = !Number.isFinite(maxPositions) ||
-            maxPositions <= 0 ||
-            openPositionsCount < maxPositions;
+        const maxPositionsOk = !Number.isFinite(maxPositions)
+            ? true
+            : maxPositions > 0
+                ? openPositionsCount < maxPositions
+                : false;
         const hasPosition = positionsRef.current.some((p) => {
             if (p.symbol !== symbol)
                 return false;
@@ -588,9 +593,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return Number.isFinite(size) && size > 0;
         });
         const openOrdersCount = ordersRef.current.length;
-        const maxOrders = Number.isFinite(maxPositions) && maxPositions > 0
-            ? maxPositions * 2
-            : Number.POSITIVE_INFINITY;
+        const maxOrders = Number.isFinite(maxPositions)
+            ? maxPositions > 0
+                ? Math.min(maxPositions * ORDERS_PER_POSITION, MAX_OPEN_ORDERS_CAP)
+                : 0
+            : MAX_OPEN_ORDERS_CAP;
         const ordersClearOk = !Number.isFinite(maxOrders) || openOrdersCount < maxOrders;
         const engineOk = !(decision?.halted ?? false);
         return {

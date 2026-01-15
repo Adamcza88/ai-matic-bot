@@ -2,6 +2,7 @@ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useState } from "react";
 const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
 const KEYCAP_HEADING = /^[0-9]\uFE0F?\u20E3/;
+const MAX_OPEN_POSITIONS_CAP = 100;
 function isHeadingLine(line) {
     return (KEYCAP_HEADING.test(line) ||
         /^\d+\)/.test(line) ||
@@ -372,11 +373,11 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                 const next = event.currentTarget.valueAsNumber;
                                                 setLocal({
                                                     ...local,
-                                                    maxOpenPositions: Number.isFinite(next)
-                                                        ? Math.max(0, Math.round(next))
-                                                        : 0,
-                                                });
-                                            }, className: "w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200" }), _jsx("span", { className: "text-xs text-secondary-foreground/70", children: "0 = bez limitu" })] })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsxs("div", { className: "flex items-center justify-between text-xs text-slate-500", children: [_jsxs("div", { children: ["View: ", compactCheatSheet ? "Compact" : "Detail"] }), _jsx("button", { type: "button", onClick: () => setCompactCheatSheet((v) => !v), className: `rounded-md border px-2 py-1 text-[11px] ${compactCheatSheet
+                                            maxOpenPositions: Number.isFinite(next)
+                                                ? Math.min(MAX_OPEN_POSITIONS_CAP, Math.max(0, Math.round(next)))
+                                                : 0,
+                                        });
+                                    }, className: "w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200", max: MAX_OPEN_POSITIONS_CAP }), _jsx("span", { className: "text-xs text-secondary-foreground/70", children: "0-100 pozic (0 = žádná pozice)" })] })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsxs("div", { className: "flex items-center justify-between text-xs text-slate-500", children: [_jsxs("div", { children: ["View: ", compactCheatSheet ? "Compact" : "Detail"] }), _jsx("button", { type: "button", onClick: () => setCompactCheatSheet((v) => !v), className: `rounded-md border px-2 py-1 text-[11px] ${compactCheatSheet
                                                 ? "border-slate-700 bg-slate-900/60 text-slate-200"
                                                 : "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"}`, children: compactCheatSheet ? "Compact" : "Detail" })] }), _jsx("div", { className: "space-y-3 text-slate-400", children: cheatBlocks.map((block, blockIndex) => {
                                         const rawLines = compactCheatSheet

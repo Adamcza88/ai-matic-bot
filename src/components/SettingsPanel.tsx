@@ -14,7 +14,7 @@ type CheatBlock = { title?: string; lines: string[] };
 const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
 const KEYCAP_HEADING = /^[0-9]\uFE0F?\u20E3/;
 const PROFILE_SETTINGS_STORAGE_KEY = "ai-matic-profile-settings";
-const MAX_OPEN_POSITIONS_CAP = 4;
+const MAX_OPEN_POSITIONS_CAP = 100;
 
 type ProfileSettingsMap = Partial<Record<AISettings["riskMode"], AISettings>>;
 
@@ -412,7 +412,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     } else {
       merged.maxOpenPositions = Math.min(
         MAX_OPEN_POSITIONS_CAP,
-        Math.max(1, Math.round(merged.maxOpenPositions))
+        Math.max(0, Math.round(merged.maxOpenPositions))
       );
     }
     return merged;
@@ -764,7 +764,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
               <input
                 type="number"
-                min={1}
+                min={0}
                 max={MAX_OPEN_POSITIONS_CAP}
                 step={1}
                 value={local.maxOpenPositions}
@@ -775,15 +775,15 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                     maxOpenPositions: Number.isFinite(next)
                       ? Math.min(
                           MAX_OPEN_POSITIONS_CAP,
-                          Math.max(1, Math.round(next))
+                          Math.max(0, Math.round(next))
                         )
-                      : 1,
+                      : 0,
                   });
                 }}
                 className="w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
               />
               <span className="text-xs text-secondary-foreground/70">
-                1-4 pozice
+                0-100 pozic (0 = žádná pozice)
               </span>
             </div>
           </div>
