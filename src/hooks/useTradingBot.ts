@@ -31,6 +31,9 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 4;
 const MAX_POSITION_NOTIONAL_USD = 7;
+const MAX_OPEN_POSITIONS_CAP = 4;
+const ORDERS_PER_POSITION = 5;
+const MAX_OPEN_ORDERS_CAP = 20;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
@@ -100,9 +103,9 @@ function loadStoredSettings(): AISettings | null {
     if (!Number.isFinite(merged.maxOpenPositions)) {
       merged.maxOpenPositions = DEFAULT_SETTINGS.maxOpenPositions;
     } else {
-      merged.maxOpenPositions = Math.max(
-        0,
-        Math.round(merged.maxOpenPositions)
+      merged.maxOpenPositions = Math.min(
+        MAX_OPEN_POSITIONS_CAP,
+        Math.max(1, Math.round(merged.maxOpenPositions))
       );
     }
     return merged;
@@ -720,8 +723,8 @@ export function useTradingBot(
       const openOrdersCount = ordersRef.current.length;
       const maxOrders =
         Number.isFinite(maxPositions) && maxPositions > 0
-          ? maxPositions * 2
-          : Number.POSITIVE_INFINITY;
+          ? Math.min(maxPositions * ORDERS_PER_POSITION, MAX_OPEN_ORDERS_CAP)
+          : MAX_OPEN_ORDERS_CAP;
       const ordersClearOk =
         !Number.isFinite(maxOrders) || openOrdersCount < maxOrders;
       const engineOk = !(decision?.halted ?? false);

@@ -14,6 +14,7 @@ type CheatBlock = { title?: string; lines: string[] };
 const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
 const KEYCAP_HEADING = /^[0-9]\uFE0F?\u20E3/;
 const PROFILE_SETTINGS_STORAGE_KEY = "ai-matic-profile-settings";
+const MAX_OPEN_POSITIONS_CAP = 4;
 
 type ProfileSettingsMap = Partial<Record<AISettings["riskMode"], AISettings>>;
 
@@ -409,7 +410,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     if (!Number.isFinite(merged.maxOpenPositions)) {
       merged.maxOpenPositions = preset.maxOpenPositions;
     } else {
-      merged.maxOpenPositions = Math.max(0, Math.round(merged.maxOpenPositions));
+      merged.maxOpenPositions = Math.min(
+        MAX_OPEN_POSITIONS_CAP,
+        Math.max(1, Math.round(merged.maxOpenPositions))
+      );
     }
     return merged;
   };
@@ -760,7 +764,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
               <input
                 type="number"
-                min={0}
+                min={1}
+                max={MAX_OPEN_POSITIONS_CAP}
                 step={1}
                 value={local.maxOpenPositions}
                 onChange={(event) => {
@@ -768,14 +773,17 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                   setLocal({
                     ...local,
                     maxOpenPositions: Number.isFinite(next)
-                      ? Math.max(0, Math.round(next))
-                      : 0,
+                      ? Math.min(
+                          MAX_OPEN_POSITIONS_CAP,
+                          Math.max(1, Math.round(next))
+                        )
+                      : 1,
                   });
                 }}
                 className="w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
               />
               <span className="text-xs text-secondary-foreground/70">
-                0 = bez limitu
+                1-4 pozice
               </span>
             </div>
           </div>
