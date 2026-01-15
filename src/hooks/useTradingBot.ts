@@ -951,12 +951,18 @@ export function useTradingBot(
   );
 
   const resolveCorrelationGate = useCallback(
-    (symbol: string, now = Date.now()) => {
+    (
+      symbol: string,
+      now = Date.now(),
+      signal?: PriceFeedDecision["signal"] | null
+    ) => {
       const group =
         CORRELATION_GROUPS.find((g) => g.includes(symbol as Symbol)) ?? [];
       const peers = group.filter((s) => s !== symbol);
+      const details: string[] = [];
+      let ok = true;
       if (!peers.length) {
-        return { ok: true, detail: "no correlated peers" };
+        details.push("no correlated peers");
       }
       const openSymbols = new Set<string>();
       positionsRef.current.forEach((p) => {
@@ -967,16 +973,56 @@ export function useTradingBot(
       });
       const activePeers = peers.filter((p) => openSymbols.has(p));
       if (activePeers.length) {
-        return { ok: false, detail: `open ${activePeers.join(", ")}` };
+        ok = false;
+        details.push(`open ${activePeers.join(", ")}`);
       }
       const recentPeers = peers.filter((p) => {
         const ts = correlationWaveRef.current.get(p) ?? 0;
         return ts > 0 && now - ts <= CORRELATION_WAVE_WINDOW_MS;
       });
       if (recentPeers.length) {
-        return { ok: false, detail: `recent wave ${recentPeers.join(", ")}` };
+        ok = false;
+        details.push(`recent wave ${recentPeers.join(", ")}`);
       }
-      return { ok: true, detail: "clear" };
+
+      const symbolUpper = String(symbol).toUpperCase();
+      if (symbolUpper === "BTCUSDT") {
+        details.push("btc self");
+        return { ok, detail: details.join(" | ") };
+      }
+
+      if (!signal) {
+        details.push("no signal");
+        return { ok, detail: details.join(" | ") };
+      }
+
+      const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
+      const signalDir =
+        sideRaw === "buy" ? "bull" : sideRaw === "sell" ? "bear" : "none";
+      if (signalDir === "none") {
+        ok = false;
+        details.push("signal dir unknown");
+        return { ok, detail: details.join(" | ") };
+      }
+
+      const btcDecision = decisionRef.current["BTCUSDT"]?.decision;
+      const btcConsensus = (btcDecision as any)?.htfTrend?.consensus;
+      const btcDir =
+        btcConsensus === "bull" || btcConsensus === "bear"
+          ? btcConsensus
+          : String((btcDecision as any)?.trend ?? "").toLowerCase();
+      if (btcDir !== "bull" && btcDir !== "bear") {
+        ok = false;
+        details.push("btc direction unknown");
+        return { ok, detail: details.join(" | ") };
+      }
+      if (btcDir !== signalDir) {
+        ok = false;
+        details.push(`btc ${btcDir} vs signal ${signalDir}`);
+        return { ok, detail: details.join(" | ") };
+      }
+      details.push(`btc ${btcDir} aligned`);
+      return { ok, detail: details.join(" | ") };
     },
     []
   );
@@ -1109,7 +1155,11 @@ export function useTradingBot(
         ? `open ${context.openOrdersCount}/${context.maxOrders}`
         : `open ${context.openOrdersCount}/no limit`;
       addGate("Max orders", context.ordersClearOk, ordersDetail);
-      const correlationGate = resolveCorrelationGate(symbol, Date.now());
+      const correlationGate = resolveCorrelationGate(
+        symbol,
+        Date.now(),
+        signalActive ? decision?.signal ?? null : null
+      );
       addGate("Correlation", correlationGate.ok, correlationGate.detail);
       const slOk =
         context.hasPosition && Number.isFinite(sl) && sl > 0;
@@ -1979,7 +2029,7 @@ export function useTradingBot(
 
       const context = getSymbolContext(symbol, decision);
       const trendGate = resolveTrendGate(decision, signal);
-      const correlationGate = resolveCorrelationGate(symbol, now);
+      const correlationGate = resolveCorrelationGate(symbol, now, signal);
       const blockReasons: string[] = [];
       const hardEnabled = context.settings.enableHardGates !== false;
       if (hardEnabled) {
