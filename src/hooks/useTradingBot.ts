@@ -264,6 +264,10 @@ export function useTradingBot(
     const next = filterSupportedSymbols(settings.selectedSymbols);
     return next.length > 0 ? next : [...SUPPORTED_SYMBOLS];
   }, [settings.selectedSymbols]);
+  const feedSymbols = useMemo<Symbol[]>(() => {
+    if (activeSymbols.includes("BTCUSDT")) return activeSymbols;
+    return ["BTCUSDT", ...activeSymbols];
+  }, [activeSymbols]);
   const engineConfig = useMemo<Partial<BotConfig>>(() => {
     const cheatSheetSetupId = settings.strategyCheatSheetEnabled
       ? CHEAT_SHEET_SETUP_BY_RISK_MODE[settings.riskMode]
@@ -364,6 +368,7 @@ export function useTradingBot(
   const positionsRef = useRef<ActivePosition[]>([]);
   const ordersRef = useRef<TestnetOrder[]>([]);
   const cancelingOrdersRef = useRef<Set<string>>(new Set());
+  const autoCloseCooldownRef = useRef<Map<string, number>>(new Map());
   const decisionRef = useRef<
     Record<string, { decision: PriceFeedDecision; ts: number }>
   >({});
@@ -494,6 +499,84 @@ export function useTradingBot(
     const value = gateOverridesRef.current?.[name];
     return typeof value === "boolean" ? value : true;
   }, []);
+
+  const normalizeBias = useCallback((value: unknown): "bull" | "bear" | null => {
+    const raw = String(value ?? "").trim().toLowerCase();
+    if (!raw) return null;
+    if (raw === "buy" || raw === "long" || raw === "bull") return "bull";
+    if (raw === "sell" || raw === "short" || raw === "bear") return "bear";
+    return null;
+  }, []);
+
+  const isEntryOrder = useCallback((order: TestnetOrder | any): boolean => {
+    if (!order) return false;
+    const reduceOnly = Boolean(order?.reduceOnly ?? order?.reduce_only ?? order?.reduce);
+    if (reduceOnly) return false;
+    const filter = String(order?.orderFilter ?? order?.order_filter ?? "").toLowerCase();
+    const stopType = String(order?.stopOrderType ?? order?.stop_order_type ?? "").toLowerCase();
+    if (
+      filter === "tpsl" ||
+      stopType === "takeprofit" ||
+      stopType === "stoploss" ||
+      stopType === "trailingstop"
+    ) {
+      return false;
+    }
+    const status = String(order?.status ?? "").toLowerCase();
+    if (!status) return true;
+    if (status.includes("filled") || status.includes("cancel") || status.includes("reject")) {
+      return false;
+    }
+    return true;
+  }, []);
+
+  const getOpenBiasState = useCallback(() => {
+    const biases = new Set<"bull" | "bear">();
+    let btcBias: "bull" | "bear" | null = null;
+    positionsRef.current.forEach((p) => {
+      const size = toNumber(p.size ?? p.qty);
+      if (!Number.isFinite(size) || size <= 0) return;
+      const bias = normalizeBias(p.side);
+      if (!bias) return;
+      biases.add(bias);
+      if (String(p.symbol ?? "").toUpperCase() === "BTCUSDT" && !btcBias) {
+        btcBias = bias;
+      }
+    });
+    ordersRef.current.forEach((o: any) => {
+      if (!isEntryOrder(o)) return;
+      const bias = normalizeBias(o.side);
+      if (!bias) return;
+      biases.add(bias);
+      if (String(o.symbol ?? "").toUpperCase() === "BTCUSDT" && !btcBias) {
+        btcBias = bias;
+      }
+    });
+    return { biases, btcBias };
+  }, [isEntryOrder, normalizeBias]);
+
+  const resolveBtcBias = useCallback(
+    (fallbackDir?: "bull" | "bear", symbolUpper?: string) => {
+      const { btcBias: openBtcBias } = getOpenBiasState();
+      let btcBias = openBtcBias ?? null;
+      if (!btcBias) {
+        const btcDecision = decisionRef.current["BTCUSDT"]?.decision;
+        const btcConsensus = (btcDecision as any)?.htfTrend?.consensus;
+        const btcDir =
+          btcConsensus === "bull" || btcConsensus === "bear"
+            ? btcConsensus
+            : String((btcDecision as any)?.trend ?? "").toLowerCase();
+        if (btcDir === "bull" || btcDir === "bear") {
+          btcBias = btcDir;
+        }
+      }
+      if (!btcBias && symbolUpper === "BTCUSDT" && fallbackDir) {
+        btcBias = fallbackDir;
+      }
+      return btcBias;
+    },
+    [getOpenBiasState]
+  );
 
   const getEquityValue = useCallback(() => {
     const wallet = walletRef.current;
@@ -662,7 +745,7 @@ export function useTradingBot(
       if (!Number.isFinite(activePrice) || activePrice <= 0) return null;
       return { trailingStop: distance, trailingActivePrice: activePrice };
     },
-    []
+    [getOpenBiasState, resolveBtcBias]
   );
 
   const syncTrailingProtection = useCallback(
@@ -944,7 +1027,105 @@ export function useTradingBot(
       }
       return { ok, detail };
     },
-    []
+    [getOpenBiasState, resolveBtcBias]
+  );
+
+  const enforceBtcBiasAlignment = useCallback(
+    async (now: number) => {
+      if (!authToken) return;
+      const btcBias = resolveBtcBias();
+      if (!btcBias) return;
+      const cooldown = autoCloseCooldownRef.current;
+      const nextPositions = positionsRef.current;
+      const nextOrders = ordersRef.current;
+
+      const closeTargets = nextPositions.filter((pos) => {
+        const size = toNumber(pos.size ?? pos.qty);
+        if (!Number.isFinite(size) || size <= 0) return false;
+        const bias = normalizeBias(pos.side);
+        return bias != null && bias !== btcBias;
+      });
+
+      const cancelTargets = nextOrders.filter((order) => {
+        if (!isEntryOrder(order)) return false;
+        const bias = normalizeBias(order.side);
+        return bias != null && bias !== btcBias;
+      });
+
+      if (!closeTargets.length && !cancelTargets.length) return;
+
+      for (const pos of closeTargets) {
+        const key = `pos:${pos.symbol}`;
+        const last = cooldown.get(key) ?? 0;
+        if (now - last < 15_000) continue;
+        cooldown.set(key, now);
+        const size = Math.abs(toNumber(pos.size ?? pos.qty));
+        if (!Number.isFinite(size) || size <= 0) continue;
+        const closeSide =
+          String(pos.side).toLowerCase() === "buy" ? "Sell" : "Buy";
+        try {
+          await postJson("/order", {
+            symbol: pos.symbol,
+            side: closeSide,
+            qty: size,
+            orderType: "Market",
+            reduceOnly: true,
+            timeInForce: "IOC",
+          });
+          addLogEntries([
+            {
+              id: `btc-bias-close:${pos.symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "AUTO_CLOSE",
+              message: `BTC bias ${btcBias} -> CLOSE ${pos.symbol} ${pos.side}`,
+            },
+          ]);
+        } catch (err) {
+          addLogEntries([
+            {
+              id: `btc-bias-close:error:${pos.symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "ERROR",
+              message: `BTC bias close failed ${pos.symbol}: ${asErrorMessage(err)}`,
+            },
+          ]);
+        }
+      }
+
+      for (const order of cancelTargets) {
+        const orderId = order.orderId || "";
+        const orderLinkId = order.orderLinkId || "";
+        const key = orderId || orderLinkId || `ord:${order.symbol}:${order.side}`;
+        const last = cooldown.get(key) ?? 0;
+        if (now - last < 15_000) continue;
+        cooldown.set(key, now);
+        try {
+          await postJson("/cancel", {
+            symbol: order.symbol,
+            orderId: orderId || undefined,
+            orderLinkId: orderLinkId || undefined,
+          });
+          addLogEntries([
+            {
+              id: `btc-bias-cancel:${key}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `BTC bias ${btcBias} -> CANCEL ${order.symbol} ${order.side}`,
+            },
+          ]);
+        } catch (err) {
+          addLogEntries([
+            {
+              id: `btc-bias-cancel:error:${key}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "ERROR",
+              message: `BTC bias cancel failed ${order.symbol}: ${asErrorMessage(err)}`,
+            },
+          ]);
+        }
+      }
+    },
+    [addLogEntries, authToken, isEntryOrder, normalizeBias, postJson, resolveBtcBias]
   );
 
   const resolveCorrelationGate = useCallback(
@@ -955,60 +1136,11 @@ export function useTradingBot(
     ) => {
       const details: string[] = [];
       let ok = true;
-      const normalizeBias = (value: unknown): "bull" | "bear" | null => {
-        const raw = String(value ?? "").trim().toLowerCase();
-        if (!raw) return null;
-        if (raw === "buy" || raw === "long" || raw === "bull") return "bull";
-        if (raw === "sell" || raw === "short" || raw === "bear") return "bear";
-        return null;
-      };
-      const isEntryOrder = (order: any): boolean => {
-        const reduceOnly = Boolean(
-          order?.reduceOnly ?? order?.reduce_only ?? order?.reduce
-        );
-        if (reduceOnly) return false;
-        const filter = String(order?.orderFilter ?? order?.order_filter ?? "").toLowerCase();
-        const stopType = String(order?.stopOrderType ?? order?.stop_order_type ?? "").toLowerCase();
-        if (filter === "tpsl" || stopType === "takeprofit" || stopType === "stoploss" || stopType === "trailingstop") {
-          return false;
-        }
-        const status = String(order?.status ?? "").toLowerCase();
-        if (!status) return true;
-        if (status.includes("filled") || status.includes("cancel") || status.includes("reject")) {
-          return false;
-        }
-        return true;
-      };
-
-      const activeBiases = new Set<"bull" | "bear">();
-      let btcBias: "bull" | "bear" | null = null;
-
-      positionsRef.current.forEach((p) => {
-        const size = toNumber(p.size ?? p.qty);
-        if (!Number.isFinite(size) || size <= 0) return;
-        const bias = normalizeBias(p.side);
-        if (!bias) return;
-        activeBiases.add(bias);
-        if (String(p.symbol ?? "").toUpperCase() === "BTCUSDT" && !btcBias) {
-          btcBias = bias;
-        }
-      });
-
-      ordersRef.current.forEach((o: any) => {
-        if (!o || !isEntryOrder(o)) return;
-        const bias = normalizeBias(o.side);
-        if (!bias) return;
-        activeBiases.add(bias);
-        if (String(o.symbol ?? "").toUpperCase() === "BTCUSDT" && !btcBias) {
-          btcBias = bias;
-        }
-      });
-
+      const { biases: activeBiases } = getOpenBiasState();
       if (activeBiases.size > 1) {
         ok = false;
         details.push("mixed open bias");
       }
-
       const symbolUpper = String(symbol).toUpperCase();
 
       if (!signal) {
@@ -1025,22 +1157,7 @@ export function useTradingBot(
         return { ok, detail: details.join(" | ") };
       }
 
-      if (!btcBias) {
-        const btcDecision = decisionRef.current["BTCUSDT"]?.decision;
-        const btcConsensus = (btcDecision as any)?.htfTrend?.consensus;
-        const btcDir =
-          btcConsensus === "bull" || btcConsensus === "bear"
-            ? btcConsensus
-            : String((btcDecision as any)?.trend ?? "").toLowerCase();
-        if (btcDir === "bull" || btcDir === "bear") {
-          btcBias = btcDir;
-        }
-      }
-
-      if (!btcBias && symbolUpper === "BTCUSDT") {
-        btcBias = signalDir;
-      }
-
+      const btcBias = resolveBtcBias(signalDir, symbolUpper);
       if (!btcBias) {
         ok = false;
         details.push("btc direction unknown");
@@ -1063,7 +1180,7 @@ export function useTradingBot(
       }
       return { ok, detail: details.join(" | ") };
     },
-    []
+    [getOpenBiasState, resolveBtcBias]
   );
 
   const resolveQualityScore = useCallback(
@@ -1299,6 +1416,7 @@ export function useTradingBot(
     setScanDiagnostics((prev) => {
       const next = { ...(prev ?? {}) };
       for (const [symbol, data] of entries) {
+        if (!activeSymbols.includes(symbol as Symbol)) continue;
         next[symbol] = buildScanDiagnostics(
           symbol,
           data.decision,
@@ -1307,7 +1425,7 @@ export function useTradingBot(
       }
       return next;
     });
-  }, [buildScanDiagnostics]);
+  }, [activeSymbols, buildScanDiagnostics]);
 
   const updateGateOverrides = useCallback(
     (overrides: Record<string, boolean>) => {
@@ -1671,6 +1789,9 @@ export function useTradingBot(
         }
       }
       orderSnapshotRef.current = nextOrders;
+      if (positionsRes.status === "fulfilled") {
+        void enforceBtcBiasAlignment(now);
+      }
     } else {
       const msg = asErrorMessage(ordersRes.reason);
       setOrdersError(msg);
@@ -1791,6 +1912,7 @@ export function useTradingBot(
     addLogEntries,
     apiBase,
     authToken,
+    enforceBtcBiasAlignment,
     fetchJson,
     refreshDiagnosticsFromDecisions,
     syncTrailingProtection,
@@ -1980,13 +2102,19 @@ export function useTradingBot(
   const handleDecision = useCallback(
     (symbol: string, decision: PriceFeedDecision) => {
       const now = Date.now();
+      const isSelected = activeSymbols.includes(symbol as Symbol);
       feedLastTickRef.current = now;
       symbolTickRef.current.set(symbol, now);
       decisionRef.current[symbol] = { decision, ts: now };
-      setScanDiagnostics((prev) => ({
-        ...(prev ?? {}),
-        [symbol]: buildScanDiagnostics(symbol, decision, now),
-      }));
+      if (isSelected) {
+        setScanDiagnostics((prev) => ({
+          ...(prev ?? {}),
+          [symbol]: buildScanDiagnostics(symbol, decision, now),
+        }));
+      }
+      if (!isSelected) {
+        return;
+      }
 
       const nextState = String(decision?.state ?? "").toUpperCase();
       if (nextState) {
@@ -2206,6 +2334,7 @@ export function useTradingBot(
     },
     [
       addLogEntries,
+      activeSymbols,
       autoTrade,
       buildScanDiagnostics,
       computeFixedSizing,
@@ -2266,7 +2395,7 @@ export function useTradingBot(
         ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
         : undefined;
     const stop = startPriceFeed(
-      activeSymbols,
+      feedSymbols,
       (symbol, decision) => {
         handleDecisionRef.current?.(symbol, decision);
       },
@@ -2298,7 +2427,7 @@ export function useTradingBot(
     return () => {
       stop();
     };
-  }, [activeSymbols, addLogEntries, authToken, engineConfig, feedEpoch, useTestnet]);
+  }, [addLogEntries, authToken, engineConfig, feedEpoch, feedSymbols, useTestnet]);
 
   useEffect(() => {
     if (!authToken) return;
