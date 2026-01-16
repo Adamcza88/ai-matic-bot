@@ -1,4 +1,16 @@
-export type Symbol = "BTCUSDT" | "ETHUSDT" | "SOLUSDT" | "ADAUSDT";
+export type Symbol =
+  | "BTCUSDT"
+  | "ETHUSDT"
+  | "SOLUSDT"
+  | "ADAUSDT"
+  | "XRPUSDT"
+  | "XMRUSDT"
+  | "DOGEUSDT"
+  | "LINKUSDT"
+  | "MELANIAUSDT"
+  | "XPLUSDT"
+  | "HYPEUSDT"
+  | "FARTCOINUSDT";
 export type Side = "Buy" | "Sell";
 export type EntryType = "LIMIT_MAKER_FIRST" | "LIMIT" | "CONDITIONAL" | "MARKET_DISABLED";
 

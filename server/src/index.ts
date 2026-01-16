@@ -17,7 +17,20 @@ const audit = new AuditLog();
 const idem = new IdempotencyStore(10 * 60_000);
 const wsHealth = new WsHealth();
 
-const symbols: Symbol[] = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"];
+const symbols: Symbol[] = [
+  "BTCUSDT",
+  "ETHUSDT",
+  "SOLUSDT",
+  "ADAUSDT",
+  "XRPUSDT",
+  "XMRUSDT",
+  "DOGEUSDT",
+  "LINKUSDT",
+  "MELANIAUSDT",
+  "XPLUSDT",
+  "HYPEUSDT",
+  "FARTCOINUSDT",
+];
 
 const v5 = new BybitV5Client({
   env: (process.env.BYBIT_ENV as any) ?? "mainnet",
