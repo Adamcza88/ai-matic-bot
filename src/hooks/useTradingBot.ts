@@ -912,7 +912,9 @@ export function useTradingBot(
             symbol,
             trailingStop: plan.trailingStop,
             trailingActivePrice: plan.trailingActivePrice,
-            positionIdx: 0,
+            positionIdx: Number.isFinite(pos.positionIdx)
+              ? pos.positionIdx
+              : 0,
           });
           addLogEntries([
             {
@@ -1232,6 +1234,9 @@ export function useTradingBot(
             orderType: "Market",
             reduceOnly: true,
             timeInForce: "IOC",
+            positionIdx: Number.isFinite(pos.positionIdx)
+              ? pos.positionIdx
+              : undefined,
           });
           addLogEntries([
             {
@@ -1627,6 +1632,10 @@ export function useTradingBot(
           const side =
             sideRaw.toLowerCase() === "buy" ? "Buy" : "Sell";
           const symbol = String(p?.symbol ?? "");
+          const positionIdxRaw = toNumber(p?.positionIdx);
+          const positionIdx = Number.isFinite(positionIdxRaw)
+            ? positionIdxRaw
+            : undefined;
           const entryPrice = toNumber(
             p?.entryPrice ?? p?.avgEntryPrice ?? p?.avgPrice
           );
@@ -1700,6 +1709,7 @@ export function useTradingBot(
             lastUpdateReason: String(p?.lastUpdateReason ?? "") || undefined,
             timestamp: updatedAt || openedAt || "",
             env: useTestnet ? "testnet" : "mainnet",
+            positionIdx,
           } satisfies ActivePosition;
         })
         .filter((p: ActivePosition | null): p is ActivePosition => Boolean(p));
@@ -2746,6 +2756,9 @@ export function useTradingBot(
         orderType: "Market",
         reduceOnly: true,
         timeInForce: "IOC",
+        positionIdx: Number.isFinite(pos.positionIdx)
+          ? pos.positionIdx
+          : undefined,
       };
       const res = await fetch(`${apiBase}/order`, {
         method: "POST",

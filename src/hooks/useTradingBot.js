@@ -763,7 +763,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     symbol,
                     trailingStop: plan.trailingStop,
                     trailingActivePrice: plan.trailingActivePrice,
-                    positionIdx: 0,
+                    positionIdx: Number.isFinite(pos.positionIdx)
+                        ? pos.positionIdx
+                        : 0,
                 });
                 addLogEntries([
                     {
@@ -1100,6 +1102,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     orderType: "Market",
                     reduceOnly: true,
                     timeInForce: "IOC",
+                    positionIdx: Number.isFinite(pos.positionIdx)
+                        ? pos.positionIdx
+                        : undefined,
                 });
                 addLogEntries([
                     {
@@ -1384,6 +1389,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 const sideRaw = String(p?.side ?? "");
                 const side = sideRaw.toLowerCase() === "buy" ? "Buy" : "Sell";
                 const symbol = String(p?.symbol ?? "");
+                const positionIdxRaw = toNumber(p?.positionIdx);
+                const positionIdx = Number.isFinite(positionIdxRaw)
+                    ? positionIdxRaw
+                    : undefined;
                 const entryPrice = toNumber(p?.entryPrice ?? p?.avgEntryPrice ?? p?.avgPrice);
                 const unrealized = toNumber(p?.unrealisedPnl ?? p?.unrealizedPnl);
                 const openEpoch = toEpoch(p?.openTime);
@@ -1446,6 +1455,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     lastUpdateReason: String(p?.lastUpdateReason ?? "") || undefined,
                     timestamp: updatedAt || openedAt || "",
                     env: useTestnet ? "testnet" : "mainnet",
+                    positionIdx,
                 };
             })
                 .filter((p) => Boolean(p));
@@ -2389,6 +2399,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             orderType: "Market",
             reduceOnly: true,
             timeInForce: "IOC",
+            positionIdx: Number.isFinite(pos.positionIdx)
+                ? pos.positionIdx
+                : undefined,
         };
         const res = await fetch(`${apiBase}/order`, {
             method: "POST",

@@ -214,6 +214,9 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     orderFilter: order.triggerPrice ? "StopOrder" : undefined,
     timeInForce: order.timeInForce || (order.orderType === "Limit" ? "GTC" : "IOC"),
     reduceOnly: order.reduceOnly ?? false,
+    positionIdx: Number.isFinite(Number(order.positionIdx))
+      ? Number(order.positionIdx)
+      : undefined,
     orderLinkId: order.orderLinkId || undefined,
   };
 
@@ -307,12 +310,27 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
           `[createDemoOrder] Trailing stop deferred (no active position yet) for ${order.symbol}.`
         );
       } else {
+        let resolvedPositionIdx = Number.isFinite(Number(order.positionIdx))
+          ? Number(order.positionIdx)
+          : undefined;
+        if (!Number.isFinite(resolvedPositionIdx)) {
+          const sideMatch = String(order.side ?? "").toLowerCase();
+          const match = list.find((p) => {
+            if (String(p?.symbol ?? "") !== String(order.symbol)) return false;
+            const size = Number(p?.size ?? 0);
+            if (!Number.isFinite(size) || size <= 0) return false;
+            const posSide = String(p?.side ?? "").toLowerCase();
+            return sideMatch ? posSide === sideMatch : true;
+          });
+          const idx = Number(match?.positionIdx);
+          if (Number.isFinite(idx)) resolvedPositionIdx = idx;
+        }
         const tsResult = await setTradingStop(
           {
             symbol: order.symbol,
             trailingStop: order.trailingStop,
             activePrice: order.trailingActivePrice,
-            positionIdx: 0,
+            positionIdx: resolvedPositionIdx,
           },
           creds,
           useTestnet

@@ -130,6 +130,7 @@ export type ActivePosition = {
   // Meta
   openedAt: string;
   env: "testnet" | "mainnet";
+  positionIdx?: number;
 
   // Legacy analysis fields (keep for UI)
   rrr?: number;
