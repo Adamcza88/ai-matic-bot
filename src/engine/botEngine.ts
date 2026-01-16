@@ -1,5 +1,5 @@
 import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet";
-import { computeRsi } from "./ta";
+import { computeEma, computeRsi } from "./ta";
 
 export enum Trend {
   Bull = "bull",
@@ -193,6 +193,9 @@ export interface BotConfig {
   pullbackRsiPeriod?: number;
   pullbackRsiMin?: number;
   pullbackRsiMax?: number;
+  emaTrendPeriod?: number;
+  emaTrendConfirmBars?: number;
+  emaTrendTouchLookback?: number;
   smcBosVolumeMult?: number;
   smcBosVolumePeriod?: number;
   smcFvgDistancePct?: number;
@@ -296,6 +299,9 @@ export const defaultConfig: BotConfig = {
   pullbackRsiPeriod: 14,
   pullbackRsiMin: 45,
   pullbackRsiMax: 55,
+  emaTrendPeriod: 50,
+  emaTrendConfirmBars: 2,
+  emaTrendTouchLookback: 2,
 };
 
 /**
@@ -1322,6 +1328,56 @@ export class TradingBot {
       return null; // Too volatile, skip
     }
 
+    const emaTrendPeriod = this.config.emaTrendPeriod ?? 50;
+    const emaTrendTouchLookback = Math.max(
+      1,
+      this.config.emaTrendTouchLookback ?? 2
+    );
+    const emaTrendConfirmBars = Math.max(
+      1,
+      this.config.emaTrendConfirmBars ?? 2
+    );
+    const htCloses = ht.map((c) => c.close);
+    const emaTrendArr = computeEma(htCloses, emaTrendPeriod);
+    const emaTrendNow = emaTrendArr[emaTrendArr.length - 1];
+    const htLast = ht[ht.length - 1];
+    const emaTrendBias =
+      Number.isFinite(emaTrendNow) && Number.isFinite(htLast?.close)
+        ? htLast.close > emaTrendNow
+          ? "long"
+          : htLast.close < emaTrendNow
+            ? "short"
+            : null
+        : null;
+    if (!emaTrendBias) return null;
+    let emaTouched = false;
+    const touchStart = Math.max(0, ht.length - emaTrendTouchLookback);
+    for (let i = touchStart; i < ht.length; i++) {
+      const candle = ht[i];
+      const emaAt = emaTrendArr[i];
+      if (!candle || !Number.isFinite(emaAt)) continue;
+      if (candle.low <= emaAt && candle.high >= emaAt) {
+        emaTouched = true;
+        break;
+      }
+    }
+    if (emaTouched) {
+      const confirmStart = Math.max(0, ht.length - emaTrendConfirmBars);
+      for (let i = confirmStart; i < ht.length; i++) {
+        const candle = ht[i];
+        const emaAt = emaTrendArr[i];
+        if (!candle || !Number.isFinite(emaAt)) return null;
+        if (emaTrendBias === "long" && candle.close <= emaAt) return null;
+        if (emaTrendBias === "short" && candle.close >= emaAt) return null;
+      }
+    }
+    const applyEmaTrendGate = (candidate: EntrySignal | null) => {
+      if (!candidate) return null;
+      if (candidate.side !== emaTrendBias) return null;
+      if (emaTouched && candidate.kind !== "PULLBACK") return null;
+      return candidate;
+    };
+
     let trend = this.determineTrend(ht);
     if (lt.length < 3) return null;
     const closes = lt.map((c) => c.close);
@@ -1384,12 +1440,12 @@ export class TradingBot {
       if (zScore <= -zCut) {
         const entry = price;
         const stop = resolveEntryStop("long", entry, price - this.config.atrEntryMultiplier * latestATR);
-        return { side: "long", entry, stopLoss: stop, kind: "MEAN_REVERSION" };
+        return applyEmaTrendGate({ side: "long", entry, stopLoss: stop, kind: "MEAN_REVERSION" });
       }
       if (zScore >= zCut) {
         const entry = price;
         const stop = resolveEntryStop("short", entry, price + this.config.atrEntryMultiplier * latestATR);
-        return { side: "short", entry, stopLoss: stop, kind: "MEAN_REVERSION" };
+        return applyEmaTrendGate({ side: "short", entry, stopLoss: stop, kind: "MEAN_REVERSION" });
       }
       return null;
     }
@@ -1428,12 +1484,12 @@ export class TradingBot {
     if (trend === Trend.Bull && diffs.every((d) => d > 0)) {
       const entry = lastN[lastN.length - 1];
       const stop = resolveEntryStop("long", entry, entry - this.config.atrEntryMultiplier * latestATR);
-      return { side: "long", entry, stopLoss: stop, kind: "MOMENTUM" };
+      return applyEmaTrendGate({ side: "long", entry, stopLoss: stop, kind: "MOMENTUM" });
     }
     if (trend === Trend.Bear && diffs.every((d) => d < 0)) {
       const entry = lastN[lastN.length - 1];
       const stop = resolveEntryStop("short", entry, entry + this.config.atrEntryMultiplier * latestATR);
-      return { side: "short", entry, stopLoss: stop, kind: "MOMENTUM" };
+      return applyEmaTrendGate({ side: "short", entry, stopLoss: stop, kind: "MOMENTUM" });
     }
     const c0 = closes[closes.length - 1];
     const c1 = closes[closes.length - 2];
@@ -1453,7 +1509,7 @@ export class TradingBot {
         entry,
         Math.min(c1, lows[lows.length - 2]) - this.config.swingBackoffAtr * latestATR,
       );
-      return { side: "long", entry, stopLoss: stop, kind: "PULLBACK" };
+      return applyEmaTrendGate({ side: "long", entry, stopLoss: stop, kind: "PULLBACK" });
     }
     if (trend === Trend.Bear && c1 > emaPrev && c0 < emaNow && rsiOkShort) {
       const entry = c0;
@@ -1462,7 +1518,7 @@ export class TradingBot {
         entry,
         Math.max(c1, highs[highs.length - 2]) + this.config.swingBackoffAtr * latestATR,
       );
-      return { side: "short", entry, stopLoss: stop, kind: "PULLBACK" };
+      return applyEmaTrendGate({ side: "short", entry, stopLoss: stop, kind: "PULLBACK" });
     }
     const lookback = strictness === "ultra" ? 5 : strictness === "relaxed" ? 8 : strictness === "test" ? 3 : 12;
     const recentHigh = Math.max(...highs.slice(-lookback));
@@ -1470,12 +1526,12 @@ export class TradingBot {
     if (trend === Trend.Bull && price > recentHigh) {
       const entry = price;
       const stop = resolveEntryStop("long", entry, recentLow - this.config.swingBackoffAtr * latestATR);
-      return { side: "long", entry, stopLoss: stop, kind: "BREAKOUT" };
+      return applyEmaTrendGate({ side: "long", entry, stopLoss: stop, kind: "BREAKOUT" });
     }
     if (trend === Trend.Bear && price < recentLow) {
       const entry = price;
       const stop = resolveEntryStop("short", entry, recentHigh + this.config.swingBackoffAtr * latestATR);
-      return { side: "short", entry, stopLoss: stop, kind: "BREAKOUT" };
+      return applyEmaTrendGate({ side: "short", entry, stopLoss: stop, kind: "BREAKOUT" });
     }
 
     // Note: Mean Reversion for Trend mode is REMOVED as requested.
@@ -1489,7 +1545,12 @@ export class TradingBot {
           trend === Trend.Bull
             ? resolveEntryStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
             : resolveEntryStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
-        return { side: trend === Trend.Bull ? "long" : "short", entry, stopLoss: stop, kind: "MOMENTUM" };
+        return applyEmaTrendGate({
+          side: trend === Trend.Bull ? "long" : "short",
+          entry,
+          stopLoss: stop,
+          kind: "MOMENTUM",
+        });
       }
     }
     if (isTest) {
@@ -1501,7 +1562,7 @@ export class TradingBot {
         dir === "long"
           ? resolveEntryStop("long", price, price - this.config.atrEntryMultiplier * latestATR)
           : resolveEntryStop("short", price, price + this.config.atrEntryMultiplier * latestATR);
-      return { side: dir as "long" | "short", entry, stopLoss: stop, kind: "OTHER" };
+      return applyEmaTrendGate({ side: dir as "long" | "short", entry, stopLoss: stop, kind: "OTHER" });
     }
     return null;
   }

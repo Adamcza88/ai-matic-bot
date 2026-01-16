@@ -222,13 +222,15 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         setChecklistEnabled(CHECKLIST_DEFAULTS);
     }, [CHECKLIST_DEFAULTS]);
     const [showSettings, setShowSettings] = useState(false);
-    const maxOpenPositions = portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
+    const rawMaxOpenPositions = portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
+    const maxOpenPositions = rawMaxOpenPositions;
     const openPositionsCount = positionsLoaded ? activePositions.length : 0;
     const openOrdersCount = ordersLoaded ? exchangeOrders.length : 0;
-    const maxOpenOrders = bot.settings?.maxOpenOrders ??
-        (Number.isFinite(maxOpenPositions)
-            ? Math.min(Math.max(maxOpenPositions * 4, 0), 400)
+    const rawMaxOpenOrders = bot.settings?.maxOpenOrders ??
+        (Number.isFinite(rawMaxOpenPositions)
+            ? Math.min(Math.max(rawMaxOpenPositions * 4, 0), 400)
             : 400);
+    const maxOpenOrders = rawMaxOpenOrders;
     const totalCapital = portfolioState?.totalCapital ?? portfolioState?.totalEquity;
     const allocated = portfolioState?.allocatedCapital;
     const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";

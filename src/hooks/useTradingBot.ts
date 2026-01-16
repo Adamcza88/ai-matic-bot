@@ -4,11 +4,12 @@ import { sendIntent } from "../api/botApi";
 import { EntryType, Profile, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
-import { evaluateStrategyForSymbol } from "../engine/botEngine";
+import { evaluateStrategyForSymbol, resampleCandles } from "../engine/botEngine";
 import { evaluateSmcStrategyForSymbol } from "../engine/smcStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
+import { computeEma } from "../engine/ta";
 import type { PriceFeedDecision } from "../engine/priceFeed";
-import type { BotConfig } from "../engine/botEngine";
+import type { BotConfig, Candle } from "../engine/botEngine";
 import { TradingMode } from "../types";
 import {
   SUPPORTED_SYMBOLS,
@@ -48,6 +49,10 @@ const AI_MATIC_HTF_TIMEFRAMES_MIN = [60, 15];
 const AI_MATIC_LTF_TIMEFRAMES_MIN = [5, 1];
 const SCALP_LTF_TIMEFRAMES_MIN = [1];
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
+const EMA_TREND_PERIOD = 50;
+const EMA_TREND_CONFIRM_BARS = 2;
+const EMA_TREND_TOUCH_LOOKBACK = 2;
+const EMA_TREND_TIMEFRAMES_MIN = [60, 15, 5];
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -150,6 +155,115 @@ function persistSettings(settings: AISettings) {
 function toNumber(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? n : Number.NaN;
+}
+
+type EmaTrendFrame = {
+  timeframeMin: number;
+  direction: "bull" | "bear" | "none";
+  ema: number;
+  close: number;
+  touched: boolean;
+  confirmed: boolean;
+};
+
+type EmaTrendResult = {
+  consensus: "bull" | "bear" | "none";
+  alignedCount: number;
+  byTimeframe: EmaTrendFrame[];
+  tags: string[];
+};
+
+function evaluateEmaMultiTrend(
+  candles: Candle[],
+  opts?: {
+    timeframesMin?: number[];
+    emaPeriod?: number;
+    touchLookback?: number;
+    confirmBars?: number;
+  }
+): EmaTrendResult {
+  const timeframes = opts?.timeframesMin ?? EMA_TREND_TIMEFRAMES_MIN;
+  const emaPeriod = opts?.emaPeriod ?? EMA_TREND_PERIOD;
+  const touchLookback = Math.max(1, opts?.touchLookback ?? EMA_TREND_TOUCH_LOOKBACK);
+  const confirmBars = Math.max(1, opts?.confirmBars ?? EMA_TREND_CONFIRM_BARS);
+  const byTimeframe: EmaTrendFrame[] = timeframes.map((tf) => {
+    const sampled = resampleCandles(candles, tf);
+    const minBars = Math.max(emaPeriod, touchLookback, confirmBars + 1);
+    if (!sampled.length || sampled.length < minBars) {
+      return {
+        timeframeMin: tf,
+        direction: "none",
+        ema: Number.NaN,
+        close: Number.NaN,
+        touched: false,
+        confirmed: false,
+      };
+    }
+    const closes = sampled.map((c) => c.close);
+    const emaArr = computeEma(closes, emaPeriod);
+    const emaNow = emaArr[emaArr.length - 1];
+    const close = closes[closes.length - 1];
+    const direction =
+      close > emaNow ? "bull" : close < emaNow ? "bear" : "none";
+    let touched = false;
+    const touchStart = Math.max(0, sampled.length - touchLookback);
+    for (let i = touchStart; i < sampled.length; i++) {
+      const candle = sampled[i];
+      const emaAt = emaArr[i];
+      if (!candle || !Number.isFinite(emaAt)) continue;
+      if (candle.low <= emaAt && candle.high >= emaAt) {
+        touched = true;
+        break;
+      }
+    }
+    let confirmed = true;
+    if (touched) {
+      if (direction === "none") {
+        confirmed = false;
+      } else {
+        const confirmStart = Math.max(0, sampled.length - confirmBars);
+        for (let i = confirmStart; i < sampled.length; i++) {
+          const candle = sampled[i];
+          const emaAt = emaArr[i];
+          if (!candle || !Number.isFinite(emaAt)) {
+            confirmed = false;
+            break;
+          }
+          if (direction === "bull" && candle.close <= emaAt) {
+            confirmed = false;
+            break;
+          }
+          if (direction === "bear" && candle.close >= emaAt) {
+            confirmed = false;
+            break;
+          }
+        }
+      }
+    }
+    return {
+      timeframeMin: tf,
+      direction,
+      ema: emaNow,
+      close,
+      touched,
+      confirmed,
+    };
+  });
+  const bull = byTimeframe.filter((t) => t.direction === "bull").length;
+  const bear = byTimeframe.filter((t) => t.direction === "bear").length;
+  const consensus =
+    bull === timeframes.length
+      ? "bull"
+      : bear === timeframes.length
+        ? "bear"
+        : "none";
+  const alignedCount = Math.max(bull, bear);
+  const tags: string[] = [];
+  if (consensus !== "none") tags.push(`ALIGN_${consensus.toUpperCase()}`);
+  if (byTimeframe.some((t) => t.touched && !t.confirmed)) {
+    tags.push("TOUCH_UNCONFIRMED");
+  }
+  return { consensus, alignedCount, byTimeframe, tags };
 }
 
 function toEpoch(value: unknown) {
@@ -745,7 +859,7 @@ export function useTradingBot(
       if (!Number.isFinite(activePrice) || activePrice <= 0) return null;
       return { trailingStop: distance, trailingActivePrice: activePrice };
     },
-    [getOpenBiasState, resolveBtcBias]
+    []
   );
 
   const syncTrailingProtection = useCallback(
@@ -835,7 +949,9 @@ export function useTradingBot(
       const now = new Date();
       const sessionOk = isSessionAllowed(now, settings);
       const maxPositions = toNumber(settings.maxOpenPositions);
-      const openPositionsCount = positionsRef.current.length;
+      const pendingIntents = intentPendingRef.current.size;
+      const openPositionsCount =
+        positionsRef.current.length + (useTestnet ? 0 : pendingIntents);
       const maxPositionsOk = !Number.isFinite(maxPositions)
         ? true
         : maxPositions > 0
@@ -846,7 +962,8 @@ export function useTradingBot(
         const size = toNumber(p.size ?? p.qty);
         return Number.isFinite(size) && size > 0;
       });
-      const openOrdersCount = ordersRef.current.length;
+      const openOrdersCount =
+        ordersRef.current.length + (useTestnet ? 0 : pendingIntents);
       const maxOrders = toNumber(settings.maxOpenOrders);
       const ordersClearOk = !Number.isFinite(maxOrders)
         ? true
@@ -868,7 +985,7 @@ export function useTradingBot(
         engineOk,
       };
     },
-    [isSessionAllowed]
+    [isSessionAllowed, useTestnet]
   );
 
   const resolveTrendGate = useCallback(
@@ -879,6 +996,9 @@ export function useTradingBot(
       const settings = settingsRef.current;
       const htfTrend = (decision as any)?.htfTrend;
       const ltfTrend = (decision as any)?.ltfTrend;
+      const emaTrend = (decision as any)?.emaTrend as
+        | EmaTrendResult
+        | undefined;
       const htfConsensusRaw =
         typeof htfTrend?.consensus === "string" ? htfTrend.consensus : "";
       const htfConsensus =
@@ -948,6 +1068,29 @@ export function useTradingBot(
         if (dir === "MIXED") return "Mixed";
         return "Range";
       };
+      const emaTfLabel = (tf: number) => {
+        if (tf >= 60) return `${Math.round(tf / 60)}h`;
+        return `${tf}m`;
+      };
+      const emaFrames = Array.isArray(emaTrend?.byTimeframe)
+        ? emaTrend!.byTimeframe
+        : [];
+      const emaByTf = EMA_TREND_TIMEFRAMES_MIN.map((tf) => {
+        const entry = emaFrames.find(
+          (item) => Number(item?.timeframeMin) === tf
+        );
+        return {
+          timeframeMin: tf,
+          direction: String(entry?.direction ?? "none").toUpperCase(),
+          touched: Boolean(entry?.touched),
+          confirmed: Boolean(entry?.confirmed),
+        };
+      });
+      const emaDetailParts = emaByTf.map((entry) => {
+        const label = trendLabel(entry.direction);
+        const touchFlag = entry.touched ? (entry.confirmed ? "*" : "!") : "";
+        return `${emaTfLabel(entry.timeframeMin)} ${label}${touchFlag}`;
+      });
       const detailParts = isAiMaticProfile
         ? [
             `HTF / 1hod ${trendLabel(htfDir)}`,
@@ -997,6 +1140,12 @@ export function useTradingBot(
         });
         if (tfParts.length) detailParts.push(`LTF ${tfParts.join(" · ")}`);
       }
+      if (emaDetailParts.length) {
+        detailParts.push(`EMA50 ${emaDetailParts.join(" · ")}`);
+      }
+      if (emaByTf.some((entry) => entry.touched && !entry.confirmed)) {
+        detailParts.push("EMA50 touch unconfirmed");
+      }
       if (!isAiMaticProfile) {
         detailParts.push(
           `mode ${mode}${modeSetting === "adaptive" ? " (adaptive)" : ""}`
@@ -1012,10 +1161,22 @@ export function useTradingBot(
       const signalDir = sideRaw === "buy" ? "BULL" : "BEAR";
       const kind = signal.kind ?? "OTHER";
       const isMeanRev = kind === "MEAN_REVERSION";
+      const emaTarget = signalDir === "BULL" ? "BULL" : "BEAR";
+      const emaAligned =
+        emaByTf.length > 0 &&
+        emaByTf.every((entry) => entry.direction === emaTarget);
+      const emaTouched = emaByTf.some((entry) => entry.touched);
+      const emaConfirmOk = !emaByTf.some(
+        (entry) => entry.touched && !entry.confirmed
+      );
+      const emaPullbackOk = !emaTouched || kind === "PULLBACK";
       if (!htfIsTrend) {
         return { ok: false, detail };
       }
       if (hasLtf && !ltfIsTrend) {
+        return { ok: false, detail };
+      }
+      if (!emaAligned || !emaConfirmOk || !emaPullbackOk) {
         return { ok: false, detail };
       }
       const ltfOk = ltfMatchesSignal(signalDir);
@@ -2386,7 +2547,10 @@ export function useTradingBot(
             timeframesMin: ltfTimeframes,
           })
         : null;
-      return { ...baseDecision, htfTrend, ltfTrend };
+      const emaTrend = evaluateEmaMultiTrend(candles, {
+        timeframesMin: EMA_TREND_TIMEFRAMES_MIN,
+      });
+      return { ...baseDecision, htfTrend, ltfTrend, emaTrend };
     };
     const maxCandles = isSmc ? 3000 : isAiMatic ? 5000 : undefined;
     const backfill = isSmc
@@ -2538,7 +2702,12 @@ export function useTradingBot(
       currentDrawdown: Number.NaN,
       maxOpenPositions: settings.maxOpenPositions,
     };
-  }, [closedPnlRecords, positions, settings.maxOpenPositions, walletSnapshot]);
+  }, [
+    closedPnlRecords,
+    positions,
+    settings.maxOpenPositions,
+    walletSnapshot,
+  ]);
 
   const resetPnlHistory = useCallback(() => {
     const symbols = new Set<string>();
