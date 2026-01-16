@@ -63,6 +63,8 @@ async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true)
   return q.toFixed(decimals);
 }
 
+const lastLeverageBySymbol = new Map();
+
 export async function getServerTime(useTestnet = true) {
   const url = `${resolveBase(useTestnet)}/v5/market/time`;
   const res = await axios.get(url);
@@ -272,10 +274,26 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   const estimatedPrice = order.price ? Number(order.price) : 0;
   const safeQty = await normalizeQty(order.symbol, order.qty, estimatedPrice, useTestnet);
 
-  if (Number.isFinite(Number(order.leverage)) && Number(order.leverage) > 0) {
+  const leverageKey = `${useTestnet ? "demo" : "mainnet"}:${order.symbol}`;
+  const leverageRaw = Number(order.leverage);
+  const requestedLeverage =
+    Number.isFinite(leverageRaw) && leverageRaw > 0 ? leverageRaw : undefined;
+  const desiredLeverage = useTestnet
+    ? 1
+    : requestedLeverage != null
+      ? Math.max(1, Math.min(100, requestedLeverage))
+      : undefined;
+  if (Number.isFinite(desiredLeverage)) {
     try {
-      const lev = Math.max(1, Math.min(100, Number(order.leverage)));
-      await setLeverage({ symbol: order.symbol, leverage: lev }, creds, useTestnet);
+      const last = lastLeverageBySymbol.get(leverageKey);
+      if (last !== desiredLeverage) {
+        await setLeverage(
+          { symbol: order.symbol, leverage: desiredLeverage },
+          creds,
+          useTestnet
+        );
+        lastLeverageBySymbol.set(leverageKey, desiredLeverage);
+      }
     } catch (err) {
       const msg = err?.response?.data || err?.message || "Unknown leverage error";
       console.error("[Bybit] setLeverage failed:", msg);
