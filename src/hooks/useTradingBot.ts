@@ -36,6 +36,7 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 100;
 const MAX_POSITION_NOTIONAL_USD = 200;
+const DEMO_POSITION_NOTIONAL_USD = 10_000;
 const MAX_OPEN_POSITIONS_CAP = 10000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -326,12 +327,12 @@ function buildEntryFallback(list: any[]) {
 }
 
 type ClosedPnlRecord = { symbol: string; pnl: number; ts: number };
-const FIXED_QTY_BY_SYMBOL: Record<Symbol, number> = {
+const FIXED_QTY_BY_SYMBOL = {
   BTCUSDT: 0.105,
   ETHUSDT: 3.04,
   SOLUSDT: 69.6,
   ADAUSDT: 25873,
-};
+} satisfies Partial<Record<Symbol, number>>;
 
 const TRAIL_PROFILE_BY_RISK_MODE: Record<
   AISettings["riskMode"],
@@ -806,27 +807,29 @@ export function useTradingBot(
 
   const computeFixedSizing = useCallback(
     (symbol: Symbol, entry: number, sl: number) => {
-      const fixedQty = FIXED_QTY_BY_SYMBOL[symbol];
-      if (fixedQty == null) return null;
-      if (!Number.isFinite(fixedQty) || fixedQty <= 0) {
-        return { ok: false as const, reason: "invalid_fixed_qty" as const };
-      }
+      if (!useTestnet) return null;
       if (!Number.isFinite(entry) || entry <= 0) {
         return { ok: false as const, reason: "invalid_entry" as const };
       }
-      const notional = fixedQty * entry;
+      const fixedQty = FIXED_QTY_BY_SYMBOL[symbol];
+      const resolvedQty =
+        fixedQty == null ? DEMO_POSITION_NOTIONAL_USD / entry : fixedQty;
+      if (!Number.isFinite(resolvedQty) || resolvedQty <= 0) {
+        return { ok: false as const, reason: "invalid_fixed_qty" as const };
+      }
+      const notional = resolvedQty * entry;
       if (!Number.isFinite(notional) || notional <= 0) {
         return { ok: false as const, reason: "invalid_fixed_notional" as const };
       }
       const riskPerUnit = Math.abs(entry - sl);
       const riskUsd =
         Number.isFinite(riskPerUnit) && riskPerUnit > 0
-          ? riskPerUnit * fixedQty
+          ? riskPerUnit * resolvedQty
           : Number.NaN;
       const equity = getEquityValue();
-      return { ok: true as const, notional, qty: fixedQty, riskUsd, equity };
+      return { ok: true as const, notional, qty: resolvedQty, riskUsd, equity };
     },
-    [getEquityValue]
+    [getEquityValue, useTestnet]
   );
 
 

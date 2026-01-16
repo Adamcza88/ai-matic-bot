@@ -13,10 +13,11 @@ import { loadPnlHistory, mergePnlRecords, resetPnlHistoryMap, } from "../lib/pnl
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
-const MIN_POSITION_NOTIONAL_USD = 4;
-const MAX_POSITION_NOTIONAL_USD = 7;
-const MAX_OPEN_POSITIONS_CAP = 100;
-const ORDERS_PER_POSITION = 4;
+const MIN_POSITION_NOTIONAL_USD = 100;
+const MAX_POSITION_NOTIONAL_USD = 200;
+const DEMO_POSITION_NOTIONAL_USD = 10000;
+const MAX_OPEN_POSITIONS_CAP = 10000;
+const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
@@ -55,8 +56,8 @@ const DEFAULT_SETTINGS = {
     baseRiskPerTrade: 0,
     maxAllocatedCapitalPercent: 1.0,
     maxPortfolioRiskPercent: 0.2,
-    maxOpenPositions: 3,
-    maxOpenOrders: 12,
+    maxOpenPositions: 5,
+    maxOpenOrders: 16,
     selectedSymbols: [...SUPPORTED_SYMBOLS],
     requireConfirmationInAuto: false,
     positionSizingMultiplier: 1.0,
@@ -265,10 +266,10 @@ function buildEntryFallback(list) {
     return map;
 }
 const FIXED_QTY_BY_SYMBOL = {
-    BTCUSDT: 0.005,
-    ETHUSDT: 0.15,
-    SOLUSDT: 3.5,
-    ADAUSDT: 995,
+    BTCUSDT: 0.105,
+    ETHUSDT: 3.04,
+    SOLUSDT: 69.6,
+    ADAUSDT: 25873,
 };
 const TRAIL_PROFILE_BY_RISK_MODE = {
     "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
@@ -674,26 +675,27 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         return { ok: true, notional, qty, riskUsd, equity };
     }, [getEquityValue]);
     const computeFixedSizing = useCallback((symbol, entry, sl) => {
-        const fixedQty = FIXED_QTY_BY_SYMBOL[symbol];
-        if (fixedQty == null)
+        if (!useTestnet)
             return null;
-        if (!Number.isFinite(fixedQty) || fixedQty <= 0) {
-            return { ok: false, reason: "invalid_fixed_qty" };
-        }
         if (!Number.isFinite(entry) || entry <= 0) {
             return { ok: false, reason: "invalid_entry" };
         }
-        const notional = fixedQty * entry;
+        const fixedQty = FIXED_QTY_BY_SYMBOL[symbol];
+        const resolvedQty = fixedQty == null ? DEMO_POSITION_NOTIONAL_USD / entry : fixedQty;
+        if (!Number.isFinite(resolvedQty) || resolvedQty <= 0) {
+            return { ok: false, reason: "invalid_fixed_qty" };
+        }
+        const notional = resolvedQty * entry;
         if (!Number.isFinite(notional) || notional <= 0) {
             return { ok: false, reason: "invalid_fixed_notional" };
         }
         const riskPerUnit = Math.abs(entry - sl);
         const riskUsd = Number.isFinite(riskPerUnit) && riskPerUnit > 0
-            ? riskPerUnit * fixedQty
+            ? riskPerUnit * resolvedQty
             : Number.NaN;
         const equity = getEquityValue();
-        return { ok: true, notional, qty: fixedQty, riskUsd, equity };
-    }, [getEquityValue]);
+        return { ok: true, notional, qty: resolvedQty, riskUsd, equity };
+    }, [getEquityValue, useTestnet]);
     const computeTrailingPlan = useCallback((entry, sl, side, symbol) => {
         const settings = settingsRef.current;
         const symbolMode = TRAIL_SYMBOL_MODE[symbol];
