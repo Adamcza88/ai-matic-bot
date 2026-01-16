@@ -284,12 +284,7 @@ export default function Dashboard({
   const maxOpenPositions = rawMaxOpenPositions;
   const openPositionsCount = positionsLoaded ? activePositions.length : 0;
   const openOrdersCount = ordersLoaded ? exchangeOrders.length : 0;
-  const rawMaxOpenOrders =
-    bot.settings?.maxOpenOrders ??
-    (Number.isFinite(rawMaxOpenPositions)
-      ? Math.min(Math.max(rawMaxOpenPositions * 4, 0), 400)
-      : 400);
-  const maxOpenOrders = rawMaxOpenOrders;
+  const maxOpenOrders = bot.settings?.maxOpenOrders ?? 0;
   const totalCapital =
     portfolioState?.totalCapital ?? portfolioState?.totalEquity;
   const allocated = portfolioState?.allocatedCapital;
