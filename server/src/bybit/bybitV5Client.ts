@@ -3,7 +3,7 @@ import { AuditLog } from "../infra/audit";
 import { WsHealth } from "../infra/wsHealth";
 import { Symbol } from "../domain/types";
 
-export type BybitEnv = "mainnet" | "testnet";
+export type BybitEnv = "mainnet" | "demo" | "testnet";
 
 export type InstrumentSpec = {
   symbol: Symbol;
@@ -27,18 +27,20 @@ export class BybitV5Client {
     audit: AuditLog;
     health: WsHealth;
   }) {
-    const testnet = args.env !== "mainnet";
+    const demoTrading = args.env !== "mainnet";
 
     this.rest = new RestClientV5({
       key: args.apiKey,
       secret: args.apiSecret,
-      testnet,
+      testnet: false,
+      demoTrading,
     });
 
     this.ws = new WebsocketClient({
       key: args.apiKey,
       secret: args.apiSecret,
-      testnet,
+      testnet: false,
+      demoTrading,
       market: "v5",
       pingInterval: 10_000,
       pongTimeout: 2_000,
