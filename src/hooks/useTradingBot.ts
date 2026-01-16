@@ -36,7 +36,7 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 100;
 const MAX_POSITION_NOTIONAL_USD = 200;
-const DEMO_POSITION_NOTIONAL_USD = 10_000;
+const DEMO_POSITION_NOTIONAL_USD = 150;
 const MAX_OPEN_POSITIONS_CAP = 10000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -327,12 +327,6 @@ function buildEntryFallback(list: any[]) {
 }
 
 type ClosedPnlRecord = { symbol: string; pnl: number; ts: number };
-const FIXED_QTY_BY_SYMBOL = {
-  BTCUSDT: 0.105,
-  ETHUSDT: 3.04,
-  SOLUSDT: 69.6,
-  ADAUSDT: 25873,
-} satisfies Partial<Record<Symbol, number>>;
 
 const TRAIL_PROFILE_BY_RISK_MODE: Record<
   AISettings["riskMode"],
@@ -695,18 +689,21 @@ export function useTradingBot(
 
   const getEquityValue = useCallback(() => {
     const wallet = walletRef.current;
+    const availableBalance = toNumber(wallet?.availableBalance);
+    if (useTestnet && Number.isFinite(availableBalance) && availableBalance > 0) {
+      return availableBalance;
+    }
     const totalEquity = toNumber(wallet?.totalEquity);
     if (Number.isFinite(totalEquity) && totalEquity > 0) return totalEquity;
     const totalWalletBalance = toNumber(wallet?.totalWalletBalance);
     if (Number.isFinite(totalWalletBalance) && totalWalletBalance > 0) {
       return totalWalletBalance;
     }
-    const availableBalance = toNumber(wallet?.availableBalance);
     if (Number.isFinite(availableBalance) && availableBalance > 0) {
       return availableBalance;
     }
     return Number.NaN;
-  }, []);
+  }, [useTestnet]);
 
   const isSessionAllowed = useCallback((now: Date, next: AISettings) => {
     if (!next.enforceSessionHours) return true;
@@ -811,9 +808,11 @@ export function useTradingBot(
       if (!Number.isFinite(entry) || entry <= 0) {
         return { ok: false as const, reason: "invalid_entry" as const };
       }
-      const fixedQty = FIXED_QTY_BY_SYMBOL[symbol];
-      const resolvedQty =
-        fixedQty == null ? DEMO_POSITION_NOTIONAL_USD / entry : fixedQty;
+      const targetNotional = Math.min(
+        Math.max(DEMO_POSITION_NOTIONAL_USD, MIN_POSITION_NOTIONAL_USD),
+        MAX_POSITION_NOTIONAL_USD
+      );
+      const resolvedQty = targetNotional / entry;
       if (!Number.isFinite(resolvedQty) || resolvedQty <= 0) {
         return { ok: false as const, reason: "invalid_fixed_qty" as const };
       }
@@ -827,7 +826,37 @@ export function useTradingBot(
           ? riskPerUnit * resolvedQty
           : Number.NaN;
       const equity = getEquityValue();
-      return { ok: true as const, notional, qty: resolvedQty, riskUsd, equity };
+      let adjustedNotional = notional;
+      let adjustedQty = resolvedQty;
+      const maxAllocPct = toNumber(settingsRef.current.maxAllocatedCapitalPercent);
+      if (
+        Number.isFinite(maxAllocPct) &&
+        maxAllocPct > 0 &&
+        maxAllocPct <= 1 &&
+        Number.isFinite(equity) &&
+        equity > 0
+      ) {
+        const maxNotional = equity * maxAllocPct;
+        if (Number.isFinite(maxNotional) && maxNotional > 0) {
+          if (maxNotional < MIN_POSITION_NOTIONAL_USD) {
+            return { ok: false as const, reason: "insufficient_equity" as const };
+          }
+          if (adjustedNotional > maxNotional) {
+            adjustedNotional = maxNotional;
+            adjustedQty = adjustedNotional / entry;
+          }
+          if (adjustedNotional < MIN_POSITION_NOTIONAL_USD) {
+            return { ok: false as const, reason: "insufficient_equity" as const };
+          }
+        }
+      }
+      return {
+        ok: true as const,
+        notional: adjustedNotional,
+        qty: adjustedQty,
+        riskUsd,
+        equity,
+      };
     },
     [getEquityValue, useTestnet]
   );

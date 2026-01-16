@@ -45,6 +45,12 @@ async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true)
   const precision = Math.round(1 / limits.stepSize);
   q = Math.floor(q * precision) / precision;
 
+  // 2b. Max Qty cap
+  if (Number.isFinite(limits.maxQty) && limits.maxQty > 0 && q > limits.maxQty) {
+    q = limits.maxQty;
+    q = Math.floor(q * precision) / precision;
+  }
+
   // 3. Min Notional check
   if (priceInput > 0) {
     const notional = q * priceInput;

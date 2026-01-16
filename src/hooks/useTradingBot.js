@@ -15,7 +15,7 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 100;
 const MAX_POSITION_NOTIONAL_USD = 200;
-const DEMO_POSITION_NOTIONAL_USD = 10000;
+const DEMO_POSITION_NOTIONAL_USD = 150;
 const MAX_OPEN_POSITIONS_CAP = 10000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -265,12 +265,6 @@ function buildEntryFallback(list) {
     }
     return map;
 }
-const FIXED_QTY_BY_SYMBOL = {
-    BTCUSDT: 0.105,
-    ETHUSDT: 3.04,
-    SOLUSDT: 69.6,
-    ADAUSDT: 25873,
-};
 const TRAIL_PROFILE_BY_RISK_MODE = {
     "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
     "ai-matic-x": { activateR: 0.5, lockR: 0.3 },
@@ -579,6 +573,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     }, [getOpenBiasState]);
     const getEquityValue = useCallback(() => {
         const wallet = walletRef.current;
+        const availableBalance = toNumber(wallet?.availableBalance);
+        if (useTestnet && Number.isFinite(availableBalance) && availableBalance > 0) {
+            return availableBalance;
+        }
         const totalEquity = toNumber(wallet?.totalEquity);
         if (Number.isFinite(totalEquity) && totalEquity > 0)
             return totalEquity;
@@ -586,12 +584,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (Number.isFinite(totalWalletBalance) && totalWalletBalance > 0) {
             return totalWalletBalance;
         }
-        const availableBalance = toNumber(wallet?.availableBalance);
         if (Number.isFinite(availableBalance) && availableBalance > 0) {
             return availableBalance;
         }
         return Number.NaN;
-    }, []);
+    }, [useTestnet]);
     const isSessionAllowed = useCallback((now, next) => {
         if (!next.enforceSessionHours)
             return true;
@@ -680,8 +677,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (!Number.isFinite(entry) || entry <= 0) {
             return { ok: false, reason: "invalid_entry" };
         }
-        const fixedQty = FIXED_QTY_BY_SYMBOL[symbol];
-        const resolvedQty = fixedQty == null ? DEMO_POSITION_NOTIONAL_USD / entry : fixedQty;
+        const targetNotional = Math.min(Math.max(DEMO_POSITION_NOTIONAL_USD, MIN_POSITION_NOTIONAL_USD), MAX_POSITION_NOTIONAL_USD);
+        const resolvedQty = targetNotional / entry;
         if (!Number.isFinite(resolvedQty) || resolvedQty <= 0) {
             return { ok: false, reason: "invalid_fixed_qty" };
         }
@@ -694,7 +691,29 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             ? riskPerUnit * resolvedQty
             : Number.NaN;
         const equity = getEquityValue();
-        return { ok: true, notional, qty: resolvedQty, riskUsd, equity };
+        let adjustedNotional = notional;
+        let adjustedQty = resolvedQty;
+        const maxAllocPct = toNumber(settingsRef.current.maxAllocatedCapitalPercent);
+        if (Number.isFinite(maxAllocPct) &&
+            maxAllocPct > 0 &&
+            maxAllocPct <= 1 &&
+            Number.isFinite(equity) &&
+            equity > 0) {
+            const maxNotional = equity * maxAllocPct;
+            if (Number.isFinite(maxNotional) && maxNotional > 0) {
+                if (maxNotional < MIN_POSITION_NOTIONAL_USD) {
+                    return { ok: false, reason: "insufficient_equity" };
+                }
+                if (adjustedNotional > maxNotional) {
+                    adjustedNotional = maxNotional;
+                    adjustedQty = adjustedNotional / entry;
+                }
+                if (adjustedNotional < MIN_POSITION_NOTIONAL_USD) {
+                    return { ok: false, reason: "insufficient_equity" };
+                }
+            }
+        }
+        return { ok: true, notional: adjustedNotional, qty: adjustedQty, riskUsd, equity };
     }, [getEquityValue, useTestnet]);
     const computeTrailingPlan = useCallback((entry, sl, side, symbol) => {
         const settings = settingsRef.current;
