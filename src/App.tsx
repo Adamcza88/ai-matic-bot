@@ -109,6 +109,12 @@ export default function App() {
         .map((row) => row.service?.toLowerCase())
         .filter(Boolean)
     );
+    if (have.has("bybit testnet api key")) {
+      have.add("bybit demo api key");
+    }
+    if (have.has("bybit testnet api secret")) {
+      have.add("bybit demo api secret");
+    }
     const missing = SERVICE_OPTIONS.filter((opt) => !have.has(opt.value)).map(
       (opt) => opt.label
     );
@@ -124,7 +130,7 @@ export default function App() {
     }
   }, [auth.status, auth.user, refreshKeyStatus]);
 
-  // Pokud chybí mainnetové klíče, automaticky přepnout na testnet, aby se API volání nesypala.
+  // Pokud chybí mainnetové klíče, automaticky přepnout na demo, aby se API volání nesypala.
   useEffect(() => {
     const missingMainnet = missingServices.some((s) =>
       s.toLowerCase().includes("mainnet")

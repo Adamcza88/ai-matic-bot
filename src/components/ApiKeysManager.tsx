@@ -35,13 +35,16 @@ export const SERVICE_OPTIONS = [
   { value: "bybit demo api secret", label: "Bybit Demo API Secret" },
   { value: "bybit mainnet api key", label: "Bybit Mainnet API Key" },
   { value: "bybit mainnet api secret", label: "Bybit Mainnet API Secret" },
-  { value: "bybit testnet api key", label: "Bybit Testnet API Key (legacy)" },
-  { value: "bybit testnet api secret", label: "Bybit Testnet API Secret (legacy)" },
   // legacy fallback
   { value: "bybit api key", label: "Bybit API Key (legacy)" },
   { value: "bybit api secret", label: "Bybit API Secret (legacy)" },
   { value: "cryptopanic api key", label: "Cryptopanic API Key" },
 ];
+
+const LEGACY_SERVICE_LABELS: Record<string, string> = {
+  "bybit testnet api key": "Bybit Demo API Key (legacy)",
+  "bybit testnet api secret": "Bybit Demo API Secret (legacy)",
+};
 
 export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
   const [records, setRecords] = useState<ApiKeyRow[]>([]);
@@ -51,17 +54,22 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  const maskedRecords = useMemo(
-    () =>
-      records.map((row) => ({
-        ...row,
-        masked:
-          row.api_key?.length > 4
-            ? `•••• ${row.api_key.slice(-4)}`
-            : "••••",
-      })),
-    [records]
-  );
+  const maskedRecords = useMemo(() => {
+    const labelMap = new Map(
+      SERVICE_OPTIONS.map((entry) => [entry.value, entry.label])
+    );
+    return records.map((row) => ({
+      ...row,
+      label:
+        labelMap.get(row.service) ??
+        LEGACY_SERVICE_LABELS[row.service] ??
+        row.service,
+      masked:
+        row.api_key?.length > 4
+          ? `•••• ${row.api_key.slice(-4)}`
+          : "••••",
+    }));
+  }, [records]);
 
   useEffect(() => {
     const fetchKeys = async () => {
@@ -262,7 +270,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
                   className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-white/5 hover:bg-white/10 transition-colors gap-2"
                 >
                   <div>
-                    <div className="font-semibold text-white">{row.service}</div>
+                    <div className="font-semibold text-white">{row.label}</div>
                     <div className="text-slate-400 font-mono text-sm">
                       {row.masked}
                     </div>

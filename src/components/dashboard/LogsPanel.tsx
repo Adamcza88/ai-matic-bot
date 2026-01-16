@@ -107,11 +107,7 @@ export default function LogsPanel({
         </div>
       }
     >
-      {useTestnet ? (
-        <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          Live feed is hidden on Demo. Switch to Mainnet to view logs.
-        </div>
-      ) : !logsLoaded ? (
+      {!logsLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
           Loading logs...
         </div>
