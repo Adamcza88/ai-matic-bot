@@ -183,6 +183,86 @@ export async function setLeverage({ symbol, leverage, buyLeverage, sellLeverage 
   return res.data;
 }
 
+async function fetchPositionList(creds, useTestnet, symbol) {
+  const params = new URLSearchParams({
+    category: "linear",
+    accountType: "UNIFIED",
+    settleCoin: "USDT",
+  });
+  if (symbol) params.set("symbol", symbol);
+  const res = await buildSignedGet(`/v5/position/list?${params.toString()}`, creds, useTestnet);
+  return res?.data?.result?.list ?? [];
+}
+
+async function resolvePositionIdxForOrder(order, creds, useTestnet) {
+  const symbol = String(order?.symbol ?? "");
+  if (!symbol) return undefined;
+  const side = String(order?.side ?? "").toLowerCase();
+  const reduceOnly = Boolean(order?.reduceOnly);
+
+  let list = await fetchPositionList(creds, useTestnet, symbol);
+  if (!Array.isArray(list) || list.length === 0) {
+    const fallback = await fetchPositionList(creds, useTestnet);
+    list = Array.isArray(fallback) ? fallback : [];
+  }
+
+  const toIdx = (value) => {
+    const idx = Number(value);
+    return Number.isFinite(idx) ? idx : undefined;
+  };
+
+  const match = list.find((p) => {
+    if (String(p?.symbol ?? "") !== symbol) return false;
+    const pSide = String(p?.side ?? "").toLowerCase();
+    if (reduceOnly) {
+      if (Number(p?.size ?? 0) <= 0) return false;
+      return pSide && pSide !== side;
+    }
+    return pSide === side;
+  });
+  const matchIdx = toIdx(match?.positionIdx);
+  if (Number.isFinite(matchIdx)) return matchIdx;
+
+  const hasHedge = list.some((p) => {
+    const idx = Number(p?.positionIdx);
+    return idx === 1 || idx === 2;
+  });
+  if (hasHedge) {
+    if (reduceOnly) {
+      if (side === "sell") return 1;
+      if (side === "buy") return 2;
+    } else {
+      if (side === "buy") return 1;
+      if (side === "sell") return 2;
+    }
+  }
+
+  return list.length > 0 ? 0 : undefined;
+}
+
+async function resolvePositionIdxForSymbol(symbol, creds, useTestnet) {
+  const sym = String(symbol ?? "");
+  if (!sym) return undefined;
+  let list = await fetchPositionList(creds, useTestnet, sym);
+  if (!Array.isArray(list) || list.length === 0) {
+    const fallback = await fetchPositionList(creds, useTestnet);
+    list = Array.isArray(fallback) ? fallback : [];
+  }
+
+  const match = list.find((p) => {
+    if (String(p?.symbol ?? "") !== sym) return false;
+    return Number(p?.size ?? 0) > 0;
+  });
+  const idx = Number(match?.positionIdx);
+  if (Number.isFinite(idx)) return idx;
+
+  const hasHedge = list.some((p) => {
+    const value = Number(p?.positionIdx);
+    return value === 1 || value === 2;
+  });
+  return hasHedge ? undefined : list.length > 0 ? 0 : undefined;
+}
+
 export async function createDemoOrder(order, creds, useTestnet = true) {
   ensureConfigured(creds);
 
@@ -202,6 +282,10 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     }
   }
 
+  const resolvedPositionIdx = Number.isFinite(Number(order.positionIdx))
+    ? Number(order.positionIdx)
+    : await resolvePositionIdxForOrder(order, creds, useTestnet);
+
   // === 1) CREATE ORDER ===
   const rawBody = {
     category: "linear",
@@ -214,8 +298,8 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     orderFilter: order.triggerPrice ? "StopOrder" : undefined,
     timeInForce: order.timeInForce || (order.orderType === "Limit" ? "GTC" : "IOC"),
     reduceOnly: order.reduceOnly ?? false,
-    positionIdx: Number.isFinite(Number(order.positionIdx))
-      ? Number(order.positionIdx)
+    positionIdx: Number.isFinite(resolvedPositionIdx)
+      ? resolvedPositionIdx
       : undefined,
     orderLinkId: order.orderLinkId || undefined,
   };
@@ -310,10 +394,10 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
           `[createDemoOrder] Trailing stop deferred (no active position yet) for ${order.symbol}.`
         );
       } else {
-        let resolvedPositionIdx = Number.isFinite(Number(order.positionIdx))
-          ? Number(order.positionIdx)
+        let trailingPositionIdx = Number.isFinite(resolvedPositionIdx)
+          ? resolvedPositionIdx
           : undefined;
-        if (!Number.isFinite(resolvedPositionIdx)) {
+        if (!Number.isFinite(trailingPositionIdx)) {
           const sideMatch = String(order.side ?? "").toLowerCase();
           const match = list.find((p) => {
             if (String(p?.symbol ?? "") !== String(order.symbol)) return false;
@@ -323,14 +407,14 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
             return sideMatch ? posSide === sideMatch : true;
           });
           const idx = Number(match?.positionIdx);
-          if (Number.isFinite(idx)) resolvedPositionIdx = idx;
+          if (Number.isFinite(idx)) trailingPositionIdx = idx;
         }
         const tsResult = await setTradingStop(
           {
             symbol: order.symbol,
             trailingStop: order.trailingStop,
             activePrice: order.trailingActivePrice,
-            positionIdx: resolvedPositionIdx,
+            positionIdx: trailingPositionIdx,
           },
           creds,
           useTestnet
@@ -352,10 +436,17 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
 export async function setTradingStop(protection, creds, useTestnet = true) {
   ensureConfigured(creds);
 
+  const resolvedPositionIdx = Number.isFinite(Number(protection.positionIdx))
+    ? Number(protection.positionIdx)
+    : await resolvePositionIdxForSymbol(protection.symbol, creds, useTestnet);
+  if (!Number.isFinite(resolvedPositionIdx)) {
+    throw new Error("position_idx_unresolved");
+  }
+
   const rawTsBody = {
     category: "linear",
     symbol: protection.symbol,
-    positionIdx: protection.positionIdx ?? 0,
+    positionIdx: resolvedPositionIdx,
     tpslMode: protection.tpslMode ?? "Full",
   };
 
