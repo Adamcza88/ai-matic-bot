@@ -3,6 +3,14 @@ export const SUPPORTED_SYMBOLS = [
     "ETHUSDT",
     "SOLUSDT",
     "ADAUSDT",
+    "XRPUSDT",
+    "XMRUSDT",
+    "DOGEUSDT",
+    "LINKUSDT",
+    "MELANIAUSDT",
+    "XPLUSDT",
+    "HYPEUSDT",
+    "FARTCOINUSDT",
 ];
 export function filterSupportedSymbols(value) {
     if (!Array.isArray(value))

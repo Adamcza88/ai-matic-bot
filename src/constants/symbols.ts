@@ -5,6 +5,14 @@ export const SUPPORTED_SYMBOLS: Symbol[] = [
   "ETHUSDT",
   "SOLUSDT",
   "ADAUSDT",
+  "XRPUSDT",
+  "XMRUSDT",
+  "DOGEUSDT",
+  "LINKUSDT",
+  "MELANIAUSDT",
+  "XPLUSDT",
+  "HYPEUSDT",
+  "FARTCOINUSDT",
 ];
 
 export function filterSupportedSymbols(value: unknown): Symbol[] {

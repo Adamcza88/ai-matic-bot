@@ -34,10 +34,10 @@ import type { AssetPnlMap } from "../lib/pnlHistory";
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
-const MIN_POSITION_NOTIONAL_USD = 4;
-const MAX_POSITION_NOTIONAL_USD = 7;
-const MAX_OPEN_POSITIONS_CAP = 100;
-const ORDERS_PER_POSITION = 4;
+const MIN_POSITION_NOTIONAL_USD = 100;
+const MAX_POSITION_NOTIONAL_USD = 200;
+const MAX_OPEN_POSITIONS_CAP = 10000;
+const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
@@ -77,8 +77,8 @@ const DEFAULT_SETTINGS: AISettings = {
   baseRiskPerTrade: 0,
   maxAllocatedCapitalPercent: 1.0,
   maxPortfolioRiskPercent: 0.2,
-  maxOpenPositions: 3,
-  maxOpenOrders: 12,
+  maxOpenPositions: 5,
+  maxOpenOrders: 16,
   selectedSymbols: [...SUPPORTED_SYMBOLS],
   requireConfirmationInAuto: false,
   positionSizingMultiplier: 1.0,
@@ -327,10 +327,10 @@ function buildEntryFallback(list: any[]) {
 
 type ClosedPnlRecord = { symbol: string; pnl: number; ts: number };
 const FIXED_QTY_BY_SYMBOL: Record<Symbol, number> = {
-  BTCUSDT: 0.005,
-  ETHUSDT: 0.15,
-  SOLUSDT: 3.5,
-  ADAUSDT: 995,
+  BTCUSDT: 0.105,
+  ETHUSDT: 3.04,
+  SOLUSDT: 69.6,
+  ADAUSDT: 25873,
 };
 
 const TRAIL_PROFILE_BY_RISK_MODE: Record<

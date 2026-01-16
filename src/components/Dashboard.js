@@ -11,6 +11,7 @@ import PositionsTable from "./dashboard/PositionsTable";
 import OrdersPanel from "./dashboard/OrdersPanel";
 import SignalsAccordion from "./dashboard/SignalsAccordion";
 import LogsPanel from "./dashboard/LogsPanel";
+import { SUPPORTED_SYMBOLS } from "../constants/symbols";
 export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bot, }) {
     const { systemState, portfolioState, activePositions, logEntries, testnetOrders, testnetTrades, ordersError, refreshTestnetOrders, assetPnlHistory, resetPnlHistory, scanDiagnostics, manualClosePosition, cancelOrder, dynamicSymbols, updateGateOverrides, } = bot;
     const dailyPnl = portfolioState?.dailyPnl;
@@ -42,7 +43,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             return {
                 label: "AI-MATIC-SCALP",
                 subtitle: "Scalpera Bot v2.0 (1h/1m)",
-                symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
+                symbols: SUPPORTED_SYMBOLS,
                 timeframes: "HTF 1h · LTF 1m",
                 session: "08:00-12:00 & 13:00-17:00 UTC",
                 risk: "SL 1.3 ATR · TP 2.6 ATR · trailing after 1.1R · max 1 pos/symbol",
@@ -54,7 +55,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             return {
                 label: "AI-MATIC-X",
                 subtitle: "SMC HTF/LTF (bull 12h/4h→1h/5m · bear 1d/4h→1h/15m)",
-                symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
+                symbols: SUPPORTED_SYMBOLS,
                 timeframes: "Bull: HTF 12h/4h · LTF 1h/5m · Bear: HTF 1d/4h · LTF 1h/15m",
                 session: "24/7",
                 risk: "4 USDT / trade · 8 USDT total (after 3 losses: 2/4 for 60m) · max 3 pos",
@@ -66,7 +67,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             return {
                 label: "AI-MATIC TREE",
                 subtitle: "Decision Tree – Market → Action (1h context / 5m execution)",
-                symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
+                symbols: SUPPORTED_SYMBOLS,
                 timeframes: "1h context · 5m execution",
                 session: "Bybit Linear Perpetuals · ~40 markets scan",
                 risk: "Risk ON: 1R · Risk OFF: 0.25R · max 5 trades/day",
@@ -77,7 +78,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         return {
             label: "AI-MATIC",
             subtitle: "AI-MATIC (HTF 1h/15m · LTF 5m/1m)",
-            symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"],
+            symbols: SUPPORTED_SYMBOLS,
             timeframes: "HTF 1h · 15m · LTF 5m · 1m",
             session: "POI: Breaker > OB > FVG > Liquidity",
             risk: "4 USDT / trade · 8 USDT total · max 3 pos",
