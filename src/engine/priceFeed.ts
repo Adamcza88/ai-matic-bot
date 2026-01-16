@@ -8,9 +8,9 @@ import {
 import type { BotConfig } from "@/engine/botEngine";
 
 const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
-const FEED_URL_TESTNET = "wss://stream-testnet.bybit.com/v5/public/linear";
+const FEED_URL_TESTNET = "wss://stream.bybit.com/v5/public/linear";
 const REST_URL_MAINNET = "https://api.bybit.com";
-const REST_URL_TESTNET = "https://api-testnet.bybit.com";
+const REST_URL_TESTNET = "https://api-demo.bybit.com";
 
 // WS ping interval (Bybit vyžaduje každých ~20s)
 const PING_INTERVAL = 20000;

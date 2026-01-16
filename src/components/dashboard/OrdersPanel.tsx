@@ -137,7 +137,7 @@ export default function OrdersPanel({
   return (
     <div className="space-y-6">
       <Panel
-        title={useTestnet ? "Testnet orders" : "Mainnet orders"}
+        title={useTestnet ? "Demo orders" : "Mainnet orders"}
         action={
           <div className="flex items-center gap-2">
             {ordersError && (

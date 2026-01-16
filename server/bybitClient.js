@@ -2,7 +2,7 @@
 import axios from "axios";
 import crypto from "crypto";
 
-const BASE_URL_TESTNET = "https://api-testnet.bybit.com";
+const BASE_URL_TESTNET = "https://api-demo.bybit.com";
 const BASE_URL_MAINNET = "https://api.bybit.com";
 
 function resolveBase(useTestnet = true) {
@@ -286,7 +286,7 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     }
 
     // FIX 9: Mandatory Audit Log (Error)
-    const logTag = useTestnet ? "[BYBIT TESTNET]" : "[BYBIT MAINNET]";
+    const logTag = useTestnet ? "[BYBIT DEMO]" : "[BYBIT MAINNET]";
     console.error(`${logTag} ERROR:`, JSON.stringify(logContext, null, 2));
 
     throw error;
@@ -394,7 +394,7 @@ export async function setTradingStop(protection, creds, useTestnet = true) {
   if (!useTestnet) {
     console.error(`[BYBIT MAINNET] TS Update:`, JSON.stringify(tsLogContext, null, 2));
   } else {
-    console.log(`[BYBIT TESTNET] TS Update:`, JSON.stringify(tsLogContext, null, 2));
+    console.log(`[BYBIT DEMO] TS Update:`, JSON.stringify(tsLogContext, null, 2));
   }
 
   return tsRes.data;
@@ -627,7 +627,7 @@ export async function cancelOrder(
     })
   );
 
-  const logTag = useTestnet ? "[BYBIT TESTNET]" : "[BYBIT MAINNET]";
+  const logTag = useTestnet ? "[BYBIT DEMO]" : "[BYBIT MAINNET]";
   console.error(`${logTag} Cancel:`, JSON.stringify({ payload: body, response: res.data }, null, 2));
 
   return res.data;

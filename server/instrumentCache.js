@@ -11,7 +11,7 @@ const TTL_MS = 60_000 * 5; // 5 minutes cache
 // We'll reimplement basic fetch here to avoid circular dependency with bybitClient if it imports this.
 
 const BASE_URL_MAINNUM = "https://api.bybit.com";
-const BASE_URL_TESTNET = "https://api-testnet.bybit.com";
+const BASE_URL_TESTNET = "https://api-demo.bybit.com";
 
 function resolveBase(useTestnet) {
     return useTestnet ? BASE_URL_TESTNET : BASE_URL_MAINNUM;

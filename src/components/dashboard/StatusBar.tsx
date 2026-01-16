@@ -70,7 +70,7 @@ export default function StatusBar({
                       : "text-muted-foreground hover:text-foreground"
                   }
                 >
-                  TESTNET
+                  DEMO
                 </Button>
                 <Button
                   variant={!useTestnet ? "secondary" : "ghost"}

@@ -2,6 +2,8 @@ import { ensureSupabase } from "./supabaseClient.js";
 
 const SERVICE_BYBIT_KEY = "bybit api key"; // legacy fallback (testnet)
 const SERVICE_BYBIT_SECRET = "bybit api secret"; // legacy fallback (testnet)
+const SERVICE_BYBIT_DEMO_KEY = "bybit demo api key";
+const SERVICE_BYBIT_DEMO_SECRET = "bybit demo api secret";
 const SERVICE_BYBIT_TESTNET_KEY = "bybit testnet api key";
 const SERVICE_BYBIT_TESTNET_SECRET = "bybit testnet api secret";
 const SERVICE_BYBIT_MAINNET_KEY = "bybit mainnet api key";
@@ -64,11 +66,11 @@ export async function getUserApiKeys(userId, env = "testnet") {
 
   if (env === "testnet") {
     const testnetKeys = {
-      apiKey: map.get(SERVICE_BYBIT_TESTNET_KEY) ?? map.get(SERVICE_BYBIT_KEY) ?? envBybitTestnetKey,
-      apiSecret: map.get(SERVICE_BYBIT_TESTNET_SECRET) ?? map.get(SERVICE_BYBIT_SECRET) ?? envBybitTestnetSecret
+      apiKey: map.get(SERVICE_BYBIT_DEMO_KEY) ?? map.get(SERVICE_BYBIT_TESTNET_KEY) ?? map.get(SERVICE_BYBIT_KEY) ?? envBybitTestnetKey,
+      apiSecret: map.get(SERVICE_BYBIT_DEMO_SECRET) ?? map.get(SERVICE_BYBIT_TESTNET_SECRET) ?? map.get(SERVICE_BYBIT_SECRET) ?? envBybitTestnetSecret
     };
 
-    console.log(`[getUserApiKeys] Resolved TESTNET for ${userId}: ${testnetKeys.apiKey ? "Explicit/Env" : "MISSING"}`);
+    console.log(`[getUserApiKeys] Resolved DEMO for ${userId}: ${testnetKeys.apiKey ? "Explicit/Env" : "MISSING"}`);
     return requireKeys(testnetKeys, "testnet");
   }
 }

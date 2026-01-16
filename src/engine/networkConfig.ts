@@ -8,7 +8,7 @@ export function getApiBase(useTestnet: boolean): string {
   // Strict validation: Must be explicitly true/false, not truthy/falsy
   if (useTestnet !== true && useTestnet !== false) {
     console.error(`[CRITICAL] Invalid useTestnet value: ${useTestnet}`);
-    // Default to safer testnet if unknown
+    // Default to safer demo if unknown
     return "/api/demo";
   }
 
@@ -19,11 +19,11 @@ export function getApiBase(useTestnet: boolean): string {
 
 export function useNetworkConfig(useTestnet: boolean) {
   const httpBase = useTestnet
-    ? "https://api-testnet.bybit.com"
+    ? "https://api-demo.bybit.com"
     : "https://api.bybit.com";
 
   const wsBase = useTestnet
-    ? "wss://stream-testnet.bybit.com/v5/public/linear"
+    ? "wss://stream.bybit.com/v5/public/linear"
     : "wss://stream.bybit.com/v5/public/linear";
 
   return {
