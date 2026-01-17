@@ -13,6 +13,31 @@ type Ctx = {
   isPrivateStale: () => boolean;
 };
 
+const LEVERAGE_BY_SYMBOL: Record<Symbol, number> = {
+  BTCUSDT: 100,
+  ETHUSDT: 100,
+  SOLUSDT: 100,
+  ADAUSDT: 75,
+  XRPUSDT: 75,
+  XMRUSDT: 25,
+  DOGEUSDT: 75,
+  LINKUSDT: 50,
+  MELANIAUSDT: 25,
+  XPLUSDT: 75,
+  HYPEUSDT: 75,
+  FARTCOINUSDT: 75,
+};
+
+const lastLeverageBySymbol = new Map<Symbol, number>();
+
+async function ensureLeverage(ctx: Ctx, symbol: Symbol) {
+  const target = LEVERAGE_BY_SYMBOL[symbol] ?? 1;
+  const last = lastLeverageBySymbol.get(symbol);
+  if (last === target) return;
+  await ctx.bybit.setLeverage(symbol, target);
+  lastLeverageBySymbol.set(symbol, target);
+}
+
 function setStatus(
   ctx: Ctx,
   status: ExecutionState["status"],
@@ -61,6 +86,18 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
   }
   if (!intent.entryPrice) {
     setStatus(ctx, "REJECTED", { reason: "MISSING_ENTRY_PRICE" });
+    return;
+  }
+
+  try {
+    await ensureLeverage(ctx, intent.symbol);
+  } catch (e) {
+    ctx.audit.write("leverage_set_error", {
+      intentId: intent.intentId,
+      symbol: intent.symbol,
+      error: String(e),
+    });
+    setStatus(ctx, "REJECTED", { reason: "LEVERAGE_SET_FAILED" });
     return;
   }
 

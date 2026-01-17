@@ -64,6 +64,15 @@ export class BybitV5AdapterImpl implements BybitAdapter {
     };
   }
 
+  async setLeverage(symbol: Symbol, leverage: number): Promise<void> {
+    await this.v5.rest.setLeverage({
+      category: "linear",
+      symbol,
+      buyLeverage: String(leverage),
+      sellLeverage: String(leverage),
+    });
+  }
+
   async notionalToQty(symbol: Symbol, notionalUSDT: number): Promise<number> {
     const [spec, lastPrice] = await Promise.all([
       this.v5.getInstrument(symbol),

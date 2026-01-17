@@ -27,4 +27,5 @@ export interface BybitAdapter {
   cancelOrder(symbol: Symbol, orderId: string): Promise<CancelOrderRes>;
   cancelAll(symbol: Symbol): Promise<void>;
   getSnapshot(symbol: Symbol): Promise<Snapshot>;
+  setLeverage(symbol: Symbol, leverage: number): Promise<void>;
 }
