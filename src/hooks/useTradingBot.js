@@ -2139,7 +2139,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 riskOff = true;
                 riskReasons.push("chop");
             }
-            const dailyPnl = toNumber(portfolioState?.dailyPnl);
+            const dailyPnl = Array.isArray(closedPnlRecords)
+                ? closedPnlRecords.reduce((sum, r) => {
+                    const dayAgo = now - 24 * 60 * 60_000;
+                    if (r.ts < dayAgo)
+                        return sum;
+                    return sum + r.pnl;
+                }, 0)
+                : Number.NaN;
             const equity = getEquityValue();
             const baseRiskRaw = toNumber(context.settings.baseRiskPerTrade);
             let riskUsd = Number.NaN;
@@ -2337,7 +2344,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         getSymbolContext,
         isGateEnabled,
         isEntryOrder,
-        portfolioState,
         resolveCorrelationGate,
         resolveTrendGate,
     ]);
@@ -2357,7 +2363,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const isScalp = riskMode === "ai-matic-scalp";
         const decisionFn = (symbol, candles, config) => {
             const baseDecision = isAiMaticX
-                ? evaluateAiMaticXStrategyForSymbol(symbol, candles, config)
+                ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
                 : evaluateStrategyForSymbol(symbol, candles, config);
             const htfTimeframes = isAiMatic
                 ? AI_MATIC_HTF_TIMEFRAMES_MIN
