@@ -46,7 +46,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                 symbols: SUPPORTED_SYMBOLS,
                 timeframes: "HTF 1h · LTF 1m",
                 session: "08:00-12:00 & 13:00-17:00 UTC",
-                risk: "SL 1.3 ATR · TP 2.6 ATR · trailing after 1.1R · max 1 pos/symbol",
+                risk: "Order value per symbol · SL 1.3 ATR · TP 2.6 ATR · trailing after 1.1R · max 1 pos/symbol · margin 100 USDT",
                 entry: "Trend-Pullback / Liquidity-Sweep (SMC + EMA + AI)",
                 execution: "Adaptive executor (Trend/Sweep) · no pyramiding · Bybit webhook",
             };
@@ -54,13 +54,13 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         if (riskMode === "ai-matic-x") {
             return {
                 label: "AI-MATIC-X",
-                subtitle: "SMC HTF/LTF (bull 12h/4h→1h/5m · bear 1d/4h→1h/15m)",
+                subtitle: "Decision Tree (1h context / 5m execution)",
                 symbols: SUPPORTED_SYMBOLS,
-                timeframes: "Bull: HTF 12h/4h · LTF 1h/5m · Bear: HTF 1d/4h · LTF 1h/15m",
+                timeframes: "1h context · 5m execution",
                 session: "24/7",
-                risk: "4 USDT / trade · 8 USDT total (after 3 losses: 2/4 for 60m) · max 3 pos",
-                entry: "HTF bias + POI (bull 12h/4h, bear 1d/4h) → LTF 1h/(5m/15m) CHOCH/MSS + displacement pullback",
-                execution: "PostOnly LIMIT · timeout 1×1m",
+                risk: "Order value per symbol · margin 100 USDT · max 1 position total",
+                entry: "Families 1–6: pullback, continuation, range fade, break&flip, reversal, no trade",
+                execution: "LIMIT default · MARKET only in strong expanse · PostOnly only in low‑vol range",
             };
         }
         if (riskMode === "ai-matic-tree") {
@@ -70,7 +70,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                 symbols: SUPPORTED_SYMBOLS,
                 timeframes: "1h context · 5m execution",
                 session: "Bybit Linear Perpetuals · ~40 markets scan",
-                risk: "Risk ON: 1R · Risk OFF: 0.25R · max 5 trades/day",
+                risk: "Order value per symbol · Risk ON: 1R · Risk OFF: 0.25R · max 5 trades/day · margin 100 USDT",
                 entry: "Families 1–6 · A-setup required",
                 execution: "Checklist B management · Kill switch -3R",
             };
@@ -81,7 +81,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             symbols: SUPPORTED_SYMBOLS,
             timeframes: "HTF 1h · 15m · LTF 5m · 1m",
             session: "POI: Breaker > OB > FVG > Liquidity",
-            risk: "4 USDT / trade · 8 USDT total · max 3 pos",
+            risk: "Order value per symbol · margin 100 USDT · max positions by settings",
             entry: "FVG/OB/Breaker + liquidity pools (0.2% tol, min 3 touches)",
             execution: "Swing window 7 · 5m management + SL/TS",
         };

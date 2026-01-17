@@ -8,6 +8,7 @@ const MAX_OPEN_POSITIONS_CAP = 100;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * 4;
 const MIN_AUTO_REFRESH_MINUTES = 1;
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
+const ORDER_VALUE_NOTE = "Order value & leverage: BTC/ETH/SOL 10k@100x; ADA/XRP/DOGE/XPLUS/HYPE/FART 7.5k@75x; LINK 5k@50x; XMR/MELANIA 2.5k@25x; margin cost 100 USDT.";
 function loadProfileSettingsMap() {
     if (typeof localStorage === "undefined")
         return {};
@@ -108,6 +109,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
             title: "AI-Matic",
             description: "TF stack (HTF 1h/15m + LTF 5m/1m) + POI analyzer (OB/FVG/Breaker/Liquidity) s prioritou.",
             notes: [
+                ORDER_VALUE_NOTE,
                 "HTF 1h: Určuje směr trhu. Nikdy neobchoduj proti němu.",
                 "HTF 15m: Sleduj mini OB, přesnější korekce/pullbacky.",
                 "LTF 5m: Vstupní patterny, potvrzení objemů, Smart Money kontext.",
@@ -122,32 +124,24 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         },
         "ai-matic-x": {
             title: "AI-Matic-X",
-            description: "SMC profil s HTF 12h/4h (bull) nebo 1d/4h (bear) biasem a LTF 1h/5m (bull) nebo 1h/15m (bear) entry přes CHOCH/MSS a displacement pullback.",
+            description: "Decision tree: čistá struktura (1h kontext / 5m exekuce), bez EMA/ATR; RSI divergence jen pro reversal.",
             notes: [
-                "Trading hours: Off",
-                "Páry: top 5 USDT dle 24h volume",
-                "HTF: Bull 12h + 4h / Bear 1d + 4h structure (HH/HL, LH/LL) + swing points",
-                "POI: Order blocky, FVG, breaker blocks, liquidity pools",
-                "LTF: 1h context + 5m (bull) / 15m (bear) displacement + CHOCH/MSS + mitigace",
-                "Entry: pullback do HTF POI po inducement sweep; ignoruj LTF bez HTF",
-                "Smart Money combo: OB + liquidity, sweep/inducement, break & retest, FVG",
-                "Checklist gate: min 7/10 potvrzeni (EMA 8/21/50, pattern, volume, BTC, OB, sweep, retest, FVG, VP/SR, CoinGlass)",
-                "LONG: EMA9 > EMA21 (M5), ADX>22, ATR <70% prům.20, cena nad VWAP; SL pod low, TP 1.8× ATR",
-                "LONG: Pullback k EMA50 na 1h + higher low, ADX>20; entry break high, SL pod EMA50",
-                "LONG: Momentum <30 na M5 + bullish engulfing; rychlý scalp",
-                "LONG: Breakout nad resistance s ATR expanzí +20% a ADX>25",
-                "SHORT: EMA9 < EMA21 (M15), ADX>22, ATR <70% prům.20, cena pod VWAP; SL nad high",
-                "SHORT: Pullback k EMA50 na 1h + lower high, ADX>20; entry break low, SL nad EMA50",
-                "SHORT: Momentum >70 na M15 + bearish engulfing",
-                "SHORT: Breakdown pod support s ATR expanzí a ADX>25",
-                "Filtrace: žádný vstup proti HTF biasu (např. 1h EMA200)",
-                "Relaxed: 70%+ confidence (2+ indikátorů) · Auto‑On vždy s TP/SL + trailing",
+                ORDER_VALUE_NOTE,
+                "1h trend: HH/HL nebo LL/LH bez overlapu (swing 2L/2R).",
+                "5m trend: impuls (>=1.2× avg range) → korekce (<=60%) → pokračování.",
+                "Rodiny 1–6: pullback, continuation, range fade, break&flip, reversal, no trade.",
+                "Reversal (#5): RSI divergence + CHOCH, rychlý exit (0.25–0.5R).",
+                "Risk OFF: -2R denně nebo 2 ztráty po sobě nebo chop → NO TRADE.",
+                "Entry: LIMIT default; MARKET jen při strong expanse; PostOnly jen v low‑vol range.",
+                "Trailing: aktivace +1R, offset 0.2% (0.25% v expanzi).",
+                "Max 1 pozice celkem; BTC bias musí souhlasit se všemi entry.",
             ],
         },
         "ai-matic-scalp": {
             title: "SCALPERA BOT AI MATIC EDITION",
             description: "Operational Implementation Guide v2.0 · Integrace AI Matic Intelligence Framework (Scalpera Systems, 2026).",
             notes: [
+                ORDER_VALUE_NOTE,
                 "Cil: spojit presnost SMC/ICT se silou AI Matic; adaptivni exekuce podle struktury, objemu, sentimentu a volatility.",
                 "Core SMC/ICT: BOS, CHOCH, OB, FVG; EMA 8/21/50/200; volume baseline SMA20.",
                 "AI layer: Trend Predictor (EMA stack + AI smer), Volatility Scanner (ATR + OI delta), Sentiment Engine (funding/OI/text/social), Price Cone (Monte Carlo 12-24h), Adaptive Executor (Trend/Sweep).",
@@ -177,6 +171,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
             title: "AI-Matic Tree (Market → Akce)",
             description: "Rozhodovací strom A + Rodiny C + Checklist B + Risk protokol D (Bybit Linear, 1h/5m).",
             notes: [
+                ORDER_VALUE_NOTE,
                 "Bybit Linear Perpetuals · kontext 1h · exekuce 5m · scan ~40 trhů",
                 "Strom A: Kontext → Režim trhu → Směr → Risk ON/OFF → High/Low Prob → Akce",
                 "Rodiny 1–6: Trend Pullback, Trend Continuation, Range Fade, Range→Trend, Reversal (omezeně), No Trade",
@@ -190,7 +185,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const cheatBlocks = useMemo(() => buildCheatBlocks(meta.notes), [meta.notes]);
     const profileSummary = {
         "ai-matic": "AI‑MATIC core (1h/15m/5m/1m): POI + struktura, pullbacky a řízení přes R‑multiple.",
-        "ai-matic-x": "AI‑MATIC‑X (bull 12h/4h→1h/5m · bear 1d/4h→1h/15m): SMC bias + smart‑money filtrace, přísnější vstupy.",
+        "ai-matic-x": "AI‑MATIC‑X (1h/5m): decision tree, čistá struktura, max 1 pozice celkem.",
         "ai-matic-scalp": "Scalp profil (1h/1m): rychlé intraday vstupy, krátké držení, disciplinované řízení rizika.",
         "ai-matic-tree": "AI‑MATIC‑TREE (1h/5m): decision‑tree overlay nad AI‑MATIC core enginem.",
     };

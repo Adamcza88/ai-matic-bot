@@ -14,8 +14,21 @@ const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 100;
-const MAX_POSITION_NOTIONAL_USD = 200;
-const DEMO_POSITION_NOTIONAL_USD = 150;
+const MAX_POSITION_NOTIONAL_USD = 10000;
+const ORDER_VALUE_BY_SYMBOL = {
+    BTCUSDT: 10000,
+    ETHUSDT: 10000,
+    SOLUSDT: 10000,
+    ADAUSDT: 7500,
+    XRPUSDT: 7500,
+    XMRUSDT: 2500,
+    DOGEUSDT: 7500,
+    LINKUSDT: 5000,
+    MELANIAUSDT: 2500,
+    XPLUSDT: 7500,
+    HYPEUSDT: 7500,
+    FARTCOINUSDT: 7500,
+};
 const MAX_OPEN_POSITIONS_CAP = 10000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -127,6 +140,12 @@ function persistSettings(settings) {
 function toNumber(value) {
     const n = Number(value);
     return Number.isFinite(n) ? n : Number.NaN;
+}
+function resolveOrderNotional(symbol) {
+    const value = ORDER_VALUE_BY_SYMBOL[symbol];
+    if (Number.isFinite(value) && value > 0)
+        return value;
+    return MIN_POSITION_NOTIONAL_USD;
 }
 function evaluateEmaMultiTrend(candles, opts) {
     const timeframes = opts?.timeframesMin ?? EMA_TREND_TIMEFRAMES_MIN;
@@ -633,40 +652,26 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return hour >= start && hour <= end;
         return hour >= start || hour <= end;
     }, []);
-    const computeNotionalForSignal = useCallback((entry, sl) => {
+    const computeNotionalForSignal = useCallback((symbol, entry, sl) => {
         const settings = settingsRef.current;
         const equity = getEquityValue();
         if (!Number.isFinite(equity) || equity <= 0) {
             return { ok: false, reason: "missing_equity" };
         }
-        const baseRiskRaw = toNumber(settings.baseRiskPerTrade);
-        if (!Number.isFinite(baseRiskRaw) || baseRiskRaw <= 0) {
-            return { ok: false, reason: "invalid_risk" };
-        }
-        let riskUsd = baseRiskRaw <= 1 ? equity * baseRiskRaw : baseRiskRaw;
-        const maxRiskPct = toNumber(settings.maxPortfolioRiskPercent);
-        if (Number.isFinite(maxRiskPct) &&
-            maxRiskPct > 0 &&
-            maxRiskPct <= 1) {
-            riskUsd = Math.min(riskUsd, equity * maxRiskPct);
-        }
-        const sizingMultiplier = toNumber(settings.positionSizingMultiplier);
-        if (Number.isFinite(sizingMultiplier) && sizingMultiplier > 0) {
-            riskUsd *= sizingMultiplier;
-        }
         const riskPerUnit = Math.abs(entry - sl);
         if (!Number.isFinite(riskPerUnit) || riskPerUnit <= 0) {
             return { ok: false, reason: "invalid_sl_distance" };
         }
-        let qty = riskUsd / riskPerUnit;
+        let notional = resolveOrderNotional(symbol);
+        if (!Number.isFinite(notional) || notional <= 0) {
+            return { ok: false, reason: "invalid_notional" };
+        }
+        notional = Math.min(Math.max(notional, MIN_POSITION_NOTIONAL_USD), MAX_POSITION_NOTIONAL_USD);
+        let qty = notional / entry;
         if (!Number.isFinite(qty) || qty <= 0) {
             return { ok: false, reason: "invalid_qty" };
         }
-        let notional = qty * entry;
-        if (Number.isFinite(notional) && notional > 0) {
-            notional = Math.min(Math.max(notional, MIN_POSITION_NOTIONAL_USD), MAX_POSITION_NOTIONAL_USD);
-            qty = notional / entry;
-        }
+        const riskUsd = riskPerUnit * qty;
         const maxAllocPct = toNumber(settings.maxAllocatedCapitalPercent);
         if (Number.isFinite(maxAllocPct) &&
             maxAllocPct > 0 &&
@@ -678,14 +683,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 if (maxNotional < MIN_POSITION_NOTIONAL_USD) {
                     return { ok: false, reason: "insufficient_equity" };
                 }
-                if (notional > maxNotional) {
-                    notional = maxNotional;
-                    qty = notional / entry;
-                }
-                if (notional < MIN_POSITION_NOTIONAL_USD) {
-                    return { ok: false, reason: "insufficient_equity" };
-                }
+            if (notional > maxNotional) {
+                notional = maxNotional;
+                qty = notional / entry;
             }
+            if (notional < MIN_POSITION_NOTIONAL_USD) {
+                return { ok: false, reason: "insufficient_equity" };
+            }
+        }
         }
         return { ok: true, notional, qty, riskUsd, equity };
     }, [getEquityValue]);
@@ -695,7 +700,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (!Number.isFinite(entry) || entry <= 0) {
             return { ok: false, reason: "invalid_entry" };
         }
-        const targetNotional = Math.min(Math.max(DEMO_POSITION_NOTIONAL_USD, MIN_POSITION_NOTIONAL_USD), MAX_POSITION_NOTIONAL_USD);
+        const targetNotional = Math.min(Math.max(resolveOrderNotional(symbol), MIN_POSITION_NOTIONAL_USD), MAX_POSITION_NOTIONAL_USD);
         const resolvedQty = targetNotional / entry;
         if (!Number.isFinite(resolvedQty) || resolvedQty <= 0) {
             return { ok: false, reason: "invalid_fixed_qty" };
@@ -2262,7 +2267,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return;
         }
         const fixedSizing = computeFixedSizing(symbol, entry, sl);
-        const sizing = fixedSizing ?? computeNotionalForSignal(entry, sl);
+        const sizing = fixedSizing ?? computeNotionalForSignal(symbol, entry, sl);
         if (!sizing.ok) {
             addLogEntries([
                 {
