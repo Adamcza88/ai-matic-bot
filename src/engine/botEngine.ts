@@ -1663,7 +1663,7 @@ export type EngineSignal = {
   symbol: string;
   intent: { side: "buy" | "sell"; entry: number; sl: number; tp: number };
   setupId?: string;
-  entryType?: "LIMIT_MAKER_FIRST" | "LIMIT" | "CONDITIONAL";
+  entryType?: "LIMIT_MAKER_FIRST" | "LIMIT" | "CONDITIONAL" | "MARKET";
   triggerPrice?: number;
   kind?: EntryKind;
   risk: number;
@@ -1680,6 +1680,8 @@ export type EngineDecision = {
   signal?: EngineSignal | null;
   position?: Position | null;
   halted?: boolean;
+  xContext?: any;
+  trailOffsetPct?: number;
 };
 
 const botRegistry: Record<string, TradingBot> = {};

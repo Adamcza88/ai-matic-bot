@@ -5,7 +5,10 @@ import { EntryType, Profile, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import { evaluateStrategyForSymbol, resampleCandles } from "../engine/botEngine";
-import { evaluateSmcStrategyForSymbol } from "../engine/smcStrategy";
+import {
+  evaluateAiMaticXStrategyForSymbol,
+  type AiMaticXContext,
+} from "../engine/aiMaticXStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { computeEma } from "../engine/ta";
 import type { PriceFeedDecision } from "../engine/priceFeed";
@@ -328,12 +331,30 @@ function buildEntryFallback(list: any[]) {
 
 type ClosedPnlRecord = { symbol: string; pnl: number; ts: number };
 
+function computeLossStreak(
+  records: ClosedPnlRecord[] | null | undefined,
+  maxCheck = 3
+) {
+  if (!Array.isArray(records) || records.length === 0) return 0;
+  const sorted = [...records].sort((a, b) => b.ts - a.ts);
+  let streak = 0;
+  for (const r of sorted) {
+    if (r.pnl < 0) {
+      streak += 1;
+      if (streak >= maxCheck) break;
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
 const TRAIL_PROFILE_BY_RISK_MODE: Record<
   AISettings["riskMode"],
   { activateR: number; lockR: number; retracementRate?: number }
 > = {
   "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
-  "ai-matic-x": { activateR: 0.5, lockR: 0.3 },
+  "ai-matic-x": { activateR: 1.0, lockR: 0.3, retracementRate: 0.002 },
   "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
   "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
 };
@@ -484,6 +505,7 @@ export function useTradingBot(
   const signalSeenRef = useRef<Set<string>>(new Set());
   const intentPendingRef = useRef<Set<string>>(new Set());
   const trailingSyncRef = useRef<Map<string, number>>(new Map());
+  const trailOffsetRef = useRef<Map<string, number>>(new Map());
   const settingsRef = useRef<AISettings>(settings);
   const walletRef = useRef<typeof walletSnapshot | null>(walletSnapshot);
   const handleDecisionRef = useRef<
@@ -881,9 +903,13 @@ export function useTradingBot(
         TRAIL_PROFILE_BY_RISK_MODE["ai-matic"];
       const activateR = profile.activateR;
       const lockR = profile.lockR;
-      const retracementRate = profile.retracementRate;
-      const distance = Number.isFinite(retracementRate)
-        ? entry * (retracementRate as number)
+      const overrideRate = trailOffsetRef.current.get(symbol);
+      const effectiveRate =
+        Number.isFinite(overrideRate) && overrideRate > 0
+          ? overrideRate
+          : profile.retracementRate;
+      const distance = Number.isFinite(effectiveRate)
+        ? entry * (effectiveRate as number)
         : Math.abs(activateR - lockR) * r;
       if (!Number.isFinite(distance) || distance <= 0) return null;
       const dir = side === "Buy" ? 1 : -1;
@@ -903,6 +929,16 @@ export function useTradingBot(
       for (const symbol of trailingSyncRef.current.keys()) {
         if (!seenSymbols.has(symbol)) {
           trailingSyncRef.current.delete(symbol);
+        }
+      }
+      for (const symbol of trailOffsetRef.current.keys()) {
+        const hasPosition = seenSymbols.has(symbol);
+        const hasPending = intentPendingRef.current.has(symbol);
+        const hasOrder = ordersRef.current.some(
+          (order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol
+        );
+        if (!hasPosition && !hasOrder && !hasPending) {
+          trailOffsetRef.current.delete(symbol);
         }
       }
 
@@ -974,7 +1010,7 @@ export function useTradingBot(
         }
       }
     },
-    [addLogEntries, computeTrailingPlan, postJson]
+    [addLogEntries, computeTrailingPlan, isEntryOrder, postJson]
   );
 
   const getSymbolContext = useCallback(
@@ -1028,6 +1064,47 @@ export function useTradingBot(
       signal?: PriceFeedDecision["signal"] | null
     ) => {
       const settings = settingsRef.current;
+      const isAiMaticX = settings.riskMode === "ai-matic-x";
+      const xContext = (decision as any)?.xContext as AiMaticXContext | undefined;
+      if (isAiMaticX && xContext) {
+        const detailParts = [
+          `X 1h ${xContext.htfTrend}`,
+          `5m ${xContext.ltfTrend}`,
+          `setup ${xContext.setup}`,
+        ];
+        if (xContext.mode) detailParts.push(`mode ${xContext.mode}`);
+        if (Number.isFinite(xContext.acceptanceCloses) && xContext.acceptanceCloses > 0) {
+          detailParts.push(`accept ${xContext.acceptanceCloses}`);
+        }
+        if (xContext.strongTrendExpanse) detailParts.push("expanse");
+        if (xContext.riskOff) detailParts.push("riskOff");
+        const detail = detailParts.join(" | ");
+
+        if (!signal) {
+          return { ok: true, detail };
+        }
+        const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
+        const signalDir =
+          sideRaw === "buy" ? "BULL" : sideRaw === "sell" ? "BEAR" : "";
+        let ok = Boolean(signalDir);
+        if (xContext.setup === "NO_TRADE") ok = false;
+        if (xContext.setup === "TREND_PULLBACK" || xContext.setup === "TREND_CONTINUATION") {
+          if (xContext.htfTrend !== signalDir || xContext.ltfTrend !== signalDir) {
+            ok = false;
+          }
+        } else if (xContext.setup === "RANGE_BREAK_FLIP") {
+          const htfOk =
+            xContext.htfTrend === "RANGE" || xContext.htfTrend === signalDir;
+          const ltfOk = xContext.ltfTrend === signalDir;
+          if (!htfOk || !ltfOk) ok = false;
+        } else if (xContext.setup === "RANGE_FADE") {
+          if (xContext.mode !== "RANGE" && xContext.htfTrend !== "RANGE") {
+            ok = false;
+          }
+          if (xContext.ltfTrend !== "RANGE") ok = false;
+        }
+        return { ok, detail };
+      }
       const htfTrend = (decision as any)?.htfTrend;
       const ltfTrend = (decision as any)?.ltfTrend;
       const emaTrend = (decision as any)?.emaTrend as
@@ -2348,18 +2425,13 @@ export function useTradingBot(
       const tp = toNumber(intent?.tp);
       const side =
         String(intent?.side ?? "").toLowerCase() === "buy" ? "Buy" : "Sell";
-      const entryType =
+      let entryType =
         signal.entryType === "CONDITIONAL" ||
         signal.entryType === "LIMIT" ||
-        signal.entryType === "LIMIT_MAKER_FIRST"
+        signal.entryType === "LIMIT_MAKER_FIRST" ||
+        signal.entryType === "MARKET"
           ? signal.entryType
           : "LIMIT_MAKER_FIRST";
-      const triggerPrice =
-        entryType === "CONDITIONAL"
-          ? Number.isFinite(signal.triggerPrice)
-            ? signal.triggerPrice
-            : entry
-          : undefined;
       const timestamp =
         signal.createdAt || new Date(now).toISOString();
 
@@ -2397,6 +2469,43 @@ export function useTradingBot(
       }
 
       const context = getSymbolContext(symbol, decision);
+      const isAiMaticX = context.settings.riskMode === "ai-matic-x";
+      const xContext = (decision as any)?.xContext as AiMaticXContext | undefined;
+      let riskOff = false;
+      const riskReasons: string[] = [];
+      if (isAiMaticX) {
+        if (xContext?.riskOff) {
+          riskOff = true;
+          riskReasons.push("chop");
+        }
+        const dailyPnl = toNumber(portfolioState?.dailyPnl);
+        const equity = getEquityValue();
+        const baseRiskRaw = toNumber(context.settings.baseRiskPerTrade);
+        let riskUsd = Number.NaN;
+        if (
+          Number.isFinite(baseRiskRaw) &&
+          baseRiskRaw > 0 &&
+          Number.isFinite(equity) &&
+          equity > 0
+        ) {
+          riskUsd = baseRiskRaw <= 1 ? equity * baseRiskRaw : baseRiskRaw;
+        }
+        if (
+          Number.isFinite(dailyPnl) &&
+          Number.isFinite(riskUsd) &&
+          riskUsd > 0 &&
+          dailyPnl <= -2 * riskUsd
+        ) {
+          riskOff = true;
+          riskReasons.push("-2R");
+        }
+        const lossStreak = computeLossStreak(closedPnlRecords, 2);
+        if (lossStreak >= 2) {
+          riskOff = true;
+          riskReasons.push("loss streak");
+        }
+      }
+      const riskOn = !riskOff;
       const trendGate = resolveTrendGate(decision, signal);
       const correlationGate = resolveCorrelationGate(symbol, now, signal);
       const blockReasons: string[] = [];
@@ -2430,6 +2539,23 @@ export function useTradingBot(
           blockReasons.push("Confirm required");
         }
       }
+      if (isAiMaticX) {
+        const openPositionsTotal = positionsRef.current.filter((p) => {
+          const size = toNumber(p.size ?? p.qty);
+          return Number.isFinite(size) && size > 0;
+        }).length;
+        const openEntryOrdersTotal = ordersRef.current.filter(isEntryOrder).length;
+        const pendingIntents = intentPendingRef.current.size;
+        if (openPositionsTotal > 0 || openEntryOrdersTotal > 0 || pendingIntents > 0) {
+          blockReasons.push(
+            `Focus mode ${openPositionsTotal}p/${openEntryOrdersTotal}o`
+          );
+        }
+        if (riskOff) {
+          const suffix = riskReasons.length ? ` (${riskReasons.join(", ")})` : "";
+          blockReasons.push(`Risk OFF${suffix}`);
+        }
+      }
 
       const execEnabled = isGateEnabled("Exec allowed");
       if (blockReasons.length) {
@@ -2454,6 +2580,19 @@ export function useTradingBot(
         ]);
         return;
       }
+
+      if (entryType === "MARKET") {
+        const allowMarket = isAiMaticX && riskOn && xContext?.strongTrendExpanse;
+        if (!allowMarket) {
+          entryType = "LIMIT";
+        }
+      }
+      const triggerPrice =
+        entryType === "CONDITIONAL"
+          ? Number.isFinite(signal.triggerPrice)
+            ? signal.triggerPrice
+            : entry
+          : undefined;
 
       if (!Number.isFinite(entry) || !Number.isFinite(sl) || entry <= 0 || sl <= 0) {
         addLogEntries([
@@ -2483,6 +2622,13 @@ export function useTradingBot(
       const useFixedQty = fixedSizing?.ok === true;
       const qtyMode = useFixedQty ? "BASE_QTY" : "USDT_NOTIONAL";
       const qtyValue = useFixedQty ? sizing.qty : sizing.notional;
+
+      const trailOffset = toNumber((decision as any)?.trailOffsetPct);
+      if (Number.isFinite(trailOffset) && trailOffset > 0) {
+        trailOffsetRef.current.set(symbol, trailOffset);
+      } else {
+        trailOffsetRef.current.delete(symbol);
+      }
 
       if (intentPendingRef.current.has(symbol)) {
         addLogEntries([
@@ -2540,10 +2686,14 @@ export function useTradingBot(
       activeSymbols,
       autoTrade,
       buildScanDiagnostics,
+      closedPnlRecords,
       computeFixedSizing,
       computeNotionalForSignal,
+      getEquityValue,
       getSymbolContext,
       isGateEnabled,
+      isEntryOrder,
+      portfolioState,
       resolveCorrelationGate,
       resolveTrendGate,
     ]
@@ -2562,7 +2712,7 @@ export function useTradingBot(
     setScanDiagnostics(null);
 
     const riskMode = settingsRef.current.riskMode;
-    const isSmc = riskMode === "ai-matic-x";
+    const isAiMaticX = riskMode === "ai-matic-x";
     const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
     const isScalp = riskMode === "ai-matic-scalp";
     const decisionFn = (
@@ -2570,8 +2720,8 @@ export function useTradingBot(
       candles: Parameters<typeof evaluateStrategyForSymbol>[1],
       config?: Partial<BotConfig>
     ) => {
-      const baseDecision = isSmc
-        ? evaluateSmcStrategyForSymbol(symbol, candles, config)
+      const baseDecision = isAiMaticX
+        ? evaluateAiMaticXStrategyForSymbol(symbol, candles, config)
         : evaluateStrategyForSymbol(symbol, candles, config);
       const htfTimeframes = isAiMatic
         ? AI_MATIC_HTF_TIMEFRAMES_MIN
@@ -2594,9 +2744,9 @@ export function useTradingBot(
       });
       return { ...baseDecision, htfTrend, ltfTrend, emaTrend };
     };
-    const maxCandles = isSmc ? 3000 : isAiMatic ? 5000 : undefined;
-    const backfill = isSmc
-      ? { enabled: true, interval: "1", lookbackMinutes: 1440, limit: 1000 }
+    const maxCandles = isAiMaticX ? 5000 : isAiMatic ? 5000 : undefined;
+    const backfill = isAiMaticX
+      ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
       : isAiMatic
         ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
         : undefined;

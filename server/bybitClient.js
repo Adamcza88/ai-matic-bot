@@ -284,9 +284,8 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   const leverageRaw = Number(order.leverage);
   const requestedLeverage =
     Number.isFinite(leverageRaw) && leverageRaw > 0 ? leverageRaw : undefined;
-  const desiredLeverage = useTestnet
-    ? 1
-    : requestedLeverage != null
+  const desiredLeverage =
+    requestedLeverage != null
       ? Math.max(1, Math.min(100, requestedLeverage))
       : undefined;
   if (Number.isFinite(desiredLeverage)) {

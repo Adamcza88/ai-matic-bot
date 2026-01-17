@@ -78,13 +78,32 @@ app.post("/api/:env/order", async (req, res) => {
 
   const { symbol, side, qty, orderType, sl, tp, orderLinkId, timeInForce, trailingStop, trailingActivePrice, price, triggerPrice, leverage, reduceOnly, positionIdx } = req.body;
 
-  const roiSymbols = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT"]);
-  const leverageMap = { BTCUSDT: 100, ETHUSDT: 100, SOLUSDT: 100, ADAUSDT: 75 };
+  const leverageMap = {
+    BTCUSDT: 100,
+    ETHUSDT: 100,
+    SOLUSDT: 100,
+    ADAUSDT: 75,
+    XRPUSDT: 75,
+    XMRUSDT: 25,
+    DOGEUSDT: 75,
+    LINKUSDT: 50,
+    MELANIAUSDT: 25,
+    XPLUSDT: 75,
+    HYPEUSDT: 75,
+    FARTCOINUSDT: 75,
+  };
+  const roiSymbols = new Set(Object.keys(leverageMap));
   const roiTargets = { tp: 1.10, sl: -0.40 }; // percent ROI targets
 
-  const applyRoiStops = (sym, entry, dir, curTp, curSl) => {
+  const resolveLeverage = (sym, requested) => {
+    const requestedLev = Number(requested);
+    if (Number.isFinite(requestedLev) && requestedLev > 0) return requestedLev;
+    return leverageMap[sym] || 1;
+  };
+
+  const applyRoiStops = (sym, entry, dir, curTp, curSl, leverageValue) => {
     if (!roiSymbols.has(sym) || !Number.isFinite(entry)) return { tp: curTp, sl: curSl };
-    const lev = leverageMap[sym] || 1;
+    const lev = resolveLeverage(sym, leverageValue);
     const isBuy = dir?.toLowerCase() === "buy";
     const tpPrice = entry * (1 + (roiTargets.tp / 100) / Math.max(1, lev) * (isBuy ? 1 : -1));
     const slPrice = entry * (1 - (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev) * (isBuy ? 1 : -1));
@@ -110,7 +129,15 @@ app.post("/api/:env/order", async (req, res) => {
 
     // Reuse createDemoOrder for both main/testnet logic in server (it handles 'useTestnet' flag)
     const entryPrice = Number(price ?? triggerPrice);
-    const { tp: roiTp, sl: roiSl } = applyRoiStops(symbol, entryPrice, side, tp, sl);
+    const resolvedLeverage = resolveLeverage(symbol, leverage);
+    const { tp: roiTp, sl: roiSl } = applyRoiStops(
+      symbol,
+      entryPrice,
+      side,
+      tp,
+      sl,
+      resolvedLeverage
+    );
 
     const result = await createDemoOrder({
       symbol,
@@ -131,7 +158,7 @@ app.post("/api/:env/order", async (req, res) => {
       stopLoss: roiSl,
       trailingStop,
       trailingActivePrice,
-      leverage
+      leverage: resolvedLeverage
     }, creds, env === "testnet");
 
     if (result.retCode !== 0) {

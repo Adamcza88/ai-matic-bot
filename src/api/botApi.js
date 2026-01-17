@@ -19,16 +19,22 @@ export async function sendIntent(intent, opts) {
         throw new Error("invalid_qty");
     }
     const isConditional = intent.entryType === "CONDITIONAL";
+    const isMarket = intent.entryType === "MARKET";
     const triggerPrice = isConditional
         ? intent.triggerPrice ?? intent.entryPrice
         : undefined;
-    const timeInForce = intent.entryType === "LIMIT_MAKER_FIRST" ? "PostOnly" : "GTC";
+    const timeInForce = isMarket
+        ? "IOC"
+        : intent.entryType === "LIMIT_MAKER_FIRST"
+            ? "PostOnly"
+            : "GTC";
+    const orderType = isMarket ? "Market" : "Limit";
     const payload = {
         symbol: intent.symbol,
         side: intent.side,
         qty,
-        orderType: "Limit",
-        price: intent.entryPrice,
+        orderType,
+        price: isMarket ? undefined : intent.entryPrice,
         triggerPrice,
         trailingStop: intent.trailingStop,
         trailingActivePrice: intent.trailingActivePrice,

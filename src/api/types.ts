@@ -12,7 +12,12 @@ export type Symbol =
   | "HYPEUSDT"
   | "FARTCOINUSDT";
 export type Side = "Buy" | "Sell";
-export type EntryType = "LIMIT_MAKER_FIRST" | "LIMIT" | "CONDITIONAL" | "MARKET_DISABLED";
+export type EntryType =
+  | "LIMIT_MAKER_FIRST"
+  | "LIMIT"
+  | "CONDITIONAL"
+  | "MARKET"
+  | "MARKET_DISABLED";
 
 export type Profile =
   | "AI-MATIC"
