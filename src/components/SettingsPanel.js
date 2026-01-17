@@ -8,7 +8,7 @@ const MAX_OPEN_POSITIONS_CAP = 100;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * 4;
 const MIN_AUTO_REFRESH_MINUTES = 1;
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
-const ORDER_VALUE_NOTE = "Order value & leverage: BTC/ETH/SOL 10k@100x; ADA/XRP/DOGE/XPLUS/HYPE/FART 7.5k@75x; LINK 5k@50x; XMR/MELANIA 2.5k@25x; margin cost 100 USDT.";
+const ORDER_VALUE_NOTE = "Order value & leverage: BTC/ETH/SOL 10k@100x; ADA/XRP/DOGE/XPLUS/HYPE/FART 7.5k@75x; LINK 5k@50x; XMR 2.5k@25x; MELANIA 2k@20x; margin cost 100 USDT.";
 function loadProfileSettingsMap() {
     if (typeof localStorage === "undefined")
         return {};

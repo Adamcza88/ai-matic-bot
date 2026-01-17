@@ -24,7 +24,7 @@ const ORDER_VALUE_BY_SYMBOL = {
     XMRUSDT: 2500,
     DOGEUSDT: 7500,
     LINKUSDT: 5000,
-    MELANIAUSDT: 2500,
+    MELANIAUSDT: 2000,
     XPLUSDT: 7500,
     HYPEUSDT: 7500,
     FARTCOINUSDT: 7500,
@@ -2206,21 +2206,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 blockReasons.push("Confirm required");
             }
         }
-        if (isAiMaticX) {
-            const openPositionsTotal = positionsRef.current.filter((p) => {
-                const size = toNumber(p.size ?? p.qty);
-                return Number.isFinite(size) && size > 0;
-            }).length;
-            const openEntryOrdersTotal = ordersRef.current.filter(isEntryOrder).length;
-            const pendingIntents = intentPendingRef.current.size;
-            if (openPositionsTotal > 0 || openEntryOrdersTotal > 0 || pendingIntents > 0) {
-                blockReasons.push(`Focus mode ${openPositionsTotal}p/${openEntryOrdersTotal}o`);
-            }
-            if (riskOff) {
-                const suffix = riskReasons.length ? ` (${riskReasons.join(", ")})` : "";
-                blockReasons.push(`Risk OFF${suffix}`);
-            }
-        }
+        // AI-MATIC-X: keep Risk OFF as signal-only; do not hard-block execution here.
         const execEnabled = isGateEnabled("Exec allowed");
         if (blockReasons.length) {
             addLogEntries([

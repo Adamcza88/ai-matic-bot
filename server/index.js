@@ -87,7 +87,7 @@ app.post("/api/:env/order", async (req, res) => {
     XMRUSDT: 25,
     DOGEUSDT: 75,
     LINKUSDT: 50,
-    MELANIAUSDT: 25,
+    MELANIAUSDT: 20,
     XPLUSDT: 75,
     HYPEUSDT: 75,
     FARTCOINUSDT: 75,
