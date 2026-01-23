@@ -7,6 +7,9 @@ function gateSummary(diag, scanLoaded) {
     if (!scanLoaded || !diag) {
         return { label: "Gate: —", blocked: false };
     }
+    if (!diag?.signalActive) {
+        return { label: "Gate: —", blocked: false };
+    }
     const hardEnabled = diag?.hardEnabled !== false;
     const softEnabled = diag?.softEnabled !== false;
     const hardBlocked = Boolean(diag?.hardBlocked);

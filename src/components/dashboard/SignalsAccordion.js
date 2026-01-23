@@ -15,12 +15,15 @@ function gateSummary(diag, gates, scanLoaded, checklistEnabled) {
     if (!scanLoaded || !diag) {
         return { label: "Gate: —", blocked: false };
     }
+    if (!diag?.signalActive) {
+        return { label: "Gate: —", blocked: false };
+    }
     const hardEnabled = diag?.hardEnabled !== false;
     const softEnabled = diag?.softEnabled !== false;
     const hardBlocked = Boolean(diag?.hardBlocked);
     const softBlocked = softEnabled && diag?.qualityPass === false;
     const execBlocked = diag?.executionAllowed === false;
-    const gatesBlocked = gates.some((g) => (checklistEnabled[g.name] ?? true) && g?.ok === false);
+    const gatesBlocked = gates.some((g) => (checklistEnabled[g.name] ?? true) && g?.ok === false && g?.detail !== "not required");
     const blocked = (hardEnabled && hardBlocked) || softBlocked || execBlocked || gatesBlocked;
     return {
         label: blocked ? "Gate: BLOCKED" : "Gate: PASS",
@@ -57,6 +60,7 @@ export default function SignalsAccordion({ allowedSymbols, scanDiagnostics, scan
                 const qualityScore = diag?.qualityScore;
                 const qualityThreshold = diag?.qualityThreshold;
                 const qualityPass = diag?.qualityPass;
+                const signalActive = Boolean(diag?.signalActive);
                 const breakdown = diag?.qualityBreakdown;
                 const breakdownOrder = [
                     "HTF",
@@ -112,46 +116,22 @@ export default function SignalsAccordion({ allowedSymbols, scanDiagnostics, scan
                                                                 ? qualityScore != null
                                                                     ? `${qualityScore} / ${qualityThreshold ?? "—"}`
                                                                     : "—"
-                                                                : "OFF"] })] })] }), _jsxs("div", { className: "grid gap-2 sm:grid-cols-2", children: [gates.map((gate) => (_jsxs("button", { type: "button", onClick: () => toggleChecklist(gate.name), className: "flex items-center gap-2 text-left", title: "Toggle gate enforcement for this check.", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${gate.ok ? "bg-emerald-400" : "bg-slate-600"}` }), _jsx("span", { className: checklistEnabled[gate.name]
-                                                            ? "text-foreground"
-                                                            : "text-muted-foreground", children: (() => {
+                                                                : "OFF"] })] })] }), _jsxs("div", { className: "grid gap-2 sm:grid-cols-2", children: [gates.map((gate) => (_jsxs("button", { type: "button", onClick: () => toggleChecklist(gate.name), className: "flex items-center gap-2 text-left", title: "Toggle gate enforcement for this check.", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${!((checklistEnabled[gate.name] ?? true)) || gate.detail === "not required" || !signalActive ? "bg-slate-600" : gate.ok ? "bg-emerald-400" : "bg-red-400"}` }), _jsx("span", { className: (checklistEnabled[gate.name] ?? true)
+                                                        ? "text-foreground"
+                                                        : "text-muted-foreground", children: (() => {
                                                             const label = gateLabel(gate.name, gate.detail);
-                                                            const allowDetail = [
-                                                                "Trend bias",
-                                                                "1h bias",
-                                                                "15m context",
-                                                                "Chop filter",
-                                                                "RTC ready",
-                                                                "TP1 >= min",
-                                                                "Level defined",
-                                                                "Maker entry",
-                                                                "SL structural",
-                                                                "BE+ / time stop",
-                                                                "Daily limits",
-                                                            ].includes(gate.name);
-                                                            const detail = (gate.ok || allowDetail) && gate.detail
-                                                                ? gate.detail === "not required"
-                                                                    ? "No"
-                                                                    : gate.detail
-                                                                : "";
-                                                            if (!detail || gate.name === "Confirm required") {
+                                                            if (!gate.detail || gate.name === "Confirm required") {
                                                                 return label;
                                                             }
-                                                            return `${label}: ${detail}`;
-                                                        })() })] }, gate.name))), _jsxs("button", { type: "button", onClick: () => toggleChecklist("Exec allowed"), className: "flex items-center gap-2 text-left", title: "Toggle gate enforcement for this check.", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${diag?.executionAllowed === true
-                                                            ? "bg-emerald-400"
-                                                            : diag?.executionAllowed === false
-                                                                ? "bg-amber-400"
-                                                                : "bg-slate-600"}` }), _jsxs("span", { className: checklistEnabled["Exec allowed"]
-                                                            ? "text-foreground"
-                                                            : "text-muted-foreground", children: ["Execution allowed (", execLabel, ")"] })] }), _jsxs("button", { type: "button", onClick: () => toggleChecklist("Feed age"), className: "flex items-center gap-2 text-left", title: "Toggle gate enforcement for this check.", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${feedAgeOk == null
+                                                            return `${label}: ${gate.detail === "not required" ? "N/A" : gate.detail}`;
+                                                        })() })] }, gate.name))), _jsxs("button", { type: "button", onClick: () => toggleChecklist("Exec allowed"), className: "flex items-center gap-2 text-left", title: "Toggle gate enforcement for this check.", children: [_jsx("span", { className: `h-2 w-2 rounded-full ${!(checklistEnabled["Exec allowed"] ?? true)
                                                             ? "bg-slate-600"
-                                                            : feedAgeOk
+                                                            : diag?.executionAllowed === true
                                                                 ? "bg-emerald-400"
-                                                                : "bg-red-400"}` }), _jsxs("span", { className: checklistEnabled["Feed age"]
+                                                                : diag?.executionAllowed === false
+                                                                ? "bg-amber-400"
+                                                                : "bg-slate-600"}` }), _jsxs("span", { className: (checklistEnabled["Exec allowed"] ?? true)
                                                             ? "text-foreground"
-                                                            : "text-muted-foreground", children: ["Feed age ", feedAgeLabel, ":", " ", feedAgeMs != null && Number.isFinite(feedAgeMs)
-                                                                ? `${feedAgeMs} ms`
-                                                                : "—"] })] })] }), (breakdownParts.length > 0 || diag?.qualityTopReason) && (_jsxs("div", { className: "text-[11px] text-muted-foreground", children: [breakdownParts.length > 0 && (_jsxs("div", { children: ["Score: ", breakdownParts.join(" · ")] })), diag?.qualityTopReason && (_jsxs("div", { children: ["Top reason: ", diag.qualityTopReason] }))] }))] })) })] }, symbol));
+                                                            : "text-muted-foreground", children: ["Execution allowed (", execLabel, ")"] })] })] }), (breakdownParts.length > 0 || diag?.qualityTopReason) && (_jsxs("div", { className: "text-[11px] text-muted-foreground", children: [breakdownParts.length > 0 && (_jsxs("div", { children: ["Score: ", breakdownParts.join(" · ")] })), diag?.qualityTopReason && (_jsxs("div", { children: ["Top reason: ", diag.qualityTopReason] }))] }))] })) })] }, symbol));
             }) }) }));
 }

@@ -134,50 +134,18 @@ export default function Dashboard({
   const CHECKLIST_DEFAULTS_BY_PROFILE = useMemo(
     () => ({
       "ai-matic": {
-        Signal: true,
         "Trend bias": false,
-        "Engine ok": true,
-        "Session ok": true,
-        "Confirm required": false,
-        "Max positions": true,
-        "Position clear": true,
-        "Max orders": true,
-        "SL set": true,
-        "TP set": true,
         "Exec allowed": true,
-        "Feed age": true,
       },
       "ai-matic-x": {
-        Signal: true,
         "Trend bias": false,
-        "Engine ok": true,
-        "Session ok": true,
-        "Confirm required": false,
-        "Max positions": true,
-        "Position clear": true,
-        "Max orders": true,
-        "SL set": true,
-        "TP set": true,
         "Exec allowed": true,
-        "Feed age": true,
       },
       "ai-matic-tree": {
-        Signal: true,
         "Trend bias": false,
-        "Engine ok": true,
-        "Session ok": true,
-        "Confirm required": false,
-        "Max positions": true,
-        "Position clear": true,
-        "Max orders": true,
-        "SL set": true,
-        "TP set": true,
         "Exec allowed": true,
-        "Feed age": true,
       },
       "ai-matic-scalp": {
-        Signal: true,
-        "RTC ready": true,
         "TP1 >= min": true,
         "1h bias": true,
         "15m context": true,
@@ -186,18 +154,7 @@ export default function Dashboard({
         "Maker entry": true,
         "SL structural": true,
         "BE+ / time stop": true,
-        "Daily limits": true,
-        "Engine ok": true,
-        "Session ok": true,
-        "Confirm required": false,
-        "Max positions": true,
-        "Position clear": true,
-        "Max orders": true,
-        Correlation: true,
-        "SL set": true,
-        "TP set": true,
         "Exec allowed": true,
-        "Feed age": true,
       },
     }),
     []
@@ -210,11 +167,6 @@ export default function Dashboard({
   }, [CHECKLIST_DEFAULTS_BY_PROFILE, riskMode]);
   const CHECKLIST_ALIASES = useMemo(
     () => ({
-      "Feed age": ["BBO age", "BBO fresh"],
-      "Position clear": ["Position open"],
-      "Max orders": ["Orders clear", "Open orders"],
-      "Session ok": ["Session"],
-      "Confirm required": ["CONFIRM_REQUIRED"],
       "1h bias": ["Trend bias"],
     }),
     []
@@ -275,7 +227,6 @@ export default function Dashboard({
     setChecklistEnabled((prev) => ({
       ...prev,
       "Exec allowed": true,
-      "Confirm required": false,
     }));
   }, [riskMode]);
 

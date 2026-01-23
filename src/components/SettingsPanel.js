@@ -143,9 +143,9 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
             notes: [
                 ORDER_VALUE_NOTE,
                 "Instrument: Crypto Linear futures · HTF 1h/15m · LTF 5m/1m · fee-aware scalp.",
-                "RTC: maker_fee %, taker_fee %, slippage_buffer % (0.01–0.03).",
+                "RTC: maker_fee %, taker_fee %, slippage_buffer % (0.01–0.03) – orientační.",
                 "RTC taker/taker = 2*taker_fee + slippage_buffer; maker/maker = 2*maker_fee + slippage_buffer.",
-                "TP1_min = 2.5 * RTC; pokud nejbližší TP < TP1_min → NO TRADE.",
+                "TP1_min = 2.5 * RTC (orientačně).",
                 "SCAN (1h): nad EMA21, EMA21 roste, struktura bez LL/LH (long); short zrcadlově.",
                 "15m kontext: bullish HH/HL nad EMA21 nebo pullback drží poslední HL / 1h demand.",
                 "No-trade: 1h EMA21 plochá + 15m EMA(8/21) cross; špatný spread; TP < TP1_min; 2 pokusy na levelu.",
@@ -159,7 +159,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                 "Time stop: 1m entry 5 min bez posunu ~0.5R; 5m entry 15 min bez follow-through → exit.",
                 "Re-entry: nový LTF HL + nový reclaim/retest; max 2 pokusy.",
                 "Risk: 0.25–1.0 % / trade; -2R denně stop; 2 ztráty v řadě pauza; žádné přidávání.",
-                "Checklist: RTC/TP1_min, 1h bias, 15m kontext, RL/BL level, maker entry, SL strukturální, TP1≥min, BE+/time stop, denní limity.",
+                "Checklist: 1h bias, 15m kontext, RL/BL level, maker entry, SL strukturální, TP1≥min, BE+/time stop, denní limity.",
             ],
         },
         "ai-matic-tree": {
@@ -181,7 +181,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const profileSummary = {
         "ai-matic": "AI‑MATIC core (1h/15m/5m/1m): POI + struktura, pullbacky a řízení přes R‑multiple.",
         "ai-matic-x": "AI‑MATIC‑X (1h/5m): decision tree, čistá struktura, max 1 pozice celkem.",
-        "ai-matic-scalp": "AI‑MATIC‑SCALP (1h/15m/5m/1m): fee‑aware scalp, maker‑first, RTC + TP1_min gate.",
+        "ai-matic-scalp": "AI‑MATIC‑SCALP (1h/15m/5m/1m): fee‑aware scalp, maker‑first, RTC + TP1_min reference.",
         "ai-matic-tree": "AI‑MATIC‑TREE (1h/5m): decision‑tree overlay nad AI‑MATIC core enginem.",
     };
     const makerFeePct = Number.isFinite(local.makerFeePct) ? local.makerFeePct : 0;
@@ -276,8 +276,8 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         baseRiskPerTrade: 0.005,
         maxPortfolioRiskPercent: 0.2,
         maxAllocatedCapitalPercent: 1.0,
-        maxOpenPositions: 3,
-        maxOpenOrders: 12,
+        maxOpenPositions: 1,
+        maxOpenOrders: 4,
         selectedSymbols: [...SUPPORTED_SYMBOLS],
         entryStrictness: "ultra",
         enforceSessionHours: false,

@@ -1651,9 +1651,6 @@ export function useTradingBot(
         feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
       const signalActive = Boolean(decision?.signal);
       const quality = resolveQualityScore(decision, signalActive);
-      const pos = positionsRef.current.find((p) => p.symbol === symbol);
-      const sl = toNumber(pos?.sl);
-      const tp = toNumber(pos?.tp);
 
       const gates: { name: string; ok: boolean; detail?: string }[] = [];
       const addGate = (name: string, ok: boolean, detail?: string) => {
@@ -1661,21 +1658,6 @@ export function useTradingBot(
       };
 
       const signal = decision?.signal ?? null;
-      const signalDetail = (() => {
-        const sig = signal;
-        if (!sig) return undefined;
-        const side = String(sig.intent?.side ?? "").toUpperCase();
-        const entry = toNumber(sig.intent?.entry);
-        const parts: string[] = [];
-        if (side) parts.push(side);
-        if (Number.isFinite(entry)) {
-          parts.push(`@ ${formatNumber(entry, 2)}`);
-        }
-        if (sig.kind) {
-          parts.push(String(sig.kind).toUpperCase());
-        }
-        return parts.join(" ") || "signal active";
-      })();
       const entryType =
         signal?.entryType ??
         "LIMIT_MAKER_FIRST";
@@ -1708,9 +1690,9 @@ export function useTradingBot(
         signalEntry > 0
           ? (Math.abs(signalTp - signalEntry) / signalEntry) * 100
           : Number.NaN;
-      const rtcOk = !signalActive || feeReady;
       const tp1Ok =
         !signalActive ||
+        !feeReady ||
         (Number.isFinite(tp1DistPct) &&
           Number.isFinite(tp1MinPct) &&
           tp1DistPct >= tp1MinPct);
@@ -1748,91 +1730,47 @@ export function useTradingBot(
       const slOk =
         !signalActive || (Number.isFinite(signalEntry) && Number.isFinite(signalSl) && signalSl > 0);
 
-      const dailyRiskGate = (() => {
-        if (!isScalp) return { ok: true, detail: undefined };
-        let ok = true;
-        const details: string[] = [];
-        const lossStreak = computeLossStreak(closedPnlRecords, 2);
-        if (lossStreak >= 2) {
-          ok = false;
-          details.push(`loss streak ${lossStreak}`);
-        }
-        const equity = getEquityValue();
-        const baseRiskRaw = toNumber(context.settings.baseRiskPerTrade);
-        let riskUsd = Number.NaN;
-        if (
-          Number.isFinite(baseRiskRaw) &&
-          baseRiskRaw > 0 &&
-          Number.isFinite(equity) &&
-          equity > 0
-        ) {
-          riskUsd = baseRiskRaw <= 1 ? equity * baseRiskRaw : baseRiskRaw;
-        }
-        const dailyPnl = Array.isArray(closedPnlRecords)
-          ? closedPnlRecords.reduce((sum, r) => {
-              const dayAgo = Date.now() - 24 * 60 * 60_000;
-              if (r.ts < dayAgo) return sum;
-              return sum + r.pnl;
-            }, 0)
-          : Number.NaN;
-        if (Number.isFinite(dailyPnl)) {
-          details.push(`PnL ${formatNumber(dailyPnl, 2)}`);
-        }
-        if (
-          Number.isFinite(dailyPnl) &&
-          Number.isFinite(riskUsd) &&
-          riskUsd > 0 &&
-          dailyPnl <= -2 * riskUsd
-        ) {
-          ok = false;
-          details.push("-2R");
-        }
-        return { ok, detail: details.join(" | ") || undefined };
-      })();
-
       const trendGate = resolveTrendGate(
         decision,
         signalActive ? signal ?? null : null
       );
 
-      addGate("Signal", signalActive, signalDetail);
       if (isScalp) {
-        addGate(
-          "RTC ready",
-          rtcOk,
-          feeReady
-            ? `${feeModel} RTC ${formatNumber(rtcPct, 3)}% | TP1_min ${formatNumber(tp1MinPct, 3)}%`
-            : "fees missing"
-        );
         addGate(
           "TP1 >= min",
           tp1Ok,
           signalActive
-            ? Number.isFinite(tp1DistPct) && Number.isFinite(tp1MinPct)
+            ? feeReady && Number.isFinite(tp1DistPct) && Number.isFinite(tp1MinPct)
               ? `TP1 ${formatNumber(tp1DistPct, 2)}% / min ${formatNumber(tp1MinPct, 2)}%`
-              : "TP1 missing"
+              : "n/a"
             : "not required"
         );
         addGate(
           "1h bias",
           h1BiasOk,
-          h1
-            ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | ${h1.structure} | ${h1.direction}`
-            : "no data"
+          signalActive
+            ? h1
+              ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | ${h1.structure} | ${h1.direction}`
+              : "no data"
+            : "not required"
         );
         addGate(
           "15m context",
           m15ContextOk,
-          m15
-            ? `15m ${m15.direction} | ${m15.structure}`
-            : "no data"
+          signalActive
+            ? m15
+              ? `15m ${m15.direction} | ${m15.structure}`
+              : "no data"
+            : "not required"
         );
         addGate(
           "Chop filter",
           chopOk,
-          h1
-            ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | cross ${scalpContext?.ema15mCrossCount ?? 0}`
-            : "no data"
+          signalActive
+            ? h1
+              ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | cross ${scalpContext?.ema15mCrossCount ?? 0}`
+              : "no data"
+            : "not required"
         );
         addGate("Level defined", levelOk, signalActive ? setupLabel : "not required");
         addGate("Maker entry", makerOk, signalActive ? entryType : "not required");
@@ -1850,65 +1788,15 @@ export function useTradingBot(
           true,
           signalActive ? "manual" : "not required"
         );
-        addGate("Daily limits", dailyRiskGate.ok, dailyRiskGate.detail);
       } else {
         addGate("Trend bias", trendGate.ok, trendGate.detail);
       }
-      addGate("Engine ok", context.engineOk, "running");
-      const sessionDetail = context.settings.enforceSessionHours
-        ? context.settings.riskMode === "ai-matic-scalp"
-          ? "08:00-12:00 / 13:00-17:00 UTC"
-          : `${String(context.settings.tradingStartHour).padStart(2, "0")}:00-${String(
-              context.settings.tradingEndHour
-            ).padStart(2, "0")}:00`
-        : "24/7";
-      addGate("Session ok", context.sessionOk, sessionDetail);
-      addGate(
-        "Confirm required",
-        !context.settings.requireConfirmationInAuto,
-        "not required"
-      );
-      const maxPositionsDetail = Number.isFinite(context.maxPositions)
-        ? `open ${context.openPositionsCount}/${context.maxPositions}`
-        : `open ${context.openPositionsCount}`;
-      addGate("Max positions", context.maxPositionsOk, maxPositionsDetail);
-      addGate("Position clear", !context.hasPosition, "no open position");
-      const ordersDetail = Number.isFinite(context.maxOrders)
-        ? `open ${context.openOrdersCount}/${context.maxOrders}`
-        : `open ${context.openOrdersCount}/no limit`;
-      addGate("Max orders", context.ordersClearOk, ordersDetail);
-      const correlationGate = resolveCorrelationGate(
-        symbol,
-        Date.now(),
-        signalActive ? decision?.signal ?? null : null
-      );
-      addGate("Correlation", correlationGate.ok, correlationGate.detail);
-      const positionSlOk =
-        context.hasPosition && Number.isFinite(sl) && sl > 0;
-      const positionTpOk =
-        context.hasPosition && Number.isFinite(tp) && tp > 0;
-      addGate(
-        "SL set",
-        positionSlOk,
-        positionSlOk ? `SL ${formatNumber(sl, 6)}` : undefined
-      );
-      addGate(
-        "TP set",
-        positionTpOk,
-        positionTpOk ? `TP ${formatNumber(tp, 6)}` : undefined
-      );
 
       const hardEnabled = context.settings.enableHardGates !== false;
       const softEnabled = context.settings.enableSoftGates !== false;
       const hardReasons: string[] = [];
       if (hardEnabled) {
-        if (!context.engineOk && isGateEnabled("Engine ok")) {
-          hardReasons.push("Engine ok");
-        }
         if (isScalp) {
-          if (!rtcOk && isGateEnabled("RTC ready")) {
-            hardReasons.push("RTC ready");
-          }
           if (!tp1Ok && isGateEnabled("TP1 >= min")) {
             hardReasons.push("TP1 >= min");
           }
@@ -1930,35 +1818,8 @@ export function useTradingBot(
           if (!slOk && isGateEnabled("SL structural")) {
             hardReasons.push("SL structural");
           }
-          if (!dailyRiskGate.ok && isGateEnabled("Daily limits")) {
-            hardReasons.push("Daily limits");
-          }
         } else if (!trendGate.ok && isGateEnabled("Trend bias")) {
           hardReasons.push("Trend bias");
-        }
-        if (!context.sessionOk && isGateEnabled("Session ok")) {
-          hardReasons.push("Session ok");
-        }
-        if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
-          hardReasons.push("Max positions");
-        }
-        if (context.hasPosition && isGateEnabled("Position clear")) {
-          hardReasons.push("Position clear");
-        }
-        if (!context.ordersClearOk && isGateEnabled("Max orders")) {
-          hardReasons.push("Max orders");
-        }
-        if (feedAgeOk === false && isGateEnabled("Feed age")) {
-          hardReasons.push("Feed age");
-        }
-        if (!correlationGate.ok && isGateEnabled("Correlation")) {
-          hardReasons.push("Correlation");
-        }
-        if (
-          context.settings.requireConfirmationInAuto &&
-          isGateEnabled("Confirm required")
-        ) {
-          hardReasons.push("Confirm required");
         }
       }
 
@@ -1996,11 +1857,8 @@ export function useTradingBot(
       };
     },
     [
-      closedPnlRecords,
       getSymbolContext,
-      getEquityValue,
       isGateEnabled,
-      resolveCorrelationGate,
       resolveQualityScore,
       resolveTrendGate,
     ]
@@ -2793,6 +2651,30 @@ export function useTradingBot(
       const context = getSymbolContext(symbol, decision);
       const isAiMaticX = context.settings.riskMode === "ai-matic-x";
       const xContext = (decision as any)?.xContext as AiMaticXContext | undefined;
+      if (isAiMaticX) {
+        const hasAnyPosition = positionsRef.current.some((p) => {
+          const size = toNumber(p.size ?? p.qty);
+          return Number.isFinite(size) && size > 0;
+        });
+        const hasEntryOrder = ordersRef.current.some(
+          (order) => isEntryOrder(order)
+        );
+        if (
+          hasAnyPosition ||
+          hasEntryOrder ||
+          intentPendingRef.current.size > 0
+        ) {
+          addLogEntries([
+            {
+              id: `signal:max-pos:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} AI-MATIC-X max 1 position: skip entry`,
+            },
+          ]);
+          return;
+        }
+      }
       let riskOff = false;
       const riskReasons: string[] = [];
       if (isAiMaticX) {
@@ -2835,7 +2717,6 @@ export function useTradingBot(
       }
       const riskOn = !riskOff;
       const trendGate = resolveTrendGate(decision, signal);
-      const correlationGate = resolveCorrelationGate(symbol, now, signal);
       const isScalp = context.settings.riskMode === "ai-matic-scalp";
       const scalpContext = (decision as any)?.scalpContext as ScalpContext | undefined;
       const signalDir = side === "Buy" ? "BULL" : "BEAR";
@@ -2857,9 +2738,9 @@ export function useTradingBot(
         Number.isFinite(entry) && Number.isFinite(tp) && entry > 0
           ? (Math.abs(tp - entry) / entry) * 100
           : Number.NaN;
-      const rtcOk = !signalActive || feeReady;
       const tp1Ok =
         !signalActive ||
+        !feeReady ||
         (Number.isFinite(tp1DistPct) &&
           Number.isFinite(tp1MinPct) &&
           tp1DistPct >= tp1MinPct);
@@ -2895,49 +2776,10 @@ export function useTradingBot(
         entryType === "LIMIT";
       const slOk =
         !signalActive || (Number.isFinite(entry) && Number.isFinite(sl) && sl > 0);
-      const dailyRiskGate = (() => {
-        if (!isScalp) return { ok: true };
-        let ok = true;
-        const lossStreak = computeLossStreak(closedPnlRecords, 2);
-        if (lossStreak >= 2) ok = false;
-        const equity = getEquityValue();
-        const baseRiskRaw = toNumber(context.settings.baseRiskPerTrade);
-        let riskUsd = Number.NaN;
-        if (
-          Number.isFinite(baseRiskRaw) &&
-          baseRiskRaw > 0 &&
-          Number.isFinite(equity) &&
-          equity > 0
-        ) {
-          riskUsd = baseRiskRaw <= 1 ? equity * baseRiskRaw : baseRiskRaw;
-        }
-        const dailyPnl = Array.isArray(closedPnlRecords)
-          ? closedPnlRecords.reduce((sum, r) => {
-              const dayAgo = now - 24 * 60 * 60_000;
-              if (r.ts < dayAgo) return sum;
-              return sum + r.pnl;
-            }, 0)
-          : Number.NaN;
-        if (
-          Number.isFinite(dailyPnl) &&
-          Number.isFinite(riskUsd) &&
-          riskUsd > 0 &&
-          dailyPnl <= -2 * riskUsd
-        ) {
-          ok = false;
-        }
-        return { ok };
-      })();
       const blockReasons: string[] = [];
       const hardEnabled = context.settings.enableHardGates !== false;
       if (hardEnabled) {
-        if (!context.engineOk && isGateEnabled("Engine ok")) {
-          blockReasons.push("Engine ok");
-        }
         if (isScalp) {
-          if (!rtcOk && isGateEnabled("RTC ready")) {
-            blockReasons.push("RTC ready");
-          }
           if (!tp1Ok && isGateEnabled("TP1 >= min")) {
             blockReasons.push("TP1 >= min");
           }
@@ -2959,32 +2801,8 @@ export function useTradingBot(
           if (!slOk && isGateEnabled("SL structural")) {
             blockReasons.push("SL structural");
           }
-          if (!dailyRiskGate.ok && isGateEnabled("Daily limits")) {
-            blockReasons.push("Daily limits");
-          }
         } else if (!trendGate.ok && isGateEnabled("Trend bias")) {
           blockReasons.push("Trend bias");
-        }
-        if (!correlationGate.ok && isGateEnabled("Correlation")) {
-          blockReasons.push("Correlation");
-        }
-        if (!context.sessionOk && isGateEnabled("Session ok")) {
-          blockReasons.push("Session ok");
-        }
-        if (!context.maxPositionsOk && isGateEnabled("Max positions")) {
-          blockReasons.push("Max positions");
-        }
-        if (context.hasPosition && isGateEnabled("Position clear")) {
-          blockReasons.push("Position clear");
-        }
-        if (!context.ordersClearOk && isGateEnabled("Max orders")) {
-          blockReasons.push("Max orders");
-        }
-        if (
-          context.settings.requireConfirmationInAuto &&
-          isGateEnabled("Confirm required")
-        ) {
-          blockReasons.push("Confirm required");
         }
       }
       // AI-MATIC-X: keep Risk OFF as signal-only; do not hard-block execution here.
@@ -3125,7 +2943,6 @@ export function useTradingBot(
       getSymbolContext,
       isGateEnabled,
       isEntryOrder,
-      resolveCorrelationGate,
       resolveTrendGate,
     ]
   );
