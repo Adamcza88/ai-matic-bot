@@ -158,34 +158,29 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       ],
     },
     "ai-matic-scalp": {
-      title: "SCALPERA BOT AI MATIC EDITION",
+      title: "AI-MATIC-SCALP Fee-Aware Scalp",
       description:
-        "Operational Implementation Guide v2.0 · Integrace AI Matic Intelligence Framework (Scalpera Systems, 2026).",
+        "Fee-aware scalp playbook (SCAN → SETUP → EXECUTE → MANAGE → RISK) s maker-first exekucí.",
       notes: [
         ORDER_VALUE_NOTE,
-        "Cil: spojit presnost SMC/ICT se silou AI Matic; adaptivni exekuce podle struktury, objemu, sentimentu a volatility.",
-        "Core SMC/ICT: BOS, CHOCH, OB, FVG; EMA 8/21/50/200; volume baseline SMA20.",
-        "AI layer: Trend Predictor (EMA stack + AI smer), Volatility Scanner (ATR + OI delta), Sentiment Engine (funding/OI/text/social), Price Cone (Monte Carlo 12-24h), Adaptive Executor (Trend/Sweep).",
-        "Pipeline: Bybit OHLCV+Orderbook, CoinGlass OI/Funding/LS ratio, Birdeye DEX volume + whales, AI Matic feed.",
-        "Signal format: {symbol, signal, confidence, mode, entry, sl, tp, validation, data_missing}.",
-        "Rezimy: Trend-Pullback (EMA8>21>50, FVG/OB retrace, volume > SMA20*1.2, AI cone + sentiment>0).",
-        "Rezimy: Liquidity-Sweep (sweep + rychly navrat, volume spike + negativni sentiment, OI delta + funding zmena).",
-        "Rezimy: Adaptive (AI prepina Trend/Sweep, confidence >60%).",
-        "Risk: SL 1.3 ATR(14) * volatility_factor; TP 2.6 ATR(14) * cone_direction; trailing po RRR 1.1; max 1 pozice/symbol; bez pyramidovani.",
-        "Predikce: price cone 12h/24h; bias >0.60 long, <0.40 short.",
-        "Validace: validation passed/failed; data_missing => WAIT.",
-        "Integrace: webhook Bybit + monitoring a adaptivni update.",
-        "Metriky: success rate 63-72%, RRR 1.8-2.2, drawdown max 2%/trade.",
-        "Modules: TrendPredictor, VolatilityScanner, SentimentEngine, PriceConeGenerator, AdaptiveExecutor.",
-        "SMART MONEY – HLOUBKOVA INTEGRACE",
-        "Mindset: posuzuj kazdy signal optikou instituci; neodevzdavej likviditu.",
-        "EMA 8/21/50 + Order Block musi potvrdit stejny smer; konflikt = NO TRADE.",
-        "Liquidity sweep/inducement: cekej na sweep a navrat do OB + objemovou reakci.",
-        "Break & retest: vstup az po retestu OB/S&R/PoC, ne na prvni impuls.",
-        "FVG: SL za FVG, TP na FVG/OB/S&R v ceste.",
-        "Multi-TF: BOS/CHoCH na 1h i 15m, vstupni pattern na 5m/1m.",
-        "Management: opacny BOS/CHoCH na 1m/5m = rucni exit.",
-        "Chyby: OB bez EMA, vstup bez sweepu/retestu, SL v likvidite.",
+        "Instrument: Crypto Linear futures · HTF 1h/15m · LTF 5m/1m · fee-aware scalp.",
+        "RTC: maker_fee %, taker_fee %, slippage_buffer % (0.01–0.03).",
+        "RTC taker/taker = 2*taker_fee + slippage_buffer; maker/maker = 2*maker_fee + slippage_buffer.",
+        "TP1_min = 2.5 * RTC; pokud nejbližší TP < TP1_min → NO TRADE.",
+        "SCAN (1h): nad EMA21, EMA21 roste, struktura bez LL/LH (long); short zrcadlově.",
+        "15m kontext: bullish HH/HL nad EMA21 nebo pullback drží poslední HL / 1h demand.",
+        "No-trade: 1h EMA21 plochá + 15m EMA(8/21) cross; špatný spread; TP < TP1_min; 2 pokusy na levelu.",
+        "LEVELS: BL = poslední 5m/15m swing high; RL = reclaim S/R po sweepu.",
+        "SETUP A (BR): 5m close nad BL, retest drží; entry LIMIT post-only.",
+        "SETUP B (SR): sweep pod 5m low → reclaim nad RL → 1m close nad RL; entry LIMIT post-only na retestu RL.",
+        "SL: strukturální pod sweep/retest low + buffer.",
+        "TP1: 70 % na prvním 5m targetu pokud ≥ TP1_min; LIMIT maker.",
+        "BE+: po TP1 posuň SL na entry + 1x fee + pár ticků.",
+        "TP2: 30 % na dalším 5m levelu nebo trail pod 1m/5m HL.",
+        "Time stop: 1m entry 5 min bez posunu ~0.5R; 5m entry 15 min bez follow-through → exit.",
+        "Re-entry: nový LTF HL + nový reclaim/retest; max 2 pokusy.",
+        "Risk: 0.25–1.0 % / trade; -2R denně stop; 2 ztráty v řadě pauza; žádné přidávání.",
+        "Checklist: RTC/TP1_min, 1h bias, 15m kontext, RL/BL level, maker entry, SL strukturální, TP1≥min, BE+/time stop, denní limity.",
       ],
     },
     "ai-matic-tree": {
@@ -214,10 +209,21 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     "ai-matic-x":
       "AI‑MATIC‑X (1h/5m): decision tree, čistá struktura, max 1 pozice celkem.",
     "ai-matic-scalp":
-      "Scalp profil (1h/1m): rychlé intraday vstupy, krátké držení, disciplinované řízení rizika.",
+      "AI‑MATIC‑SCALP (1h/15m/5m/1m): fee‑aware scalp, maker‑first, RTC + TP1_min gate.",
     "ai-matic-tree":
       "AI‑MATIC‑TREE (1h/5m): decision‑tree overlay nad AI‑MATIC core enginem.",
   };
+  const makerFeePct = Number.isFinite(local.makerFeePct) ? local.makerFeePct : 0;
+  const takerFeePct = Number.isFinite(local.takerFeePct) ? local.takerFeePct : 0;
+  const slippageBufferPct = Number.isFinite(local.slippageBufferPct)
+    ? local.slippageBufferPct
+    : 0;
+  const rtcMaker = 2 * makerFeePct + slippageBufferPct;
+  const rtcTaker = 2 * takerFeePct + slippageBufferPct;
+  const tp1MinMaker = rtcMaker * 2.5;
+  const tp1MinTaker = rtcTaker * 2.5;
+  const formatPct = (value: number, digits = 3) =>
+    Number.isFinite(value) ? value.toFixed(digits) : "—";
   const statusItems = [
     {
       label: "Cheat Sheet",
@@ -279,6 +285,9 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     min24hVolume: 50,
     minProfitFactor: 1.0,
     minWinRate: 65,
+    makerFeePct: 0.01,
+    takerFeePct: 0.06,
+    slippageBufferPct: 0.02,
     tradingStartHour: 0,
     tradingEndHour: 23,
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
@@ -317,6 +326,9 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     min24hVolume: 50,
     minProfitFactor: 0,
     minWinRate: 65,
+    makerFeePct: 0.01,
+    takerFeePct: 0.06,
+    slippageBufferPct: 0.02,
     tradingStartHour: 0,
     tradingEndHour: 23,
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
@@ -355,6 +367,9 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     min24hVolume: 50,
     minProfitFactor: 1.0,
     minWinRate: 65,
+    makerFeePct: 0.01,
+    takerFeePct: 0.06,
+    slippageBufferPct: 0.02,
     tradingStartHour: 8,
     tradingEndHour: 17,
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
@@ -393,6 +408,9 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     min24hVolume: 50,
     minProfitFactor: 1.0,
     minWinRate: 65,
+    makerFeePct: 0.01,
+    takerFeePct: 0.06,
+    slippageBufferPct: 0.02,
     tradingStartHour: 0,
     tradingEndHour: 23,
     tradingDays: [0, 1, 2, 3, 4, 5, 6],
@@ -447,6 +465,15 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         MIN_AUTO_REFRESH_MINUTES,
         Math.round(merged.autoRefreshMinutes)
       );
+    }
+    if (!Number.isFinite(merged.makerFeePct) || merged.makerFeePct < 0) {
+      merged.makerFeePct = preset.makerFeePct;
+    }
+    if (!Number.isFinite(merged.takerFeePct) || merged.takerFeePct < 0) {
+      merged.takerFeePct = preset.takerFeePct;
+    }
+    if (!Number.isFinite(merged.slippageBufferPct) || merged.slippageBufferPct < 0) {
+      merged.slippageBufferPct = preset.slippageBufferPct;
     }
     const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
     merged.selectedSymbols =
@@ -760,6 +787,71 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             </div>
           </div>
 
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              Fees & Slippage (RTC)
+            </label>
+            <div className="grid gap-3 rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="grid gap-1">
+                  <span className="text-xs text-secondary-foreground/70">Maker fee %</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.001}
+                    value={local.makerFeePct}
+                    onChange={(event) => {
+                      const next = event.currentTarget.valueAsNumber;
+                      setLocal({
+                        ...local,
+                        makerFeePct: Number.isFinite(next) ? Math.max(0, next) : 0,
+                      });
+                    }}
+                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <span className="text-xs text-secondary-foreground/70">Taker fee %</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.001}
+                    value={local.takerFeePct}
+                    onChange={(event) => {
+                      const next = event.currentTarget.valueAsNumber;
+                      setLocal({
+                        ...local,
+                        takerFeePct: Number.isFinite(next) ? Math.max(0, next) : 0,
+                      });
+                    }}
+                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <span className="text-xs text-secondary-foreground/70">Slippage buffer %</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.001}
+                    value={local.slippageBufferPct}
+                    onChange={(event) => {
+                      const next = event.currentTarget.valueAsNumber;
+                      setLocal({
+                        ...local,
+                        slippageBufferPct: Number.isFinite(next) ? Math.max(0, next) : 0,
+                      });
+                    }}
+                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
+                  />
+                </div>
+              </div>
+              <div className="text-xs text-secondary-foreground/70">
+                RTC maker/maker {formatPct(rtcMaker)}% · TP1_min {formatPct(tp1MinMaker)}% ·
+                RTC taker/taker {formatPct(rtcTaker)}% · TP1_min {formatPct(tp1MinTaker)}%
+              </div>
+            </div>
+          </div>
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">

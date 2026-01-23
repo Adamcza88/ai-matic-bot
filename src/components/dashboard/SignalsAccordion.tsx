@@ -254,7 +254,19 @@ export default function SignalsAccordion({
                           >
                             {(() => {
                               const label = gateLabel(gate.name, gate.detail);
-                              const allowDetail = gate.name === "Trend bias";
+                              const allowDetail = [
+                                "Trend bias",
+                                "1h bias",
+                                "15m context",
+                                "Chop filter",
+                                "RTC ready",
+                                "TP1 >= min",
+                                "Level defined",
+                                "Maker entry",
+                                "SL structural",
+                                "BE+ / time stop",
+                                "Daily limits",
+                              ].includes(gate.name);
                               const detail =
                                 (gate.ok || allowDetail) && gate.detail
                                   ? gate.detail === "not required"

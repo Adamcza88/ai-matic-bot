@@ -42,13 +42,13 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         if (riskMode === "ai-matic-scalp") {
             return {
                 label: "AI-MATIC-SCALP",
-                subtitle: "Scalpera Bot v2.0 (1h/1m)",
+                subtitle: "Fee-aware Scalp (HTF 1h/15m · LTF 5m/1m)",
                 symbols: SUPPORTED_SYMBOLS,
-                timeframes: "HTF 1h · LTF 1m",
-                session: "08:00-12:00 & 13:00-17:00 UTC",
-                risk: "Order value per symbol · SL 1.3 ATR · TP 2.6 ATR · trailing after 1.1R · max 1 pos/symbol · margin 100 USDT",
-                entry: "Trend-Pullback / Liquidity-Sweep (SMC + EMA + AI)",
-                execution: "Adaptive executor (Trend/Sweep) · no pyramiding · Bybit webhook",
+                timeframes: "HTF 1h · 15m · LTF 5m · 1m",
+                session: "08:00-12:00 / 13:00-17:00 UTC",
+                risk: "Risk 0.25–1.0% · -2R/day stop · max 2 losses · no adding",
+                entry: "Setup SR (sweep + reclaim RL) / BR (break + retest BL) · maker-first",
+                execution: "LIMIT post-only · TP1 ≥ 2.5×RTC · BE+ after TP1 · time stop",
             };
         }
         if (riskMode === "ai-matic-x") {
@@ -139,13 +139,23 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         },
         "ai-matic-scalp": {
             Signal: true,
-            "Trend bias": true,
+            "RTC ready": true,
+            "TP1 >= min": true,
+            "1h bias": true,
+            "15m context": true,
+            "Chop filter": true,
+            "Level defined": true,
+            "Maker entry": true,
+            "SL structural": true,
+            "BE+ / time stop": true,
+            "Daily limits": true,
             "Engine ok": true,
             "Session ok": true,
             "Confirm required": false,
             "Max positions": true,
             "Position clear": true,
             "Max orders": true,
+            Correlation: true,
             "SL set": true,
             "TP set": true,
             "Exec allowed": true,
@@ -162,6 +172,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         "Max orders": ["Orders clear", "Open orders"],
         "Session ok": ["Session"],
         "Confirm required": ["CONFIRM_REQUIRED"],
+        "1h bias": ["Trend bias"],
     }), []);
     const gateStorageKey = useMemo(() => `ai-matic-checklist-enabled:${riskMode}`, [riskMode]);
     const [checklistEnabled, setChecklistEnabled] = useState(() => CHECKLIST_DEFAULTS);

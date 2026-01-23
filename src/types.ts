@@ -41,6 +41,9 @@ export interface AISettings {
   min24hVolume: number;
   minProfitFactor: number;
   minWinRate: number;
+  makerFeePct: number;
+  takerFeePct: number;
+  slippageBufferPct: number;
   tradingStartHour: number;
   tradingEndHour: number;
   tradingDays: number[];
