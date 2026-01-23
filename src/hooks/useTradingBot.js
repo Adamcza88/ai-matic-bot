@@ -1590,10 +1590,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         addGate("Max orders", context.ordersClearOk, ordersDetail);
         const correlationGate = resolveCorrelationGate(symbol, Date.now(), signalActive ? decision?.signal ?? null : null);
         addGate("Correlation", correlationGate.ok, correlationGate.detail);
-        const slOk = context.hasPosition && Number.isFinite(sl) && sl > 0;
-        const tpOk = context.hasPosition && Number.isFinite(tp) && tp > 0;
-        addGate("SL set", slOk, slOk ? `SL ${formatNumber(sl, 6)}` : undefined);
-        addGate("TP set", tpOk, tpOk ? `TP ${formatNumber(tp, 6)}` : undefined);
+        const positionSlOk = context.hasPosition && Number.isFinite(sl) && sl > 0;
+        const positionTpOk = context.hasPosition && Number.isFinite(tp) && tp > 0;
+        addGate("SL set", positionSlOk, positionSlOk ? `SL ${formatNumber(sl, 6)}` : undefined);
+        addGate("TP set", positionTpOk, positionTpOk ? `TP ${formatNumber(tp, 6)}` : undefined);
         const hardEnabled = context.settings.enableHardGates !== false;
         const softEnabled = context.settings.enableSoftGates !== false;
         const hardReasons = [];

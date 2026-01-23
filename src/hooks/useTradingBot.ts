@@ -1883,19 +1883,19 @@ export function useTradingBot(
         signalActive ? decision?.signal ?? null : null
       );
       addGate("Correlation", correlationGate.ok, correlationGate.detail);
-      const slOk =
+      const positionSlOk =
         context.hasPosition && Number.isFinite(sl) && sl > 0;
-      const tpOk =
+      const positionTpOk =
         context.hasPosition && Number.isFinite(tp) && tp > 0;
       addGate(
         "SL set",
-        slOk,
-        slOk ? `SL ${formatNumber(sl, 6)}` : undefined
+        positionSlOk,
+        positionSlOk ? `SL ${formatNumber(sl, 6)}` : undefined
       );
       addGate(
         "TP set",
-        tpOk,
-        tpOk ? `TP ${formatNumber(tp, 6)}` : undefined
+        positionTpOk,
+        positionTpOk ? `TP ${formatNumber(tp, 6)}` : undefined
       );
 
       const hardEnabled = context.settings.enableHardGates !== false;
