@@ -157,6 +157,9 @@ export default function SignalsAccordion({
             feedAgeMs != null && Number.isFinite(feedAgeMs)
               ? `${feedAgeMs} ms`
               : "—";
+          const symbolState = diag?.symbolState;
+          const manageReason = diag?.manageReason;
+          const isManage = symbolState === "MANAGE";
           const summary = gateSummary(
             diag,
             gates,
@@ -185,6 +188,14 @@ export default function SignalsAccordion({
                   >
                     Feed age {feedAgeLabel} · {feedAgeValue}
                   </Badge>
+                  {isManage ? (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500/50 text-amber-400"
+                    >
+                      MANAGE{manageReason ? ` · ${manageReason}` : ""}
+                    </Badge>
+                  ) : null}
                   <Badge variant="outline" className="border-border/60 text-muted-foreground">
                     Mode {MODE_LABELS[mode]}
                   </Badge>
@@ -207,41 +218,49 @@ export default function SignalsAccordion({
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`h-2 w-2 rounded-full ${
-                            hardEnabled
-                              ? hardBlocked
-                                ? "bg-red-400"
-                                : "bg-emerald-400"
-                              : "bg-slate-600"
-                          }`}
-                        />
-                        <span className={hardEnabled ? "text-foreground" : "text-muted-foreground"}>
-                          Hard gate: {hardEnabled ? (hardBlocked ? "BLOCKED" : "PASS") : "OFF"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`h-2 w-2 rounded-full ${
-                            softEnabled
-                              ? qualityPass
-                                ? "bg-emerald-400"
-                                : "bg-amber-400"
-                              : "bg-slate-600"
-                          }`}
-                        />
-                        <span className={softEnabled ? "text-foreground" : "text-muted-foreground"}>
-                          Soft score:{" "}
-                          {softEnabled
-                            ? qualityScore != null
-                              ? `${qualityScore} / ${qualityThreshold ?? "—"}`
-                              : "—"
-                            : "OFF"}
-                        </span>
-                      </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          hardEnabled
+                            ? hardBlocked
+                              ? "bg-red-400"
+                              : "bg-emerald-400"
+                            : "bg-slate-600"
+                        }`}
+                      />
+                      <span className={hardEnabled ? "text-foreground" : "text-muted-foreground"}>
+                        Hard gate: {hardEnabled ? (hardBlocked ? "BLOCKED" : "PASS") : "OFF"}
+                      </span>
                     </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          softEnabled
+                            ? qualityPass
+                              ? "bg-emerald-400"
+                              : "bg-amber-400"
+                            : "bg-slate-600"
+                        }`}
+                      />
+                      <span className={softEnabled ? "text-foreground" : "text-muted-foreground"}>
+                        Soft score:{" "}
+                        {softEnabled
+                          ? qualityScore != null
+                            ? `${qualityScore} / ${qualityThreshold ?? "—"}`
+                            : "—"
+                          : "OFF"}
+                      </span>
+                    </div>
+                    {isManage ? (
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-amber-400" />
+                        <span className="text-foreground">
+                          Manage: {manageReason ?? "active"}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
                     <div className="grid gap-2 sm:grid-cols-2">
                       {gates.map((gate: any) => (
                         <button

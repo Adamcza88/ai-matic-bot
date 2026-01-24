@@ -1644,6 +1644,7 @@ export function useTradingBot(
   const buildScanDiagnostics = useCallback(
     (symbol: string, decision: PriceFeedDecision, lastScanTs: number) => {
       const context = getSymbolContext(symbol, decision);
+      const symbolState = resolveSymbolState(symbol);
       const lastTick = symbolTickRef.current.get(symbol) ?? 0;
       const feedAgeMs =
         lastTick > 0 ? Math.max(0, Date.now() - lastTick) : null;
@@ -1671,6 +1672,20 @@ export function useTradingBot(
       const signalEntry = toNumber(signal?.intent?.entry);
       const signalSl = toNumber(signal?.intent?.sl);
       const signalTp = toNumber(signal?.intent?.tp);
+      const hasEntryOrder = ordersRef.current.some(
+        (order) =>
+          isEntryOrder(order) && String(order?.symbol ?? "") === symbol
+      );
+      const hasPendingIntent = intentPendingRef.current.has(symbol);
+      const manageReason = context.hasPosition
+        ? "open position"
+        : hasEntryOrder
+          ? "open order"
+          : hasPendingIntent
+            ? "pending intent"
+            : symbolState === "MANAGE"
+              ? "engine state"
+              : null;
 
       const makerFeePct = toNumber(context.settings.makerFeePct);
       const takerFeePct = toNumber(context.settings.takerFeePct);
@@ -1838,6 +1853,11 @@ export function useTradingBot(
         : null;
 
       return {
+        symbolState,
+        manageReason,
+        hasPosition: context.hasPosition,
+        hasEntryOrder,
+        hasPendingIntent,
         signalActive,
         hardEnabled,
         softEnabled,
@@ -1867,6 +1887,7 @@ export function useTradingBot(
       isGateEnabled,
       resolveQualityScore,
       resolveTrendGate,
+      resolveSymbolState,
     ]
   );
 
@@ -2663,13 +2684,13 @@ export function useTradingBot(
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
       );
       const hasPendingIntent = intentPendingRef.current.has(symbol);
-      const blockReasons: string[] = [];
-      if (hasSymbolPosition) blockReasons.push("open position");
-      if (hasSymbolEntryOrder) blockReasons.push("open order");
-      if (hasPendingIntent) blockReasons.push("pending intent");
-      if (!context.maxPositionsOk) blockReasons.push("max positions");
-      if (!context.ordersClearOk) blockReasons.push("max orders");
-      if (blockReasons.length > 0) {
+      const entryBlockReasons: string[] = [];
+      if (hasSymbolPosition) entryBlockReasons.push("open position");
+      if (hasSymbolEntryOrder) entryBlockReasons.push("open order");
+      if (hasPendingIntent) entryBlockReasons.push("pending intent");
+      if (!context.maxPositionsOk) entryBlockReasons.push("max positions");
+      if (!context.ordersClearOk) entryBlockReasons.push("max orders");
+      if (entryBlockReasons.length > 0) {
         const profileLabel =
           PROFILE_BY_RISK_MODE[context.settings.riskMode] ?? "AI-MATIC";
         addLogEntries([
@@ -2677,7 +2698,7 @@ export function useTradingBot(
             id: `signal:max-pos:${signalId}`,
             timestamp: new Date(now).toISOString(),
             action: "STATUS",
-            message: `${symbol} ${profileLabel} gate: ${blockReasons.join(
+            message: `${symbol} ${profileLabel} gate: ${entryBlockReasons.join(
               ", "
             )} -> skip entry`,
           },
