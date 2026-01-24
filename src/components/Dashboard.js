@@ -65,13 +65,13 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         if (riskMode === "ai-matic-x") {
             return {
                 label: "AI-MATIC-X",
-                subtitle: "Decision Tree Core (1h context / 5m execution)",
+                subtitle: "EMA12/26 HTF bias + 5m pullback + micro break close",
                 symbols: SUPPORTED_SYMBOLS,
                 timeframes: "1h context · 5m execution",
                 session: "24/7",
-                risk: "Order value per symbol · margin 100 USDT · Max positions/orders dle settings",
-                entry: "Families 1–6 · pullback/continuation/range/flip/reversal/no trade · bez přikupování do otevřené pozice",
-                execution: `LIMIT default · MARKET only in strong expanse · ${cheatSheetNote}`,
+                risk: "Risk 100 USDT/trade · sizing by SL distance · notional cap ~1% allocation",
+                entry: "5m pullback do EMA12/EMA12–26 zóny + micro break CLOSE",
+                execution: `BBO filter (fresh/age) · SL pod/nad pivot + ATR buffer · ${cheatSheetNote}`,
             };
         }
         if (riskMode === "ai-matic-tree") {
