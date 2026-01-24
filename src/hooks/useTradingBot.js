@@ -53,7 +53,6 @@ const SCALP_EMA_CROSS_LOOKBACK = 6;
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
     trendGateMode: "adaptive",
-    strictRiskAdherence: true,
     pauseOnHighVolatility: false,
     avoidLowLiquidity: false,
     useTrendFollowing: true,
@@ -63,21 +62,14 @@ const DEFAULT_SETTINGS = {
     enableHardGates: true,
     enableSoftGates: true,
     entryStrictness: "base",
-    enforceSessionHours: false,
-    haltOnDailyLoss: false,
-    haltOnDrawdown: false,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
     autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
-    baseRiskPerTrade: 0,
-    maxAllocatedCapitalPercent: 1.0,
-    maxPortfolioRiskPercent: 0.2,
     maxOpenPositions: 5,
     maxOpenOrders: 16,
     selectedSymbols: [...SUPPORTED_SYMBOLS],
     requireConfirmationInAuto: false,
-    positionSizingMultiplier: 1.0,
     customInstructions: "",
     customStrategy: "",
     min24hVolume: 50,
@@ -86,9 +78,6 @@ const DEFAULT_SETTINGS = {
     makerFeePct: 0.01,
     takerFeePct: 0.06,
     slippageBufferPct: 0.02,
-    tradingStartHour: 0,
-    tradingEndHour: 23,
-    tradingDays: [0, 1, 2, 3, 4, 5, 6],
 };
 function loadStoredSettings() {
     try {
@@ -99,9 +88,6 @@ function loadStoredSettings() {
         if (!parsed || typeof parsed !== "object")
             return null;
         const merged = { ...DEFAULT_SETTINGS, ...parsed };
-        merged.enforceSessionHours = false;
-        merged.haltOnDailyLoss = false;
-        merged.haltOnDrawdown = false;
         if (merged.trendGateMode !== "adaptive" &&
             merged.trendGateMode !== "follow" &&
             merged.trendGateMode !== "reverse") {
@@ -748,26 +734,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return { ok: false, reason: "invalid_qty" };
         }
         const riskUsd = riskPerUnit * qty;
-        const maxAllocPct = toNumber(settings.maxAllocatedCapitalPercent);
-        if (Number.isFinite(maxAllocPct) &&
-            maxAllocPct > 0 &&
-            maxAllocPct <= 1 &&
-            Number.isFinite(entry) &&
-            entry > 0) {
-            const maxNotional = equity * maxAllocPct;
-            if (Number.isFinite(maxNotional) && maxNotional > 0) {
-                if (maxNotional < MIN_POSITION_NOTIONAL_USD) {
-                    return { ok: false, reason: "insufficient_equity" };
-                }
-            if (notional > maxNotional) {
-                notional = maxNotional;
-                qty = notional / entry;
-            }
-            if (notional < MIN_POSITION_NOTIONAL_USD) {
-                return { ok: false, reason: "insufficient_equity" };
-            }
-        }
-        }
         return { ok: true, notional, qty, riskUsd, equity };
     }, [getEquityValue]);
     const computeFixedSizing = useCallback((symbol, entry, sl) => {
@@ -792,26 +758,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const equity = getEquityValue();
         let adjustedNotional = notional;
         let adjustedQty = resolvedQty;
-        const maxAllocPct = toNumber(settingsRef.current.maxAllocatedCapitalPercent);
-        if (Number.isFinite(maxAllocPct) &&
-            maxAllocPct > 0 &&
-            maxAllocPct <= 1 &&
-            Number.isFinite(equity) &&
-            equity > 0) {
-            const maxNotional = equity * maxAllocPct;
-            if (Number.isFinite(maxNotional) && maxNotional > 0) {
-                if (maxNotional < MIN_POSITION_NOTIONAL_USD) {
-                    return { ok: false, reason: "insufficient_equity" };
-                }
-                if (adjustedNotional > maxNotional) {
-                    adjustedNotional = maxNotional;
-                    adjustedQty = adjustedNotional / entry;
-                }
-                if (adjustedNotional < MIN_POSITION_NOTIONAL_USD) {
-                    return { ok: false, reason: "insufficient_equity" };
-                }
-            }
-        }
         return { ok: true, notional: adjustedNotional, qty: adjustedQty, riskUsd, equity };
     }, [getEquityValue, useTestnet]);
     const computeTrailingPlan = useCallback((entry, sl, side, symbol) => {

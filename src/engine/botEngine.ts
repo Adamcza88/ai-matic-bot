@@ -172,10 +172,7 @@ export interface BotConfig {
   breakevenBufferAtr: number;
   lookbackZones: number;
   cooldownBars: number;
-  maxPortfolioRiskPercent: number;
   maxRiskPerTradeCap: number;
-  tradingHours: { start: number; end: number; days: number[] };
-  enforceSessionHours?: boolean;
   maxOpenPositions: number;
   maxExitChunks: number;
   trailingActivationR: number;
@@ -230,9 +227,7 @@ function applyProfileOverrides(cfg: BotConfig): BotConfig {
     ...cfg,
     riskPerTrade: scalpRisk,
     maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
-    maxPortfolioRiskPercent: Math.max(Math.min(cfg.maxPortfolioRiskPercent, 0.12), 0.08),
     maxOpenPositions: 3,
-    enforceSessionHours: false,
     trailingActivationR: 1,
     minStopPercent: Math.min(cfg.minStopPercent, 0.0012),
     partialSteps: [{ r: 1, exitFraction: 0.5 }],
@@ -273,10 +268,7 @@ export const defaultConfig: BotConfig = {
   breakevenBufferAtr: 0.2,
   lookbackZones: 50,
   cooldownBars: 1,
-  maxPortfolioRiskPercent: 0.15,
   maxRiskPerTradeCap: 0.07,
-  tradingHours: { start: 0, end: 23, days: [0, 1, 2, 3, 4, 5, 6] },
-  enforceSessionHours: false,
   maxOpenPositions: 3,
   maxExitChunks: 3,
   trailingActivationR: 2,
@@ -817,13 +809,8 @@ export class TradingBot {
 
     // FIX 6: Normalize size logic (Moved to computeQty)
 
-    const riskAmount = Math.abs(slDistance * size);
-    const openRisk = this.aggregateOpenRisk();
     const openCount = this.openPositionsCount();
     if (openCount >= this.config.maxOpenPositions) {
-      return;
-    }
-    if (openRisk + riskAmount > this.config.accountBalance * this.config.maxPortfolioRiskPercent) {
       return;
     }
     const rrMap: Record<BotConfig["strategyProfile"], number> = {

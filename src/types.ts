@@ -11,7 +11,6 @@ export type Language = "en" | "cs";
 export interface AISettings {
   riskMode: "ai-matic" | "ai-matic-x" | "ai-matic-scalp" | "ai-matic-tree";
   trendGateMode: "adaptive" | "follow" | "reverse";
-  strictRiskAdherence: boolean;
   pauseOnHighVolatility: boolean;
   avoidLowLiquidity: boolean;
   useTrendFollowing: boolean;
@@ -21,21 +20,14 @@ export interface AISettings {
   enableHardGates: boolean;
   enableSoftGates: boolean;
   entryStrictness: "base" | "relaxed" | "ultra" | "test";
-  enforceSessionHours: boolean;
-  haltOnDailyLoss: boolean;
-  haltOnDrawdown: boolean;
   useDynamicPositionSizing: boolean;
   lockProfitsWithTrail: boolean;
   autoRefreshEnabled: boolean;
   autoRefreshMinutes: number;
-  baseRiskPerTrade: number;
-  maxAllocatedCapitalPercent: number;
-  maxPortfolioRiskPercent: number;
   maxOpenPositions: number;
   maxOpenOrders: number;
   selectedSymbols: Symbol[];
   requireConfirmationInAuto: boolean;
-  positionSizingMultiplier: number;
   customInstructions: string;
   customStrategy: string;
   min24hVolume: number;
@@ -44,9 +36,6 @@ export interface AISettings {
   makerFeePct: number;
   takerFeePct: number;
   slippageBufferPct: number;
-  tradingStartHour: number;
-  tradingEndHour: number;
-  tradingDays: number[];
 }
 
 // ===== API & COMMON TYPES (MIGRATION A1) =====
