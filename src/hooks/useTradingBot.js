@@ -1488,36 +1488,35 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             (Number.isFinite(signalEntry) && Number.isFinite(signalSl) && signalSl > 0);
         const trendGate = resolveTrendGate(decision, signalActive ? signal ?? null : null);
         if (isScalp) {
-            addGate("TP1 >= min", tp1Ok, Number.isFinite(tp1DistPct) && Number.isFinite(tp1MinPct)
-                ? `TP1 ${formatNumber(tp1DistPct, 2)}% / min ${formatNumber(tp1MinPct, 2)}%`
-                : signalActive
-                    ? feeReady
-                        ? "TP1 missing"
-                        : "n/a"
-                    : "not required");
-            addGate("1h bias", h1BiasOk, signalActive
-                ? h1
-                    ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | ${h1.structure} | ${h1.direction}`
-                    : "no data"
-                : "not required");
-            addGate("15m context", m15ContextOk, signalActive
-                ? m15
-                    ? `15m ${m15.direction} | ${m15.structure}`
-                    : "no data"
-                : "not required");
-            addGate("Chop filter", chopOk, signalActive
-                ? h1
-                    ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | cross ${scalpContext?.ema15mCrossCount ?? 0}`
-                    : "no data"
-                : "not required");
-            addGate("Level defined", levelOk, signalActive ? setupLabel : "not required");
-            addGate("Maker entry", makerOk, signalActive ? entryType : "not required");
-            addGate("SL structural", slOk, signalActive
+            const h1Detail = h1
+                ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | ${h1.structure} | ${h1.direction}`
+                : "no data";
+            const m15Detail = m15 ? `15m ${m15.direction} | ${m15.structure}` : "no data";
+            const chopDetail = h1
+                ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | cross ${scalpContext?.ema15mCrossCount ?? 0}`
+                : "no data";
+            const tp1Detail = signalActive
+                ? feeReady && Number.isFinite(tp1DistPct) && Number.isFinite(tp1MinPct)
+                    ? `TP1 ${formatNumber(tp1DistPct, 2)}% / min ${formatNumber(tp1MinPct, 2)}%`
+                    : "n/a"
+                : feeReady && Number.isFinite(tp1MinPct)
+                    ? `min ${formatNumber(tp1MinPct, 2)}% (need TP1)`
+                    : "fee params missing";
+            const levelDetail = signalActive ? setupLabel : "waiting for setup";
+            const entryDetail = signalActive ? entryType : entryType;
+            const slDetail = signalActive
                 ? Number.isFinite(signalSl)
                     ? `SL ${formatNumber(signalSl, 6)}`
                     : "SL missing"
-                : "not required");
-            addGate("BE+ / time stop", true, signalActive ? "manual" : "not required");
+                : "waiting for signal";
+            addGate("TP1 >= min", tp1Ok, tp1Detail);
+            addGate("1h bias", h1BiasOk, h1Detail);
+            addGate("15m context", m15ContextOk, m15Detail);
+            addGate("Chop filter", chopOk, chopDetail);
+            addGate("Level defined", levelOk, levelDetail);
+            addGate("Maker entry", makerOk, entryDetail);
+            addGate("SL structural", slOk, slDetail);
+            addGate("BE+ / time stop", true, "manual");
         }
         else {
             addGate(trendGateName, trendGate.ok, trendGate.detail);
