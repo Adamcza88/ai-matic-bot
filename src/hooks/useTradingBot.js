@@ -63,9 +63,9 @@ const DEFAULT_SETTINGS = {
     enableHardGates: true,
     enableSoftGates: true,
     entryStrictness: "base",
-    enforceSessionHours: true,
-    haltOnDailyLoss: true,
-    haltOnDrawdown: true,
+    enforceSessionHours: false,
+    haltOnDailyLoss: false,
+    haltOnDrawdown: false,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
@@ -99,6 +99,9 @@ function loadStoredSettings() {
         if (!parsed || typeof parsed !== "object")
             return null;
         const merged = { ...DEFAULT_SETTINGS, ...parsed };
+        merged.enforceSessionHours = false;
+        merged.haltOnDailyLoss = false;
+        merged.haltOnDrawdown = false;
         if (merged.trendGateMode !== "adaptive" &&
             merged.trendGateMode !== "follow" &&
             merged.trendGateMode !== "reverse") {
@@ -724,32 +727,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }
         return Number.NaN;
     }, [useTestnet]);
-    const isSessionAllowed = useCallback((now, next) => {
-        if (!next.enforceSessionHours)
-            return true;
-        const useUtc = next.riskMode === "ai-matic-scalp";
-        const day = useUtc ? now.getUTCDay() : now.getDay();
-        if (Array.isArray(next.tradingDays) && next.tradingDays.length > 0) {
-            if (!next.tradingDays.includes(day))
-                return false;
-        }
-        if (next.riskMode === "ai-matic-scalp") {
-            const hour = now.getUTCHours();
-            const inMorning = hour >= 8 && hour < 12;
-            const inAfternoon = hour >= 13 && hour < 17;
-            return inMorning || inAfternoon;
-        }
-        const start = Number(next.tradingStartHour);
-        const end = Number(next.tradingEndHour);
-        if (!Number.isFinite(start) || !Number.isFinite(end))
-            return true;
-        if (start === end)
-            return true;
-        const hour = now.getHours();
-        if (start < end)
-            return hour >= start && hour <= end;
-        return hour >= start || hour <= end;
-    }, []);
+    const isSessionAllowed = useCallback((_now, _next) => true, []);
     const computeNotionalForSignal = useCallback((symbol, entry, sl) => {
         const settings = settingsRef.current;
         const equity = getEquityValue();
@@ -2326,35 +2304,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             if (xContext?.riskOff) {
                 riskOff = true;
                 riskReasons.push("chop");
-            }
-            const dailyPnl = Array.isArray(closedPnlRecords)
-                ? closedPnlRecords.reduce((sum, r) => {
-                    const dayAgo = now - 24 * 60 * 60_000;
-                    if (r.ts < dayAgo)
-                        return sum;
-                    return sum + r.pnl;
-                }, 0)
-                : Number.NaN;
-            const equity = getEquityValue();
-            const baseRiskRaw = toNumber(context.settings.baseRiskPerTrade);
-            let riskUsd = Number.NaN;
-            if (Number.isFinite(baseRiskRaw) &&
-                baseRiskRaw > 0 &&
-                Number.isFinite(equity) &&
-                equity > 0) {
-                riskUsd = baseRiskRaw <= 1 ? equity * baseRiskRaw : baseRiskRaw;
-            }
-            if (Number.isFinite(dailyPnl) &&
-                Number.isFinite(riskUsd) &&
-                riskUsd > 0 &&
-                dailyPnl <= -2 * riskUsd) {
-                riskOff = true;
-                riskReasons.push("-2R");
-            }
-            const lossStreak = computeLossStreak(closedPnlRecords, 2);
-            if (lossStreak >= 2) {
-                riskOff = true;
-                riskReasons.push("loss streak");
             }
         }
         const riskOn = !riskOff;

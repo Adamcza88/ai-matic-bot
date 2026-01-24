@@ -564,16 +564,6 @@ export class TradingBot {
         }
     }
     withinSession(now) {
-        if (this.config.entryStrictness === "test" || this.config.enforceSessionHours === false)
-            return true;
-        const d = new Date(now);
-        const hour = d.getUTCHours();
-        const day = d.getUTCDay();
-        const { start, end, days } = this.config.tradingHours;
-        if (!days.includes(day))
-            return false;
-        if (hour < start || hour > end)
-            return false;
         return true;
     }
     riskHalted() {

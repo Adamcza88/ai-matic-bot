@@ -123,20 +123,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   useEffect(() => {
     setLocal(settings);
   }, [settings]);
-  const tzLabel = (() => {
-    const off = new Date().getTimezoneOffset(); // CET: -60, CEST: -120
-    if (off === -60) return "SEČ";
-    if (off === -120) return "SELČ";
-    return "lokální čas";
-  })();
-
-  const tradingWindowLabel =
-    local.riskMode === "ai-matic-scalp"
-      ? "08:00–12:00 / 13:00–17:00 (UTC)"
-      : `${String(local.tradingStartHour).padStart(2, "0")}:00–${String(
-          local.tradingEndHour
-        ).padStart(2, "0")}:00 (${tzLabel})`;
-
   const coreProfiles: Record<AISettings["riskMode"], CoreProfile> = {
     "ai-matic": {
       title: "AI-MATIC Core",
@@ -162,7 +148,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         "1h trend: HH/HL nebo LL/LH bez overlapu (swing 2L/2R).",
         "5m trend: impuls (>=1.2× avg range) → korekce (<=60%) → pokračování.",
         "Rodiny 1–6: pullback, continuation, range fade, break&flip, reversal, no trade.",
-        "Risk OFF: -2R denně nebo 2 ztráty po sobě nebo chop → NO TRADE.",
         "Entry: LIMIT default; MARKET jen při strong expanse; PostOnly jen v low‑vol range.",
         "Otevřená pozice = žádné přikupování; respektuj Max positions/orders v settings.",
       ],
@@ -189,7 +174,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         "Core engine = AI‑MATIC (1h/15m/5m/1m) + EMA50 trend gate.",
         "Strom A: Kontext → Režim → Směr → Risk → Pravděpodobnost → Akce.",
         "Rodiny C + Checklist B slouží jako manuální overlay.",
-        "Risk ON 1R; Risk OFF 0.25R; max 5 obchodů/den.",
       ],
     },
   };
@@ -237,15 +221,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     },
     { label: "Hard gates", value: local.enableHardGates ? "On" : "Off" },
     { label: "Soft gates", value: local.enableSoftGates ? "On" : "Off" },
-    { label: "Strict risk", value: local.strictRiskAdherence ? "On" : "Off" },
-    { label: "Max daily loss", value: local.haltOnDailyLoss ? "On" : "Off" },
-    { label: "Max drawdown", value: local.haltOnDrawdown ? "On" : "Off" },
-    {
-      label: "Trading hours",
-      value: local.enforceSessionHours
-        ? tradingWindowLabel
-        : `Off (${tzLabel})`,
-    },
     {
       label: "Auto-refresh",
       value: local.autoRefreshEnabled
@@ -277,9 +252,9 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     maxOpenOrders: 12,
     selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "base",
-    enforceSessionHours: true,
-    haltOnDailyLoss: true,
-    haltOnDrawdown: true,
+    enforceSessionHours: false,
+    haltOnDailyLoss: false,
+    haltOnDrawdown: false,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
@@ -319,8 +294,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "ultra",
     enforceSessionHours: false,
-    haltOnDailyLoss: true,
-    haltOnDrawdown: true,
+    haltOnDailyLoss: false,
+    haltOnDrawdown: false,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
@@ -359,9 +334,9 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     maxOpenOrders: 12,
     selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "ultra",
-    enforceSessionHours: true,
-    haltOnDailyLoss: true,
-    haltOnDrawdown: true,
+    enforceSessionHours: false,
+    haltOnDailyLoss: false,
+    haltOnDrawdown: false,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
@@ -401,8 +376,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "base",
     enforceSessionHours: false,
-    haltOnDailyLoss: true,
-    haltOnDrawdown: true,
+    haltOnDailyLoss: false,
+    haltOnDrawdown: false,
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
     autoRefreshEnabled: false,
@@ -635,36 +610,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Enforce Trading Hours
-            </label>
-            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-              <div>
-                <div className="font-medium">{local.enforceSessionHours ? "On" : "Off"}</div>
-                <div className="text-xs text-secondary-foreground/70 mt-1">
-                  {local.enforceSessionHours ? tradingWindowLabel : `Vypnuto (${tzLabel})`}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setLocal({
-                    ...local,
-                    enforceSessionHours: !local.enforceSessionHours,
-                  })
-                }
-                className={`rounded-md border px-3 py-1 text-sm ${
-                  local.enforceSessionHours
-                    ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                    : "border-slate-700 bg-slate-900/40 text-slate-200"
-                }`}
-              >
-                {local.enforceSessionHours ? "On" : "Off"}
-              </button>
-            </div>
-          </div>
-
-          <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Auto-refresh
             </label>
             <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
@@ -778,89 +723,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
               </div>
             </div>
           </div>
-
-          <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Risk Stops
-            </label>
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-                <div>
-                  <div className="font-medium">Strict risk adherence</div>
-                  <div className="text-xs text-secondary-foreground/70 mt-1">
-                    Vynucuje risk protokol: R limit (max ztráta v R), povinné stopky a žádné obcházení pravidel.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setLocal({
-                      ...local,
-                      strictRiskAdherence: !local.strictRiskAdherence,
-                    })
-                  }
-                  className={`rounded-md border px-3 py-1 text-sm ${
-                    local.strictRiskAdherence
-                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                      : "border-slate-700 bg-slate-900/40 text-slate-200"
-                  }`}
-                >
-                  {local.strictRiskAdherence ? "On" : "Off"}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-                <div>
-                  <div className="font-medium">Max daily loss gate</div>
-                  <div className="text-xs text-secondary-foreground/70 mt-1">
-                    Blokuje vstupy po dosažení denní ztráty.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setLocal({
-                      ...local,
-                      haltOnDailyLoss: !local.haltOnDailyLoss,
-                    })
-                  }
-                  className={`rounded-md border px-3 py-1 text-sm ${
-                    local.haltOnDailyLoss
-                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                      : "border-slate-700 bg-slate-900/40 text-slate-200"
-                  }`}
-                >
-                  {local.haltOnDailyLoss ? "On" : "Off"}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-                <div>
-                  <div className="font-medium">Max drawdown gate</div>
-                  <div className="text-xs text-secondary-foreground/70 mt-1">
-                    Blokuje vstupy po překročení max drawdownu.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setLocal({
-                      ...local,
-                      haltOnDrawdown: !local.haltOnDrawdown,
-                    })
-                  }
-                  className={`rounded-md border px-3 py-1 text-sm ${
-                    local.haltOnDrawdown
-                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                      : "border-slate-700 bg-slate-900/40 text-slate-200"
-                  }`}
-                >
-                  {local.haltOnDrawdown ? "On" : "Off"}
-                </button>
-              </div>
-            </div>
-          </div>
-
 
           {local.riskMode !== "ai-matic-scalp" ? (
             <div className="grid gap-2">
@@ -1072,11 +934,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           </div>
 
           <div className="text-xs text-slate-500">
-            Parametry: Hours{" "}
-            {local.enforceSessionHours
-              ? tradingWindowLabel
-              : `Off (${tzLabel})`}{" "}
-            • Max positions {local.maxOpenPositions} • Max orders{" "}
+            Parametry: Max positions {local.maxOpenPositions} • Max orders{" "}
             {local.maxOpenOrders}
           </div>
         </div>

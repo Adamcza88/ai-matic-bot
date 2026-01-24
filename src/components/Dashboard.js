@@ -81,7 +81,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                 symbols: SUPPORTED_SYMBOLS,
                 timeframes: "1h context · 5m execution",
                 session: "Bybit Linear Perpetuals · ~40 markets scan",
-                risk: "Order value per symbol · Risk ON: 1R · Risk OFF: 0.25R · max 5 trades/day · margin 100 USDT",
+                risk: "Order value per symbol · margin 100 USDT · Max positions/orders dle settings",
                 entry: "AI-MATIC core signal + Strom A / Rodiny C filter",
                 execution: `Checklist B management · ${cheatSheetNote}`,
             };
