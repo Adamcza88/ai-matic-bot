@@ -14,7 +14,7 @@ import LogsPanel from "./dashboard/LogsPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
 import { getCheatSheetSetup } from "../engine/strategyCheatSheet";
 export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bot, }) {
-    const { systemState, portfolioState, activePositions, logEntries, testnetOrders, testnetTrades, ordersError, refreshTestnetOrders, assetPnlHistory, resetPnlHistory, scanDiagnostics, manualClosePosition, cancelOrder, dynamicSymbols, updateGateOverrides, } = bot;
+    const { systemState, portfolioState, activePositions, logEntries, testnetOrders, testnetTrades, ordersError, refreshTestnetOrders, assetPnlHistory, resetPnlHistory, scanDiagnostics, manualClosePosition, cancelOrder, updateGateOverrides, } = bot;
     const dailyPnl = portfolioState?.dailyPnl;
     const positionsLoaded = Array.isArray(activePositions);
     const openPositionsPnl = positionsLoaded
@@ -98,10 +98,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         };
     }, [cheatSheetNote, riskMode]);
     const selectedSymbols = bot.settings?.selectedSymbols?.length ? bot.settings.selectedSymbols : null;
-    const allowedSymbols = selectedSymbols ??
-        (bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
-            ? dynamicSymbols
-            : profileMeta.symbols);
+    const allowedSymbols = selectedSymbols ?? profileMeta.symbols;
     const exchangeOrders = ordersLoaded ? testnetOrders : [];
     const exchangeTrades = tradesLoaded ? testnetTrades : [];
     const refreshOrders = refreshTestnetOrders;

@@ -43,7 +43,6 @@ export default function Dashboard({
     scanDiagnostics,
     manualClosePosition,
     cancelOrder,
-    dynamicSymbols,
     updateGateOverrides,
   } = bot;
 
@@ -136,10 +135,7 @@ export default function Dashboard({
   const selectedSymbols =
     bot.settings?.selectedSymbols?.length ? bot.settings.selectedSymbols : null;
   const allowedSymbols =
-    selectedSymbols ??
-    (bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
-      ? dynamicSymbols
-      : profileMeta.symbols);
+    selectedSymbols ?? profileMeta.symbols;
 
   const exchangeOrders = ordersLoaded ? testnetOrders : [];
   const exchangeTrades = tradesLoaded ? testnetTrades : [];
