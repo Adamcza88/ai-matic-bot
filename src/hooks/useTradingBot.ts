@@ -1666,11 +1666,7 @@ export function useTradingBot(
         sideRaw === "buy" ? "BULL" : sideRaw === "sell" ? "BEAR" : "";
       const isScalp = context.settings.riskMode === "ai-matic-scalp";
       const trendGateName =
-        context.settings.riskMode === "ai-matic-x"
-          ? "X setup"
-          : context.settings.riskMode === "ai-matic-tree"
-            ? "Tree setup"
-            : "Trend bias";
+        context.settings.riskMode === "ai-matic-x" ? "X setup" : "Trend bias";
       const scalpContext = (decision as any)?.scalpContext as ScalpContext | undefined;
       const signalEntry = toNumber(signal?.intent?.entry);
       const signalSl = toNumber(signal?.intent?.sl);
@@ -2662,24 +2658,25 @@ export function useTradingBot(
       const isAiMaticX = context.settings.riskMode === "ai-matic-x";
       const xContext = (decision as any)?.xContext as AiMaticXContext | undefined;
       if (isAiMaticX) {
-        const hasAnyPosition = positionsRef.current.some((p) => {
-          const size = toNumber(p.size ?? p.qty);
-          return Number.isFinite(size) && size > 0;
-        });
-        const hasEntryOrder = ordersRef.current.some(
-          (order) => isEntryOrder(order)
+        const hasSymbolPosition = context.hasPosition;
+        const hasSymbolEntryOrder = ordersRef.current.some(
+          (order) =>
+            isEntryOrder(order) && String(order?.symbol ?? "") === symbol
         );
-        if (
-          hasAnyPosition ||
-          hasEntryOrder ||
-          intentPendingRef.current.size > 0
-        ) {
+        const hasPendingIntent = intentPendingRef.current.has(symbol);
+        const blockReasons: string[] = [];
+        if (hasSymbolPosition) blockReasons.push("open position");
+        if (hasSymbolEntryOrder) blockReasons.push("open order");
+        if (hasPendingIntent) blockReasons.push("pending intent");
+        if (!context.maxPositionsOk) blockReasons.push("max positions");
+        if (!context.ordersClearOk) blockReasons.push("max orders");
+        if (blockReasons.length > 0) {
           addLogEntries([
             {
               id: `signal:max-pos:${signalId}`,
               timestamp: new Date(now).toISOString(),
               action: "STATUS",
-              message: `${symbol} AI-MATIC-X max 1 position: skip entry`,
+              message: `${symbol} AI-MATIC-X gate: ${blockReasons.join(", ")} -> skip entry`,
             },
           ]);
           return;
@@ -2729,11 +2726,7 @@ export function useTradingBot(
       const trendGate = resolveTrendGate(decision, signal);
       const isScalp = context.settings.riskMode === "ai-matic-scalp";
       const trendGateName =
-        context.settings.riskMode === "ai-matic-x"
-          ? "X setup"
-          : context.settings.riskMode === "ai-matic-tree"
-            ? "Tree setup"
-            : "Trend bias";
+        context.settings.riskMode === "ai-matic-x" ? "X setup" : "Trend bias";
       const scalpContext = (decision as any)?.scalpContext as ScalpContext | undefined;
       const signalDir = side === "Buy" ? "BULL" : "BEAR";
       const makerFeePct = toNumber(context.settings.makerFeePct);

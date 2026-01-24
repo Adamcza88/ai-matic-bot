@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Symbol } from "../api/types";
 import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../constants/symbols";
 import { AISettings } from "../types";
+import { getCheatSheetSetup } from "../engine/strategyCheatSheet";
 
 interface Props {
   theme: string;
@@ -12,6 +13,12 @@ interface Props {
 }
 
 type CheatBlock = { title?: string; lines: string[] };
+type CoreProfile = {
+  title: string;
+  summary: string;
+  description: string;
+  notes: string[];
+};
 
 const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
 const KEYCAP_HEADING = /^[0-9]\uFE0F?\u20E3/;
@@ -22,6 +29,12 @@ const MIN_AUTO_REFRESH_MINUTES = 1;
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const ORDER_VALUE_NOTE =
   "Order value & leverage: BTC/ETH/SOL 10k@100x; ADA/XRP/DOGE/XPLUS/HYPE/FART 7.5k@75x; LINK 5k@50x; XMR 2.5k@25x; MELANIA 2k@20x; margin cost 100 USDT.";
+const CHEAT_SHEET_SETUP_BY_RISK_MODE: Record<AISettings["riskMode"], string> = {
+  "ai-matic": "ai-matic-core",
+  "ai-matic-x": "ai-matic-x-smart-money-combo",
+  "ai-matic-scalp": "ai-matic-scalp-scalpera",
+  "ai-matic-tree": "ai-matic-decision-tree",
+};
 
 type ProfileSettingsMap = Partial<Record<AISettings["riskMode"], AISettings>>;
 
@@ -124,83 +137,84 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           local.tradingEndHour
         ).padStart(2, "0")}:00 (${tzLabel})`;
 
-  const profileCopy: Record<AISettings["riskMode"], { title: string; description: string; notes: string[] }> = {
+  const coreProfiles: Record<AISettings["riskMode"], CoreProfile> = {
     "ai-matic": {
-      title: "AI-Matic",
-      description: "TF stack (HTF 1h/15m + LTF 5m/1m) + POI analyzer (OB/FVG/Breaker/Liquidity) s prioritou.",
+      title: "AI-MATIC Core",
+      summary: "HTF 1h/15m · LTF 5m/1m · POI priority",
+      description:
+        "Core engine: multi‑TF POI (OB/FVG/Breaker/Liquidity) + EMA50 trend gate.",
       notes: [
         ORDER_VALUE_NOTE,
-        "HTF 1h: Určuje směr trhu. Nikdy neobchoduj proti němu.",
-        "HTF 15m: Sleduj mini OB, přesnější korekce/pullbacky.",
-        "LTF 5m: Vstupní patterny, potvrzení objemů, Smart Money kontext.",
-        "LTF 1m: Absolutní přesnost vstupu, exekuce, správa SL/TS.",
-        "FVG: 3-svíčková imbalance (priority 1)",
-        "OB: poslední opačná svíčka před impulsem (priority 2)",
-        "Breaker: mitigace OB + close za extremem (priority 3)",
-        "Liquidity pools: equal highs/lows, tolerance 0.2 %, min 3 dotyky",
-        "Swing points window: 7 (pro highs/lows)",
-        "POI priorita: Breaker > OB > FVG > Liquidity",
+        "Trend gate: EMA50 + shoda HTF/LTF (1h/15m/5m).",
+        "POI priorita: Breaker > OB > FVG > Liquidity.",
+        "Entry: pullback/mean‑reversion jen po potvrzení struktury.",
+        "Exekuce: 1m timing, SL swing/ATR, partial 1R.",
       ],
     },
     "ai-matic-x": {
-      title: "AI-Matic-X",
-      description: "Decision tree: čistá struktura (1h kontext / 5m exekuce), bez EMA/ATR; RSI divergence jen pro reversal.",
+      title: "AI-MATIC-X Core (Decision Tree)",
+      summary:
+        "1h kontext · 5m exekuce · rodiny 1–6 · max pozice/order dle settings",
+      description:
+        "Decision tree pro režim trhu (trend/range) a volbu rodin; bez EMA/ATR; bez přidávání do otevřené pozice.",
       notes: [
         ORDER_VALUE_NOTE,
         "1h trend: HH/HL nebo LL/LH bez overlapu (swing 2L/2R).",
         "5m trend: impuls (>=1.2× avg range) → korekce (<=60%) → pokračování.",
         "Rodiny 1–6: pullback, continuation, range fade, break&flip, reversal, no trade.",
-        "Reversal (#5): RSI divergence + CHoCH, rychlý exit (0.25–0.5R).",
         "Risk OFF: -2R denně nebo 2 ztráty po sobě nebo chop → NO TRADE.",
         "Entry: LIMIT default; MARKET jen při strong expanse; PostOnly jen v low‑vol range.",
-        "Trailing: aktivace +1R, offset 0.2% (0.25% v expanzi).",
-        "Max 1 pozice celkem; BTC bias musí souhlasit se všemi entry.",
+        "Otevřená pozice = žádné přikupování; respektuj Max positions/orders v settings.",
       ],
     },
     "ai-matic-scalp": {
-      title: "AI-MATIC-SCALP",
-      description:
-        "Scalp profile with 15m trend direction and 1m entry timing.",
+      title: "AI-MATIC-SCALP Core",
+      summary: "1h bias · 15m kontext · 1m entry · fee-aware",
+      description: "Scalp engine s RTC filtrem a maker‑first exekucí.",
       notes: [
-        "Primary timeframe: 15m for trend, 1m for entry.",
-        "Entry logic: EMA cross + RSI divergence + volume spike.",
-        "Exit logic: Trailing stop (ATR 2.5x) or fixed TP (1.5 RRR).",
+        "TF: 1h bias + 15m kontext + 1m entry.",
+        "TP1 gate: TP1 >= 2.5× RTC (fee + slippage).",
+        "Setupy: SR (sweep+reclaim) primární, BR (break+retest) sekundární.",
+        "Entry: LIMIT post‑only; SL strukturální; BE+ / time stop po TP1.",
+        "Max 2 pokusy na level; risk podle R.",
       ],
     },
     "ai-matic-tree": {
-      title: "AI-Matic Tree (Market → Akce)",
+      title: "AI-MATIC Core + Tree Overlay",
+      summary: "AI‑MATIC core (1h/15m/5m/1m) + strom A/rodiny",
       description:
-        "Rozhodovací strom A + Rodiny C + Checklist B + Risk protokol D (Bybit Linear, 1h/5m).",
+        "Core engine AI‑MATIC + rozhodovací strom A jako filtr pro rodiny a risk režim.",
       notes: [
         ORDER_VALUE_NOTE,
-        "Bybit Linear Perpetuals · kontext 1h · exekuce 5m · scan ~40 trhů",
-        "Strom A: Kontext → Režim trhu → Směr → Risk ON/OFF → High/Low Prob → Akce",
-        "Rodiny 1–6: Trend Pullback, Trend Continuation, Range Fade, Range→Trend, Reversal (omezeně), No Trade",
-        "Checklist B: invalidace → režim → logický target → trend zdravý → čas → risk off → hold",
-        "Risk protokol: Risk ON 1R; Risk OFF 0.25R; max 5 obchodů/den; max 2 pozice",
-        "Absolutní zákazy: žádné přidávání; žádná změna plánu v otevřeném obchodu",
+        "Core engine = AI‑MATIC (1h/15m/5m/1m) + EMA50 trend gate.",
+        "Strom A: Kontext → Režim → Směr → Risk → Pravděpodobnost → Akce.",
+        "Rodiny C + Checklist B slouží jako manuální overlay.",
+        "Risk ON 1R; Risk OFF 0.25R; max 5 obchodů/den.",
       ],
     },
   };
-  const meta = profileCopy[local.riskMode];
-  const cheatBlocks = useMemo(
-    () => buildCheatBlocks(meta.notes),
-    [meta.notes]
+  const coreMeta = coreProfiles[local.riskMode];
+  const cheatSheetSetupId = CHEAT_SHEET_SETUP_BY_RISK_MODE[local.riskMode];
+  const cheatSheetSetup = cheatSheetSetupId
+    ? getCheatSheetSetup(cheatSheetSetupId)
+    : null;
+  const cheatSheetLabel = cheatSheetSetup?.name ?? "Cheat sheet";
+  const cheatSheetNotes =
+    cheatSheetSetup?.rules ?? ["Cheat sheet se nepodařilo načíst."];
+  const cheatSheetStatus = local.strategyCheatSheetEnabled ? "On" : "Off";
+  const coreBlocks = useMemo(
+    () => buildCheatBlocks(coreMeta.notes),
+    [coreMeta.notes]
   );
-  const profileSummary: Record<AISettings["riskMode"], string> = {
-    "ai-matic":
-      "AI‑MATIC core (1h/15m/5m/1m): POI + struktura, pullbacky a řízení přes R‑multiple.",
-    "ai-matic-x":
-      "AI‑MATIC‑X (1h/5m): decision tree, čistá struktura, max 1 pozice celkem.",
-    "ai-matic-scalp":
-      "AI-MATIC-SCALP (15m/1m): EMA cross + RSI divergence + volume spike; exit via ATR 2.5x or TP 1.5 RRR.",
-    "ai-matic-tree":
-      "AI‑MATIC‑TREE (1h/5m): decision‑tree overlay nad AI‑MATIC core enginem.",
-  };
+  const cheatBlocks = useMemo(
+    () => buildCheatBlocks(cheatSheetNotes),
+    [cheatSheetNotes]
+  );
+  const summaryText = `${coreMeta.title} · ${coreMeta.summary} · Cheat sheet: ${cheatSheetLabel} (${cheatSheetStatus})`;
   const checklistGatesByProfile: Record<AISettings["riskMode"], string[]> = {
     "ai-matic": ["Trend bias"],
     "ai-matic-x": ["X setup"],
-    "ai-matic-tree": ["Tree setup"],
+    "ai-matic-tree": ["Trend bias"],
     "ai-matic-scalp": [
       "TP1 >= min",
       "1h bias",
@@ -217,7 +231,9 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   const statusItems = [
     {
       label: "Cheat Sheet",
-      value: local.strategyCheatSheetEnabled ? "On" : "Off",
+      value: cheatSheetSetup
+        ? `${cheatSheetStatus} · ${cheatSheetLabel}`
+        : cheatSheetStatus,
     },
     { label: "Hard gates", value: local.enableHardGates ? "On" : "Off" },
     { label: "Soft gates", value: local.enableSoftGates ? "On" : "Off" },
@@ -478,6 +494,68 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     setLocal(resolveProfileSettings(mode));
   };
 
+  const renderCheatBlocks = (blocks: CheatBlock[]) => (
+    <div className="space-y-3 text-slate-400">
+      {blocks.map((block, blockIndex) => {
+        const rawLines = compactCheatSheet
+          ? block.lines.filter((line) => !extractImageUrl(line))
+          : block.lines;
+        const visibleLines = compactCheatSheet
+          ? rawLines.slice(0, 3)
+          : rawLines;
+        const hiddenCount = rawLines.length - visibleLines.length;
+        return (
+          <div
+            key={`${block.title ?? "block"}-${blockIndex}`}
+            className={
+              block.title
+                ? "rounded-md border border-slate-800 bg-slate-950/40 p-2"
+                : ""
+            }
+          >
+            {block.title ? (
+              <div className="text-[11px] uppercase tracking-wide text-slate-300">
+                {block.title}
+              </div>
+            ) : null}
+            <ul className="mt-1 space-y-1 text-xs leading-relaxed">
+              {visibleLines.map((line, lineIndex) => {
+                const imageUrl = extractImageUrl(line);
+                if (imageUrl) {
+                  const host = imageUrl
+                    .replace(/^https?:\/\//, "")
+                    .split("/")[0];
+                  return (
+                    <li key={`${blockIndex}-${lineIndex}`}>
+                      <a
+                        href={imageUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sky-300 underline underline-offset-2"
+                      >
+                        Image reference ({host})
+                      </a>
+                    </li>
+                  );
+                }
+                return (
+                  <li key={`${blockIndex}-${lineIndex}`}>
+                    {compactCheatSheet ? compactLine(line) : line}
+                  </li>
+                );
+              })}
+            </ul>
+            {compactCheatSheet && hiddenCount > 0 ? (
+              <div className="mt-1 text-[11px] text-slate-500">
+                +{hiddenCount} dalších
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50">
       <div className="w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto">
@@ -489,7 +567,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             <div className="text-[11px] uppercase tracking-wide text-slate-400">
               Strategie (aktuální stav)
             </div>
-            <div>{profileSummary[local.riskMode]}</div>
+            <div>{summaryText}</div>
             <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-400">
               {statusItems.map((item) => (
                 <span
@@ -946,8 +1024,15 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           </div>
 
           <div className="mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
-            <div className="font-semibold text-white">{meta.title}</div>
-            <div className="text-slate-300">{meta.description}</div>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold text-white">{coreMeta.title}</div>
+                <div className="text-slate-300">{coreMeta.description}</div>
+              </div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                Core
+              </div>
+            </div>
             <div className="flex items-center justify-between text-xs text-slate-500">
               <div>
                 View: {compactCheatSheet ? "Compact" : "Detail"}
@@ -964,72 +1049,37 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 {compactCheatSheet ? "Compact" : "Detail"}
               </button>
             </div>
-            <div className="space-y-3 text-slate-400">
-              {cheatBlocks.map((block, blockIndex) => {
-                const rawLines = compactCheatSheet
-                  ? block.lines.filter((line) => !extractImageUrl(line))
-                  : block.lines;
-                const visibleLines = compactCheatSheet
-                  ? rawLines.slice(0, 3)
-                  : rawLines;
-                const hiddenCount = rawLines.length - visibleLines.length;
-                return (
-                  <div
-                    key={`${block.title ?? "block"}-${blockIndex}`}
-                    className={
-                      block.title
-                        ? "rounded-md border border-slate-800 bg-slate-950/40 p-2"
-                        : ""
-                    }
-                  >
-                    {block.title ? (
-                      <div className="text-[11px] uppercase tracking-wide text-slate-300">
-                        {block.title}
-                      </div>
-                    ) : null}
-                    <ul className="mt-1 space-y-1 text-xs leading-relaxed">
-                      {visibleLines.map((line, lineIndex) => {
-                        const imageUrl = extractImageUrl(line);
-                        if (imageUrl) {
-                          const host = imageUrl
-                            .replace(/^https?:\/\//, "")
-                            .split("/")[0];
-                          return (
-                            <li key={`${blockIndex}-${lineIndex}`}>
-                              <a
-                                href={imageUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-sky-300 underline underline-offset-2"
-                              >
-                                Image reference ({host})
-                              </a>
-                            </li>
-                          );
-                        }
-                        return (
-                          <li key={`${blockIndex}-${lineIndex}`}>
-                            {compactCheatSheet ? compactLine(line) : line}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                    {compactCheatSheet && hiddenCount > 0 ? (
-                      <div className="mt-1 text-[11px] text-slate-500">
-                        +{hiddenCount} dalších
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
+            {renderCheatBlocks(coreBlocks)}
+          </div>
+
+          <div className="mt-3 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold text-white">Cheat Sheet</div>
+                <div className="text-slate-300">
+                  {cheatSheetSetup?.description ??
+                    "Cheat sheet se nepodařilo načíst."}
+                </div>
+              </div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                {cheatSheetStatus}
+              </div>
             </div>
+            <div className="text-xs text-slate-500">
+              Setup: {cheatSheetLabel}
+            </div>
+            {renderCheatBlocks(cheatBlocks)}
+          </div>
+
           <div className="text-xs text-slate-500">
-            Parametry: Hours {local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`} • Max positions{" "}
-            {local.maxOpenPositions} • Max orders {local.maxOpenOrders}
+            Parametry: Hours{" "}
+            {local.enforceSessionHours
+              ? tradingWindowLabel
+              : `Off (${tzLabel})`}{" "}
+            • Max positions {local.maxOpenPositions} • Max orders{" "}
+            {local.maxOpenOrders}
           </div>
         </div>
-      </div>
-
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end mt-6">
           <button
             type="button"

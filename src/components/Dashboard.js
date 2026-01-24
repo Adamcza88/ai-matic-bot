@@ -12,6 +12,7 @@ import OrdersPanel from "./dashboard/OrdersPanel";
 import SignalsAccordion from "./dashboard/SignalsAccordion";
 import LogsPanel from "./dashboard/LogsPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
+import { getCheatSheetSetup } from "../engine/strategyCheatSheet";
 export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bot, }) {
     const { systemState, portfolioState, activePositions, logEntries, testnetOrders, testnetTrades, ordersError, refreshTestnetOrders, assetPnlHistory, resetPnlHistory, scanDiagnostics, manualClosePosition, cancelOrder, dynamicSymbols, updateGateOverrides, } = bot;
     const dailyPnl = portfolioState?.dailyPnl;
@@ -38,54 +39,64 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         return Math.max(...values);
     }, [scanDiagnostics]);
     const riskMode = bot.settings?.riskMode ?? "ai-matic";
+    const cheatSheetSetupId = ({
+        "ai-matic": "ai-matic-core",
+        "ai-matic-x": "ai-matic-x-smart-money-combo",
+        "ai-matic-scalp": "ai-matic-scalp-scalpera",
+        "ai-matic-tree": "ai-matic-decision-tree",
+    }[riskMode] ?? "ai-matic-core");
+    const cheatSheetSetup = getCheatSheetSetup(cheatSheetSetupId);
+    const cheatSheetStatus = bot.settings?.strategyCheatSheetEnabled ? "On" : "Off";
+    const cheatSheetLabel = cheatSheetSetup?.name ?? "Cheat sheet";
+    const cheatSheetNote = `Cheat sheet: ${cheatSheetLabel} (${cheatSheetStatus})`;
     const profileMeta = useMemo(() => {
         if (riskMode === "ai-matic-scalp") {
             return {
                 label: "AI-MATIC-SCALP",
-                subtitle: "Scalp (15m trend / 1m entry)",
+                subtitle: "Scalp (1h bias / 15m context / 1m entry)",
                 symbols: SUPPORTED_SYMBOLS,
-                timeframes: "15m trend / 1m entry",
+                timeframes: "1h bias · 15m context · 1m entry",
                 session: "08:00-12:00 / 13:00-17:00 UTC",
-                risk: "RRR target 1.5",
-                entry: "EMA cross + RSI divergence + volume spike",
-                execution: "Trailing stop ATR 2.5x or fixed TP 1.5 RRR",
+                risk: "RTC/TP1 gate · fee-aware scalp",
+                entry: "SR/BR setups · maker-first entry",
+                execution: `TP1 >= 2.5× RTC · time stop · ${cheatSheetNote}`,
             };
         }
         if (riskMode === "ai-matic-x") {
             return {
                 label: "AI-MATIC-X",
-                subtitle: "Decision Tree (1h context / 5m execution)",
+                subtitle: "Decision Tree Core (1h context / 5m execution)",
                 symbols: SUPPORTED_SYMBOLS,
                 timeframes: "1h context · 5m execution",
                 session: "24/7",
-                risk: "Order value per symbol · margin 100 USDT · max 1 position total",
-                entry: "Families 1–6: pullback, continuation, range fade, break&flip, reversal, no trade",
-                execution: "LIMIT default · MARKET only in strong expanse · PostOnly only in low‑vol range",
+                risk: "Order value per symbol · margin 100 USDT · Max positions/orders dle settings",
+                entry: "Families 1–6 · pullback/continuation/range/flip/reversal/no trade · bez přikupování do otevřené pozice",
+                execution: `LIMIT default · MARKET only in strong expanse · ${cheatSheetNote}`,
             };
         }
         if (riskMode === "ai-matic-tree") {
             return {
-                label: "AI-MATIC TREE",
-                subtitle: "Decision Tree – Market → Action (1h context / 5m execution)",
+                label: "AI-MATIC-TREE",
+                subtitle: "AI-MATIC Core + Tree Overlay (1h context / 5m execution)",
                 symbols: SUPPORTED_SYMBOLS,
                 timeframes: "1h context · 5m execution",
                 session: "Bybit Linear Perpetuals · ~40 markets scan",
                 risk: "Order value per symbol · Risk ON: 1R · Risk OFF: 0.25R · max 5 trades/day · margin 100 USDT",
-                entry: "Families 1–6 · A-setup required",
-                execution: "Checklist B management · Kill switch -3R",
+                entry: "AI-MATIC core signal + Strom A / Rodiny C filter",
+                execution: `Checklist B management · ${cheatSheetNote}`,
             };
         }
         return {
             label: "AI-MATIC",
-            subtitle: "AI-MATIC (HTF 1h/15m · LTF 5m/1m)",
+            subtitle: "AI-MATIC Core (HTF 1h/15m · LTF 5m/1m)",
             symbols: SUPPORTED_SYMBOLS,
             timeframes: "HTF 1h · 15m · LTF 5m · 1m",
             session: "POI: Breaker > OB > FVG > Liquidity",
             risk: "Order value per symbol · margin 100 USDT · max positions by settings",
             entry: "FVG/OB/Breaker + liquidity pools (0.2% tol, min 3 touches)",
-            execution: "Swing window 7 · 5m management + SL/TS",
+            execution: `EMA50 trend gate · 1m timing + swing/ATR stop · ${cheatSheetNote}`,
         };
-    }, [riskMode]);
+    }, [cheatSheetNote, riskMode]);
     const selectedSymbols = bot.settings?.selectedSymbols?.length ? bot.settings.selectedSymbols : null;
     const allowedSymbols = selectedSymbols ??
         (bot.settings?.riskMode === "ai-matic-x" && dynamicSymbols?.length
@@ -96,15 +107,15 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     const refreshOrders = refreshTestnetOrders;
     const CHECKLIST_DEFAULTS_BY_PROFILE = useMemo(() => ({
         "ai-matic": {
-            "Trend bias": false,
+            "Trend bias": true,
             "Exec allowed": true,
         },
         "ai-matic-x": {
-            "X setup": false,
+            "X setup": true,
             "Exec allowed": true,
         },
         "ai-matic-tree": {
-            "Tree setup": false,
+            "Trend bias": true,
             "Exec allowed": true,
         },
         "ai-matic-scalp": {
@@ -129,9 +140,9 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         return Object.keys(defaults).filter((name) => name !== "Exec allowed");
     }, [CHECKLIST_DEFAULTS_BY_PROFILE, riskMode]);
     const CHECKLIST_ALIASES = useMemo(() => ({
-        "1h bias": ["Trend bias"],
+        "Trend bias": ["Tree setup"],
         "X setup": ["Trend bias"],
-        "Tree setup": ["Trend bias"],
+        "1h bias": ["Trend bias"],
     }), []);
     const gateStorageKey = useMemo(() => `ai-matic-checklist-enabled:${riskMode}`, [riskMode]);
     const [checklistEnabled, setChecklistEnabled] = useState(() => CHECKLIST_DEFAULTS);

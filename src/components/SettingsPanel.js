@@ -1,6 +1,7 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../constants/symbols";
+import { getCheatSheetSetup } from "../engine/strategyCheatSheet";
 const IMAGE_LINE = /^!\[Image\]\((.+)\)$/;
 const KEYCAP_HEADING = /^[0-9]\uFE0F?\u20E3/;
 const PROFILE_SETTINGS_STORAGE_KEY = "ai-matic-profile-settings";
@@ -9,6 +10,12 @@ const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * 4;
 const MIN_AUTO_REFRESH_MINUTES = 1;
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const ORDER_VALUE_NOTE = "Order value & leverage: BTC/ETH/SOL 10k@100x; ADA/XRP/DOGE/XPLUS/HYPE/FART 7.5k@75x; LINK 5k@50x; XMR 2.5k@25x; MELANIA 2k@20x; margin cost 100 USDT.";
+const CHEAT_SHEET_SETUP_BY_RISK_MODE = {
+    "ai-matic": "ai-matic-core",
+    "ai-matic-x": "ai-matic-x-smart-money-combo",
+    "ai-matic-scalp": "ai-matic-scalp-scalpera",
+    "ai-matic-tree": "ai-matic-decision-tree",
+};
 function loadProfileSettingsMap() {
     if (typeof localStorage === "undefined")
         return {};
@@ -104,74 +111,71 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const tradingWindowLabel = local.riskMode === "ai-matic-scalp"
         ? "08:00–12:00 / 13:00–17:00 (UTC)"
         : `${String(local.tradingStartHour).padStart(2, "0")}:00–${String(local.tradingEndHour).padStart(2, "0")}:00 (${tzLabel})`;
-    const profileCopy = {
+    const coreProfiles = {
         "ai-matic": {
-            title: "AI-Matic",
-            description: "TF stack (HTF 1h/15m + LTF 5m/1m) + POI analyzer (OB/FVG/Breaker/Liquidity) s prioritou.",
+            title: "AI-MATIC Core",
+            summary: "HTF 1h/15m · LTF 5m/1m · POI priority",
+            description: "Core engine: multi‑TF POI (OB/FVG/Breaker/Liquidity) + EMA50 trend gate.",
             notes: [
                 ORDER_VALUE_NOTE,
-                "HTF 1h: Určuje směr trhu. Nikdy neobchoduj proti němu.",
-                "HTF 15m: Sleduj mini OB, přesnější korekce/pullbacky.",
-                "LTF 5m: Vstupní patterny, potvrzení objemů, Smart Money kontext.",
-                "LTF 1m: Absolutní přesnost vstupu, exekuce, správa SL/TS.",
-                "FVG: 3-svíčková imbalance (priority 1)",
-                "OB: poslední opačná svíčka před impulsem (priority 2)",
-                "Breaker: mitigace OB + close za extremem (priority 3)",
-                "Liquidity pools: equal highs/lows, tolerance 0.2 %, min 3 dotyky",
-                "Swing points window: 7 (pro highs/lows)",
-                "POI priorita: Breaker > OB > FVG > Liquidity",
+                "Trend gate: EMA50 + shoda HTF/LTF (1h/15m/5m).",
+                "POI priorita: Breaker > OB > FVG > Liquidity.",
+                "Entry: pullback/mean‑reversion jen po potvrzení struktury.",
+                "Exekuce: 1m timing, SL swing/ATR, partial 1R.",
             ],
         },
         "ai-matic-x": {
-            title: "AI-Matic-X",
-            description: "Decision tree: čistá struktura (1h kontext / 5m exekuce), bez EMA/ATR; RSI divergence jen pro reversal.",
+            title: "AI-MATIC-X Core (Decision Tree)",
+            summary: "1h kontext · 5m exekuce · rodiny 1–6 · max pozice/order dle settings",
+            description: "Decision tree pro režim trhu (trend/range) a volbu rodin; bez EMA/ATR; bez přidávání do otevřené pozice.",
             notes: [
                 ORDER_VALUE_NOTE,
                 "1h trend: HH/HL nebo LL/LH bez overlapu (swing 2L/2R).",
                 "5m trend: impuls (>=1.2× avg range) → korekce (<=60%) → pokračování.",
                 "Rodiny 1–6: pullback, continuation, range fade, break&flip, reversal, no trade.",
-                "Reversal (#5): RSI divergence + CHOCH, rychlý exit (0.25–0.5R).",
                 "Risk OFF: -2R denně nebo 2 ztráty po sobě nebo chop → NO TRADE.",
                 "Entry: LIMIT default; MARKET jen při strong expanse; PostOnly jen v low‑vol range.",
-                "Trailing: aktivace +1R, offset 0.2% (0.25% v expanzi).",
-                "Max 1 pozice celkem; BTC bias musí souhlasit se všemi entry.",
+                "Otevřená pozice = žádné přikupování; respektuj Max positions/orders v settings.",
             ],
         },
         "ai-matic-scalp": {
-            title: "AI-MATIC-SCALP",
-            description: "Scalp profile with 15m trend direction and 1m entry timing.",
+            title: "AI-MATIC-SCALP Core",
+            summary: "1h bias · 15m kontext · 1m entry · fee-aware",
+            description: "Scalp engine s RTC filtrem a maker‑first exekucí.",
             notes: [
-                "Primary timeframe: 15m for trend, 1m for entry.",
-                "Entry logic: EMA cross + RSI divergence + volume spike.",
-                "Exit logic: Trailing stop (ATR 2.5x) or fixed TP (1.5 RRR).",
+                "TF: 1h bias + 15m kontext + 1m entry.",
+                "TP1 gate: TP1 >= 2.5× RTC (fee + slippage).",
+                "Setupy: SR (sweep+reclaim) primární, BR (break+retest) sekundární.",
+                "Entry: LIMIT post‑only; SL strukturální; BE+ / time stop po TP1.",
+                "Max 2 pokusy na level; risk podle R.",
             ],
         },
         "ai-matic-tree": {
-            title: "AI-Matic Tree (Market → Akce)",
-            description: "Rozhodovací strom A + Rodiny C + Checklist B + Risk protokol D (Bybit Linear, 1h/5m).",
+            title: "AI-MATIC Core + Tree Overlay",
+            summary: "AI‑MATIC core (1h/15m/5m/1m) + strom A/rodiny",
+            description: "Core engine AI‑MATIC + rozhodovací strom A jako filtr pro rodiny a risk režim.",
             notes: [
                 ORDER_VALUE_NOTE,
-                "Bybit Linear Perpetuals · kontext 1h · exekuce 5m · scan ~40 trhů",
-                "Strom A: Kontext → Režim trhu → Směr → Risk ON/OFF → High/Low Prob → Akce",
-                "Rodiny 1–6: Trend Pullback, Trend Continuation, Range Fade, Range→Trend, Reversal (omezeně), No Trade",
-                "Checklist B: invalidace → režim → logický target → trend zdravý → čas → risk off → hold",
-                "Risk protokol: Risk ON 1R; Risk OFF 0.25R; max 5 obchodů/den; max 2 pozice",
-                "Absolutní zákazy: žádné přidávání; žádná změna plánu v otevřeném obchodu",
+                "Core engine = AI‑MATIC (1h/15m/5m/1m) + EMA50 trend gate.",
+                "Strom A: Kontext → Režim → Směr → Risk → Pravděpodobnost → Akce.",
+                "Rodiny C + Checklist B slouží jako manuální overlay.",
+                "Risk ON 1R; Risk OFF 0.25R; max 5 obchodů/den.",
             ],
         },
     };
-    const meta = profileCopy[local.riskMode];
-    const cheatBlocks = useMemo(() => buildCheatBlocks(meta.notes), [meta.notes]);
-    const profileSummary = {
-        "ai-matic": "AI‑MATIC core (1h/15m/5m/1m): POI + struktura, pullbacky a řízení přes R‑multiple.",
-        "ai-matic-x": "AI‑MATIC‑X (1h/5m): decision tree, čistá struktura, max 1 pozice celkem.",
-        "ai-matic-scalp": "AI-MATIC-SCALP (15m/1m): EMA cross + RSI divergence + volume spike; exit via ATR 2.5x or TP 1.5 RRR.",
-        "ai-matic-tree": "AI‑MATIC‑TREE (1h/5m): decision‑tree overlay nad AI‑MATIC core enginem.",
-    };
+    const coreMeta = coreProfiles[local.riskMode];
+    const cheatSheetSetupId = CHEAT_SHEET_SETUP_BY_RISK_MODE[local.riskMode];
+    const cheatSheetSetup = cheatSheetSetupId ? getCheatSheetSetup(cheatSheetSetupId) : null;
+    const cheatSheetLabel = cheatSheetSetup?.name ?? "Cheat sheet";
+    const cheatSheetNotes = cheatSheetSetup?.rules ?? ["Cheat sheet se nepodařilo načíst."];
+    const cheatSheetStatus = local.strategyCheatSheetEnabled ? "On" : "Off";
+    const coreBlocks = useMemo(() => buildCheatBlocks(coreMeta.notes), [coreMeta.notes]);
+    const cheatBlocks = useMemo(() => buildCheatBlocks(cheatSheetNotes), [cheatSheetNotes]);
+    const summaryText = `${coreMeta.title} · ${coreMeta.summary} · Cheat sheet: ${cheatSheetLabel} (${cheatSheetStatus})`;
     const checklistGatesByProfile = {
         "ai-matic": ["Trend bias"],
         "ai-matic-x": ["X setup"],
-        "ai-matic-tree": ["Tree setup"],
+        "ai-matic-tree": ["Trend bias"],
         "ai-matic-scalp": [
             "TP1 >= min",
             "1h bias",
@@ -187,7 +191,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const statusItems = [
         {
             label: "Cheat Sheet",
-            value: local.strategyCheatSheetEnabled ? "On" : "Off",
+            value: cheatSheetSetup ? `${cheatSheetStatus} · ${cheatSheetLabel}` : cheatSheetStatus,
         },
         { label: "Hard gates", value: local.enableHardGates ? "On" : "Off" },
         { label: "Soft gates", value: local.enableSoftGates ? "On" : "Off" },
@@ -431,7 +435,28 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         stashProfileSettings(local.riskMode, local);
         setLocal(resolveProfileSettings(mode));
     };
-    return (_jsx("div", { className: "fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50", children: _jsxs("div", { className: "w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto", children: [_jsxs("div", { className: "flex flex-col space-y-1.5 mb-6", children: [_jsx("h2", { className: "text-lg font-semibold leading-none tracking-tight", children: "Settings" }), _jsxs("div", { className: "rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200", children: [_jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-400", children: "Strategie (aktu\u00E1ln\u00ED stav)" }), _jsx("div", { children: profileSummary[local.riskMode] }), _jsx("div", { className: "mt-2 flex flex-wrap gap-2 text-[11px] text-slate-400", children: statusItems.map((item) => (_jsxs("span", { className: "rounded-full border border-slate-800 bg-slate-950/40 px-2 py-0.5", children: [item.label, ": ", item.value] }, item.label))) })] }), _jsx("p", { className: "text-sm text-muted-foreground", children: "Zvolen\u00FD profil nastav\u00ED v\u00FDchoz\u00ED parametry; vybran\u00E9 podm\u00EDnky m\u016F\u017Ee\u0161 p\u0159epnout." })] }), _jsxs("div", { className: "grid gap-4 py-4", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Profile" }), _jsxs("div", { className: "grid grid-cols-2 gap-2", children: [_jsx("button", { onClick: () => applyPreset("ai-matic"), className: `rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic"
+    const renderCheatBlocks = (blocks) => (_jsx("div", { className: "space-y-3 text-slate-400", children: blocks.map((block, blockIndex) => {
+            const rawLines = compactCheatSheet
+                ? block.lines.filter((line) => !extractImageUrl(line))
+                : block.lines;
+            const visibleLines = compactCheatSheet
+                ? rawLines.slice(0, 3)
+                : rawLines;
+            const hiddenCount = rawLines.length - visibleLines.length;
+            return (_jsxs("div", { className: block.title
+                    ? "rounded-md border border-slate-800 bg-slate-950/40 p-2"
+                    : "", children: [block.title ? (_jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-300", children: block.title })) : null, _jsx("ul", { className: "mt-1 space-y-1 text-xs leading-relaxed", children: visibleLines.map((line, lineIndex) => {
+                            const imageUrl = extractImageUrl(line);
+                            if (imageUrl) {
+                                const host = imageUrl
+                                    .replace(/^https?:\/\//, "")
+                                    .split("/")[0];
+                                return (_jsx("li", { children: _jsx("a", { href: imageUrl, target: "_blank", rel: "noreferrer", className: "text-sky-300 underline underline-offset-2", children: `Image reference (${host})` }) }, `${blockIndex}-${lineIndex}`));
+                            }
+                            return (_jsx("li", { children: compactCheatSheet ? compactLine(line) : line }, `${blockIndex}-${lineIndex}`));
+                        }) }), compactCheatSheet && hiddenCount > 0 ? (_jsxs("div", { className: "mt-1 text-[11px] text-slate-500", children: ["+", hiddenCount, " dal\u0161\u00EDch"] })) : null] }, `${block.title ?? "block"}-${blockIndex}`));
+        }) }));
+    return (_jsx("div", { className: "fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50", children: _jsxs("div", { className: "w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto", children: [_jsxs("div", { className: "flex flex-col space-y-1.5 mb-6", children: [_jsx("h2", { className: "text-lg font-semibold leading-none tracking-tight", children: "Settings" }), _jsxs("div", { className: "rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200", children: [_jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-400", children: "Strategie (aktu\u00E1ln\u00ED stav)" }), _jsx("div", { children: summaryText }), _jsx("div", { className: "mt-2 flex flex-wrap gap-2 text-[11px] text-slate-400", children: statusItems.map((item) => (_jsxs("span", { className: "rounded-full border border-slate-800 bg-slate-950/40 px-2 py-0.5", children: [item.label, ": ", item.value] }, item.label))) })] }), _jsx("p", { className: "text-sm text-muted-foreground", children: "Zvolen\u00FD profil nastav\u00ED v\u00FDchoz\u00ED parametry; vybran\u00E9 podm\u00EDnky m\u016F\u017Ee\u0161 p\u0159epnout." })] }), _jsxs("div", { className: "grid gap-4 py-4", children: [_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Profile" }), _jsxs("div", { className: "grid grid-cols-2 gap-2", children: [_jsx("button", { onClick: () => applyPreset("ai-matic"), className: `rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic"
                                                 ? "bg-emerald-600 text-white"
                                                 : "bg-slate-800 text-secondary-foreground"}`, children: "AI-Matic" }), _jsx("button", { onClick: () => applyPreset("ai-matic-x"), className: `rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic-x"
                                                 ? "bg-emerald-600 text-white"
@@ -525,29 +550,10 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                             }, className: `rounded-md border px-3 py-1 text-xs font-medium ${active
                                                 ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
                                                 : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: symbol }, symbol));
-                                    }) }), _jsx("span", { className: "text-xs text-secondary-foreground/70", children: "Vyber, kter\u00E9 coiny bot skenuje a obchoduje." })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsx("div", { className: "font-semibold text-white", children: meta.title }), _jsx("div", { className: "text-slate-300", children: meta.description }), _jsxs("div", { className: "flex items-center justify-between text-xs text-slate-500", children: [_jsxs("div", { children: ["View: ", compactCheatSheet ? "Compact" : "Detail"] }), _jsx("button", { type: "button", onClick: () => setCompactCheatSheet((v) => !v), className: `rounded-md border px-2 py-1 text-[11px] ${compactCheatSheet
+                                    }) }), _jsx("span", { className: "text-xs text-secondary-foreground/70", children: "Vyber, kter\u00E9 coiny bot skenuje a obchoduje." })] }), _jsxs("div", { className: "mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsxs("div", { className: "flex items-start justify-between gap-3", children: [_jsxs("div", { children: [_jsx("div", { className: "font-semibold text-white", children: coreMeta.title }), _jsx("div", { className: "text-slate-300", children: coreMeta.description })] }), _jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-500", children: "Core" })] }), _jsxs("div", { className: "flex items-center justify-between text-xs text-slate-500", children: [_jsxs("div", { children: ["View: ", compactCheatSheet ? "Compact" : "Detail"] }), _jsx("button", { type: "button", onClick: () => setCompactCheatSheet((v) => !v), className: `rounded-md border px-2 py-1 text-[11px] ${compactCheatSheet
                                                 ? "border-slate-700 bg-slate-900/60 text-slate-200"
-                                                : "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"}`, children: compactCheatSheet ? "Compact" : "Detail" })] }), _jsx("div", { className: "space-y-3 text-slate-400", children: cheatBlocks.map((block, blockIndex) => {
-                                        const rawLines = compactCheatSheet
-                                            ? block.lines.filter((line) => !extractImageUrl(line))
-                                            : block.lines;
-                                        const visibleLines = compactCheatSheet
-                                            ? rawLines.slice(0, 3)
-                                            : rawLines;
-                                        const hiddenCount = rawLines.length - visibleLines.length;
-                                        return (_jsxs("div", { className: block.title
-                                                ? "rounded-md border border-slate-800 bg-slate-950/40 p-2"
-                                                : "", children: [block.title ? (_jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-300", children: block.title })) : null, _jsx("ul", { className: "mt-1 space-y-1 text-xs leading-relaxed", children: visibleLines.map((line, lineIndex) => {
-                                                        const imageUrl = extractImageUrl(line);
-                                                        if (imageUrl) {
-                                                            const host = imageUrl
-                                                                .replace(/^https?:\/\//, "")
-                                                                .split("/")[0];
-                                                            return (_jsx("li", { children: _jsxs("a", { href: imageUrl, target: "_blank", rel: "noreferrer", className: "text-sky-300 underline underline-offset-2", children: ["Image reference (", host, ")"] }) }, `${blockIndex}-${lineIndex}`));
-                                                        }
-                                                        return (_jsx("li", { children: compactCheatSheet ? compactLine(line) : line }, `${blockIndex}-${lineIndex}`));
-                                                    }) }), compactCheatSheet && hiddenCount > 0 ? (_jsxs("div", { className: "mt-1 text-[11px] text-slate-500", children: ["+", hiddenCount, " dal\u0161\u00EDch"] })) : null] }, `${block.title ?? "block"}-${blockIndex}`));
-                                    }) }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Max positions", " ", local.maxOpenPositions, " \u2022 Max orders ", local.maxOpenOrders] })] })] }), _jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:justify-end mt-6", children: [_jsx("button", { type: "button", onClick: () => {
+                                                : "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"}`, children: compactCheatSheet ? "Compact" : "Detail" })] }), renderCheatBlocks(coreBlocks)] }), _jsxs("div", { className: "mt-3 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2", children: [_jsxs("div", { className: "flex items-start justify-between gap-3", children: [_jsxs("div", { children: [_jsx("div", { className: "font-semibold text-white", children: "Cheat Sheet" }), _jsx("div", { className: "text-slate-300", children: cheatSheetSetup?.description ??
+                                                        "Cheat sheet se nepoda\u0159ilo na\u010D\u00EDst." })] }), _jsx("div", { className: "text-[11px] uppercase tracking-wide text-slate-500", children: cheatSheetStatus })] }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Setup: ", cheatSheetLabel] }), renderCheatBlocks(cheatBlocks)] }), _jsxs("div", { className: "text-xs text-slate-500", children: ["Parametry: Hours ", local.enforceSessionHours ? tradingWindowLabel : `Off (${tzLabel})`, " \u2022 Max positions ", local.maxOpenPositions, " \u2022 Max orders ", local.maxOpenOrders] })] }), _jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:justify-end mt-6", children: [_jsx("button", { type: "button", onClick: () => {
                                 stashProfileSettings(local.riskMode, local);
                                 onUpdateSettings(local);
                                 onClose();
