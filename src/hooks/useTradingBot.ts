@@ -1623,11 +1623,6 @@ export function useTradingBot(
   );
 
   const resolveSymbolState = useCallback((symbol: string) => {
-    const decision = decisionRef.current[symbol]?.decision;
-    const state = String(decision?.state ?? "").toUpperCase();
-    if (state === "MANAGE") return "MANAGE";
-    if (state === "SCAN") return "SCAN";
-
     const hasPosition = positionsRef.current.some((p) => {
       if (p.symbol !== symbol) return false;
       const size = toNumber(p.size ?? p.qty);
@@ -1638,6 +1633,8 @@ export function useTradingBot(
       (o) => String(o.symbol ?? "") === symbol
     );
     if (hasOrders) return "MANAGE";
+    const hasPendingIntent = intentPendingRef.current.has(symbol);
+    if (hasPendingIntent) return "MANAGE";
     return "SCAN";
   }, []);
 
@@ -1683,9 +1680,7 @@ export function useTradingBot(
           ? "open order"
           : hasPendingIntent
             ? "pending intent"
-            : symbolState === "MANAGE"
-              ? "engine state"
-              : null;
+            : null;
 
       const makerFeePct = toNumber(context.settings.makerFeePct);
       const takerFeePct = toNumber(context.settings.takerFeePct);
