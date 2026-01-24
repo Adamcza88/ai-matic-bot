@@ -1349,6 +1349,8 @@ export function useTradingBot(
   const enforceBtcBiasAlignment = useCallback(
     async (now: number) => {
       if (!authToken) return;
+      const settings = settingsRef.current;
+      if (settings.riskMode === "ai-matic-x") return;
       const btcBias = resolveBtcBias();
       if (!btcBias) return;
       const cooldown = autoCloseCooldownRef.current;
