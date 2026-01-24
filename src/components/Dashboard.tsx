@@ -111,14 +111,14 @@ export default function Dashboard({
     if (riskMode === "ai-matic-tree") {
       return {
         label: "AI-MATIC-TREE",
-        subtitle: "AI-MATIC Core + Tree Overlay (1h context / 5m execution)",
+        subtitle: "Fibonacci Strategy (trend pullbacks / confluence)",
         symbols: SUPPORTED_SYMBOLS,
         timeframes: "1h context · 5m execution",
         session: "Bybit Linear Perpetuals · ~40 markets scan",
         risk:
           "Order value per symbol · margin 100 USDT · Max positions/orders dle settings",
-        entry: "AI-MATIC core signal + Strom A / Rodiny C filter",
-        execution: `Checklist B management · ${cheatSheetNote}`,
+        entry: "Fib retracement pullback v trendu · confluence se strukturou",
+        execution: `Targets přes Fib extensions · SL za další Fib nebo swing · ${cheatSheetNote}`,
       };
     }
     return {
