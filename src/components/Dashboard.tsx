@@ -74,13 +74,13 @@ export default function Dashboard({
     if (riskMode === "ai-matic-scalp") {
       return {
         label: "AI-MATIC-SCALP",
-        subtitle: "Fee-aware Scalp (HTF 1h/15m · LTF 5m/1m)",
+        subtitle: "Scalp (15m trend / 1m entry)",
         symbols: SUPPORTED_SYMBOLS,
-        timeframes: "HTF 1h · 15m · LTF 5m · 1m",
+        timeframes: "15m trend / 1m entry",
         session: "08:00-12:00 / 13:00-17:00 UTC",
-        risk: "Risk 0.25–1.0% · -2R/day stop · max 2 losses · no adding",
-        entry: "Setup SR (sweep + reclaim RL) / BR (break + retest BL) · maker-first",
-        execution: "LIMIT post-only · TP1 ≥ 2.5×RTC · BE+ after TP1 · time stop",
+        risk: "RRR target 1.5",
+        entry: "EMA cross + RSI divergence + volume spike",
+        execution: "Trailing stop ATR 2.5x or fixed TP 1.5 RRR",
       };
     }
     if (riskMode === "ai-matic-x") {
