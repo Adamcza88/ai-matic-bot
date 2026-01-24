@@ -143,9 +143,6 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
             notes: [
                 ORDER_VALUE_NOTE,
                 "Instrument: Crypto Linear futures · HTF 1h/15m · LTF 5m/1m · fee-aware scalp.",
-                "RTC: maker_fee %, taker_fee %, slippage_buffer % (0.01–0.03) – orientační.",
-                "RTC taker/taker = 2*taker_fee + slippage_buffer; maker/maker = 2*maker_fee + slippage_buffer.",
-                "TP1_min = 2.5 * RTC (orientačně).",
                 "SCAN (1h): nad EMA21, EMA21 roste, struktura bez LL/LH (long); short zrcadlově.",
                 "15m kontext: bullish HH/HL nad EMA21 nebo pullback drží poslední HL / 1h demand.",
                 "No-trade: 1h EMA21 plochá + 15m EMA(8/21) cross; špatný spread; TP < TP1_min; 2 pokusy na levelu.",
@@ -159,7 +156,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                 "Time stop: 1m entry 5 min bez posunu ~0.5R; 5m entry 15 min bez follow-through → exit.",
                 "Re-entry: nový LTF HL + nový reclaim/retest; max 2 pokusy.",
                 "Risk: 0.25–1.0 % / trade; -2R denně stop; 2 ztráty v řadě pauza; žádné přidávání.",
-                "Checklist: 1h bias, 15m kontext, RL/BL level, maker entry, SL strukturální, TP1≥min, BE+/time stop, denní limity.",
+                "Checklist: 1h bias, 15m kontext, chop filter, RL/BL level, maker entry, SL strukturální, TP1≥min, BE+/time stop.",
             ],
         },
         "ai-matic-tree": {
@@ -181,19 +178,25 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     const profileSummary = {
         "ai-matic": "AI‑MATIC core (1h/15m/5m/1m): POI + struktura, pullbacky a řízení přes R‑multiple.",
         "ai-matic-x": "AI‑MATIC‑X (1h/5m): decision tree, čistá struktura, max 1 pozice celkem.",
-        "ai-matic-scalp": "AI‑MATIC‑SCALP (1h/15m/5m/1m): fee‑aware scalp, maker‑first, RTC + TP1_min reference.",
+        "ai-matic-scalp": "AI‑MATIC‑SCALP (1h/15m/5m/1m): fee‑aware scalp, maker‑first.",
         "ai-matic-tree": "AI‑MATIC‑TREE (1h/5m): decision‑tree overlay nad AI‑MATIC core enginem.",
     };
-    const makerFeePct = Number.isFinite(local.makerFeePct) ? local.makerFeePct : 0;
-    const takerFeePct = Number.isFinite(local.takerFeePct) ? local.takerFeePct : 0;
-    const slippageBufferPct = Number.isFinite(local.slippageBufferPct)
-        ? local.slippageBufferPct
-        : 0;
-    const rtcMaker = 2 * makerFeePct + slippageBufferPct;
-    const rtcTaker = 2 * takerFeePct + slippageBufferPct;
-    const tp1MinMaker = rtcMaker * 2.5;
-    const tp1MinTaker = rtcTaker * 2.5;
-    const formatPct = (value, digits = 3) => (Number.isFinite(value) ? value.toFixed(digits) : "—");
+    const checklistGatesByProfile = {
+        "ai-matic": ["Trend bias"],
+        "ai-matic-x": ["Trend bias"],
+        "ai-matic-tree": ["Trend bias"],
+        "ai-matic-scalp": [
+            "TP1 >= min",
+            "1h bias",
+            "15m context",
+            "Chop filter",
+            "Level defined",
+            "Maker entry",
+            "SL structural",
+            "BE+ / time stop",
+        ],
+    };
+    const activeGateNames = checklistGatesByProfile[local.riskMode] ?? checklistGatesByProfile["ai-matic"];
     const statusItems = [
         {
             label: "Cheat Sheet",
@@ -476,8 +479,8 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                         ...local,
                                                         enableSoftGates: !local.enableSoftGates,
                                                     }), className: `rounded-md border px-3 py-1 text-sm ${local.enableSoftGates
-                                                        ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                                                        : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enableSoftGates ? "On" : "Off" })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Risk Stops" }), _jsxs("div", { className: "grid gap-2", children: [_jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: "Strict risk adherence" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "Vynucuje risk protokol: R limit (max ztr\u00E1ta v R), povinn\u00E9 stopky a \u017E\u00E1dn\u00E9 obch\u00E1zen\u00ED pravidel." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
+                                                ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                                                : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.enableSoftGates ? "On" : "Off" })] }), _jsxs("div", { className: "rounded-md border border-input bg-slate-800 px-3 py-2 text-sm", children: [_jsx("div", { className: "text-xs text-secondary-foreground/70", children: "Checklist gates" }), _jsx("div", { className: "mt-1 text-secondary-foreground", children: activeGateNames.join(" \u00b7 ") })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Risk Stops" }), _jsxs("div", { className: "grid gap-2", children: [_jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: "Strict risk adherence" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "Vynucuje risk protokol: R limit (max ztr\u00E1ta v R), povinn\u00E9 stopky a \u017E\u00E1dn\u00E9 obch\u00E1zen\u00ED pravidel." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
                                                         ...local,
                                                         strictRiskAdherence: !local.strictRiskAdherence,
                                                     }), className: `rounded-md border px-3 py-1 text-sm ${local.strictRiskAdherence
@@ -492,28 +495,10 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                         haltOnDrawdown: !local.haltOnDrawdown,
                                                     }), className: `rounded-md border px-3 py-1 text-sm ${local.haltOnDrawdown
                                                         ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                                                        : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.haltOnDrawdown ? "On" : "Off" })] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Fees & Slippage (RTC)" }), _jsxs("div", { className: "grid gap-3 rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { className: "grid gap-2 sm:grid-cols-3", children: [_jsxs("div", { className: "grid gap-1", children: [_jsx("span", { className: "text-xs text-secondary-foreground/70", children: "Maker fee %" }), _jsx("input", { type: "number", min: 0, step: 0.001, value: local.makerFeePct, onChange: (event) => {
-                                                        const next = event.currentTarget.valueAsNumber;
-                                                        setLocal({
-                                                            ...local,
-                                                            makerFeePct: Number.isFinite(next) ? Math.max(0, next) : 0,
-                                                        });
-                                                    }, className: "w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200" })] }), _jsxs("div", { className: "grid gap-1", children: [_jsx("span", { className: "text-xs text-secondary-foreground/70", children: "Taker fee %" }), _jsx("input", { type: "number", min: 0, step: 0.001, value: local.takerFeePct, onChange: (event) => {
-                                                        const next = event.currentTarget.valueAsNumber;
-                                                        setLocal({
-                                                            ...local,
-                                                            takerFeePct: Number.isFinite(next) ? Math.max(0, next) : 0,
-                                                        });
-                                                    }, className: "w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200" })] }), _jsxs("div", { className: "grid gap-1", children: [_jsx("span", { className: "text-xs text-secondary-foreground/70", children: "Slippage buffer %" }), _jsx("input", { type: "number", min: 0, step: 0.001, value: local.slippageBufferPct, onChange: (event) => {
-                                                        const next = event.currentTarget.valueAsNumber;
-                                                        setLocal({
-                                                            ...local,
-                                                            slippageBufferPct: Number.isFinite(next) ? Math.max(0, next) : 0,
-                                                        });
-                                                    }, className: "w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200" })] })] }), _jsxs("div", { className: "text-xs text-secondary-foreground/70", children: ["RTC maker/maker ", formatPct(rtcMaker), "% · TP1_min ", formatPct(tp1MinMaker), "% · RTC taker/taker ", formatPct(rtcTaker), "% · TP1_min ", formatPct(tp1MinTaker), "%"] })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Trend Gate Mode" }), _jsxs("div", { className: "rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2", children: [_jsxs("select", { value: local.trendGateMode, onChange: (e) => setLocal({
+                                                        : "border-slate-700 bg-slate-900/40 text-slate-200"}`, children: local.haltOnDrawdown ? "On" : "Off" })] })] })] }), local.riskMode !== "ai-matic-scalp" ? (_jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Trend Gate Mode" }), _jsxs("div", { className: "rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2", children: [_jsxs("select", { value: local.trendGateMode, onChange: (e) => setLocal({
                                                 ...local,
                                                 trendGateMode: e.target.value,
-                                            }), className: "w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200", children: [_jsx("option", { value: "adaptive", children: "Adaptive" }), _jsx("option", { value: "follow", children: "Follow" }), _jsx("option", { value: "reverse", children: "Reverse" })] }), _jsx("div", { className: "text-xs text-secondary-foreground/70", children: "Trend Gate filtruje vstupy podle sm\u011Bru trendu z HTF 1h. Adaptive: p\u0159ep\u00EDn\u00E1 Follow/Reverse podle s\u00EDly trendu (ADX/score); Reverse jen p\u0159i slab\u00E9m trendu a mean\u2011reversion sign\u00E1lu. Follow: pouze se sm\u011Brem 1h trendu." })] })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Cheat Sheet" }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: local.strategyCheatSheetEnabled ? "On" : "Off" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "Prioritize saved entry setups (Limit/Conditional)." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
+                                            }), className: "w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200", children: [_jsx("option", { value: "adaptive", children: "Adaptive" }), _jsx("option", { value: "follow", children: "Follow" }), _jsx("option", { value: "reverse", children: "Reverse" })] }), _jsx("div", { className: "text-xs text-secondary-foreground/70", children: "Trend Gate filtruje vstupy podle sm\u011Bru trendu z HTF 1h. Adaptive: p\u0159ep\u00EDn\u00E1 Follow/Reverse podle s\u00EDly trendu (ADX/score); Reverse jen p\u0159i slab\u00E9m trendu a mean\u2011reversion sign\u00E1lu. Follow: pouze se sm\u011Brem 1h trendu." })] })] })) : null, _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Strategy Cheat Sheet" }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: local.strategyCheatSheetEnabled ? "On" : "Off" }), _jsx("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: "Prioritize saved entry setups (Limit/Conditional)." })] }), _jsx("button", { type: "button", onClick: () => setLocal({
                                                 ...local,
                                                 strategyCheatSheetEnabled: !local.strategyCheatSheetEnabled,
                                             }), className: `rounded-md border px-3 py-1 text-sm ${local.strategyCheatSheetEnabled

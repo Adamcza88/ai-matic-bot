@@ -165,6 +165,12 @@ export default function Dashboard({
       CHECKLIST_DEFAULTS_BY_PROFILE["ai-matic"]
     );
   }, [CHECKLIST_DEFAULTS_BY_PROFILE, riskMode]);
+  const checklistGateNames = useMemo(() => {
+    const defaults =
+      CHECKLIST_DEFAULTS_BY_PROFILE[riskMode] ??
+      CHECKLIST_DEFAULTS_BY_PROFILE["ai-matic"];
+    return Object.keys(defaults).filter((name) => name !== "Exec allowed");
+  }, [CHECKLIST_DEFAULTS_BY_PROFILE, riskMode]);
   const CHECKLIST_ALIASES = useMemo(
     () => ({
       "1h bias": ["Trend bias"],
@@ -308,18 +314,19 @@ export default function Dashboard({
             onClosePosition={manualClosePosition}
           />
         </TabsContent>
-        <TabsContent value="signals">
-          <SignalsAccordion
-            allowedSymbols={allowedSymbols}
-            scanDiagnostics={scanDiagnostics}
-            scanLoaded={scanLoaded}
-            lastScanTs={lastScanTs}
-            checklistEnabled={checklistEnabled}
-            toggleChecklist={toggleChecklist}
-            resetChecklist={resetChecklist}
-            mode={mode}
-          />
-        </TabsContent>
+          <TabsContent value="signals">
+            <SignalsAccordion
+              allowedSymbols={allowedSymbols}
+              scanDiagnostics={scanDiagnostics}
+              scanLoaded={scanLoaded}
+              lastScanTs={lastScanTs}
+              checklistEnabled={checklistEnabled}
+              toggleChecklist={toggleChecklist}
+              resetChecklist={resetChecklist}
+              mode={mode}
+              profileGateNames={checklistGateNames}
+            />
+          </TabsContent>
         <TabsContent value="orders">
           <OrdersPanel
             orders={exchangeOrders}

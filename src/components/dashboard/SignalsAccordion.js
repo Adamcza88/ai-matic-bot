@@ -43,7 +43,7 @@ function gateLabel(name, detail) {
     }
     return name;
 }
-export default function SignalsAccordion({ allowedSymbols, scanDiagnostics, scanLoaded, lastScanTs, checklistEnabled, toggleChecklist, resetChecklist, mode, }) {
+export default function SignalsAccordion({ allowedSymbols, scanDiagnostics, scanLoaded, lastScanTs, checklistEnabled, toggleChecklist, resetChecklist, mode, profileGateNames, }) {
     const lastScanLabel = lastScanTs
         ? new Date(lastScanTs).toLocaleTimeString([], {
             hour: "2-digit",
@@ -53,7 +53,9 @@ export default function SignalsAccordion({ allowedSymbols, scanDiagnostics, scan
         : "—";
     return (_jsx(Panel, { title: "Signal checklist", description: `Last scan: ${lastScanLabel}`, action: _jsx(Button, { variant: "outline", size: "sm", onClick: resetChecklist, className: "h-8 text-xs", children: "Reset gates" }), children: _jsx("div", { className: "space-y-3", children: allowedSymbols.map((symbol) => {
                 const diag = scanDiagnostics?.[symbol];
-                const gates = Array.isArray(diag?.gates) ? diag.gates : [];
+                const rawGates = Array.isArray(diag?.gates) ? diag.gates : [];
+                const gateSet = new Set(profileGateNames);
+                const gates = rawGates.filter((gate) => gateSet.has(gate.name));
                 const hardEnabled = diag?.hardEnabled !== false;
                 const softEnabled = diag?.softEnabled !== false;
                 const hardBlocked = diag?.hardBlocked;

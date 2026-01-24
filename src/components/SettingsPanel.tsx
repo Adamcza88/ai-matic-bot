@@ -164,9 +164,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       notes: [
         ORDER_VALUE_NOTE,
         "Instrument: Crypto Linear futures · HTF 1h/15m · LTF 5m/1m · fee-aware scalp.",
-        "RTC: maker_fee %, taker_fee %, slippage_buffer % (0.01–0.03) – orientační.",
-        "RTC taker/taker = 2*taker_fee + slippage_buffer; maker/maker = 2*maker_fee + slippage_buffer.",
-        "TP1_min = 2.5 * RTC (orientačně).",
         "SCAN (1h): nad EMA21, EMA21 roste, struktura bez LL/LH (long); short zrcadlově.",
         "15m kontext: bullish HH/HL nad EMA21 nebo pullback drží poslední HL / 1h demand.",
         "No-trade: 1h EMA21 plochá + 15m EMA(8/21) cross; špatný spread; TP < TP1_min; 2 pokusy na levelu.",
@@ -180,7 +177,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         "Time stop: 1m entry 5 min bez posunu ~0.5R; 5m entry 15 min bez follow-through → exit.",
         "Re-entry: nový LTF HL + nový reclaim/retest; max 2 pokusy.",
         "Risk: 0.25–1.0 % / trade; -2R denně stop; 2 ztráty v řadě pauza; žádné přidávání.",
-        "Checklist: 1h bias, 15m kontext, RL/BL level, maker entry, SL strukturální, TP1≥min, BE+/time stop, denní limity.",
+        "Checklist: 1h bias, 15m kontext, chop filter, RL/BL level, maker entry, SL strukturální, TP1≥min, BE+/time stop.",
       ],
     },
     "ai-matic-tree": {
@@ -209,21 +206,27 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     "ai-matic-x":
       "AI‑MATIC‑X (1h/5m): decision tree, čistá struktura, max 1 pozice celkem.",
     "ai-matic-scalp":
-      "AI‑MATIC‑SCALP (1h/15m/5m/1m): fee‑aware scalp, maker‑first, RTC + TP1_min reference.",
+      "AI‑MATIC‑SCALP (1h/15m/5m/1m): fee‑aware scalp, maker‑first.",
     "ai-matic-tree":
       "AI‑MATIC‑TREE (1h/5m): decision‑tree overlay nad AI‑MATIC core enginem.",
   };
-  const makerFeePct = Number.isFinite(local.makerFeePct) ? local.makerFeePct : 0;
-  const takerFeePct = Number.isFinite(local.takerFeePct) ? local.takerFeePct : 0;
-  const slippageBufferPct = Number.isFinite(local.slippageBufferPct)
-    ? local.slippageBufferPct
-    : 0;
-  const rtcMaker = 2 * makerFeePct + slippageBufferPct;
-  const rtcTaker = 2 * takerFeePct + slippageBufferPct;
-  const tp1MinMaker = rtcMaker * 2.5;
-  const tp1MinTaker = rtcTaker * 2.5;
-  const formatPct = (value: number, digits = 3) =>
-    Number.isFinite(value) ? value.toFixed(digits) : "—";
+  const checklistGatesByProfile: Record<AISettings["riskMode"], string[]> = {
+    "ai-matic": ["Trend bias"],
+    "ai-matic-x": ["Trend bias"],
+    "ai-matic-tree": ["Trend bias"],
+    "ai-matic-scalp": [
+      "TP1 >= min",
+      "1h bias",
+      "15m context",
+      "Chop filter",
+      "Level defined",
+      "Maker entry",
+      "SL structural",
+      "BE+ / time stop",
+    ],
+  };
+  const activeGateNames =
+    checklistGatesByProfile[local.riskMode] ?? checklistGatesByProfile["ai-matic"];
   const statusItems = [
     {
       label: "Cheat Sheet",
@@ -702,6 +705,12 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                   {local.enableSoftGates ? "On" : "Off"}
                 </button>
               </div>
+              <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
+                <div className="text-xs text-secondary-foreground/70">Checklist gates</div>
+                <div className="mt-1 text-secondary-foreground">
+                  {activeGateNames.join(" · ")}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -788,95 +797,32 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           </div>
 
 
-          <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Fees & Slippage (RTC)
-            </label>
-            <div className="grid gap-3 rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-              <div className="grid gap-2 sm:grid-cols-3">
-                <div className="grid gap-1">
-                  <span className="text-xs text-secondary-foreground/70">Maker fee %</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.001}
-                    value={local.makerFeePct}
-                    onChange={(event) => {
-                      const next = event.currentTarget.valueAsNumber;
-                      setLocal({
-                        ...local,
-                        makerFeePct: Number.isFinite(next) ? Math.max(0, next) : 0,
-                      });
-                    }}
-                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
-                  />
+          {local.riskMode !== "ai-matic-scalp" ? (
+            <div className="grid gap-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Trend Gate Mode
+              </label>
+              <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
+                <select
+                  value={local.trendGateMode}
+                  onChange={(e) =>
+                    setLocal({
+                      ...local,
+                      trendGateMode: e.target.value as AISettings["trendGateMode"],
+                    })
+                  }
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
+                >
+                  <option value="adaptive">Adaptive</option>
+                  <option value="follow">Follow</option>
+                  <option value="reverse">Reverse</option>
+                </select>
+                <div className="text-xs text-secondary-foreground/70">
+                  Trend Gate filtruje vstupy podle směru trendu z HTF 1h. Adaptive: přepíná Follow/Reverse podle síly trendu (ADX/score); Reverse jen při slabém trendu a mean‑reversion signálu. Follow: pouze se směrem 1h trendu.
                 </div>
-                <div className="grid gap-1">
-                  <span className="text-xs text-secondary-foreground/70">Taker fee %</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.001}
-                    value={local.takerFeePct}
-                    onChange={(event) => {
-                      const next = event.currentTarget.valueAsNumber;
-                      setLocal({
-                        ...local,
-                        takerFeePct: Number.isFinite(next) ? Math.max(0, next) : 0,
-                      });
-                    }}
-                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
-                  />
-                </div>
-                <div className="grid gap-1">
-                  <span className="text-xs text-secondary-foreground/70">Slippage buffer %</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.001}
-                    value={local.slippageBufferPct}
-                    onChange={(event) => {
-                      const next = event.currentTarget.valueAsNumber;
-                      setLocal({
-                        ...local,
-                        slippageBufferPct: Number.isFinite(next) ? Math.max(0, next) : 0,
-                      });
-                    }}
-                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
-                  />
-                </div>
-              </div>
-              <div className="text-xs text-secondary-foreground/70">
-                RTC maker/maker {formatPct(rtcMaker)}% · TP1_min {formatPct(tp1MinMaker)}% ·
-                RTC taker/taker {formatPct(rtcTaker)}% · TP1_min {formatPct(tp1MinTaker)}%
               </div>
             </div>
-          </div>
-
-          <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Trend Gate Mode
-            </label>
-            <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
-              <select
-                value={local.trendGateMode}
-                onChange={(e) =>
-                  setLocal({
-                    ...local,
-                    trendGateMode: e.target.value as AISettings["trendGateMode"],
-                  })
-                }
-                className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
-              >
-                <option value="adaptive">Adaptive</option>
-                <option value="follow">Follow</option>
-                <option value="reverse">Reverse</option>
-              </select>
-              <div className="text-xs text-secondary-foreground/70">
-                Trend Gate filtruje vstupy podle směru trendu z HTF 1h. Adaptive: přepíná Follow/Reverse podle síly trendu (ADX/score); Reverse jen při slabém trendu a mean‑reversion signálu. Follow: pouze se směrem 1h trendu.
-              </div>
-            </div>
-          </div>
+          ) : null}
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">

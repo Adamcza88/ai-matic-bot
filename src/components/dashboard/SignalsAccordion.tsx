@@ -13,6 +13,7 @@ type SignalsAccordionProps = {
   toggleChecklist: (name: string) => void;
   resetChecklist: () => void;
   mode: TradingMode;
+  profileGateNames: string[];
 };
 
 const MODE_LABELS: Record<TradingMode, string> = {
@@ -75,6 +76,7 @@ export default function SignalsAccordion({
   toggleChecklist,
   resetChecklist,
   mode,
+  profileGateNames,
 }: SignalsAccordionProps) {
   const lastScanLabel = lastScanTs
     ? new Date(lastScanTs).toLocaleTimeString([], {
@@ -102,7 +104,9 @@ export default function SignalsAccordion({
       <div className="space-y-3">
         {allowedSymbols.map((symbol) => {
           const diag = scanDiagnostics?.[symbol];
-          const gates = Array.isArray(diag?.gates) ? diag.gates : [];
+          const rawGates = Array.isArray(diag?.gates) ? diag.gates : [];
+          const gateSet = new Set(profileGateNames);
+          const gates = rawGates.filter((gate: any) => gateSet.has(gate.name));
           const hardEnabled = diag?.hardEnabled !== false;
           const softEnabled = diag?.softEnabled !== false;
           const hardBlocked = diag?.hardBlocked;
