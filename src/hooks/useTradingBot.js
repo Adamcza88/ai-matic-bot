@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendIntent } from "../api/botApi";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
-import { evaluateStrategyForSymbol, resampleCandles } from "../engine/botEngine";
+import { evaluateStrategyForSymbol, resampleCandles, computeATR } from "../engine/botEngine";
 import { evaluateAiMaticXStrategyForSymbol, } from "../engine/aiMaticXStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { computeEma, findPivotsHigh, findPivotsLow } from "../engine/ta";
@@ -29,6 +29,43 @@ const ORDER_VALUE_BY_SYMBOL = {
     HYPEUSDT: 7500,
     FARTCOINUSDT: 7500,
 };
+const MAJOR_SYMBOLS = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
+const CORE_V2_RISK_PCT = {
+    "ai-matic": 0.004,
+    "ai-matic-x": 0.003,
+    "ai-matic-scalp": 0.0025,
+    "ai-matic-tree": 0.003,
+};
+const CORE_V2_COOLDOWN_MS = {
+    "ai-matic": 30 * 60_000,
+    "ai-matic-x": 60 * 60_000,
+    "ai-matic-scalp": 20 * 60_000,
+    "ai-matic-tree": 60 * 60_000,
+};
+const CORE_V2_VOLUME_PCTL = {
+    "ai-matic": 60,
+    "ai-matic-x": 70,
+    "ai-matic-scalp": 50,
+    "ai-matic-tree": 65,
+};
+const CORE_V2_SCORE_GATE = {
+    "ai-matic": { major: 11, alt: 12 },
+    "ai-matic-x": { major: 12, alt: 13 },
+    "ai-matic-scalp": { major: 10, alt: 99 },
+    "ai-matic-tree": { major: 11, alt: 13 },
+};
+const CORE_V2_EMA_SEP1_MIN = 0.18;
+const CORE_V2_EMA_SEP2_MIN = 0.12;
+const CORE_V2_ATR_MIN_PCT_MAJOR = 0.0012;
+const CORE_V2_ATR_MIN_PCT_ALT = 0.0018;
+const CORE_V2_HTF_BUFFER_PCT = 0.001;
+const CORE_V2_NOTIONAL_CAP_PCT = 0.01;
+const CORE_V2_BBO_AGE_BY_SYMBOL = {
+    BTCUSDT: 800,
+    ETHUSDT: 800,
+    SOLUSDT: 700,
+};
+const CORE_V2_BBO_AGE_DEFAULT_MS = 1000;
 const MAX_OPEN_POSITIONS_CAP = 10000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -319,6 +356,136 @@ function buildScalpContext(candles) {
     }
     return { h1, m15, ema15mCrossCount, ema15mChoppy };
 }
+function percentile(values, p) {
+    if (!values.length)
+        return Number.NaN;
+    const sorted = [...values].sort((a, b) => a - b);
+    const rank = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+    return sorted[rank];
+}
+const resolveEntryTfMin = (riskMode) => riskMode === "ai-matic-scalp" ? 1 : 5;
+const resolveBboAgeLimit = (symbol) => CORE_V2_BBO_AGE_BY_SYMBOL[symbol] ?? CORE_V2_BBO_AGE_DEFAULT_MS;
+const computeCoreV2Metrics = (candles, riskMode) => {
+    const ltfTimeframeMin = resolveEntryTfMin(riskMode);
+    const ltf = resampleCandles(candles, ltfTimeframeMin);
+    const ltfClose = ltf.length ? ltf[ltf.length - 1].close : Number.NaN;
+    const ltfCloses = ltf.map((c) => c.close);
+    const ltfHighs = ltf.map((c) => c.high);
+    const ltfLows = ltf.map((c) => c.low);
+    const ema8Arr = computeEma(ltfCloses, 8);
+    const ema12Arr = computeEma(ltfCloses, 12);
+    const ema21Arr = computeEma(ltfCloses, 21);
+    const ema26Arr = computeEma(ltfCloses, 26);
+    const ema50Arr = computeEma(ltfCloses, 50);
+    const ema8 = ema8Arr[ema8Arr.length - 1] ?? Number.NaN;
+    const ema12 = ema12Arr[ema12Arr.length - 1] ?? Number.NaN;
+    const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
+    const ema26 = ema26Arr[ema26Arr.length - 1] ?? Number.NaN;
+    const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
+    const atrArr = computeATR(ltfHighs, ltfLows, ltfCloses, 14);
+    const atr14 = atrArr[atrArr.length - 1] ?? Number.NaN;
+    const atrPct = Number.isFinite(atr14) && Number.isFinite(ltfClose) && ltfClose > 0
+        ? atr14 / ltfClose
+        : Number.NaN;
+    const sep1 = Number.isFinite(atr14) && atr14 > 0
+        ? Math.abs(ema8 - ema21) / atr14
+        : Number.NaN;
+    const sep2 = Number.isFinite(atr14) && atr14 > 0
+        ? Math.abs(ema21 - ema50) / atr14
+        : Number.NaN;
+    const vols = ltf.map((c) => toNumber(c.volume));
+    const recentVols = vols.slice(-200).filter((v) => Number.isFinite(v));
+    const volumeCurrent = recentVols[recentVols.length - 1] ?? Number.NaN;
+    const volumeP50 = percentile(recentVols, 50);
+    const volumeP60 = percentile(recentVols, 60);
+    const volumeP65 = percentile(recentVols, 65);
+    const volumeP70 = percentile(recentVols, 70);
+    const htf = resampleCandles(candles, 60);
+    const htfCloses = htf.map((c) => c.close);
+    const htfHighs = htf.map((c) => c.high);
+    const htfLows = htf.map((c) => c.low);
+    const htfClose = htf.length ? htf[htf.length - 1].close : Number.NaN;
+    const htfEma12Arr = computeEma(htfCloses, 12);
+    const htfEma26Arr = computeEma(htfCloses, 26);
+    const htfEma12 = htfEma12Arr[htfEma12Arr.length - 1] ?? Number.NaN;
+    const htfEma26 = htfEma26Arr[htfEma26Arr.length - 1] ?? Number.NaN;
+    const htfDiffPct = Number.isFinite(htfClose) && htfClose > 0
+        ? Math.abs(htfEma12 - htfEma26) / htfClose
+        : Number.NaN;
+    const htfBias = Number.isFinite(htfEma12) && Number.isFinite(htfEma26)
+        ? htfEma12 > htfEma26
+            ? "BULL"
+            : htfEma12 < htfEma26
+                ? "BEAR"
+                : "NONE"
+        : "NONE";
+    const htfAtrArr = computeATR(htfHighs, htfLows, htfCloses, 14);
+    const htfAtr14 = htfAtrArr[htfAtrArr.length - 1] ?? Number.NaN;
+    const htfAtrPct = Number.isFinite(htfAtr14) && Number.isFinite(htfClose) && htfClose > 0
+        ? htfAtr14 / htfClose
+        : Number.NaN;
+    const pullbackLookback = 12;
+    let pullbackLong = false;
+    let pullbackShort = false;
+    for (let i = Math.max(0, ltf.length - pullbackLookback); i < ltf.length; i++) {
+        const candle = ltf[i];
+        const ema12At = ema12Arr[i];
+        const ema26At = ema26Arr[i];
+        if (!candle || !Number.isFinite(ema12At) || !Number.isFinite(ema26At))
+            continue;
+        const lowZone = Math.min(ema12At, ema26At);
+        const highZone = Math.max(ema12At, ema26At);
+        if (candle.close <= ema12At || (candle.close >= lowZone && candle.close <= highZone)) {
+            pullbackLong = true;
+        }
+        if (candle.close >= ema12At || (candle.close >= lowZone && candle.close <= highZone)) {
+            pullbackShort = true;
+        }
+    }
+    const pivotsHigh = findPivotsHigh(ltf, 2, 2);
+    const pivotsLow = findPivotsLow(ltf, 2, 2);
+    const lastLow = pivotsLow[pivotsLow.length - 1];
+    const lastHigh = pivotsHigh[pivotsHigh.length - 1];
+    const prevHigh = lastLow ? pivotsHigh.filter((p) => p.idx < lastLow.idx).pop() : undefined;
+    const prevLow = lastHigh ? pivotsLow.filter((p) => p.idx < lastHigh.idx).pop() : undefined;
+    const microBreakLong = Boolean(prevHigh && lastLow) &&
+        Number.isFinite(ltfClose) &&
+        ltfClose > prevHigh.price;
+    const microBreakShort = Boolean(prevLow && lastHigh) &&
+        Number.isFinite(ltfClose) &&
+        ltfClose < prevLow.price;
+    return {
+        ltfTimeframeMin,
+        ltfClose,
+        ema8,
+        ema12,
+        ema21,
+        ema26,
+        ema50,
+        atr14,
+        atrPct,
+        sep1,
+        sep2,
+        volumeCurrent,
+        volumeP50,
+        volumeP60,
+        volumeP65,
+        volumeP70,
+        htfClose,
+        htfEma12,
+        htfEma26,
+        htfDiffPct,
+        htfBias,
+        htfAtr14,
+        htfAtrPct,
+        pullbackLong,
+        pullbackShort,
+        pivotHigh: prevHigh?.price,
+        pivotLow: prevLow?.price,
+        microBreakLong,
+        microBreakShort,
+    };
+};
 function toEpoch(value) {
     const n = Number(value);
     if (Number.isFinite(n) && n > 0) {
@@ -500,6 +667,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const positionSnapshotRef = useRef(new Map());
     const execSeenRef = useRef(new Set());
     const pnlSeenRef = useRef(new Set());
+    const lastLossBySymbolRef = useRef(new Map());
     const fastOkRef = useRef(false);
     const slowOkRef = useRef(false);
     const modeRef = useRef(mode);
@@ -715,7 +883,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     }, [useTestnet]);
     const isSessionAllowed = useCallback((_now, _next) => true, []);
     const computeNotionalForSignal = useCallback((symbol, entry, sl) => {
-        const settings = settingsRef.current;
         const equity = getEquityValue();
         if (!Number.isFinite(equity) || equity <= 0) {
             return { ok: false, reason: "missing_equity" };
@@ -724,12 +891,29 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (!Number.isFinite(riskPerUnit) || riskPerUnit <= 0) {
             return { ok: false, reason: "invalid_sl_distance" };
         }
-        let notional = resolveOrderNotional(symbol);
+        const settings = settingsRef.current;
+        const riskPct = CORE_V2_RISK_PCT[settings.riskMode] ?? 0;
+        const riskBudget = equity * riskPct;
+        if (!Number.isFinite(riskBudget) || riskBudget <= 0) {
+            return { ok: false, reason: "invalid_risk_budget" };
+        }
+        let qty = riskBudget / riskPerUnit;
+        let notional = qty * entry;
         if (!Number.isFinite(notional) || notional <= 0) {
             return { ok: false, reason: "invalid_notional" };
         }
-        notional = Math.min(Math.max(notional, MIN_POSITION_NOTIONAL_USD), MAX_POSITION_NOTIONAL_USD);
-        let qty = notional / entry;
+        const notionalCap = equity * CORE_V2_NOTIONAL_CAP_PCT;
+        if (Number.isFinite(notionalCap) && notionalCap > 0 && notional > notionalCap) {
+            notional = notionalCap;
+            qty = notional / entry;
+        }
+        if (notional < MIN_POSITION_NOTIONAL_USD) {
+            return { ok: false, reason: "below_min_notional" };
+        }
+        if (notional > MAX_POSITION_NOTIONAL_USD) {
+            notional = MAX_POSITION_NOTIONAL_USD;
+            qty = notional / entry;
+        }
         if (!Number.isFinite(qty) || qty <= 0) {
             return { ok: false, reason: "invalid_qty" };
         }
@@ -1183,6 +1367,228 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }
         return { ok, detail: details.join(" | ") };
     }, [getOpenBiasState, resolveBtcBias]);
+    const evaluateCoreV2 = useCallback((symbol, decision, signal, feedAgeMs) => {
+        const settings = settingsRef.current;
+        const core = decision?.coreV2;
+        const signalActive = Boolean(signal);
+        const sideRaw = String(signal?.intent?.side ?? "").toLowerCase();
+        const signalDir = sideRaw === "buy" ? "BULL" : sideRaw === "sell" ? "BEAR" : "";
+        const htfConsensusRaw = String(decision?.htfTrend?.consensus ?? "").toLowerCase();
+        const htfConsensus = htfConsensusRaw === "bull"
+            ? "BULL"
+            : htfConsensusRaw === "bear"
+                ? "BEAR"
+                : "";
+        const htfDir = settings.riskMode === "ai-matic-x"
+            ? core?.htfBias ?? "NONE"
+            : htfConsensus || core?.htfBias || "NONE";
+        const direction = signalDir || htfDir || "NONE";
+        const isMajor = MAJOR_SYMBOLS.has(symbol);
+        const atrMin = isMajor ? CORE_V2_ATR_MIN_PCT_MAJOR : CORE_V2_ATR_MIN_PCT_ALT;
+        const volumePct = CORE_V2_VOLUME_PCTL[settings.riskMode];
+        const volumeThreshold = core == null
+            ? Number.NaN
+            : volumePct === 50
+                ? core.volumeP50
+                : volumePct === 60
+                    ? core.volumeP60
+                    : volumePct === 65
+                        ? core.volumeP65
+                        : core.volumeP70;
+        const htfBiasOk = direction !== "NONE" &&
+            htfDir === direction &&
+            (settings.riskMode !== "ai-matic-x" ||
+                (Number.isFinite(core?.htfDiffPct) &&
+                    core.htfDiffPct >= CORE_V2_HTF_BUFFER_PCT));
+        const emaOrderOk = direction === "BULL"
+            ? Number.isFinite(core?.ltfClose) &&
+                core.ltfClose > core.ema8 &&
+                core.ema8 > core.ema21 &&
+                core.ema21 > core.ema50
+            : direction === "BEAR"
+                ? Number.isFinite(core?.ltfClose) &&
+                    core.ltfClose < core.ema8 &&
+                    core.ema8 < core.ema21 &&
+                    core.ema21 < core.ema50
+                : false;
+        const sep1Ok = Number.isFinite(core?.sep1) && core.sep1 >= CORE_V2_EMA_SEP1_MIN;
+        const sep2Ok = Number.isFinite(core?.sep2) && core.sep2 >= CORE_V2_EMA_SEP2_MIN;
+        const atrOk = Number.isFinite(core?.atrPct) && core.atrPct >= atrMin;
+        const volumeOk = Number.isFinite(core?.volumeCurrent) &&
+            Number.isFinite(volumeThreshold) &&
+            core.volumeCurrent > volumeThreshold;
+        const requireMicro = settings.riskMode === "ai-matic-x";
+        const pullbackOk = !requireMicro
+            ? true
+            : direction === "BULL"
+                ? Boolean(core?.pullbackLong)
+                : direction === "BEAR"
+                    ? Boolean(core?.pullbackShort)
+                    : false;
+        const pivotOk = !requireMicro
+            ? true
+            : direction === "BULL"
+                ? Number.isFinite(core?.pivotLow) && Number.isFinite(core?.pivotHigh)
+                : direction === "BEAR"
+                    ? Number.isFinite(core?.pivotHigh) && Number.isFinite(core?.pivotLow)
+                    : false;
+        const microBreakOk = !requireMicro
+            ? true
+            : direction === "BULL"
+                ? Boolean(core?.microBreakLong)
+                : direction === "BEAR"
+                    ? Boolean(core?.microBreakShort)
+                    : false;
+        const bboLimit = resolveBboAgeLimit(symbol);
+        const bboFreshOk = feedAgeMs != null;
+        const bboAgeOk = feedAgeMs != null && feedAgeMs <= bboLimit;
+        const entryType = signal?.entryType ?? "LIMIT_MAKER_FIRST";
+        const makerOk = entryType === "LIMIT_MAKER_FIRST" || entryType === "LIMIT";
+        const sl = toNumber(signal?.intent?.sl);
+        const slOk = !signalActive ? true : Number.isFinite(sl) && sl > 0;
+        const adx = toNumber(decision?.trendAdx);
+        const htfAtrOk = Number.isFinite(core?.htfAtrPct) && core.htfAtrPct >= atrMin;
+        const trendStrengthOk = (Number.isFinite(adx) && adx >= 18) || htfAtrOk;
+        const gates = [
+            {
+                name: "HTF bias",
+                ok: htfBiasOk,
+                detail: settings.riskMode === "ai-matic-x"
+                    ? Number.isFinite(core?.htfEma12) && Number.isFinite(core?.htfEma26)
+                        ? `EMA12 ${formatNumber(core.htfEma12, 3)} | EMA26 ${formatNumber(core.htfEma26, 3)} | diff ${formatNumber((core.htfDiffPct ?? 0) * 100, 2)}%`
+                        : "missing"
+                    : htfConsensus
+                        ? `Consensus ${htfConsensus}${Number.isFinite(decision?.htfTrend?.alignedCount)
+                            ? ` (${decision?.htfTrend?.alignedCount}/${Array.isArray(decision?.htfTrend?.byTimeframe)
+                                ? decision?.htfTrend?.byTimeframe.length
+                                : 0})`
+                            : ""}`
+                        : "missing",
+                hard: true,
+            },
+            {
+                name: "EMA order",
+                ok: emaOrderOk,
+                detail: Number.isFinite(core?.ltfClose)
+                    ? `close ${formatNumber(core.ltfClose, 4)} | EMA8 ${formatNumber(core.ema8, 4)} | EMA21 ${formatNumber(core.ema21, 4)} | EMA50 ${formatNumber(core.ema50, 4)}`
+                    : "missing",
+                hard: true,
+            },
+            {
+                name: "EMA sep1",
+                ok: sep1Ok,
+                detail: Number.isFinite(core?.sep1)
+                    ? `sep1 ${formatNumber(core.sep1, 2)} (min ${CORE_V2_EMA_SEP1_MIN})`
+                    : "missing",
+                hard: true,
+            },
+            {
+                name: "EMA sep2",
+                ok: sep2Ok,
+                detail: Number.isFinite(core?.sep2)
+                    ? `sep2 ${formatNumber(core.sep2, 2)} (min ${CORE_V2_EMA_SEP2_MIN})`
+                    : "missing",
+                hard: true,
+            },
+            {
+                name: "ATR% window",
+                ok: atrOk,
+                detail: Number.isFinite(core?.atrPct)
+                    ? `ATR% ${formatNumber(core.atrPct * 100, 3)} (min ${formatNumber(atrMin * 100, 3)})`
+                    : "missing",
+                hard: true,
+            },
+            {
+                name: "Volume Pxx",
+                ok: volumeOk,
+                detail: Number.isFinite(core?.volumeCurrent) && Number.isFinite(volumeThreshold)
+                    ? `vol ${formatNumber(core.volumeCurrent, 0)} > P${volumePct} ${formatNumber(volumeThreshold, 0)}`
+                    : "missing",
+                hard: true,
+            },
+            {
+                name: "LTF pullback",
+                ok: pullbackOk,
+                detail: requireMicro ? (pullbackOk ? "EMA12/26 zone touched" : "no pullback") : "not required",
+            },
+            {
+                name: "Micro pivot",
+                ok: pivotOk,
+                detail: requireMicro
+                    ? Number.isFinite(core?.pivotHigh) || Number.isFinite(core?.pivotLow)
+                        ? `pivotHi ${formatNumber(core?.pivotHigh ?? Number.NaN, 4)} | pivotLo ${formatNumber(core?.pivotLow ?? Number.NaN, 4)}`
+                        : "missing"
+                    : "not required",
+            },
+            {
+                name: "Micro break close",
+                ok: microBreakOk,
+                detail: requireMicro ? (microBreakOk ? "break confirmed" : "no break") : "not required",
+            },
+            {
+                name: "BBO fresh",
+                ok: bboFreshOk,
+                detail: feedAgeMs != null ? `age ${Math.round(feedAgeMs)}ms` : "no feed",
+            },
+            {
+                name: "BBO age",
+                ok: bboAgeOk,
+                detail: feedAgeMs != null ? `${Math.round(feedAgeMs)}ms ≤ ${bboLimit}ms` : "no feed",
+            },
+            {
+                name: "Trend strength",
+                ok: trendStrengthOk,
+                detail: Number.isFinite(adx) || Number.isFinite(core?.htfAtrPct)
+                    ? `ADX ${formatNumber(adx, 1)} | 1h ATR% ${formatNumber((core?.htfAtrPct ?? Number.NaN) * 100, 2)}`
+                    : "missing",
+            },
+            {
+                name: "Maker entry",
+                ok: makerOk,
+                detail: entryType,
+            },
+            {
+                name: "SL structural",
+                ok: slOk,
+                detail: Number.isFinite(sl)
+                    ? `SL ${formatNumber(sl, 6)}`
+                    : signalActive
+                        ? "SL missing"
+                        : "waiting",
+                hard: true,
+            },
+        ];
+        const scoreItems = gates;
+        const scoreTotal = scoreItems.length;
+        const score = scoreItems.filter((g) => g.ok).length;
+        const scoreCfg = CORE_V2_SCORE_GATE[settings.riskMode];
+        const baseThreshold = isMajor ? scoreCfg.major : scoreCfg.alt;
+        const strongTrend = (Number.isFinite(adx) && adx >= 25) ||
+            (Number.isFinite(core?.htfAtrPct) && core.htfAtrPct >= atrMin) ||
+            decision?.htfTrend?.alignedCount >= 2;
+        const threshold = settings.riskMode === "ai-matic-tree"
+            ? strongTrend
+                ? scoreCfg.major
+                : scoreCfg.alt
+            : baseThreshold;
+        const hardFailures = gates.filter((g) => g.hard && !g.ok).map((g) => g.name);
+        const scorePass = hardFailures.length > 0
+            ? false
+            : scoreTotal > 0
+                ? score >= threshold
+                : undefined;
+        return {
+            gates,
+            score,
+            scoreTotal,
+            threshold,
+            scorePass,
+            hardFailures,
+            atrMin,
+            volumePct,
+            isMajor,
+        };
+    }, []);
     const enforceBtcBiasAlignment = useCallback(async (now) => {
         if (!authToken)
             return;
@@ -1287,40 +1693,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             }
         }
     }, [addLogEntries, authToken, isEntryOrder, normalizeBias, postJson, resolveBtcBias]);
-    const resolveQualityScore = useCallback((decision, signalActive) => {
-        const adx = toNumber(decision?.trendAdx);
-        const trendScore = toNumber(decision?.trendScore);
-        const htfTrend = decision?.htfTrend;
-        const alignedCount = toNumber(htfTrend?.alignedCount);
-        const tfCount = Array.isArray(htfTrend?.byTimeframe)
-            ? htfTrend.byTimeframe.length
-            : 0;
-        const hasTrendScore = Number.isFinite(trendScore);
-        const hasAdx = Number.isFinite(adx);
-        const hasHtf = tfCount > 0 && Number.isFinite(alignedCount);
-        const trendPoints = hasTrendScore
-            ? Math.min(4, Math.max(0, trendScore))
-            : 0;
-        const adxPoints = hasAdx
-            ? adx >= 30
-                ? 3
-                : adx >= 20
-                    ? 2
-                    : adx >= 15
-                        ? 1
-                        : 0
-            : 0;
-        const htfPoints = hasHtf ? Math.min(alignedCount, tfCount) : 0;
-        const maxPoints = (hasTrendScore ? 4 : 0) + (hasAdx ? 3 : 0) + (hasHtf ? tfCount : 0);
-        if (!maxPoints) {
+    const resolveQualityScore = useCallback((symbol, decision, signal, feedAgeMs) => {
+        if (!decision)
             return { score: null, threshold: null, pass: undefined };
-        }
-        const normalized = ((trendPoints + adxPoints + htfPoints) / maxPoints) * 10;
-        const score = Math.round(normalized * 10) / 10;
-        const threshold = 6;
-        const pass = score >= threshold;
-        return { score, threshold, pass };
-    }, []);
+        const evalResult = evaluateCoreV2(symbol, decision, signal, feedAgeMs);
+        return {
+            score: Number.isFinite(evalResult.score) ? evalResult.score : null,
+            threshold: Number.isFinite(evalResult.threshold) ? evalResult.threshold : null,
+            pass: evalResult.scorePass,
+        };
+    }, [evaluateCoreV2]);
     const resolveSymbolState = useCallback((symbol) => {
         const hasPosition = positionsRef.current.some((p) => {
             if (p.symbol !== symbol)
@@ -1344,24 +1726,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const lastTick = symbolTickRef.current.get(symbol) ?? 0;
         const feedAgeMs = lastTick > 0 ? Math.max(0, Date.now() - lastTick) : null;
         const feedAgeOk = feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
-        const signalActive = Boolean(decision?.signal);
-        const quality = resolveQualityScore(decision, signalActive);
+        const signal = decision?.signal ?? null;
+        const signalActive = Boolean(signal);
+        const quality = resolveQualityScore(symbol, decision, signal, feedAgeMs);
         const gates = [];
         const addGate = (name, ok, detail) => {
             gates.push({ name, ok, detail });
         };
-        const signal = decision?.signal ?? null;
-        const entryType = signal?.entryType ?? "LIMIT_MAKER_FIRST";
-        const sideRaw = String(signal?.intent?.side ?? "").toLowerCase();
-        const signalDir = sideRaw === "buy" ? "BULL" : sideRaw === "sell" ? "BEAR" : "";
-        const isScalp = context.settings.riskMode === "ai-matic-scalp";
-        const trendGateName = context.settings.riskMode === "ai-matic-x"
-            ? "X setup"
-            : "Trend bias";
-        const scalpContext = decision?.scalpContext;
-        const signalEntry = toNumber(signal?.intent?.entry);
-        const signalSl = toNumber(signal?.intent?.sl);
-        const signalTp = toNumber(signal?.intent?.tp);
+        const coreEval = evaluateCoreV2(symbol, decision, signal, feedAgeMs);
         const hasEntryOrder = ordersRef.current.some((order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol);
         const hasPendingIntent = intentPendingRef.current.has(symbol);
         const manageReason = context.hasPosition
@@ -1371,124 +1743,25 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 : hasPendingIntent
                     ? "pending intent"
                     : null;
-        const makerFeePct = toNumber(context.settings.makerFeePct);
-        const takerFeePct = toNumber(context.settings.takerFeePct);
-        const slippageBufferPct = toNumber(context.settings.slippageBufferPct);
-        const feeReady = Number.isFinite(makerFeePct) &&
-            Number.isFinite(takerFeePct) &&
-            Number.isFinite(slippageBufferPct);
-        const feeModel = entryType === "LIMIT_MAKER_FIRST" || entryType === "LIMIT"
-            ? "maker"
-            : "taker";
-        const feePct = feeModel === "maker" ? makerFeePct : takerFeePct;
-        const rtcPct = feeReady ? 2 * feePct + slippageBufferPct : Number.NaN;
-        const tp1MinPct = feeReady ? rtcPct * 2.5 : Number.NaN;
-        const tp1DistPct = Number.isFinite(signalEntry) && Number.isFinite(signalTp) && signalEntry > 0
-            ? (Math.abs(signalTp - signalEntry) / signalEntry) * 100
-            : Number.NaN;
-        const tp1Ok = !signalActive ||
-            !feeReady ||
-            (Number.isFinite(tp1DistPct) &&
-                Number.isFinite(tp1MinPct) &&
-                tp1DistPct >= tp1MinPct);
-        const h1 = scalpContext?.h1;
-        const m15 = scalpContext?.m15;
-        const h1BiasOk = !signalActive ||
-            (signalDir === "BULL"
-                ? h1?.direction === "BULL" && !h1?.emaFlat
-                : signalDir === "BEAR"
-                    ? h1?.direction === "BEAR" && !h1?.emaFlat
-                    : false);
-        const m15ContextOk = !signalActive ||
-            (signalDir === "BULL"
-                ? m15?.direction === "BULL" || (m15?.direction !== "BEAR" && h1?.direction === "BULL")
-                : signalDir === "BEAR"
-                    ? m15?.direction === "BEAR" || (m15?.direction !== "BULL" && h1?.direction === "BEAR")
-                    : false);
-        const chopOk = !signalActive || !(h1?.emaFlat && scalpContext?.ema15mChoppy);
-        const kind = signal?.kind ?? "OTHER";
-        const setupLabel = kind === "BREAKOUT"
-            ? "BR/BL"
-            : kind === "MEAN_REVERSION" || kind === "PULLBACK"
-                ? "SR/RL"
-                : "OTHER";
-        const levelOk = !signalActive || setupLabel !== "OTHER";
-        const makerOk = !signalActive ||
-            entryType === "LIMIT_MAKER_FIRST" ||
-            entryType === "LIMIT";
-        const slOk = !signalActive ||
-            (Number.isFinite(signalEntry) && Number.isFinite(signalSl) && signalSl > 0);
-        const trendGate = resolveTrendGate(decision, signalActive ? signal ?? null : null);
-        if (isScalp) {
-            const h1Detail = h1
-                ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | ${h1.structure} | ${h1.direction}`
-                : "no data";
-            const m15Detail = m15 ? `15m ${m15.direction} | ${m15.structure}` : "no data";
-            const chopDetail = h1
-                ? `EMA21 ${formatNumber(h1.emaSlopePct, 3)}% | cross ${scalpContext?.ema15mCrossCount ?? 0}`
-                : "no data";
-            const tp1Detail = signalActive
-                ? feeReady && Number.isFinite(tp1DistPct) && Number.isFinite(tp1MinPct)
-                    ? `TP1 ${formatNumber(tp1DistPct, 2)}% / min ${formatNumber(tp1MinPct, 2)}%`
-                    : "n/a"
-                : feeReady && Number.isFinite(tp1MinPct)
-                    ? `min ${formatNumber(tp1MinPct, 2)}% (need TP1)`
-                    : "fee params missing";
-            const levelDetail = signalActive ? setupLabel : "waiting for setup";
-            const entryDetail = signalActive ? entryType : entryType;
-            const slDetail = signalActive
-                ? Number.isFinite(signalSl)
-                    ? `SL ${formatNumber(signalSl, 6)}`
-                    : "SL missing"
-                : "waiting for signal";
-            addGate("TP1 >= min", tp1Ok, tp1Detail);
-            addGate("1h bias", h1BiasOk, h1Detail);
-            addGate("15m context", m15ContextOk, m15Detail);
-            addGate("Chop filter", chopOk, chopDetail);
-            addGate("Level defined", levelOk, levelDetail);
-            addGate("Maker entry", makerOk, entryDetail);
-            addGate("SL structural", slOk, slDetail);
-            addGate("BE+ / time stop", true, "manual");
-        }
-        else {
-            addGate(trendGateName, trendGate.ok, trendGate.detail);
-        }
+        coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
         const hardEnabled = context.settings.enableHardGates !== false;
         const softEnabled = context.settings.enableSoftGates !== false;
         const hardReasons = [];
         if (hardEnabled) {
-            if (isScalp) {
-                if (!tp1Ok && isGateEnabled("TP1 >= min")) {
-                    hardReasons.push("TP1 >= min");
-                }
-                if (!h1BiasOk && isGateEnabled("1h bias")) {
-                    hardReasons.push("1h bias");
-                }
-                if (!m15ContextOk && isGateEnabled("15m context")) {
-                    hardReasons.push("15m context");
-                }
-                if (!chopOk && isGateEnabled("Chop filter")) {
-                    hardReasons.push("Chop filter");
-                }
-                if (!levelOk && isGateEnabled("Level defined")) {
-                    hardReasons.push("Level defined");
-                }
-                if (!makerOk && isGateEnabled("Maker entry")) {
-                    hardReasons.push("Maker entry");
-                }
-                if (!slOk && isGateEnabled("SL structural")) {
-                    hardReasons.push("SL structural");
-                }
-            }
-            else if (!trendGate.ok && isGateEnabled(trendGateName)) {
-                hardReasons.push(trendGateName);
-            }
+            coreEval.gates.forEach((gate) => {
+                if (!gate.hard || gate.ok)
+                    return;
+                if (!isGateEnabled(gate.name))
+                    return;
+                hardReasons.push(gate.name);
+            });
         }
         const hardBlocked = hardEnabled && hardReasons.length > 0;
         const execEnabled = isGateEnabled("Exec allowed");
+        const softBlocked = softEnabled && quality.pass === false;
         const executionAllowed = signalActive
             ? execEnabled
-                ? hardReasons.length === 0
+                ? hardReasons.length === 0 && !softBlocked
                 : false
             : null;
         return {
@@ -1507,7 +1780,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 ? execEnabled
                     ? hardReasons.length > 0
                         ? hardReasons.join(" · ")
-                        : undefined
+                        : softBlocked
+                            ? `Score ${quality.score ?? "—"} / ${quality.threshold ?? "—"}`
+                            : undefined
                     : "Exec allowed (OFF)"
                 : execEnabled
                     ? "Waiting for signal"
@@ -1521,10 +1796,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             feedAgeOk,
         };
     }, [
+        evaluateCoreV2,
         getSymbolContext,
         isGateEnabled,
         resolveQualityScore,
-        resolveTrendGate,
         resolveSymbolState,
     ]);
     const refreshDiagnosticsFromDecisions = useCallback(() => {
@@ -2021,6 +2296,15 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 return { symbol, pnl, ts };
             })
                 .filter((r) => Boolean(r));
+            const lastLossMap = new Map(lastLossBySymbolRef.current);
+            for (const r of records) {
+                if (r.pnl >= 0)
+                    continue;
+                const prev = lastLossMap.get(r.symbol) ?? 0;
+                if (r.ts > prev)
+                    lastLossMap.set(r.symbol, r.ts);
+            }
+            lastLossBySymbolRef.current = lastLossMap;
             const pnlRecords = records.map((r) => ({
                 symbol: r.symbol,
                 pnl: r.pnl,
@@ -2224,6 +2508,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const hasSymbolPosition = context.hasPosition;
         const hasSymbolEntryOrder = ordersRef.current.some((order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol);
         const hasPendingIntent = intentPendingRef.current.has(symbol);
+        const isMajorSymbol = MAJOR_SYMBOLS.has(symbol);
+        const coreMaxTotal = isMajorSymbol ? 2 : 1;
+        const cooldownMs = CORE_V2_COOLDOWN_MS[context.settings.riskMode];
+        const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
         const entryBlockReasons = [];
         if (hasSymbolPosition)
             entryBlockReasons.push("open position");
@@ -2231,6 +2519,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             entryBlockReasons.push("open order");
         if (hasPendingIntent)
             entryBlockReasons.push("pending intent");
+        if (context.openPositionsCount >= coreMaxTotal) {
+            entryBlockReasons.push(isMajorSymbol ? "core max positions" : "core alt cap");
+        }
+        if (lastLossTs && now - lastLossTs < cooldownMs) {
+            const remainingMs = Math.max(0, cooldownMs - (now - lastLossTs));
+            const remainingMin = Math.ceil(remainingMs / 60_000);
+            entryBlockReasons.push(`cooldown ${remainingMin}m`);
+        }
         if (!context.maxPositionsOk)
             entryBlockReasons.push("max positions");
         if (!context.ordersClearOk)
@@ -2256,102 +2552,55 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             }
         }
         const riskOn = !riskOff;
-        const trendGate = resolveTrendGate(decision, signal);
-        const isScalp = context.settings.riskMode === "ai-matic-scalp";
-        const trendGateName = context.settings.riskMode === "ai-matic-x"
-            ? "X setup"
-            : "Trend bias";
-        const scalpContext = decision?.scalpContext;
-        const signalDir = side === "Buy" ? "BULL" : "BEAR";
-        const makerFeePct = toNumber(context.settings.makerFeePct);
-        const takerFeePct = toNumber(context.settings.takerFeePct);
-        const slippageBufferPct = toNumber(context.settings.slippageBufferPct);
-        const feeReady = Number.isFinite(makerFeePct) &&
-            Number.isFinite(takerFeePct) &&
-            Number.isFinite(slippageBufferPct);
-        const feeModel = entryType === "LIMIT_MAKER_FIRST" || entryType === "LIMIT"
-            ? "maker"
-            : "taker";
-        const feePct = feeModel === "maker" ? makerFeePct : takerFeePct;
-        const rtcPct = feeReady ? 2 * feePct + slippageBufferPct : Number.NaN;
-        const tp1MinPct = feeReady ? rtcPct * 2.5 : Number.NaN;
-        const tp1DistPct = Number.isFinite(entry) && Number.isFinite(tp) && entry > 0
-            ? (Math.abs(tp - entry) / entry) * 100
-            : Number.NaN;
-        const tp1Ok = !signalActive ||
-            !feeReady ||
-            (Number.isFinite(tp1DistPct) &&
-                Number.isFinite(tp1MinPct) &&
-                tp1DistPct >= tp1MinPct);
-        const h1 = scalpContext?.h1;
-        const m15 = scalpContext?.m15;
-        const h1BiasOk = !signalActive ||
-            (signalDir === "BULL"
-                ? h1?.direction === "BULL" && !h1?.emaFlat
-                : signalDir === "BEAR"
-                    ? h1?.direction === "BEAR" && !h1?.emaFlat
-                    : false);
-        const m15ContextOk = !signalActive ||
-            (signalDir === "BULL"
-                ? m15?.direction === "BULL" || (m15?.direction !== "BEAR" && h1?.direction === "BULL")
-                : signalDir === "BEAR"
-                    ? m15?.direction === "BEAR" || (m15?.direction !== "BULL" && h1?.direction === "BEAR")
-                    : false);
-        const chopOk = !signalActive || !(h1?.emaFlat && scalpContext?.ema15mChoppy);
-        const kind = signal?.kind ?? "OTHER";
-        const setupLabel = kind === "BREAKOUT"
-            ? "BR/BL"
-            : kind === "MEAN_REVERSION" || kind === "PULLBACK"
-                ? "SR/RL"
-                : "OTHER";
-        const levelOk = !signalActive || setupLabel !== "OTHER";
-        const makerOk = !signalActive ||
-            entryType === "LIMIT_MAKER_FIRST" ||
-            entryType === "LIMIT";
-        const slOk = !signalActive || (Number.isFinite(entry) && Number.isFinite(sl) && sl > 0);
-        const blockReasons = [];
-        const hardEnabled = context.settings.enableHardGates !== false;
-        if (hardEnabled) {
-            if (isScalp) {
-                if (!tp1Ok && isGateEnabled("TP1 >= min")) {
-                    blockReasons.push("TP1 >= min");
-                }
-                if (!h1BiasOk && isGateEnabled("1h bias")) {
-                    blockReasons.push("1h bias");
-                }
-                if (!m15ContextOk && isGateEnabled("15m context")) {
-                    blockReasons.push("15m context");
-                }
-                if (!chopOk && isGateEnabled("Chop filter")) {
-                    blockReasons.push("Chop filter");
-                }
-                if (!levelOk && isGateEnabled("Level defined")) {
-                    blockReasons.push("Level defined");
-                }
-                if (!makerOk && isGateEnabled("Maker entry")) {
-                    blockReasons.push("Maker entry");
-                }
-                if (!slOk && isGateEnabled("SL structural")) {
-                    blockReasons.push("SL structural");
-                }
-            }
-            else if (!trendGate.ok && isGateEnabled(trendGateName)) {
-                blockReasons.push(trendGateName);
-            }
+        if (!riskOn) {
+            addLogEntries([
+                {
+                    id: `signal:risk:${signalId}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "RISK_BLOCK",
+                    message: `${symbol} risk block: ${riskReasons.join(", ")}`,
+                },
+            ]);
+            return;
         }
-        // AI-MATIC-X: keep Risk OFF as signal-only; do not hard-block execution here.
-        const execEnabled = isGateEnabled("Exec allowed");
-        if (blockReasons.length) {
+        const lastTick = symbolTickRef.current.get(symbol) ?? 0;
+        const feedAgeMs = lastTick > 0 ? Math.max(0, now - lastTick) : null;
+        const coreEval = evaluateCoreV2(symbol, decision, signal, feedAgeMs);
+        const hardEnabled = context.settings.enableHardGates !== false;
+        const softEnabled = context.settings.enableSoftGates !== false;
+        const hardBlockReasons = [];
+        if (hardEnabled) {
+            coreEval.gates.forEach((gate) => {
+                if (!gate.hard || gate.ok)
+                    return;
+                if (!isGateEnabled(gate.name))
+                    return;
+                hardBlockReasons.push(gate.name);
+            });
+        }
+        if (hardBlockReasons.length) {
             addLogEntries([
                 {
                     id: `signal:block:${signalId}`,
                     timestamp: new Date(now).toISOString(),
                     action: "RISK_BLOCK",
-                    message: `${symbol} blocked by: ${blockReasons.join(" · ")}`,
+                    message: `${symbol} blocked by: ${hardBlockReasons.join(" · ")}`,
                 },
             ]);
             return;
         }
+        if (softEnabled && coreEval.scorePass === false) {
+            addLogEntries([
+                {
+                    id: `signal:score:${signalId}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "RISK_BLOCK",
+                    message: `${symbol} score gate ${coreEval.score}/${coreEval.threshold}`,
+                },
+            ]);
+            return;
+        }
+        const execEnabled = isGateEnabled("Exec allowed");
         if (!execEnabled) {
             addLogEntries([
                 {
@@ -2464,11 +2713,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         closedPnlRecords,
         computeFixedSizing,
         computeNotionalForSignal,
+        evaluateCoreV2,
         getEquityValue,
         getSymbolContext,
         isGateEnabled,
         isEntryOrder,
-        resolveTrendGate,
     ]);
     useEffect(() => {
         handleDecisionRef.current = handleDecision;
@@ -2508,7 +2757,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 timeframesMin: EMA_TREND_TIMEFRAMES_MIN,
             });
             const scalpContext = isScalp ? buildScalpContext(candles) : undefined;
-            return { ...baseDecision, htfTrend, ltfTrend, emaTrend, scalpContext };
+            const coreV2 = computeCoreV2Metrics(candles, riskMode);
+            return { ...baseDecision, htfTrend, ltfTrend, emaTrend, scalpContext, coreV2 };
         };
         const maxCandles = isAiMaticX ? 5000 : isAiMatic ? 5000 : undefined;
         const backfill = isAiMaticX

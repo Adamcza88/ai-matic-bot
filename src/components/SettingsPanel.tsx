@@ -28,7 +28,7 @@ const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * 4;
 const MIN_AUTO_REFRESH_MINUTES = 1;
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const ORDER_VALUE_NOTE =
-  "Order value & leverage: BTC/ETH/SOL 10k@100x; ADA/XRP/DOGE/XPLUS/HYPE/FART 7.5k@75x; LINK 5k@50x; XMR 2.5k@25x; MELANIA 2k@20x; margin cost 100 USDT.";
+  "Core v2 sizing: risk % equity (ai-matic 0.40%, x 0.30%, scalp 0.25%, tree 0.30%), notional cap ~1% equity, min 100 USDT.";
 const CHEAT_SHEET_SETUP_BY_RISK_MODE: Record<AISettings["riskMode"], string> = {
   "ai-matic": "ai-matic-core",
   "ai-matic-x": "ai-matic-x-smart-money-combo",
@@ -141,14 +141,14 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       title: "AI-MATIC-X (EMA Trend + Pullback)",
       summary: "1h EMA12/26 bias · 5m pullback + micro break close · BBO filter",
       description:
-        "HTF EMA cross bias + LTF EMA pullback + micro break close s BBO filtrem a risk 100 USDT/trade.",
+        "HTF EMA cross bias + LTF EMA pullback + micro break close s BBO filtrem a riskem 0.30% equity/trade.",
       notes: [
         "Paráda — teď už z toho jde udělat konkrétní, exekuovatelná strategie (1h bias, 5m entry), bez subjektivity.",
         "Strategie: HTF Trend (EMA Cross 12/26) + LTF EMA Pullback + Micro Break (close) + BBO filter",
         "Kontext",
         "* HTF = 1h: určuje směr (bias) přes EMA12/EMA26 cross.",
         "* LTF = 5m: načasuje vstup (pullback + micro break close).",
-        "* Risk: 100 USDT risk/trade, position cost cca 1% alokace → sizing bude primárně přes SL vzdálenost, ne přes “fixní size”.",
+        "* Risk: 0.30% equity/trade (ai-matic-x v2), notional cap ~1% equity → sizing přes SL vzdálenost.",
         "Pravidla / logika (testovatelná)",
         "1) HTF bias (1h) – trend filtr",
         "* Long bias: EMA12(1h) > EMA26(1h)",
@@ -180,8 +180,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         "* Long: SL pod poslední pivot low (micro swing low) + buffer",
         "* Short: SL nad poslední pivot high + buffer",
         "* Buffer default: 0.1 × ATR(14) na 5m (laditelné)",
-        "Position sizing (na risk 100 USDT)",
-        "* Risk$ = 100",
+        "Position sizing (na risk 0.30% equity)",
+        "* Risk$ = 0.30% equity",
         "* SL_distance = |entry - SL|",
         "* Qty = Risk$ / SL_distance",
         "* Cost limit (protože chceš ~1% alokace):",
@@ -189,7 +189,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         "* pokud Notional > 1% allocated, tak:",
         "* buď trade skip (moc široký SL),",
         "* nebo sniž Qty tak, aby notional seděl, ale pak reálný risk bude < 100 (to je ok).",
-        "Důležité: pokud trváš na “cost 1% vždy”, tak risk 100 USDT nebude konstantní. Doporučuju prioritizovat konstantní risk a cost jen jako cap.",
+        "Důležité: pokud trváš na “cost 1% vždy”, tak risk nebude konstantní. Doporučuju prioritizovat konstantní risk a cost jen jako cap.",
         "TP (2 jednoduché volby)",
         "Varianta A (systematická)",
         "* TP1 = 1R (zavřít 30–50%)",
@@ -209,7 +209,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         "3. Vznikl pivot (micro swing) po pullbacku?",
         "4. Break micro levelu CLOSE?",
         "5. BBO fresh + age pod limitem?",
-        "6. SL na pivotu + buffer, sizing na 100 USDT risk, notional ≤ 1% cap?",
+        "6. SL na pivotu + buffer, sizing na 0.30% equity risk, notional ≤ 1% cap?",
         "7. TP plán: 1R/2R + trail.",
         "Doporučené “must-have” zpřesnění (bez dalších otázek, jen návrh)",
         "* Hard gate ON pro range:",
@@ -221,13 +221,13 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     "ai-matic-scalp": {
       title: "AI-MATIC-SCALP Core",
       summary: "1h bias · 15m kontext · 1m entry · fee-aware",
-      description: "Scalp engine s RTC filtrem a maker‑first exekucí.",
+      description: "Scalp engine s Core v2 filtry a maker‑first exekucí.",
       notes: [
-        "TF: 1h bias + 15m kontext + 1m entry.",
-        "TP1 gate: TP1 >= 2.5× RTC (fee + slippage).",
-        "Setupy: SR (sweep+reclaim) primární, BR (break+retest) sekundární.",
-        "Entry: LIMIT post‑only; SL strukturální; BE+ / time stop po TP1.",
-        "Max 2 pokusy na level; risk podle R.",
+        "TF: 1m entry s Core v2 filtry (EMA order/separation + ATR% + volume).",
+        "Risk: 0.25% equity/trade, notional cap ~1% equity.",
+        "Entry: maker‑first; SL strukturální na LTF.",
+        "Score gate: Majors 10/14 (alty defaultně vypnout).",
+        "Time‑exit 6–12 min doporučené pro scalp.",
       ],
     },
     "ai-matic-tree": {
@@ -302,20 +302,27 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     [cheatSheetNotes]
   );
   const summaryText = `${coreMeta.title} · ${coreMeta.summary} · Cheat sheet: ${cheatSheetLabel} (${cheatSheetStatus})`;
+  const coreV2GateNames = [
+    "HTF bias",
+    "EMA order",
+    "EMA sep1",
+    "EMA sep2",
+    "ATR% window",
+    "Volume Pxx",
+    "LTF pullback",
+    "Micro pivot",
+    "Micro break close",
+    "BBO fresh",
+    "BBO age",
+    "Trend strength",
+    "Maker entry",
+    "SL structural",
+  ];
   const checklistGatesByProfile: Record<AISettings["riskMode"], string[]> = {
-    "ai-matic": ["Trend bias"],
-    "ai-matic-x": ["X setup"],
-    "ai-matic-tree": ["Trend bias"],
-    "ai-matic-scalp": [
-      "TP1 >= min",
-      "1h bias",
-      "15m context",
-      "Chop filter",
-      "Level defined",
-      "Maker entry",
-      "SL structural",
-      "BE+ / time stop",
-    ],
+    "ai-matic": coreV2GateNames,
+    "ai-matic-x": coreV2GateNames,
+    "ai-matic-tree": coreV2GateNames,
+    "ai-matic-scalp": coreV2GateNames,
   };
   const activeGateNames =
     checklistGatesByProfile[local.riskMode] ?? checklistGatesByProfile["ai-matic"];

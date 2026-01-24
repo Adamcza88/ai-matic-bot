@@ -57,9 +57,9 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                 symbols: SUPPORTED_SYMBOLS,
                 timeframes: "1h bias · 15m context · 1m entry",
                 session: "08:00-12:00 / 13:00-17:00 UTC",
-                risk: "RTC/TP1 gate · fee-aware scalp",
+                risk: "Risk 0.25% equity/trade · notional cap ~1% equity",
                 entry: "SR/BR setups · maker-first entry",
-                execution: `TP1 >= 2.5× RTC · time stop · ${cheatSheetNote}`,
+                execution: `Core v2 gates · maker-first · ${cheatSheetNote}`,
             };
         }
         if (riskMode === "ai-matic-x") {
@@ -69,7 +69,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                 symbols: SUPPORTED_SYMBOLS,
                 timeframes: "1h context · 5m execution",
                 session: "24/7",
-                risk: "Risk 100 USDT/trade · sizing by SL distance · notional cap ~1% allocation",
+                risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
                 entry: "5m pullback do EMA12/EMA12–26 zóny + micro break CLOSE",
                 execution: `BBO filter (fresh/age) · SL pod/nad pivot + ATR buffer · ${cheatSheetNote}`,
             };
@@ -81,7 +81,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                 symbols: SUPPORTED_SYMBOLS,
                 timeframes: "1h context · 5m execution",
                 session: "Bybit Linear Perpetuals · ~40 markets scan",
-                risk: "Order value per symbol · margin 100 USDT · Max positions/orders dle settings",
+                risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
                 entry: "Fib retracement pullback v trendu · confluence se strukturou",
                 execution: `Targets přes Fib extensions · SL za další Fib nebo swing · ${cheatSheetNote}`,
             };
@@ -92,7 +92,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             symbols: SUPPORTED_SYMBOLS,
             timeframes: "HTF 1h · 15m · LTF 5m · 1m",
             session: "POI: Breaker > OB > FVG > Liquidity",
-            risk: "Order value per symbol · margin 100 USDT · max positions by settings",
+            risk: "Risk 0.40% equity/trade · notional cap ~1% equity",
             entry: "FVG/OB/Breaker + liquidity pools (0.2% tol, min 3 touches)",
             execution: `EMA50 trend gate · 1m timing + swing/ATR stop · ${cheatSheetNote}`,
         };
@@ -102,31 +102,31 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     const exchangeOrders = ordersLoaded ? testnetOrders : [];
     const exchangeTrades = tradesLoaded ? testnetTrades : [];
     const refreshOrders = refreshTestnetOrders;
-    const CHECKLIST_DEFAULTS_BY_PROFILE = useMemo(() => ({
-        "ai-matic": {
-            "Trend bias": true,
-            "Exec allowed": true,
-        },
-        "ai-matic-x": {
-            "X setup": true,
-            "Exec allowed": true,
-        },
-        "ai-matic-tree": {
-            "Trend bias": true,
-            "Exec allowed": true,
-        },
-        "ai-matic-scalp": {
-            "TP1 >= min": true,
-            "1h bias": true,
-            "15m context": true,
-            "Chop filter": true,
-            "Level defined": true,
+    const CHECKLIST_DEFAULTS_BY_PROFILE = useMemo(() => {
+        const base = {
+            "HTF bias": true,
+            "EMA order": true,
+            "EMA sep1": true,
+            "EMA sep2": true,
+            "ATR% window": true,
+            "Volume Pxx": true,
+            "LTF pullback": true,
+            "Micro pivot": true,
+            "Micro break close": true,
+            "BBO fresh": true,
+            "BBO age": true,
+            "Trend strength": true,
             "Maker entry": true,
             "SL structural": true,
-            "BE+ / time stop": true,
             "Exec allowed": true,
-        },
-    }), []);
+        };
+        return {
+            "ai-matic": base,
+            "ai-matic-x": base,
+            "ai-matic-tree": base,
+            "ai-matic-scalp": base,
+        };
+    }, []);
     const CHECKLIST_DEFAULTS = useMemo(() => {
         return (CHECKLIST_DEFAULTS_BY_PROFILE[riskMode] ??
             CHECKLIST_DEFAULTS_BY_PROFILE["ai-matic"]);
@@ -137,9 +137,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         return Object.keys(defaults).filter((name) => name !== "Exec allowed");
     }, [CHECKLIST_DEFAULTS_BY_PROFILE, riskMode]);
     const CHECKLIST_ALIASES = useMemo(() => ({
-        "Trend bias": ["Tree setup"],
-        "X setup": ["Trend bias"],
-        "1h bias": ["Trend bias"],
+        "HTF bias": ["Trend bias", "X setup", "Tree setup", "1h bias"],
     }), []);
     const gateStorageKey = useMemo(() => `ai-matic-checklist-enabled:${riskMode}`, [riskMode]);
     const [checklistEnabled, setChecklistEnabled] = useState(() => CHECKLIST_DEFAULTS);
