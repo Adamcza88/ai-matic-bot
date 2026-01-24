@@ -1665,6 +1665,12 @@ export function useTradingBot(
       const signalDir =
         sideRaw === "buy" ? "BULL" : sideRaw === "sell" ? "BEAR" : "";
       const isScalp = context.settings.riskMode === "ai-matic-scalp";
+      const trendGateName =
+        context.settings.riskMode === "ai-matic-x"
+          ? "X setup"
+          : context.settings.riskMode === "ai-matic-tree"
+            ? "Tree setup"
+            : "Trend bias";
       const scalpContext = (decision as any)?.scalpContext as ScalpContext | undefined;
       const signalEntry = toNumber(signal?.intent?.entry);
       const signalSl = toNumber(signal?.intent?.sl);
@@ -1789,7 +1795,7 @@ export function useTradingBot(
           signalActive ? "manual" : "not required"
         );
       } else {
-        addGate("Trend bias", trendGate.ok, trendGate.detail);
+        addGate(trendGateName, trendGate.ok, trendGate.detail);
       }
 
       const hardEnabled = context.settings.enableHardGates !== false;
@@ -1818,8 +1824,8 @@ export function useTradingBot(
           if (!slOk && isGateEnabled("SL structural")) {
             hardReasons.push("SL structural");
           }
-        } else if (!trendGate.ok && isGateEnabled("Trend bias")) {
-          hardReasons.push("Trend bias");
+        } else if (!trendGate.ok && isGateEnabled(trendGateName)) {
+          hardReasons.push(trendGateName);
         }
       }
 
@@ -2718,6 +2724,12 @@ export function useTradingBot(
       const riskOn = !riskOff;
       const trendGate = resolveTrendGate(decision, signal);
       const isScalp = context.settings.riskMode === "ai-matic-scalp";
+      const trendGateName =
+        context.settings.riskMode === "ai-matic-x"
+          ? "X setup"
+          : context.settings.riskMode === "ai-matic-tree"
+            ? "Tree setup"
+            : "Trend bias";
       const scalpContext = (decision as any)?.scalpContext as ScalpContext | undefined;
       const signalDir = side === "Buy" ? "BULL" : "BEAR";
       const makerFeePct = toNumber(context.settings.makerFeePct);
@@ -2801,8 +2813,8 @@ export function useTradingBot(
           if (!slOk && isGateEnabled("SL structural")) {
             blockReasons.push("SL structural");
           }
-        } else if (!trendGate.ok && isGateEnabled("Trend bias")) {
-          blockReasons.push("Trend bias");
+        } else if (!trendGate.ok && isGateEnabled(trendGateName)) {
+          blockReasons.push(trendGateName);
         }
       }
       // AI-MATIC-X: keep Risk OFF as signal-only; do not hard-block execution here.

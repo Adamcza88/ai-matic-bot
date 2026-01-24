@@ -138,11 +138,11 @@ export default function Dashboard({
         "Exec allowed": true,
       },
       "ai-matic-x": {
-        "Trend bias": false,
+        "X setup": false,
         "Exec allowed": true,
       },
       "ai-matic-tree": {
-        "Trend bias": false,
+        "Tree setup": false,
         "Exec allowed": true,
       },
       "ai-matic-scalp": {
@@ -174,6 +174,8 @@ export default function Dashboard({
   const CHECKLIST_ALIASES = useMemo(
     () => ({
       "1h bias": ["Trend bias"],
+      "X setup": ["Trend bias"],
+      "Tree setup": ["Trend bias"],
     }),
     []
   );

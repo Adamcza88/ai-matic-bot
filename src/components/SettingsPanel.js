@@ -183,8 +183,8 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
     };
     const checklistGatesByProfile = {
         "ai-matic": ["Trend bias"],
-        "ai-matic-x": ["Trend bias"],
-        "ai-matic-tree": ["Trend bias"],
+        "ai-matic-x": ["X setup"],
+        "ai-matic-tree": ["Tree setup"],
         "ai-matic-scalp": [
             "TP1 >= min",
             "1h bias",

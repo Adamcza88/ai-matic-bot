@@ -1430,6 +1430,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const sideRaw = String(signal?.intent?.side ?? "").toLowerCase();
         const signalDir = sideRaw === "buy" ? "BULL" : sideRaw === "sell" ? "BEAR" : "";
         const isScalp = context.settings.riskMode === "ai-matic-scalp";
+        const trendGateName = context.settings.riskMode === "ai-matic-x"
+            ? "X setup"
+            : context.settings.riskMode === "ai-matic-tree"
+                ? "Tree setup"
+                : "Trend bias";
         const scalpContext = decision?.scalpContext;
         const signalEntry = toNumber(signal?.intent?.entry);
         const signalSl = toNumber(signal?.intent?.sl);
@@ -1515,7 +1520,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             addGate("BE+ / time stop", true, signalActive ? "manual" : "not required");
         }
         else {
-            addGate("Trend bias", trendGate.ok, trendGate.detail);
+            addGate(trendGateName, trendGate.ok, trendGate.detail);
         }
         const hardEnabled = context.settings.enableHardGates !== false;
         const softEnabled = context.settings.enableSoftGates !== false;
@@ -1544,8 +1549,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     hardReasons.push("SL structural");
                 }
             }
-            else if (!trendGate.ok && isGateEnabled("Trend bias")) {
-                hardReasons.push("Trend bias");
+            else if (!trendGate.ok && isGateEnabled(trendGateName)) {
+                hardReasons.push(trendGateName);
             }
         }
         const hardBlocked = hardEnabled && hardReasons.length > 0;
@@ -2337,6 +2342,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const riskOn = !riskOff;
         const trendGate = resolveTrendGate(decision, signal);
         const isScalp = context.settings.riskMode === "ai-matic-scalp";
+        const trendGateName = context.settings.riskMode === "ai-matic-x"
+            ? "X setup"
+            : context.settings.riskMode === "ai-matic-tree"
+                ? "Tree setup"
+                : "Trend bias";
         const scalpContext = decision?.scalpContext;
         const signalDir = side === "Buy" ? "BULL" : "BEAR";
         const makerFeePct = toNumber(context.settings.makerFeePct);
@@ -2411,8 +2421,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     blockReasons.push("SL structural");
                 }
             }
-            else if (!trendGate.ok && isGateEnabled("Trend bias")) {
-                blockReasons.push("Trend bias");
+            else if (!trendGate.ok && isGateEnabled(trendGateName)) {
+                blockReasons.push(trendGateName);
             }
         }
         // AI-MATIC-X: keep Risk OFF as signal-only; do not hard-block execution here.
