@@ -274,7 +274,7 @@ export default function SignalsAccordion({
                             className={`h-2 w-2 rounded-full ${
                               !((checklistEnabled[gate.name] ?? true)) ||
                               gate.detail === "not required" ||
-                              !signalActive
+                              (!signalActive && !gate.ok)
                                 ? "bg-slate-600"
                                 : gate.ok
                                   ? "bg-emerald-400"
