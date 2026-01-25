@@ -220,14 +220,12 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     },
     "ai-matic-scalp": {
       title: "AI-MATIC-SCALP Core",
-      summary: "1h bias · 15m kontext · 1m entry · fee-aware",
-      description: "Scalp engine s Core v2 filtry a maker‑first exekucí.",
+      summary: "15m trend · 1m entry · EMA cross + RSI div + volume spike",
+      description: "Adaptive Trend Following (v1.3) pro rychlé scalp vstupy.",
       notes: [
-        "TF: 1m entry s Core v2 filtry (EMA order/separation + ATR% + volume).",
-        "Risk: 0.25% equity/trade, notional cap ~1% equity.",
-        "Entry: maker‑first; SL strukturální na LTF.",
-        "Score gate: Majors 10/14 (alty defaultně vypnout).",
-        "Time‑exit 6–12 min doporučené pro scalp.",
+        "Primary Timeframe: 15m for trend, 1m for entry.",
+        "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.",
+        "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
       ],
     },
     "ai-matic-tree": {
@@ -322,7 +320,11 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     "ai-matic": coreV2GateNames,
     "ai-matic-x": coreV2GateNames,
     "ai-matic-tree": coreV2GateNames,
-    "ai-matic-scalp": coreV2GateNames,
+    "ai-matic-scalp": [
+      "Primary Timeframe: 15m for trend, 1m for entry.",
+      "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.",
+      "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
+    ],
   };
   const activeGateNames =
     checklistGatesByProfile[local.riskMode] ?? checklistGatesByProfile["ai-matic"];

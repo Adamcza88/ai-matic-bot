@@ -10,7 +10,7 @@ import {
   type AiMaticXContext,
 } from "../engine/aiMaticXStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
-import { computeEma, findPivotsHigh, findPivotsLow } from "../engine/ta";
+import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta";
 import type { PriceFeedDecision } from "../engine/priceFeed";
 import type { BotConfig, Candle } from "../engine/botEngine";
 import { TradingMode } from "../types";
@@ -93,6 +93,12 @@ const CORE_V2_BBO_AGE_BY_SYMBOL: Partial<Record<Symbol, number>> = {
   SOLUSDT: 700,
 };
 const CORE_V2_BBO_AGE_DEFAULT_MS = 1000;
+const SCALP_PRIMARY_GATE =
+  "Primary Timeframe: 15m for trend, 1m for entry.";
+const SCALP_ENTRY_GATE =
+  "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.";
+const SCALP_EXIT_GATE =
+  "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).";
 const MAX_OPEN_POSITIONS_CAP = 10000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -464,12 +470,17 @@ type CoreV2Metrics = {
   htfBias: "BULL" | "BEAR" | "NONE";
   htfAtr14: number;
   htfAtrPct: number;
+  ema15m12: number;
+  ema15m26: number;
+  ema15mTrend: "BULL" | "BEAR" | "NONE";
   pullbackLong: boolean;
   pullbackShort: boolean;
   pivotHigh?: number;
   pivotLow?: number;
   microBreakLong: boolean;
   microBreakShort: boolean;
+  rsiBullDiv: boolean;
+  rsiBearDiv: boolean;
 };
 
 const percentile = (values: number[], p: number) => {
@@ -559,6 +570,21 @@ const computeCoreV2Metrics = (
       ? htfAtr14 / htfClose
       : Number.NaN;
 
+  const m15 = resampleCandles(candles, 15);
+  const m15Closes = m15.map((c) => c.close);
+  const ema15m12Arr = computeEma(m15Closes, 12);
+  const ema15m26Arr = computeEma(m15Closes, 26);
+  const ema15m12 = ema15m12Arr[ema15m12Arr.length - 1] ?? Number.NaN;
+  const ema15m26 = ema15m26Arr[ema15m26Arr.length - 1] ?? Number.NaN;
+  const ema15mTrend =
+    Number.isFinite(ema15m12) && Number.isFinite(ema15m26)
+      ? ema15m12 > ema15m26
+        ? "BULL"
+        : ema15m12 < ema15m26
+          ? "BEAR"
+          : "NONE"
+      : "NONE";
+
   const pullbackLookback = 12;
   let pullbackLong = false;
   let pullbackShort = false;
@@ -579,12 +605,15 @@ const computeCoreV2Metrics = (
 
   const pivotsHigh = findPivotsHigh(ltf, 2, 2);
   const pivotsLow = findPivotsLow(ltf, 2, 2);
+  const rsiArr = computeRsi(ltfCloses, 14);
   const lastLow = pivotsLow[pivotsLow.length - 1];
   const lastHigh = pivotsHigh[pivotsHigh.length - 1];
   const prevHigh =
     lastLow ? pivotsHigh.filter((p) => p.idx < lastLow.idx).pop() : undefined;
   const prevLow =
     lastHigh ? pivotsLow.filter((p) => p.idx < lastHigh.idx).pop() : undefined;
+  const prevLowPivot = pivotsLow[pivotsLow.length - 2];
+  const prevHighPivot = pivotsHigh[pivotsHigh.length - 2];
   const microBreakLong =
     Boolean(prevHigh && lastLow) &&
     Number.isFinite(ltfClose) &&
@@ -593,6 +622,18 @@ const computeCoreV2Metrics = (
     Boolean(prevLow && lastHigh) &&
     Number.isFinite(ltfClose) &&
     ltfClose < prevLow!.price;
+  const rsiBullDiv =
+    Boolean(prevLowPivot && lastLow) &&
+    lastLow!.price < prevLowPivot!.price &&
+    Number.isFinite(rsiArr[lastLow!.idx]) &&
+    Number.isFinite(rsiArr[prevLowPivot!.idx]) &&
+    rsiArr[lastLow!.idx] > rsiArr[prevLowPivot!.idx];
+  const rsiBearDiv =
+    Boolean(prevHighPivot && lastHigh) &&
+    lastHigh!.price > prevHighPivot!.price &&
+    Number.isFinite(rsiArr[lastHigh!.idx]) &&
+    Number.isFinite(rsiArr[prevHighPivot!.idx]) &&
+    rsiArr[lastHigh!.idx] < rsiArr[prevHighPivot!.idx];
 
   return {
     ltfTimeframeMin,
@@ -618,12 +659,54 @@ const computeCoreV2Metrics = (
     htfBias,
     htfAtr14,
     htfAtrPct,
+    ema15m12,
+    ema15m26,
+    ema15mTrend,
     pullbackLong,
     pullbackShort,
     pivotHigh: prevHigh?.price,
     pivotLow: prevLow?.price,
     microBreakLong,
     microBreakShort,
+    rsiBullDiv,
+    rsiBearDiv,
+  };
+};
+
+const computeScalpPrimaryChecklist = (
+  core: CoreV2Metrics | undefined,
+  volumeOk: boolean
+) => {
+  const ema15mTrend = core?.ema15mTrend ?? "NONE";
+  const ltfOk = core?.ltfTimeframeMin === 1;
+  const primaryOk = ema15mTrend !== "NONE" && ltfOk;
+  const emaCrossOk =
+    ema15mTrend === "BULL"
+      ? Number.isFinite(core?.ema12) &&
+        Number.isFinite(core?.ema26) &&
+        core!.ema12 > core!.ema26
+      : ema15mTrend === "BEAR"
+        ? Number.isFinite(core?.ema12) &&
+          Number.isFinite(core?.ema26) &&
+          core!.ema12 < core!.ema26
+        : false;
+  const rsiOk =
+    ema15mTrend === "BULL"
+      ? Boolean(core?.rsiBullDiv)
+      : ema15mTrend === "BEAR"
+        ? Boolean(core?.rsiBearDiv)
+        : false;
+  const entryOk = Boolean(emaCrossOk && rsiOk && volumeOk);
+  const exitOk = Number.isFinite(core?.atr14);
+  return {
+    primaryOk,
+    entryOk,
+    exitOk,
+    ema15mTrend,
+    ltfOk,
+    emaCrossOk,
+    rsiOk,
+    volumeOk,
   };
 };
 
@@ -2101,6 +2184,12 @@ export function useTradingBot(
         signal,
         feedAgeMs
       );
+      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      const volumeGate = coreEval.gates.find((g) => g.name === "Volume Pxx");
+      const scalpPrimary = computeScalpPrimaryChecklist(
+        core,
+        volumeGate?.ok ?? false
+      );
       const hasEntryOrder = ordersRef.current.some(
         (order) =>
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
@@ -2115,6 +2204,27 @@ export function useTradingBot(
             : null;
 
       coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
+      if (context.settings.riskMode === "ai-matic-scalp") {
+        addGate(
+          SCALP_PRIMARY_GATE,
+          scalpPrimary.primaryOk,
+          `15m ${scalpPrimary.ema15mTrend} | LTF ${core?.ltfTimeframeMin ?? "—"}m`
+        );
+        addGate(
+          SCALP_ENTRY_GATE,
+          scalpPrimary.entryOk,
+          `EMA ${scalpPrimary.emaCrossOk ? "OK" : "no"} | RSI ${
+            scalpPrimary.rsiOk ? "OK" : "no"
+          } | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`
+        );
+        addGate(
+          SCALP_EXIT_GATE,
+          scalpPrimary.exitOk,
+          Number.isFinite(core?.atr14)
+            ? `ATR ${formatNumber(core!.atr14, 4)} | TP 1.5R`
+            : "ATR missing"
+        );
+      }
 
       const hardEnabled = context.settings.enableHardGates !== false;
       const softEnabled = context.settings.enableSoftGates !== false;
@@ -2125,6 +2235,14 @@ export function useTradingBot(
           if (!isGateEnabled(gate.name)) return;
           hardReasons.push(gate.name);
         });
+        if (context.settings.riskMode === "ai-matic-scalp") {
+          if (!scalpPrimary.primaryOk && isGateEnabled(SCALP_PRIMARY_GATE)) {
+            hardReasons.push(SCALP_PRIMARY_GATE);
+          }
+          if (!scalpPrimary.entryOk && isGateEnabled(SCALP_ENTRY_GATE)) {
+            hardReasons.push(SCALP_ENTRY_GATE);
+          }
+        }
       }
 
       const hardBlocked = hardEnabled && hardReasons.length > 0;
@@ -3039,6 +3157,12 @@ export function useTradingBot(
         signal,
         feedAgeMs
       );
+      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      const volumeGate = coreEval.gates.find((g) => g.name === "Volume Pxx");
+      const scalpPrimary = computeScalpPrimaryChecklist(
+        core,
+        volumeGate?.ok ?? false
+      );
       const hardEnabled = context.settings.enableHardGates !== false;
       const softEnabled = context.settings.enableSoftGates !== false;
       const hardBlockReasons: string[] = [];
@@ -3048,6 +3172,14 @@ export function useTradingBot(
           if (!isGateEnabled(gate.name)) return;
           hardBlockReasons.push(gate.name);
         });
+        if (context.settings.riskMode === "ai-matic-scalp") {
+          if (!scalpPrimary.primaryOk && isGateEnabled(SCALP_PRIMARY_GATE)) {
+            hardBlockReasons.push(SCALP_PRIMARY_GATE);
+          }
+          if (!scalpPrimary.entryOk && isGateEnabled(SCALP_ENTRY_GATE)) {
+            hardBlockReasons.push(SCALP_ENTRY_GATE);
+          }
+        }
       }
       if (hardBlockReasons.length) {
         addLogEntries([

@@ -53,13 +53,13 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         if (riskMode === "ai-matic-scalp") {
             return {
                 label: "AI-MATIC-SCALP",
-                subtitle: "Scalp (1h bias / 15m context / 1m entry)",
+                subtitle: "Adaptive Trend Following (v1.3)",
                 symbols: SUPPORTED_SYMBOLS,
-                timeframes: "1h bias · 15m context · 1m entry",
-                session: "08:00-12:00 / 13:00-17:00 UTC",
+                timeframes: "15m trend · 1m entry",
+                session: "24/7",
                 risk: "Risk 0.25% equity/trade · notional cap ~1% equity",
-                entry: "SR/BR setups · maker-first entry",
-                execution: `Core v2 gates · maker-first · ${cheatSheetNote}`,
+                entry: "EMA Cross + RSI Divergence + Volume Spike",
+                execution: `Trailing Stop (ATR 2.5x) nebo Fixed TP (1.5 RRR) · ${cheatSheetNote}`,
             };
         }
         if (riskMode === "ai-matic-x") {
@@ -124,7 +124,12 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             "ai-matic": base,
             "ai-matic-x": base,
             "ai-matic-tree": base,
-            "ai-matic-scalp": base,
+            "ai-matic-scalp": {
+                "Primary Timeframe: 15m for trend, 1m for entry.": true,
+                "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.": true,
+                "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).": true,
+                "Exec allowed": true,
+            },
         };
     }, []);
     const CHECKLIST_DEFAULTS = useMemo(() => {
