@@ -25,7 +25,7 @@ type Position = {
 };
 
 const BETA_BUCKET = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
-const LOSS_STREAK_SYMBOL_COOLDOWN_MS = 45 * 60_000;
+const LOSS_STREAK_SYMBOL_COOLDOWN_MS = 0;
 const LOSS_STREAK_RISK_USD = 2;
 
 export class V2Runtime {
@@ -175,7 +175,7 @@ export class V2Runtime {
     }
     this.lossStreak += 1;
     this.symbolLossStreak[symbol] = (this.symbolLossStreak[symbol] ?? 0) + 1;
-    if (this.symbolLossStreak[symbol] === 2) {
+    if (this.symbolLossStreak[symbol] === 2 && LOSS_STREAK_SYMBOL_COOLDOWN_MS > 0) {
       this.symbolCooldownUntil[symbol] = Date.now() + LOSS_STREAK_SYMBOL_COOLDOWN_MS;
       this.log("COOLDOWN", { symbol, mins: Math.round(LOSS_STREAK_SYMBOL_COOLDOWN_MS / 60000) });
     }

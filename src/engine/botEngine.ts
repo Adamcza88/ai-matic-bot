@@ -267,7 +267,7 @@ export const defaultConfig: BotConfig = {
   partialTakeProfitR: 1.5,
   breakevenBufferAtr: 0.2,
   lookbackZones: 50,
-  cooldownBars: 1,
+  cooldownBars: 0,
   maxRiskPerTradeCap: 0.07,
   maxOpenPositions: 3,
   maxExitChunks: 3,

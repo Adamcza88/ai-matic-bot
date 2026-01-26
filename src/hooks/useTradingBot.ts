@@ -61,10 +61,10 @@ const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
   "ai-matic-tree": 0.003,
 };
 const CORE_V2_COOLDOWN_MS: Record<AISettings["riskMode"], number> = {
-  "ai-matic": 30 * 60_000,
-  "ai-matic-x": 60 * 60_000,
-  "ai-matic-scalp": 20 * 60_000,
-  "ai-matic-tree": 60 * 60_000,
+  "ai-matic": 0,
+  "ai-matic-x": 0,
+  "ai-matic-scalp": 0,
+  "ai-matic-tree": 0,
 };
 const CORE_V2_VOLUME_PCTL: Record<AISettings["riskMode"], number> = {
   "ai-matic": 60,
@@ -909,12 +909,14 @@ export function useTradingBot(
         baseTimeframe: "15m",
         signalTimeframe: "1m",
         entryStrictness: strictness,
+        cooldownBars: 0,
       };
     }
     if (settings.riskMode === "ai-matic-x") {
       return {
         ...baseConfig,
         strategyProfile: "ai-matic-x",
+        cooldownBars: 0,
       };
     }
     return baseConfig;
@@ -3136,7 +3138,7 @@ export function useTradingBot(
       if (hasSymbolPosition) entryBlockReasons.push("open position");
       if (hasSymbolEntryOrder) entryBlockReasons.push("open order");
       if (hasPendingIntent) entryBlockReasons.push("pending intent");
-      if (context.openPositionsCount >= coreMaxTotal) {
+      if (!isAiMaticX && context.openPositionsCount >= coreMaxTotal) {
         entryBlockReasons.push(isMajorSymbol ? "core max positions" : "core alt cap");
       }
       if (lastLossTs && now - lastLossTs < cooldownMs) {
