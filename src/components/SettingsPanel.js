@@ -56,7 +56,9 @@ function isHeadingLine(line) {
         line.startsWith("VIZUÁLNÍ ZKRATKA") ||
         line.startsWith("JAK S TÍM PRACOVAT") ||
         line.startsWith("FINÁLNÍ PRINCIP") ||
-        line.startsWith("PROVOZNÍ"));
+        line.startsWith("PROVOZNÍ") ||
+        line.startsWith("Kombinovaná strategie") ||
+        line.startsWith("Integrace tržních znalostí"));
 }
 function buildCheatBlocks(notes) {
     const blocks = [];
