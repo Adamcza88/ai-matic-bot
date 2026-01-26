@@ -385,6 +385,22 @@ const computeCoreV2Metrics = (candles, riskMode) => {
     const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
     const ema26 = ema26Arr[ema26Arr.length - 1] ?? Number.NaN;
     const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
+    const emaCrossLookback = Math.min(Math.max(3, SCALP_EMA_CROSS_LOOKBACK + 1), Math.min(ema12Arr.length, ema26Arr.length));
+    let emaCrossDir = "NONE";
+    let emaCrossBarsAgo = undefined;
+    if (emaCrossLookback >= 3) {
+        const size = Math.min(ema12Arr.length, ema26Arr.length);
+        let prevSign = Math.sign(ema12Arr[size - emaCrossLookback] - ema26Arr[size - emaCrossLookback]);
+        for (let i = size - emaCrossLookback + 1; i < size; i++) {
+            const sign = Math.sign(ema12Arr[i] - ema26Arr[i]);
+            if (sign !== 0 && prevSign !== 0 && sign !== prevSign) {
+                emaCrossDir = sign > 0 ? "BULL" : "BEAR";
+                emaCrossBarsAgo = size - 1 - i;
+            }
+            if (sign !== 0)
+                prevSign = sign;
+        }
+    }
     const atrArr = computeATR(ltfHighs, ltfLows, ltfCloses, 14);
     const atr14 = atrArr[atrArr.length - 1] ?? Number.NaN;
     const atrPct = Number.isFinite(atr14) && Number.isFinite(ltfClose) && ltfClose > 0
@@ -510,6 +526,8 @@ const computeCoreV2Metrics = (candles, riskMode) => {
         ema15m12,
         ema15m26,
         ema15mTrend,
+        emaCrossDir,
+        emaCrossBarsAgo,
         pullbackLong,
         pullbackShort,
         pivotHigh: prevHigh?.price,
@@ -525,13 +543,9 @@ const computeScalpPrimaryChecklist = (core, volumeOk) => {
     const ltfOk = core?.ltfTimeframeMin === 1;
     const primaryOk = ema15mTrend !== "NONE" && ltfOk;
     const emaCrossOk = ema15mTrend === "BULL"
-        ? Number.isFinite(core?.ema12) &&
-            Number.isFinite(core?.ema26) &&
-            core.ema12 > core.ema26
+        ? core?.emaCrossDir === "BULL"
         : ema15mTrend === "BEAR"
-            ? Number.isFinite(core?.ema12) &&
-                Number.isFinite(core?.ema26) &&
-                core.ema12 < core.ema26
+            ? core?.emaCrossDir === "BEAR"
             : false;
     const rsiOk = ema15mTrend === "BULL"
         ? Boolean(core?.rsiBullDiv)
@@ -547,6 +561,7 @@ const computeScalpPrimaryChecklist = (core, volumeOk) => {
         ema15mTrend,
         ltfOk,
         emaCrossOk,
+        emaCrossBarsAgo: core?.emaCrossBarsAgo,
         rsiOk,
         volumeOk,
     };
@@ -1011,6 +1026,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     }, [getEquityValue, useTestnet]);
     const computeTrailingPlan = useCallback((entry, sl, side, symbol) => {
         const settings = settingsRef.current;
+        const isScalpProfile = settings.riskMode === "ai-matic-scalp";
         const symbolMode = TRAIL_SYMBOL_MODE[symbol];
         const forceTrail = settings.riskMode === "ai-matic" ||
             settings.riskMode === "ai-matic-x" ||
@@ -1037,7 +1053,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (!Number.isFinite(distance) || distance <= 0)
             return null;
         const dir = side === "Buy" ? 1 : -1;
-        const activePrice = entry + dir * activateR * r;
+        const activePrice = isScalpProfile
+            ? entry + dir * distance
+            : entry + dir * activateR * r;
         if (!Number.isFinite(activePrice) || activePrice <= 0)
             return null;
         return { trailingStop: distance, trailingActivePrice: activePrice };
@@ -1815,7 +1833,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
         if (isScalpProfile) {
             addGate(SCALP_PRIMARY_GATE, scalpPrimary.primaryOk, `15m ${scalpPrimary.ema15mTrend} | LTF ${core?.ltfTimeframeMin ?? "—"}m`);
-            addGate(SCALP_ENTRY_GATE, scalpPrimary.entryOk, `EMA ${scalpPrimary.emaCrossOk ? "OK" : "no"} | RSI ${scalpPrimary.rsiOk ? "OK" : "no"} | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`);
+            addGate(SCALP_ENTRY_GATE, scalpPrimary.entryOk, `EMA ${scalpPrimary.emaCrossOk ? "OK" : "no"} | RSI ${scalpPrimary.rsiOk ? "OK" : "no"} | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}${Number.isFinite(scalpPrimary.emaCrossBarsAgo)
+                ? ` | cross ${scalpPrimary.emaCrossBarsAgo}b`
+                : ""}`);
             addGate(SCALP_EXIT_GATE, scalpPrimary.exitOk, Number.isFinite(core?.atr14)
                 ? `ATR ${formatNumber(core.atr14, 4)} | TP 1.5R`
                 : "ATR missing");

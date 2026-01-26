@@ -473,6 +473,8 @@ type CoreV2Metrics = {
   ema15m12: number;
   ema15m26: number;
   ema15mTrend: "BULL" | "BEAR" | "NONE";
+  emaCrossDir: "BULL" | "BEAR" | "NONE";
+  emaCrossBarsAgo?: number;
   pullbackLong: boolean;
   pullbackShort: boolean;
   pivotHigh?: number;
@@ -519,6 +521,26 @@ const computeCoreV2Metrics = (
   const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
   const ema26 = ema26Arr[ema26Arr.length - 1] ?? Number.NaN;
   const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
+  const emaCrossLookback = Math.min(
+    Math.max(3, SCALP_EMA_CROSS_LOOKBACK + 1),
+    Math.min(ema12Arr.length, ema26Arr.length)
+  );
+  let emaCrossDir: CoreV2Metrics["emaCrossDir"] = "NONE";
+  let emaCrossBarsAgo: number | undefined;
+  if (emaCrossLookback >= 3) {
+    const size = Math.min(ema12Arr.length, ema26Arr.length);
+    let prevSign = Math.sign(
+      ema12Arr[size - emaCrossLookback] - ema26Arr[size - emaCrossLookback]
+    );
+    for (let i = size - emaCrossLookback + 1; i < size; i++) {
+      const sign = Math.sign(ema12Arr[i] - ema26Arr[i]);
+      if (sign !== 0 && prevSign !== 0 && sign !== prevSign) {
+        emaCrossDir = sign > 0 ? "BULL" : "BEAR";
+        emaCrossBarsAgo = size - 1 - i;
+      }
+      if (sign !== 0) prevSign = sign;
+    }
+  }
   const atrArr = computeATR(ltfHighs, ltfLows, ltfCloses, 14);
   const atr14 = atrArr[atrArr.length - 1] ?? Number.NaN;
   const atrPct =
@@ -662,6 +684,8 @@ const computeCoreV2Metrics = (
     ema15m12,
     ema15m26,
     ema15mTrend,
+    emaCrossDir,
+    emaCrossBarsAgo,
     pullbackLong,
     pullbackShort,
     pivotHigh: prevHigh?.price,
@@ -682,13 +706,9 @@ const computeScalpPrimaryChecklist = (
   const primaryOk = ema15mTrend !== "NONE" && ltfOk;
   const emaCrossOk =
     ema15mTrend === "BULL"
-      ? Number.isFinite(core?.ema12) &&
-        Number.isFinite(core?.ema26) &&
-        core!.ema12 > core!.ema26
+      ? core?.emaCrossDir === "BULL"
       : ema15mTrend === "BEAR"
-        ? Number.isFinite(core?.ema12) &&
-          Number.isFinite(core?.ema26) &&
-          core!.ema12 < core!.ema26
+        ? core?.emaCrossDir === "BEAR"
         : false;
   const rsiOk =
     ema15mTrend === "BULL"
@@ -705,6 +725,7 @@ const computeScalpPrimaryChecklist = (
     ema15mTrend,
     ltfOk,
     emaCrossOk,
+    emaCrossBarsAgo: core?.emaCrossBarsAgo,
     rsiOk,
     volumeOk,
   };
@@ -1261,6 +1282,7 @@ export function useTradingBot(
   const computeTrailingPlan = useCallback(
     (entry: number, sl: number, side: "Buy" | "Sell", symbol: Symbol) => {
       const settings = settingsRef.current;
+      const isScalpProfile = settings.riskMode === "ai-matic-scalp";
       const symbolMode = TRAIL_SYMBOL_MODE[symbol];
       const forceTrail =
         settings.riskMode === "ai-matic" ||
@@ -1287,7 +1309,9 @@ export function useTradingBot(
         : Math.abs(activateR - lockR) * r;
       if (!Number.isFinite(distance) || distance <= 0) return null;
       const dir = side === "Buy" ? 1 : -1;
-      const activePrice = entry + dir * activateR * r;
+      const activePrice = isScalpProfile
+        ? entry + dir * distance
+        : entry + dir * activateR * r;
       if (!Number.isFinite(activePrice) || activePrice <= 0) return null;
       return { trailingStop: distance, trailingActivePrice: activePrice };
     },
@@ -2216,7 +2240,11 @@ export function useTradingBot(
           scalpPrimary.entryOk,
           `EMA ${scalpPrimary.emaCrossOk ? "OK" : "no"} | RSI ${
             scalpPrimary.rsiOk ? "OK" : "no"
-          } | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`
+          } | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}${
+            Number.isFinite(scalpPrimary.emaCrossBarsAgo)
+              ? ` | cross ${scalpPrimary.emaCrossBarsAgo}b`
+              : ""
+          }`
         );
         addGate(
           SCALP_EXIT_GATE,
