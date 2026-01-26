@@ -85,6 +85,7 @@ const MIN_CHECKLIST_PASS = 8;
 const REENTRY_COOLDOWN_MS = 30_000;
 const SIGNAL_LOG_THROTTLE_MS = 10_000;
 const SKIP_LOG_THROTTLE_MS = 10_000;
+const INTENT_COOLDOWN_MS = 20_000;
 const CORE_V2_EMA_SEP1_MIN = 0.18;
 const CORE_V2_EMA_SEP2_MIN = 0.12;
 const CORE_V2_ATR_MIN_PCT_MAJOR = 0.0012;
@@ -961,6 +962,7 @@ export function useTradingBot(
   const pnlSeenRef = useRef<Set<string>>(new Set());
   const lastLossBySymbolRef = useRef<Map<string, number>>(new Map());
   const lastCloseBySymbolRef = useRef<Map<string, number>>(new Map());
+  const lastIntentBySymbolRef = useRef<Map<string, number>>(new Map());
   const signalLogThrottleRef = useRef<Map<string, number>>(new Map());
   const skipLogThrottleRef = useRef<Map<string, number>>(new Map());
   const fastOkRef = useRef(false);
@@ -3245,10 +3247,16 @@ export function useTradingBot(
       const cooldownMs = CORE_V2_COOLDOWN_MS[context.settings.riskMode];
       const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
       const lastCloseTs = lastCloseBySymbolRef.current.get(symbol) ?? 0;
+      const lastIntentTs = lastIntentBySymbolRef.current.get(symbol) ?? 0;
       const entryBlockReasons: string[] = [];
       if (hasSymbolPosition) entryBlockReasons.push("open position");
       if (hasSymbolEntryOrder) entryBlockReasons.push("open order");
       if (hasPendingIntent) entryBlockReasons.push("pending intent");
+      if (lastIntentTs && now - lastIntentTs < INTENT_COOLDOWN_MS) {
+        const remainingMs = Math.max(0, INTENT_COOLDOWN_MS - (now - lastIntentTs));
+        const remainingSec = Math.ceil(remainingMs / 1000);
+        entryBlockReasons.push(`recent intent ${remainingSec}s`);
+      }
       if (lastCloseTs && now - lastCloseTs < REENTRY_COOLDOWN_MS) {
         const remainingMs = Math.max(0, REENTRY_COOLDOWN_MS - (now - lastCloseTs));
         const remainingSec = Math.ceil(remainingMs / 1000);
@@ -3497,6 +3505,7 @@ export function useTradingBot(
       }
 
       intentPendingRef.current.add(symbol);
+      lastIntentBySymbolRef.current.set(symbol, now);
       void (async () => {
         try {
           await autoTrade({
