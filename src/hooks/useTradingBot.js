@@ -892,6 +892,25 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const core = decision?.coreV2;
         if (!core)
             return null;
+        const normalizedEntry = toNumber(core.ltfClose);
+        const normalizedAtr = toNumber(core.atr14);
+        const normalizedPivotLow = toNumber(core.pivotLow);
+        const normalizedPivotHigh = toNumber(core.pivotHigh);
+        if (!Number.isFinite(normalizedEntry) || normalizedEntry <= 0)
+            return null;
+        let scale = 1;
+        if (Number.isFinite(normalizedPivotLow) && normalizedPivotLow > 0) {
+            const ratio = Math.max(normalizedPivotLow, normalizedEntry) /
+                Math.min(normalizedPivotLow, normalizedEntry);
+            if (ratio >= 5)
+                scale = normalizedEntry / normalizedPivotLow;
+        }
+        else if (Number.isFinite(normalizedPivotHigh) && normalizedPivotHigh > 0) {
+            const ratio = Math.max(normalizedPivotHigh, normalizedEntry) /
+                Math.min(normalizedPivotHigh, normalizedEntry);
+            if (ratio >= 5)
+                scale = normalizedEntry / normalizedPivotHigh;
+        }
         const bias = core.htfBias !== "NONE"
             ? core.htfBias
             : core.ema15mTrend !== "NONE"
@@ -901,12 +920,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     : "NONE";
         if (bias === "NONE")
             return null;
-        const entry = toNumber(core.ltfClose);
+        const entry = normalizedEntry;
         if (!Number.isFinite(entry) || entry <= 0)
             return null;
-        const atr = toNumber(core.atr14);
+        const atr = Number.isFinite(normalizedAtr) ? normalizedAtr * scale : Number.NaN;
         const fallbackOffset = Number.isFinite(atr) && atr > 0 ? atr * 1.5 : Number.NaN;
-        let sl = bias === "BULL" ? toNumber(core.pivotLow) : toNumber(core.pivotHigh);
+        let sl = bias === "BULL"
+            ? (Number.isFinite(normalizedPivotLow) ? normalizedPivotLow * scale : Number.NaN)
+            : (Number.isFinite(normalizedPivotHigh) ? normalizedPivotHigh * scale : Number.NaN);
         if (!Number.isFinite(sl) || sl <= 0) {
             if (!Number.isFinite(fallbackOffset))
                 return null;

@@ -450,7 +450,7 @@ export function evaluateAiMaticXStrategyForSymbol(
   const rangeInfo = resolveRangeInfo(ltf);
   const lowVol = detectLowVol(ltf);
   const strongTrendExpanse = detectStrongTrendExpanse(ltf, ltfSwings, ltfTrend.trend);
-  const riskOff = detectRiskOffByStructure(ltf);
+  const riskOff = false;
 
   const details: string[] = [
     `1h ${htfTrend.trend}`,
