@@ -3736,16 +3736,16 @@ export function useTradingBot(
       lastHeartbeatRef.current = now;
 
       const scan: string[] = [];
-      const manage: string[] = [];
+      const hold: string[] = [];
       for (const symbol of activeSymbols) {
         const state = resolveSymbolState(symbol);
-        if (state === "MANAGE") manage.push(symbol);
+        if (state === "HOLD") hold.push(symbol);
         else scan.push(symbol);
       }
 
       const parts: string[] = [];
       if (scan.length) parts.push(`scan: ${scan.join(", ")}`);
-      if (manage.length) parts.push(`manage: ${manage.join(", ")}`);
+      if (hold.length) parts.push(`hold: ${hold.join(", ")}`);
       const message = parts.length
         ? `BOT HEARTBEAT | ${parts.join(" | ")}`
         : "BOT HEARTBEAT | idle";

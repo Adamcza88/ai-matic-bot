@@ -3145,20 +3145,20 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             if (now - lastHeartbeatRef.current < 60_000)
                 return;
             lastHeartbeatRef.current = now;
-            const scan = [];
-            const manage = [];
-            for (const symbol of activeSymbols) {
-                const state = resolveSymbolState(symbol);
-                if (state === "MANAGE")
-                    manage.push(symbol);
-                else
-                    scan.push(symbol);
-            }
-            const parts = [];
-            if (scan.length)
-                parts.push(`scan: ${scan.join(", ")}`);
-            if (manage.length)
-                parts.push(`manage: ${manage.join(", ")}`);
+        const scan = [];
+        const hold = [];
+        for (const symbol of activeSymbols) {
+            const state = resolveSymbolState(symbol);
+            if (state === "HOLD")
+                hold.push(symbol);
+            else
+                scan.push(symbol);
+        }
+        const parts = [];
+        if (scan.length)
+            parts.push(`scan: ${scan.join(", ")}`);
+        if (hold.length)
+            parts.push(`hold: ${hold.join(", ")}`);
             const message = parts.length
                 ? `BOT HEARTBEAT | ${parts.join(" | ")}`
                 : "BOT HEARTBEAT | idle";
