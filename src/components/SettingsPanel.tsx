@@ -550,52 +550,57 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           ? rawLines.slice(0, 3)
           : rawLines;
         const hiddenCount = rawLines.length - visibleLines.length;
+        const showDivider = !compactCheatSheet && blockIndex > 0;
         return (
           <div
             key={`${block.title ?? "block"}-${blockIndex}`}
-            className={
-              block.title
-                ? "rounded-md border border-slate-800 bg-slate-950/40 p-2"
-                : ""
-            }
+            className={showDivider ? "border-t border-slate-800/80 pt-3" : ""}
           >
-            {block.title ? (
-              <div className="text-[11px] uppercase tracking-wide text-slate-300">
-                {block.title}
-              </div>
-            ) : null}
-            <ul className="mt-1 space-y-1 text-xs leading-relaxed">
-              {visibleLines.map((line, lineIndex) => {
-                const imageUrl = extractImageUrl(line);
-                if (imageUrl) {
-                  const host = imageUrl
-                    .replace(/^https?:\/\//, "")
-                    .split("/")[0];
+            <div
+              className={
+                block.title
+                  ? "rounded-md border border-slate-800 bg-slate-950/40 p-2"
+                  : ""
+              }
+            >
+              {block.title ? (
+                <div className="text-[11px] uppercase tracking-wide text-slate-300">
+                  {block.title}
+                </div>
+              ) : null}
+              <ul className="mt-1 space-y-1 text-xs leading-relaxed">
+                {visibleLines.map((line, lineIndex) => {
+                  const imageUrl = extractImageUrl(line);
+                  if (imageUrl) {
+                    const host = imageUrl
+                      .replace(/^https?:\/\//, "")
+                      .split("/")[0];
+                    return (
+                      <li key={`${blockIndex}-${lineIndex}`}>
+                        <a
+                          href={imageUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sky-300 underline underline-offset-2"
+                        >
+                          Image reference ({host})
+                        </a>
+                      </li>
+                    );
+                  }
                   return (
                     <li key={`${blockIndex}-${lineIndex}`}>
-                      <a
-                        href={imageUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-sky-300 underline underline-offset-2"
-                      >
-                        Image reference ({host})
-                      </a>
+                      {compactCheatSheet ? compactLine(line) : line}
                     </li>
                   );
-                }
-                return (
-                  <li key={`${blockIndex}-${lineIndex}`}>
-                    {compactCheatSheet ? compactLine(line) : line}
-                  </li>
-                );
-              })}
-            </ul>
-            {compactCheatSheet && hiddenCount > 0 ? (
-              <div className="mt-1 text-[11px] text-slate-500">
-                +{hiddenCount} dalších
-              </div>
-            ) : null}
+                })}
+              </ul>
+              {compactCheatSheet && hiddenCount > 0 ? (
+                <div className="mt-1 text-[11px] text-slate-500">
+                  +{hiddenCount} dalších
+                </div>
+              ) : null}
+            </div>
           </div>
         );
       })}
