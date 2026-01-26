@@ -3198,7 +3198,7 @@ export function useTradingBot(
         core,
         volumeGate?.ok ?? false
       );
-      const hardEnabled = context.settings.enableHardGates !== false;
+      const hardEnabled = false;
       const softEnabled = context.settings.enableSoftGates !== false;
       const hardBlockReasons: string[] = [];
       if (hardEnabled) {
@@ -3230,19 +3230,39 @@ export function useTradingBot(
         ]);
         return;
       }
+      if (softEnabled && coreEval.scorePass === false) {
+        addLogEntries([
+          {
+            id: `signal:score:${signalId}`,
+            timestamp: new Date(now).toISOString(),
+            action: "RISK_BLOCK",
+            message: `${symbol} score gate ${coreEval.score}/${coreEval.threshold}`,
+          },
+        ]);
+        return;
+      }
       const checklistGates = [...coreEval.gates];
       if (isScalpProfile) {
         checklistGates.push({
           name: SCALP_PRIMARY_GATE,
           ok: scalpPrimary.primaryOk,
+          detail: `15m ${scalpPrimary.ema15mTrend} | LTF ${core?.ltfTimeframeMin ?? "—"}m`,
         });
         checklistGates.push({
           name: SCALP_ENTRY_GATE,
           ok: scalpPrimary.entryOk,
+          detail: `EMA cross ${
+            core?.emaCrossDir === "NONE" ? "no cross" : core?.emaCrossDir ?? "no cross"
+          }${Number.isFinite(scalpPrimary.emaCrossBarsAgo) ? " <=6b" : ""} | RSI ${
+            scalpPrimary.rsiOk ? "OK" : "no"
+          } | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`,
         });
         checklistGates.push({
           name: SCALP_EXIT_GATE,
           ok: scalpPrimary.exitOk,
+          detail: Number.isFinite(core?.atr14)
+            ? `ATR ${formatNumber(core!.atr14, 4)} | TP 1.5R`
+            : "ATR missing",
         });
       }
       const checklist = evaluateChecklistPass(checklistGates);

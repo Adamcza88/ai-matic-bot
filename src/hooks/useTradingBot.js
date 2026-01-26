@@ -1855,35 +1855,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 ? `ATR ${formatNumber(core.atr14, 4)} | TP 1.5R`
                 : "ATR missing");
         }
-        const hardEnabled = context.settings.enableHardGates !== false;
-        const softEnabled = !isScalpProfile && context.settings.enableSoftGates !== false;
+        const hardEnabled = false;
+        const softEnabled = context.settings.enableSoftGates !== false;
         const hardReasons = [];
-        if (hardEnabled) {
-            if (!isScalpProfile) {
-                coreEval.gates.forEach((gate) => {
-                    if (!gate.hard || gate.ok)
-                        return;
-                    if (!isGateEnabled(gate.name))
-                        return;
-                    hardReasons.push(gate.name);
-                });
-            }
-            if (isScalpProfile) {
-                if (!scalpPrimary.primaryOk && isGateEnabled(SCALP_PRIMARY_GATE)) {
-                    hardReasons.push(SCALP_PRIMARY_GATE);
-                }
-                if (!scalpPrimary.entryOk && isGateEnabled(SCALP_ENTRY_GATE)) {
-                    hardReasons.push(SCALP_ENTRY_GATE);
-                }
-            }
-        }
-        const hardBlocked = hardEnabled && hardReasons.length > 0;
+        const hardBlocked = false;
         const execEnabled = isGateEnabled("Exec allowed");
         const softBlocked = softEnabled && quality.pass === false;
         const checklist = evaluateChecklistPass(gates);
         const executionAllowed = signalActive
             ? execEnabled
-                ? checklist.pass
+                ? checklist.pass && !softBlocked
                 : false
             : null;
         return {
@@ -1902,7 +1883,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 ? execEnabled
                     ? !checklist.pass
                         ? `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`
-                        : undefined
+                        : softBlocked
+                            ? `Score ${quality.score ?? "—"} / ${quality.threshold ?? "—"}`
+                            : undefined
                     : "Exec allowed (OFF)"
                 : execEnabled
                     ? "Waiting for signal"
@@ -1916,6 +1899,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             feedAgeOk,
         };
     }, [
+        evaluateChecklistPass,
         evaluateCoreV2,
         getSymbolContext,
         isGateEnabled,
@@ -2690,7 +2674,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const core = decision?.coreV2;
         const volumeGate = coreEval.gates.find((g) => g.name === "Volume Pxx");
         const scalpPrimary = computeScalpPrimaryChecklist(core, volumeGate?.ok ?? false);
-        const hardEnabled = context.settings.enableHardGates !== false;
+        const hardEnabled = false;
         const softEnabled = context.settings.enableSoftGates !== false;
         const hardBlockReasons = [];
         if (hardEnabled) {
@@ -2724,19 +2708,39 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             ]);
             return;
         }
+        if (softEnabled && coreEval.scorePass === false) {
+            addLogEntries([
+                {
+                    id: `signal:score:${signalId}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "RISK_BLOCK",
+                    message: `${symbol} score gate ${coreEval.score}/${coreEval.threshold}`,
+                },
+            ]);
+            return;
+        }
         const checklistGates = [...coreEval.gates];
         if (isScalpProfile) {
             checklistGates.push({
                 name: SCALP_PRIMARY_GATE,
                 ok: scalpPrimary.primaryOk,
+                detail: `15m ${scalpPrimary.ema15mTrend} | LTF ${core?.ltfTimeframeMin ?? "—"}m`,
             });
             checklistGates.push({
                 name: SCALP_ENTRY_GATE,
                 ok: scalpPrimary.entryOk,
+                detail: `EMA cross ${core?.emaCrossDir === "NONE"
+                    ? "no cross"
+                    : core?.emaCrossDir ?? "no cross"}${Number.isFinite(scalpPrimary.emaCrossBarsAgo)
+                    ? " <=6b"
+                    : ""} | RSI ${scalpPrimary.rsiOk ? "OK" : "no"} | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`,
             });
             checklistGates.push({
                 name: SCALP_EXIT_GATE,
                 ok: scalpPrimary.exitOk,
+                detail: Number.isFinite(core?.atr14)
+                    ? `ATR ${formatNumber(core.atr14, 4)} | TP 1.5R`
+                    : "ATR missing",
             });
         }
         const checklist = evaluateChecklistPass(checklistGates);
