@@ -1030,6 +1030,7 @@ export function useTradingBot(
   >({});
   const signalSeenRef = useRef<Set<string>>(new Set());
   const intentPendingRef = useRef<Set<string>>(new Set());
+  const feedPauseRef = useRef<Set<string>>(new Set());
   const trailingSyncRef = useRef<Map<string, number>>(new Map());
   const trailOffsetRef = useRef<Map<string, number>>(new Map());
   const settingsRef = useRef<AISettings>(settings);
@@ -3267,6 +3268,16 @@ export function useTradingBot(
         (order) =>
           isActiveEntryOrder(order) && String(order?.symbol ?? "") === symbol
       );
+      const hasPendingIntent = intentPendingRef.current.has(symbol);
+      const paused = feedPauseRef.current.has(symbol);
+      // Pokud je feed pro tento symbol pozastavený, čekáme dokud se nevyčistí
+      // pending intent / otevřená pozice / entry order, potom automaticky obnovíme.
+      if (paused) {
+        if (hasPosition || hasEntryOrder || hasPendingIntent) {
+          return;
+        }
+        feedPauseRef.current.delete(symbol);
+      }
       const cheatHold =
         settingsRef.current.riskMode === "ai-matic-x" &&
         settingsRef.current.strategyCheatSheetEnabled;
@@ -3444,7 +3455,6 @@ export function useTradingBot(
         (order) =>
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
       );
-      const hasPendingIntent = intentPendingRef.current.has(symbol);
       const cooldownMs = CORE_V2_COOLDOWN_MS[context.settings.riskMode];
       const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
       const lastCloseTs = lastCloseBySymbolRef.current.get(symbol) ?? 0;
@@ -3737,6 +3747,9 @@ export function useTradingBot(
       intentPendingRef.current.add(symbol);
       lastIntentBySymbolRef.current.set(symbol, now);
       entryOrderLockRef.current.set(symbol, now);
+      // Pozastavíme feed pro tento symbol, dokud nedoběhne intent/pozice,
+      // aby se nevyvolávaly nové obchody při Exec allowed ON.
+      feedPauseRef.current.add(symbol);
       void (async () => {
         try {
           await autoTrade({
