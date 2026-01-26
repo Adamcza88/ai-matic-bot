@@ -17,6 +17,7 @@ import {
   cancelOrder,
 } from "./bybitClient.js";
 import { reconcileState } from "./reconcile.js";
+import { getInstrumentInfo } from "./instrumentCache.js";
 
 dotenv.config();
 
@@ -104,6 +105,7 @@ app.post("/api/:env/order", async (req, res) => {
 
   const applyRoiStops = (sym, entry, dir, curTp, curSl, leverageValue) => {
     if (!roiSymbols.has(sym) || !Number.isFinite(entry)) return { tp: curTp, sl: curSl };
+    if (Number.isFinite(curTp) || Number.isFinite(curSl)) return { tp: curTp, sl: curSl };
     const lev = resolveLeverage(sym, leverageValue);
     const isBuy = dir?.toLowerCase() === "buy";
     const tpPrice = entry * (1 + (roiTargets.tp / 100) / Math.max(1, lev) * (isBuy ? 1 : -1));
@@ -125,6 +127,66 @@ app.post("/api/:env/order", async (req, res) => {
         }
         if (Number.isFinite(nextSl) && nextSl <= entry + minDistance) {
           nextSl = entry + minDistance;
+        }
+      }
+    }
+    return { tp: nextTp, sl: nextSl };
+  };
+
+  const resolveMinDistance = (entry, tickSize) => {
+    const pctDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
+    const tick = Number.isFinite(tickSize) && tickSize > 0 ? tickSize : 0;
+    return Math.max(pctDistance, tick);
+  };
+
+  const roundToTick = (value, tickSize, mode) => {
+    if (!Number.isFinite(value) || !Number.isFinite(tickSize) || tickSize <= 0) {
+      return value;
+    }
+    const ratio = value / tickSize;
+    const stepped =
+      mode === "ceil" ? Math.ceil(ratio) : mode === "floor" ? Math.floor(ratio) : Math.round(ratio);
+    return Number((stepped * tickSize).toFixed(12));
+  };
+
+  const clampProtection = (entry, dir, curTp, curSl, tickSize) => {
+    if (!Number.isFinite(entry) || entry <= 0) return { tp: curTp, sl: curSl };
+    const isBuy = String(dir ?? "").toLowerCase() === "buy";
+    const minDistance = resolveMinDistance(entry, tickSize);
+    let nextTp = curTp;
+    let nextSl = curSl;
+    if (isBuy) {
+      if (Number.isFinite(nextTp)) {
+        const minTp = entry + minDistance;
+        nextTp = Math.max(nextTp, minTp);
+        nextTp = roundToTick(nextTp, tickSize, "ceil");
+        if (Number.isFinite(tickSize) && tickSize > 0 && nextTp <= entry) {
+          nextTp = entry + tickSize;
+        }
+      }
+      if (Number.isFinite(nextSl)) {
+        const maxSl = entry - minDistance;
+        nextSl = Math.min(nextSl, maxSl);
+        nextSl = roundToTick(nextSl, tickSize, "floor");
+        if (Number.isFinite(tickSize) && tickSize > 0 && nextSl >= entry) {
+          nextSl = entry - tickSize;
+        }
+      }
+    } else {
+      if (Number.isFinite(nextTp)) {
+        const maxTp = entry - minDistance;
+        nextTp = Math.min(nextTp, maxTp);
+        nextTp = roundToTick(nextTp, tickSize, "floor");
+        if (Number.isFinite(tickSize) && tickSize > 0 && nextTp >= entry) {
+          nextTp = entry - tickSize;
+        }
+      }
+      if (Number.isFinite(nextSl)) {
+        const minSl = entry + minDistance;
+        nextSl = Math.max(nextSl, minSl);
+        nextSl = roundToTick(nextSl, tickSize, "ceil");
+        if (Number.isFinite(tickSize) && tickSize > 0 && nextSl <= entry) {
+          nextSl = entry + tickSize;
         }
       }
     }
@@ -172,6 +234,13 @@ app.post("/api/:env/order", async (req, res) => {
     // Reuse createDemoOrder for both main/testnet logic in server (it handles 'useTestnet' flag)
     const entryPrice = Number(price ?? triggerPrice);
     const resolvedLeverage = resolveLeverage(symbol, leverage);
+    let tickSize = 0;
+    try {
+      const instrument = await getInstrumentInfo(symbol, env === "testnet");
+      tickSize = Number(instrument?.tickSize ?? 0);
+    } catch (err) {
+      console.warn("[order] instrument info unavailable:", err?.message || err);
+    }
     const { tp: roiTp, sl: roiSl } = applyRoiStops(
       symbol,
       entryPrice,
@@ -179,6 +248,13 @@ app.post("/api/:env/order", async (req, res) => {
       tp,
       sl,
       resolvedLeverage
+    );
+    const { tp: safeTp, sl: safeSl } = clampProtection(
+      entryPrice,
+      side,
+      roiTp,
+      roiSl,
+      tickSize
     );
 
     const result = await createDemoOrder({
@@ -188,16 +264,16 @@ app.post("/api/:env/order", async (req, res) => {
       orderType,
       price,
       triggerPrice,
-      sl: roiSl,
-      tp: roiTp,
+      sl: safeSl,
+      tp: safeTp,
       trailingStop,
       trailingActivePrice,
       orderLinkId,
       timeInForce,
       reduceOnly,
       positionIdx,
-      takeProfit: roiTp,
-      stopLoss: roiSl,
+      takeProfit: safeTp,
+      stopLoss: safeSl,
       trailingStop,
       trailingActivePrice,
       leverage: resolvedLeverage

@@ -76,6 +76,7 @@ export default function PositionsTable({
           : "—";
       })();
       const hasTrailing =
+        Boolean(p.trailPlanned) ||
         (Number.isFinite(trail) && trail > 0) ||
         (Number.isFinite(trailingActivePrice) && trailingActivePrice > 0);
       const activationHit =

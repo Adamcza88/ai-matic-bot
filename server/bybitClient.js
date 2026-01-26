@@ -25,6 +25,82 @@ import { metric } from "./metrics.js";
 import { getInstrumentInfo } from "./instrumentCache.js";
 import { withRetry } from "./httpRetry.js";
 
+const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
+
+function resolveMinDistance(entry, tickSize) {
+  const pctDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
+  const tick = Number.isFinite(tickSize) && tickSize > 0 ? tickSize : 0;
+  return Math.max(pctDistance, tick);
+}
+
+function roundToTick(value, tickSize, mode) {
+  if (!Number.isFinite(value) || !Number.isFinite(tickSize) || tickSize <= 0) {
+    return value;
+  }
+  const ratio = value / tickSize;
+  const stepped =
+    mode === "ceil" ? Math.ceil(ratio) : mode === "floor" ? Math.floor(ratio) : Math.round(ratio);
+  return Number((stepped * tickSize).toFixed(12));
+}
+
+async function clampProtectionLevels({
+  symbol,
+  entry,
+  side,
+  tp,
+  sl,
+  useTestnet,
+}) {
+  if (!Number.isFinite(entry) || entry <= 0) return { tp, sl };
+  let tickSize = 0;
+  try {
+    const info = await getInstrumentInfo(symbol, useTestnet);
+    tickSize = Number(info?.tickSize ?? 0);
+  } catch (err) {
+    console.warn("[Bybit] instrument info unavailable:", err?.message || err);
+  }
+  const minDistance = resolveMinDistance(entry, tickSize);
+  const isBuy = String(side ?? "").toLowerCase() === "buy";
+  let nextTp = tp;
+  let nextSl = sl;
+  if (isBuy) {
+    if (Number.isFinite(nextTp)) {
+      const minTp = entry + minDistance;
+      nextTp = Math.max(nextTp, minTp);
+      nextTp = roundToTick(nextTp, tickSize, "ceil");
+      if (Number.isFinite(tickSize) && tickSize > 0 && nextTp <= entry) {
+        nextTp = entry + tickSize;
+      }
+    }
+    if (Number.isFinite(nextSl)) {
+      const maxSl = entry - minDistance;
+      nextSl = Math.min(nextSl, maxSl);
+      nextSl = roundToTick(nextSl, tickSize, "floor");
+      if (Number.isFinite(tickSize) && tickSize > 0 && nextSl >= entry) {
+        nextSl = entry - tickSize;
+      }
+    }
+  } else {
+    if (Number.isFinite(nextTp)) {
+      const maxTp = entry - minDistance;
+      nextTp = Math.min(nextTp, maxTp);
+      nextTp = roundToTick(nextTp, tickSize, "floor");
+      if (Number.isFinite(tickSize) && tickSize > 0 && nextTp >= entry) {
+        nextTp = entry - tickSize;
+      }
+    }
+    if (Number.isFinite(nextSl)) {
+      const minSl = entry + minDistance;
+      nextSl = Math.max(nextSl, minSl);
+      nextSl = roundToTick(nextSl, tickSize, "ceil");
+      if (Number.isFinite(tickSize) && tickSize > 0 && nextSl <= entry) {
+        nextSl = entry + tickSize;
+      }
+    }
+  }
+  return { tp: nextTp, sl: nextSl };
+}
+
 async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true) {
   let q = Number(qtyInput);
 
@@ -354,6 +430,22 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   if (order.sl != null) {
     rawBody.stopLoss = String(order.sl);
     rawBody.slTriggerBy = "LastPrice";
+  }
+
+  const entryPrice = Number(order.price ?? order.triggerPrice);
+  if (Number.isFinite(entryPrice) && (rawBody.takeProfit != null || rawBody.stopLoss != null)) {
+    const tpValue = rawBody.takeProfit != null ? Number(rawBody.takeProfit) : undefined;
+    const slValue = rawBody.stopLoss != null ? Number(rawBody.stopLoss) : undefined;
+    const clamped = await clampProtectionLevels({
+      symbol: order.symbol,
+      entry: entryPrice,
+      side: order.side,
+      tp: Number.isFinite(tpValue) ? tpValue : undefined,
+      sl: Number.isFinite(slValue) ? slValue : undefined,
+      useTestnet,
+    });
+    rawBody.takeProfit = Number.isFinite(clamped.tp) ? String(clamped.tp) : undefined;
+    rawBody.stopLoss = Number.isFinite(clamped.sl) ? String(clamped.sl) : undefined;
   }
 
   // CLEAN THE BODY strictly before signing

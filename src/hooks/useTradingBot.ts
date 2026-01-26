@@ -1229,7 +1229,7 @@ export function useTradingBot(
         entryType: "LIMIT_MAKER_FIRST",
         kind: "PULLBACK",
         risk: 0.6,
-        message: "Checklist auto-signal",
+        message: "Checklist auto-signál",
         createdAt: new Date(now).toISOString(),
       } as PriceFeedDecision["signal"];
     },
@@ -2546,7 +2546,7 @@ export function useTradingBot(
           );
           const sl = toNumber(p?.stopLoss ?? p?.sl);
           const tp = toNumber(p?.takeProfit ?? p?.tp);
-          const trailingActivePrice = toNumber(
+          const trailingActiveRaw = toNumber(
             p?.trailingActivePrice ?? p?.activePrice ?? p?.activationPrice
           );
           const markPrice = toNumber(
@@ -2570,6 +2570,20 @@ export function useTradingBot(
               : Number.isFinite(fallback?.price)
                 ? (fallback?.price as number)
                 : Number.NaN;
+          const trailPlan =
+            Number.isFinite(resolvedEntry) &&
+            Number.isFinite(sl) &&
+            sl > 0
+              ? computeTrailingPlan(
+                  resolvedEntry,
+                  sl,
+                  side === "Sell" ? "Sell" : "Buy",
+                  symbol as Symbol
+                )
+              : null;
+          const trailingActivePrice = Number.isFinite(trailingActiveRaw)
+            ? trailingActiveRaw
+            : trailPlan?.trailingActivePrice;
           const rrr =
             Number.isFinite(resolvedEntry) &&
             Number.isFinite(sl) &&
@@ -2602,6 +2616,7 @@ export function useTradingBot(
               Number.isFinite(trailingStop) && trailingStop > 0
                 ? trailingStop
                 : undefined,
+            trailPlanned: Boolean(trailPlan),
             unrealizedPnl: Number.isFinite(unrealized)
               ? unrealized
               : Number.NaN,
@@ -3321,7 +3336,9 @@ export function useTradingBot(
       }
       if (signal.message) msgParts.push(signal.message);
 
-      const isChecklistSignal = signal.message === "Checklist auto-signal";
+      const isChecklistSignal =
+        signal.message === "Checklist auto-signál" ||
+        signal.message === "Checklist auto-signal";
       const signalKey = `${symbol}:${side}`;
       const lastSignalLog = signalLogThrottleRef.current.get(signalKey) ?? 0;
       const shouldLogSignal =

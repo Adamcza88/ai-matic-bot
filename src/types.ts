@@ -120,6 +120,7 @@ export type ActivePosition = {
   currentTrailingStop?: number; // Legacy?
   trailingActivePrice?: number;
   markPrice?: number;
+  trailPlanned?: boolean;
 
   // Meta
   openedAt: string;
