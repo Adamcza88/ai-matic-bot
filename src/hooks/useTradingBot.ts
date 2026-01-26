@@ -2293,11 +2293,11 @@ export function useTradingBot(
       const size = toNumber(p.size ?? p.qty);
       return Number.isFinite(size) && size > 0;
     });
-    if (hasPosition) return "MANAGE";
+    if (hasPosition) return "HOLD";
     const hasOrders = ordersRef.current.some(
       (o) => isActiveEntryOrder(o) && String(o.symbol ?? "") === symbol
     );
-    if (hasOrders) return "MANAGE";
+    if (hasOrders) return "HOLD";
     return "SCAN";
   }, [isActiveEntryOrder]);
 
@@ -3168,6 +3168,19 @@ export function useTradingBot(
         }));
       }
       if (!isSelected) {
+        return;
+      }
+
+      const hasPosition = positionsRef.current.some((p) => {
+        if (p.symbol !== symbol) return false;
+        const size = toNumber(p.size ?? p.qty);
+        return Number.isFinite(size) && size > 0;
+      });
+      const hasEntryOrder = ordersRef.current.some(
+        (order) =>
+          isActiveEntryOrder(order) && String(order?.symbol ?? "") === symbol
+      );
+      if (hasPosition || hasEntryOrder) {
         return;
       }
 

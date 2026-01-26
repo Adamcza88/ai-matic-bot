@@ -1886,10 +1886,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return Number.isFinite(size) && size > 0;
         });
         if (hasPosition)
-            return "MANAGE";
+            return "HOLD";
         const hasOrders = ordersRef.current.some((o) => isActiveEntryOrder(o) && String(o.symbol ?? "") === symbol);
         if (hasOrders)
-            return "MANAGE";
+            return "HOLD";
         return "SCAN";
     }, [isActiveEntryOrder]);
     const buildScanDiagnostics = useCallback((symbol, decision, lastScanTs) => {
@@ -2639,6 +2639,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             }));
         }
         if (!isSelected) {
+            return;
+        }
+        const hasPosition = positionsRef.current.some((p) => {
+            if (p.symbol !== symbol)
+                return false;
+            const size = toNumber(p.size ?? p.qty);
+            return Number.isFinite(size) && size > 0;
+        });
+        const hasEntryOrder = ordersRef.current.some((order) => isActiveEntryOrder(order) && String(order?.symbol ?? "") === symbol);
+        if (hasPosition || hasEntryOrder) {
             return;
         }
         const nextState = String(decision?.state ?? "").toUpperCase();
