@@ -1114,6 +1114,53 @@ export function useTradingBot(
     [isGateEnabled]
   );
 
+  const buildChecklistSignal = useCallback(
+    (symbol: Symbol, decision: PriceFeedDecision, now: number) => {
+      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      if (!core) return null;
+      const bias =
+        core.htfBias !== "NONE"
+          ? core.htfBias
+          : core.ema15mTrend !== "NONE"
+            ? core.ema15mTrend
+            : core.emaCrossDir !== "NONE"
+              ? core.emaCrossDir
+              : "NONE";
+      if (bias === "NONE") return null;
+      const entry = toNumber(core.ltfClose);
+      if (!Number.isFinite(entry) || entry <= 0) return null;
+      const atr = toNumber(core.atr14);
+      const fallbackOffset =
+        Number.isFinite(atr) && atr > 0 ? atr * 1.5 : Number.NaN;
+      let sl =
+        bias === "BULL" ? toNumber(core.pivotLow) : toNumber(core.pivotHigh);
+      if (!Number.isFinite(sl) || sl <= 0) {
+        if (!Number.isFinite(fallbackOffset)) return null;
+        sl = bias === "BULL" ? entry - fallbackOffset : entry + fallbackOffset;
+      }
+      if (!Number.isFinite(sl) || sl <= 0 || sl === entry) return null;
+      const risk = Math.abs(entry - sl);
+      const tp = bias === "BULL" ? entry + 2 * risk : entry - 2 * risk;
+      if (!Number.isFinite(tp) || tp <= 0) return null;
+      return {
+        id: `${symbol}-${now}-checklist`,
+        symbol,
+        intent: {
+          side: bias === "BULL" ? "buy" : "sell",
+          entry,
+          sl,
+          tp,
+        },
+        entryType: "LIMIT_MAKER_FIRST",
+        kind: "PULLBACK",
+        risk: 0.6,
+        message: "Checklist auto-signal",
+        createdAt: new Date(now).toISOString(),
+      } as PriceFeedDecision["signal"];
+    },
+    []
+  );
+
   const normalizeBias = useCallback((value: unknown): "bull" | "bear" | null => {
     const raw = String(value ?? "").trim().toLowerCase();
     if (!raw) return null;
@@ -2229,7 +2276,6 @@ export function useTradingBot(
         lastTick > 0 ? Math.max(0, Date.now() - lastTick) : null;
       const feedAgeOk =
         feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
-      const signalActive = Boolean(decision?.signal);
       const signal = decision?.signal ?? null;
       const quality = resolveQualityScore(symbol as Symbol, decision, signal, feedAgeMs);
 
@@ -2298,6 +2344,7 @@ export function useTradingBot(
       const execEnabled = isGateEnabled("Exec allowed");
       const softBlocked = softEnabled && quality.pass === false;
       const checklist = evaluateChecklistPass(gates);
+      const signalActive = Boolean(signal) || checklist.pass;
       const executionAllowed = signalActive
         ? execEnabled
           ? checklist.pass && !softBlocked
@@ -3081,9 +3128,21 @@ export function useTradingBot(
         lastStateRef.current.set(symbol, nextState);
       }
 
-      const signal = decision?.signal ?? null;
+      const rawSignal = decision?.signal ?? null;
+      const lastTick = symbolTickRef.current.get(symbol) ?? 0;
+      const feedAgeMs = lastTick > 0 ? Math.max(0, now - lastTick) : null;
+      const coreEval = evaluateCoreV2(
+        symbol as Symbol,
+        decision,
+        rawSignal,
+        feedAgeMs
+      );
+      const checklist = evaluateChecklistPass(coreEval.gates);
+      let signal = rawSignal;
+      if (!signal && checklist.pass) {
+        signal = buildChecklistSignal(symbol as Symbol, decision, now);
+      }
       if (!signal) return;
-      const signalActive = true;
 
       const signalId = String(signal.id ?? `${symbol}-${now}`);
       if (signalSeenRef.current.has(signalId)) return;
@@ -3203,14 +3262,7 @@ export function useTradingBot(
         return;
       }
 
-      const lastTick = symbolTickRef.current.get(symbol) ?? 0;
-      const feedAgeMs = lastTick > 0 ? Math.max(0, now - lastTick) : null;
-      const coreEval = evaluateCoreV2(
-        symbol as Symbol,
-        decision,
-        signal,
-        feedAgeMs
-      );
+      // reuse feedAgeMs + coreEval computed above
       const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
       const volumeGate = coreEval.gates.find((g) => g.name === "Volume Pxx");
       const scalpPrimary = computeScalpPrimaryChecklist(
@@ -3448,6 +3500,7 @@ export function useTradingBot(
       activeSymbols,
       autoTrade,
       buildScanDiagnostics,
+      buildChecklistSignal,
       closedPnlRecords,
       computeFixedSizing,
       computeNotionalForSignal,
