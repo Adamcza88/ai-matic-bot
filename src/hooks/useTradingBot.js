@@ -700,7 +700,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return {
                 ...baseConfig,
                 strategyProfile: "ai-matic-scalp",
-                baseTimeframe: "1h",
+                baseTimeframe: "15m",
                 signalTimeframe: "1m",
                 entryStrictness: strictness,
             };
@@ -1802,6 +1802,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const core = decision?.coreV2;
         const volumeGate = coreEval.gates.find((g) => g.name === "Volume Pxx");
         const scalpPrimary = computeScalpPrimaryChecklist(core, volumeGate?.ok ?? false);
+        const isScalpProfile = context.settings.riskMode === "ai-matic-scalp";
         const hasEntryOrder = ordersRef.current.some((order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol);
         const hasPendingIntent = intentPendingRef.current.has(symbol);
         const manageReason = context.hasPosition
@@ -1812,7 +1813,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     ? "pending intent"
                     : null;
         coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
-        if (context.settings.riskMode === "ai-matic-scalp") {
+        if (isScalpProfile) {
             addGate(SCALP_PRIMARY_GATE, scalpPrimary.primaryOk, `15m ${scalpPrimary.ema15mTrend} | LTF ${core?.ltfTimeframeMin ?? "—"}m`);
             addGate(SCALP_ENTRY_GATE, scalpPrimary.entryOk, `EMA ${scalpPrimary.emaCrossOk ? "OK" : "no"} | RSI ${scalpPrimary.rsiOk ? "OK" : "no"} | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`);
             addGate(SCALP_EXIT_GATE, scalpPrimary.exitOk, Number.isFinite(core?.atr14)
@@ -1820,17 +1821,19 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 : "ATR missing");
         }
         const hardEnabled = context.settings.enableHardGates !== false;
-        const softEnabled = context.settings.enableSoftGates !== false;
+        const softEnabled = !isScalpProfile && context.settings.enableSoftGates !== false;
         const hardReasons = [];
         if (hardEnabled) {
-            coreEval.gates.forEach((gate) => {
-                if (!gate.hard || gate.ok)
-                    return;
-                if (!isGateEnabled(gate.name))
-                    return;
-                hardReasons.push(gate.name);
-            });
-            if (context.settings.riskMode === "ai-matic-scalp") {
+            if (!isScalpProfile) {
+                coreEval.gates.forEach((gate) => {
+                    if (!gate.hard || gate.ok)
+                        return;
+                    if (!isGateEnabled(gate.name))
+                        return;
+                    hardReasons.push(gate.name);
+                });
+            }
+            if (isScalpProfile) {
                 if (!scalpPrimary.primaryOk && isGateEnabled(SCALP_PRIMARY_GATE)) {
                     hardReasons.push(SCALP_PRIMARY_GATE);
                 }
@@ -2587,6 +2590,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }
         const context = getSymbolContext(symbol, decision);
         const isAiMaticX = context.settings.riskMode === "ai-matic-x";
+        const isScalpProfile = context.settings.riskMode === "ai-matic-scalp";
         const xContext = decision?.xContext;
         const hasSymbolPosition = context.hasPosition;
         const hasSymbolEntryOrder = ordersRef.current.some((order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol);
@@ -2656,14 +2660,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const softEnabled = context.settings.enableSoftGates !== false;
         const hardBlockReasons = [];
         if (hardEnabled) {
-            coreEval.gates.forEach((gate) => {
-                if (!gate.hard || gate.ok)
-                    return;
-                if (!isGateEnabled(gate.name))
-                    return;
-                hardBlockReasons.push(gate.name);
-            });
-            if (context.settings.riskMode === "ai-matic-scalp") {
+            if (!isScalpProfile) {
+                coreEval.gates.forEach((gate) => {
+                    if (!gate.hard || gate.ok)
+                        return;
+                    if (!isGateEnabled(gate.name))
+                        return;
+                    hardBlockReasons.push(gate.name);
+                });
+            }
+            if (isScalpProfile) {
                 if (!scalpPrimary.primaryOk && isGateEnabled(SCALP_PRIMARY_GATE)) {
                     hardBlockReasons.push(SCALP_PRIMARY_GATE);
                 }
@@ -2683,7 +2689,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             ]);
             return;
         }
-        if (softEnabled && coreEval.scorePass === false) {
+        if (!isScalpProfile && softEnabled && coreEval.scorePass === false) {
             addLogEntries([
                 {
                     id: `signal:score:${signalId}`,
@@ -2717,7 +2723,34 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 ? signal.triggerPrice
                 : entry
             : undefined;
-        if (!Number.isFinite(entry) || !Number.isFinite(sl) || entry <= 0 || sl <= 0) {
+        let resolvedSl = sl;
+        let resolvedTp = tp;
+        if (isScalpProfile &&
+            (!Number.isFinite(resolvedSl) || resolvedSl <= 0) &&
+            Number.isFinite(entry) &&
+            entry > 0 &&
+            Number.isFinite(core?.atr14) &&
+            core.atr14 > 0) {
+            const offset = core.atr14 * 2.5;
+            resolvedSl = side === "Buy" ? entry - offset : entry + offset;
+        }
+        if (isScalpProfile &&
+            (!Number.isFinite(resolvedTp) || resolvedTp <= 0) &&
+            Number.isFinite(resolvedSl) &&
+            resolvedSl > 0 &&
+            Number.isFinite(entry) &&
+            entry > 0) {
+            const risk = Math.abs(entry - resolvedSl);
+            if (Number.isFinite(risk) && risk > 0) {
+                resolvedTp = side === "Buy"
+                    ? entry + 1.5 * risk
+                    : entry - 1.5 * risk;
+            }
+        }
+        if (!Number.isFinite(entry) ||
+            !Number.isFinite(resolvedSl) ||
+            entry <= 0 ||
+            resolvedSl <= 0) {
             addLogEntries([
                 {
                     id: `signal:invalid:${signalId}`,
@@ -2728,8 +2761,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             ]);
             return;
         }
-        const fixedSizing = computeFixedSizing(symbol, entry, sl);
-        const sizing = fixedSizing ?? computeNotionalForSignal(symbol, entry, sl);
+        const fixedSizing = computeFixedSizing(symbol, entry, resolvedSl);
+        const sizing = fixedSizing ?? computeNotionalForSignal(symbol, entry, resolvedSl);
         if (!sizing.ok) {
             addLogEntries([
                 {
@@ -2744,7 +2777,15 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const useFixedQty = fixedSizing?.ok === true;
         const qtyMode = useFixedQty ? "BASE_QTY" : "USDT_NOTIONAL";
         const qtyValue = useFixedQty ? sizing.qty : sizing.notional;
-        const trailOffset = toNumber(decision?.trailOffsetPct);
+        let trailOffset = toNumber(decision?.trailOffsetPct);
+        if (isScalpProfile &&
+            (!Number.isFinite(trailOffset) || trailOffset <= 0) &&
+            Number.isFinite(core?.atr14) &&
+            core.atr14 > 0 &&
+            Number.isFinite(entry) &&
+            entry > 0) {
+            trailOffset = (core.atr14 * 2.5) / entry;
+        }
         if (Number.isFinite(trailOffset) && trailOffset > 0) {
             trailOffsetRef.current.set(symbol, trailOffset);
         }
@@ -2771,8 +2812,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     entryPrice: entry,
                     entryType,
                     triggerPrice,
-                    slPrice: sl,
-                    tpPrices: Number.isFinite(tp) ? [tp] : [],
+                    slPrice: resolvedSl,
+                    tpPrices: Number.isFinite(resolvedTp) ? [resolvedTp] : [],
                     qtyMode,
                     qtyValue,
                 });

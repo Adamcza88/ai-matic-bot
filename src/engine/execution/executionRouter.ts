@@ -37,7 +37,7 @@ export interface ProfileConfig {
 
 export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
   "ai-matic-scalp": {
-    tpR: 1.4,
+    tpR: 1.5,
     trailLockR: 0.4,
     trailActivateR: 1.2,
     stopLimitBufferBps: 6,

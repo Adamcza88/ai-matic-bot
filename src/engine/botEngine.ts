@@ -668,7 +668,7 @@ export class TradingBot {
       "ai-matic": 2.2,
       "ai-matic-tree": 2.2,
       "ai-matic-x": 1.6,
-      "ai-matic-scalp": 1.4,
+      "ai-matic-scalp": 1.5,
     };
     const widthMap: Record<BotConfig["strategyProfile"], number> = {
       "ai-matic": 1.1,
@@ -679,7 +679,7 @@ export class TradingBot {
     const profile = this.config.strategyProfile;
     const tpR = tpMap[profile] ?? 1.4;
     const widthR = widthMap[profile] ?? 0.4;
-    // Trigger těsně pod TP: blízko cíle (např. scalp 1.4R -> trigger 1.35R)
+    // Trigger těsně pod TP: blízko cíle (např. scalp 1.5R -> trigger 1.45R)
     const triggerR = tpR - 0.05;
     if (rMultiple < triggerR || this.position.slDistance <= 0) return;
     const widthAbs = widthR * this.position.slDistance;
@@ -817,7 +817,7 @@ export class TradingBot {
       "ai-matic": 2.2,
       "ai-matic-tree": 2.2,
       "ai-matic-x": 1.6,
-      "ai-matic-scalp": 1.4,
+      "ai-matic-scalp": 1.5,
     };
     const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
     this.position = {
@@ -1384,7 +1384,6 @@ export class TradingBot {
       fallback: number,
     ) => ensureStop(side, entry, swingStops ? swingStops[side] : fallback);
     const conf = this.computeConfluence(ht, lt, trend);
-    if (this.config.strategyProfile === "ai-matic-scalp" && conf.score < 3 && !conf.liquiditySweep) return null;
     const strictness =
       this.config.entryStrictness ??
       (this.config.strategyProfile === "ai-matic-scalp"

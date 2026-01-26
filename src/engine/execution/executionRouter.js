@@ -2,7 +2,7 @@
 // (Market vs Limit vs Stop-Limit) with TP/SL/trailing derived from profile.
 export const PROFILE = {
     "ai-matic-scalp": {
-        tpR: 1.4,
+        tpR: 1.5,
         trailLockR: 0.4,
         trailActivateR: 1.2,
         stopLimitBufferBps: 6,
