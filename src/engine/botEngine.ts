@@ -416,6 +416,28 @@ export class TradingBot {
   private history: Record<string, DataFrame>;
   // Exchange client interface (optional)
   private exchange?: Exchange;
+  // Derived flags for cheat sheet
+  private bosDirection: "up" | "down" | null = null;
+  private returnedToLevel = false;
+  private rejectedLvn = false;
+  private touchedOb = false;
+  private rejectedOb = false;
+  private trapReaction = false;
+  private lowVolFlag = false;
+  private htfReaction = false;
+  private structureReadable = true;
+
+  getBosDirection() { return this.bosDirection; }
+  didReturnToLevel() { return this.returnedToLevel; }
+  didRejectLvn() { return this.rejectedLvn; }
+  didTouchOb() { return this.touchedOb; }
+  didRejectOb() { return this.rejectedOb; }
+  didTrapReaction() { return this.trapReaction; }
+  getLowVolFlag() { return this.lowVolFlag; }
+  hasHtfReaction() { return this.htfReaction; }
+  isStructureReadable() { return this.structureReadable; }
+
+
 
   constructor(config: Partial<BotConfig> = {}, exchange?: Exchange) {
     this.config = applyProfileOverrides({ ...defaultConfig, ...config });
@@ -1661,6 +1683,10 @@ export type EngineDecision = {
   halted?: boolean;
   xContext?: any;
   trailOffsetPct?: number;
+  cheatDeps?: any;
+  cheatSignals?: any;
+  // Allow future metadata fields without breaking strict excess property checks.
+  [key: string]: any;
 };
 
 const botRegistry: Record<string, TradingBot> = {};
@@ -1744,7 +1770,10 @@ export function evaluateStrategyForSymbol(
     bot.stepWithFrames(ht, lt);
   }
 
+
   const trendMetrics = bot.getTrendMetrics(ht);
+  // (placeholder) cheat flags – real modules should populate these in future
+
   const trend = trendMetrics.trend;
   let signal: EngineSignal | null = null;
   const position = bot.getPosition();
@@ -1784,6 +1813,34 @@ export function evaluateStrategyForSymbol(
       }
     }
   }
+  // Build cheat sheet dependency/signal payloads for AI-MATIC-TREE.
+  // These are conservative defaults so the cheat-sheet pipeline works
+  // end-to-end even without dedicated market-structure modules wired in yet.
+  const cheatDeps = {
+    hasVP: true,      // allow PoC/VP usage
+    hasOB: true,      // allow OB logic
+    hasGAP: true,     // allow GAP TP logic
+    hasTrap: true,    // allow trap logic
+    hasLowVol: true,  // low-vol module available
+  };
+
+  const cheatSignals = {
+    sessionOk: true,
+    htfReactionConfirmed:
+      Number.isFinite(trendMetrics.adx) &&
+      trendMetrics.adx >= botConfig.adxThreshold &&
+      trend !== Trend.Range,
+    structureReadable: true,
+    inLowVolume: false,
+    bosUp: trend === Trend.Bull,
+    bosDown: trend === Trend.Bear,
+    returnToLevel: false,
+    rejectionInLVN: false,
+    touchOB: false,
+    rejectionInOB: false,
+    trapReaction: false,
+  };
+
   return {
     state: bot.getState(),
     trend,
@@ -1793,26 +1850,7 @@ export function evaluateStrategyForSymbol(
     signal,
     position,
     halted: bot.isHalted(),
-    // Cheat sheet plumbing for AI-MATIC-TREE
-    cheatDeps: {
-      hasVP: true,
-      hasOB: true,
-      hasGAP: true,
-      hasTrap: true,
-      hasLowVol: true,
-    },
-    cheatSignals: {
-      sessionOk: true,
-      htfReactionConfirmed: trendMetrics.adx > 20,
-      structureReadable: true,
-      inLowVolume: false,
-      bosUp: trend === "up",
-      bosDown: trend === "down",
-      returnToLevel: false,
-      rejectionInLVN: false,
-      touchOB: false,
-      rejectionInOB: false,
-      trapReaction: false,
-    },
+    cheatDeps,
+    cheatSignals,
   };
 }
