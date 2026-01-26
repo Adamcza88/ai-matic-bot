@@ -3180,7 +3180,28 @@ export function useTradingBot(
         (order) =>
           isActiveEntryOrder(order) && String(order?.symbol ?? "") === symbol
       );
-      if (hasPosition || hasEntryOrder) {
+      const cheatHold =
+        settingsRef.current.riskMode === "ai-matic-x" &&
+        settingsRef.current.strategyCheatSheetEnabled;
+      if (cheatHold) {
+        if (hasPosition || hasEntryOrder) {
+          const reason = hasPosition ? "position" : "order";
+          const key = `cheat-hold:${symbol}:${reason}`;
+          const last = logDedupeRef.current.get(key) ?? 0;
+          if (now - last > 10_000) {
+            logDedupeRef.current.set(key, now);
+            addLogEntries([
+              {
+                id: `cheat-hold:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} CHEAT HOLD (${reason})`,
+              },
+            ]);
+          }
+          return;
+        }
+      } else if (hasPosition || hasEntryOrder) {
         return;
       }
 
