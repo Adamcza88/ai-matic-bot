@@ -302,7 +302,7 @@ export default function Dashboard({
         value={activeTab}
         onValueChange={(value) => {
           setActiveTab(value);
-          if (value === "logs") {
+          if (value === "logs" || value === "overview") {
             refreshTestnetOrders();
           }
         }}

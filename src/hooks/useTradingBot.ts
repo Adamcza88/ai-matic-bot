@@ -2348,20 +2348,20 @@ export function useTradingBot(
       const lastCloseTs = lastCloseBySymbolRef.current.get(symbol) ?? 0;
       const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
       const cooldownMs = CORE_V2_COOLDOWN_MS[context.settings.riskMode];
-      if (context.hasPosition) addBlockReason("otevřená pozice");
-      if (hasEntryOrder) addBlockReason("otevřený order");
-      if (hasPendingIntent) addBlockReason("čeká na intent");
+      if (context.hasPosition) addBlockReason("pozice");
+      if (hasEntryOrder) addBlockReason("order");
+      if (hasPendingIntent) addBlockReason("intent");
       if (entryLockTs && now - entryLockTs < ENTRY_ORDER_LOCK_MS) {
         const remainingMs = Math.max(0, ENTRY_ORDER_LOCK_MS - (now - entryLockTs));
-        addBlockReason(`lock vstupu ${Math.ceil(remainingMs / 1000)}s`);
+        addBlockReason(`lock ${Math.ceil(remainingMs / 1000)}s`);
       }
       if (lastIntentTs && now - lastIntentTs < INTENT_COOLDOWN_MS) {
         const remainingMs = Math.max(0, INTENT_COOLDOWN_MS - (now - lastIntentTs));
-        addBlockReason(`nedávný intent ${Math.ceil(remainingMs / 1000)}s`);
+        addBlockReason(`intent ${Math.ceil(remainingMs / 1000)}s`);
       }
       if (lastCloseTs && now - lastCloseTs < REENTRY_COOLDOWN_MS) {
         const remainingMs = Math.max(0, REENTRY_COOLDOWN_MS - (now - lastCloseTs));
-        addBlockReason(`nedávné uzavření ${Math.ceil(remainingMs / 1000)}s`);
+        addBlockReason(`re-entry ${Math.ceil(remainingMs / 1000)}s`);
       }
       if (lastLossTs && now - lastLossTs < cooldownMs) {
         const remainingMs = Math.max(0, cooldownMs - (now - lastLossTs));
