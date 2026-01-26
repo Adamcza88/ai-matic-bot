@@ -1797,11 +1797,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 : scoreCfg.alt
             : baseThreshold;
         const hardFailures = gates.filter((g) => g.hard && !g.ok).map((g) => g.name);
-        const scorePass = hardFailures.length > 0
-            ? false
-            : scoreTotal > 0
-                ? score >= threshold
-                : undefined;
+        const scorePass = scoreTotal > 0 ? score >= threshold : undefined;
         return {
             gates,
             score,

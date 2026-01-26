@@ -2135,11 +2135,7 @@ export function useTradingBot(
         .filter((g) => g.hard && !g.ok)
         .map((g) => g.name);
       const scorePass =
-        hardFailures.length > 0
-          ? false
-          : scoreTotal > 0
-            ? score >= threshold
-            : undefined;
+        scoreTotal > 0 ? score >= threshold : undefined;
 
       return {
         gates,

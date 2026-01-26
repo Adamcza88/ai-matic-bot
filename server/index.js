@@ -145,6 +145,30 @@ app.post("/api/:env/order", async (req, res) => {
       return sendError(res, 400, "Missing required fields: symbol, side, qty", { env, endpoint });
     }
 
+    const orderSide = String(side).toLowerCase() === "buy" ? "buy" : "sell";
+    if (!reduceOnly) {
+      try {
+        const posRes = await getDemoPositions(creds, env === "testnet");
+        const list = posRes?.result?.list ?? posRes?.data?.result?.list ?? [];
+        const match = Array.isArray(list)
+          ? list.find((p) => String(p?.symbol ?? "") === String(symbol) && Number(p?.size ?? 0) > 0)
+          : null;
+        const posSide = String(match?.side ?? "").toLowerCase();
+        const posIdx = Number(match?.positionIdx);
+        const isOneWay = !Number.isFinite(posIdx) || posIdx === 0;
+        if (isOneWay && posSide && posSide !== orderSide) {
+          return sendError(
+            res,
+            409,
+            "Open position opposite side blocked (use TP/SL/TS or manual close)",
+            { env, endpoint, symbol, side, posSide }
+          );
+        }
+      } catch (err) {
+        console.warn("[order] position check failed:", err?.message || err);
+      }
+    }
+
     // Reuse createDemoOrder for both main/testnet logic in server (it handles 'useTestnet' flag)
     const entryPrice = Number(price ?? triggerPrice);
     const resolvedLeverage = resolveLeverage(symbol, leverage);
