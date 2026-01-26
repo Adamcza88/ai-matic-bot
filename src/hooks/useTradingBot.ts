@@ -86,6 +86,7 @@ const REENTRY_COOLDOWN_MS = 30_000;
 const SIGNAL_LOG_THROTTLE_MS = 10_000;
 const SKIP_LOG_THROTTLE_MS = 10_000;
 const INTENT_COOLDOWN_MS = 20_000;
+const ENTRY_ORDER_LOCK_MS = 60_000;
 const CORE_V2_EMA_SEP1_MIN = 0.18;
 const CORE_V2_EMA_SEP2_MIN = 0.12;
 const CORE_V2_ATR_MIN_PCT_MAJOR = 0.0012;
@@ -963,6 +964,7 @@ export function useTradingBot(
   const lastLossBySymbolRef = useRef<Map<string, number>>(new Map());
   const lastCloseBySymbolRef = useRef<Map<string, number>>(new Map());
   const lastIntentBySymbolRef = useRef<Map<string, number>>(new Map());
+  const entryOrderLockRef = useRef<Map<string, number>>(new Map());
   const signalLogThrottleRef = useRef<Map<string, number>>(new Map());
   const skipLogThrottleRef = useRef<Map<string, number>>(new Map());
   const fastOkRef = useRef(false);
@@ -2718,6 +2720,24 @@ export function useTradingBot(
       ordersRef.current = next;
       setOrdersError(null);
       setLastSuccessAt(now);
+      const activeEntrySymbols = new Set(
+        next
+          .filter((order) => isEntryOrder(order))
+          .map((order) => String(order.symbol ?? ""))
+          .filter(Boolean)
+      );
+      for (const [symbol, ts] of entryOrderLockRef.current.entries()) {
+        const hasEntry = activeEntrySymbols.has(symbol);
+        const hasPending = intentPendingRef.current.has(symbol);
+        const hasPos = positionsRef.current.some(
+          (p) => String(p.symbol ?? "") === symbol
+        );
+        if (!hasEntry && !hasPending && !hasPos) {
+          entryOrderLockRef.current.delete(symbol);
+        } else if (!hasEntry && !hasPos && now - ts >= ENTRY_ORDER_LOCK_MS) {
+          entryOrderLockRef.current.delete(symbol);
+        }
+      }
       const cancelTargets =
         authToken
           ? mapped.filter((order) => {
@@ -3248,10 +3268,16 @@ export function useTradingBot(
       const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
       const lastCloseTs = lastCloseBySymbolRef.current.get(symbol) ?? 0;
       const lastIntentTs = lastIntentBySymbolRef.current.get(symbol) ?? 0;
+      const entryLockTs = entryOrderLockRef.current.get(symbol) ?? 0;
       const entryBlockReasons: string[] = [];
       if (hasSymbolPosition) entryBlockReasons.push("open position");
       if (hasSymbolEntryOrder) entryBlockReasons.push("open order");
       if (hasPendingIntent) entryBlockReasons.push("pending intent");
+      if (entryLockTs && now - entryLockTs < ENTRY_ORDER_LOCK_MS) {
+        const remainingMs = Math.max(0, ENTRY_ORDER_LOCK_MS - (now - entryLockTs));
+        const remainingSec = Math.ceil(remainingMs / 1000);
+        entryBlockReasons.push(`entry lock ${remainingSec}s`);
+      }
       if (lastIntentTs && now - lastIntentTs < INTENT_COOLDOWN_MS) {
         const remainingMs = Math.max(0, INTENT_COOLDOWN_MS - (now - lastIntentTs));
         const remainingSec = Math.ceil(remainingMs / 1000);
@@ -3506,6 +3532,7 @@ export function useTradingBot(
 
       intentPendingRef.current.add(symbol);
       lastIntentBySymbolRef.current.set(symbol, now);
+      entryOrderLockRef.current.set(symbol, now);
       void (async () => {
         try {
           await autoTrade({
