@@ -2238,7 +2238,9 @@ export function useTradingBot(
         addGate(
           SCALP_ENTRY_GATE,
           scalpPrimary.entryOk,
-          `EMA cross ${core?.emaCrossDir ?? "NONE"}${
+          `EMA cross ${
+            core?.emaCrossDir === "NONE" ? "no cross" : core?.emaCrossDir ?? "no cross"
+          }${
             Number.isFinite(scalpPrimary.emaCrossBarsAgo) ? " <=6b" : ""
           } | RSI ${scalpPrimary.rsiOk ? "OK" : "no"} | Vol ${
             scalpPrimary.volumeOk ? "OK" : "no"

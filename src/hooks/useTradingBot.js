@@ -1833,7 +1833,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
         if (isScalpProfile) {
             addGate(SCALP_PRIMARY_GATE, scalpPrimary.primaryOk, `15m ${scalpPrimary.ema15mTrend} | LTF ${core?.ltfTimeframeMin ?? "—"}m`);
-            addGate(SCALP_ENTRY_GATE, scalpPrimary.entryOk, `EMA cross ${core?.emaCrossDir ?? "NONE"}${Number.isFinite(scalpPrimary.emaCrossBarsAgo)
+            addGate(SCALP_ENTRY_GATE, scalpPrimary.entryOk, `EMA cross ${core?.emaCrossDir === "NONE"
+                ? "no cross"
+                : core?.emaCrossDir ?? "no cross"}${Number.isFinite(scalpPrimary.emaCrossBarsAgo)
                 ? " <=6b"
                 : ""} | RSI ${scalpPrimary.rsiOk ? "OK" : "no"} | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`);
             addGate(SCALP_EXIT_GATE, scalpPrimary.exitOk, Number.isFinite(core?.atr14)
