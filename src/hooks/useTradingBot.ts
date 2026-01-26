@@ -83,6 +83,8 @@ const CORE_V2_SCORE_GATE: Record<
 };
 const MIN_CHECKLIST_PASS = 8;
 const REENTRY_COOLDOWN_MS = 30_000;
+const SIGNAL_LOG_THROTTLE_MS = 10_000;
+const SKIP_LOG_THROTTLE_MS = 10_000;
 const CORE_V2_EMA_SEP1_MIN = 0.18;
 const CORE_V2_EMA_SEP2_MIN = 0.12;
 const CORE_V2_ATR_MIN_PCT_MAJOR = 0.0012;
@@ -959,6 +961,8 @@ export function useTradingBot(
   const pnlSeenRef = useRef<Set<string>>(new Set());
   const lastLossBySymbolRef = useRef<Map<string, number>>(new Map());
   const lastCloseBySymbolRef = useRef<Map<string, number>>(new Map());
+  const signalLogThrottleRef = useRef<Map<string, number>>(new Map());
+  const skipLogThrottleRef = useRef<Map<string, number>>(new Map());
   const fastOkRef = useRef(false);
   const slowOkRef = useRef(false);
   const modeRef = useRef<TradingMode | undefined>(mode);
@@ -3137,9 +3141,9 @@ export function useTradingBot(
         rawSignal,
         feedAgeMs
       );
-      const checklist = evaluateChecklistPass(coreEval.gates);
+      const checklistBase = evaluateChecklistPass(coreEval.gates);
       let signal = rawSignal;
-      if (!signal && checklist.pass) {
+      if (!signal && checklistBase.pass) {
         signal = buildChecklistSignal(symbol as Symbol, decision, now);
       }
       if (!signal) return;
@@ -3176,14 +3180,22 @@ export function useTradingBot(
       }
       if (signal.message) msgParts.push(signal.message);
 
-      addLogEntries([
-        {
-          id: `signal:${signalId}`,
-          timestamp,
-          action: "SIGNAL",
-          message: msgParts.join(" | "),
-        },
-      ]);
+      const isChecklistSignal = signal.message === "Checklist auto-signal";
+      const signalKey = `${symbol}:${side}`;
+      const lastSignalLog = signalLogThrottleRef.current.get(signalKey) ?? 0;
+      const shouldLogSignal =
+        !isChecklistSignal || now - lastSignalLog >= SIGNAL_LOG_THROTTLE_MS;
+      if (shouldLogSignal) {
+        signalLogThrottleRef.current.set(signalKey, now);
+        addLogEntries([
+          {
+            id: `signal:${signalId}`,
+            timestamp,
+            action: "SIGNAL",
+            message: msgParts.join(" | "),
+          },
+        ]);
+      }
 
       if (modeRef.current !== TradingMode.AUTO_ON) {
         addLogEntries([
@@ -3229,16 +3241,21 @@ export function useTradingBot(
       if (entryBlockReasons.length > 0) {
         const profileLabel =
           PROFILE_BY_RISK_MODE[context.settings.riskMode] ?? "AI-MATIC";
-        addLogEntries([
-          {
-            id: `signal:max-pos:${signalId}`,
-            timestamp: new Date(now).toISOString(),
-            action: "STATUS",
-            message: `${symbol} ${profileLabel} gate: ${entryBlockReasons.join(
-              ", "
-            )} -> skip entry`,
-          },
-        ]);
+        const skipKey = `${symbol}:${entryBlockReasons.join(",")}`;
+        const lastSkipLog = skipLogThrottleRef.current.get(skipKey) ?? 0;
+        if (now - lastSkipLog >= SKIP_LOG_THROTTLE_MS) {
+          skipLogThrottleRef.current.set(skipKey, now);
+          addLogEntries([
+            {
+              id: `signal:max-pos:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} ${profileLabel} gate: ${entryBlockReasons.join(
+                ", "
+              )} -> skip entry`,
+            },
+          ]);
+        }
         return;
       }
       let riskOff = false;
@@ -3336,14 +3353,14 @@ export function useTradingBot(
             : "ATR missing",
         });
       }
-      const checklist = evaluateChecklistPass(checklistGates);
-      if (!checklist.pass) {
+      const checklistExec = evaluateChecklistPass(checklistGates);
+      if (!checklistExec.pass) {
         addLogEntries([
           {
             id: `signal:checklist:${signalId}`,
             timestamp: new Date(now).toISOString(),
             action: "RISK_BLOCK",
-            message: `${symbol} checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`,
+            message: `${symbol} checklist ${checklistExec.passedCount}/${MIN_CHECKLIST_PASS}`,
           },
         ]);
         return;
