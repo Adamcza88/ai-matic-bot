@@ -148,6 +148,11 @@ export default function SignalsAccordion({
               : "—";
           const symbolState = diag?.symbolState;
           const manageReason = diag?.manageReason;
+          const isManage =
+            Boolean(manageReason) ||
+            Boolean(diag?.hasPosition) ||
+            Boolean(diag?.hasEntryOrder) ||
+            Boolean(diag?.hasPendingIntent);
           const isHold = symbolState === "HOLD";
           const summary = gateSummary(
             diag,
