@@ -148,7 +148,7 @@ export default function SignalsAccordion({
               : "—";
           const symbolState = diag?.symbolState;
           const manageReason = diag?.manageReason;
-          const isManage = symbolState === "MANAGE";
+          const isHold = symbolState === "HOLD";
           const summary = gateSummary(
             diag,
             gates,
@@ -177,12 +177,12 @@ export default function SignalsAccordion({
                   >
                     Feed age {feedAgeLabel} · {feedAgeValue}
                   </Badge>
-                  {isManage ? (
+                  {isHold ? (
                     <Badge
                       variant="outline"
                       className="border-amber-500/50 text-amber-400"
                     >
-                      MANAGE{manageReason ? ` · ${manageReason}` : ""}
+                      HOLD{manageReason ? ` · ${manageReason}` : ""}
                     </Badge>
                   ) : null}
                   <Badge variant="outline" className="border-border/60 text-muted-foreground">

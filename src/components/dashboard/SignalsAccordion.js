@@ -100,7 +100,7 @@ export default function SignalsAccordion({ allowedSymbols, scanDiagnostics, scan
                     : "—";
                 const symbolState = diag?.symbolState;
                 const manageReason = diag?.manageReason;
-                const isManage = symbolState === "MANAGE";
+                const isHold = symbolState === "HOLD";
                 const summary = gateSummary(diag, gates, scanLoaded, checklistEnabled);
                 return (_jsxs("details", { className: "group rounded-lg border border-border/60 bg-background/40", children: [_jsxs("summary", { className: "flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs", children: [_jsxs("div", { className: "flex min-w-0 flex-wrap items-center gap-2", children: [_jsx("span", { className: "font-mono text-sm", children: symbol }), _jsx(Badge, { variant: "outline", className: summary.blocked ? "border-red-500/50 text-red-400" : "border-emerald-500/50 text-emerald-400", children: summary.label }), _jsxs(Badge, { variant: "outline", className: feedAgeOk === false
                                                 ? "border-red-500/50 text-red-400"
