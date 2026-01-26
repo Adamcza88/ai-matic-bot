@@ -164,7 +164,7 @@ export default function Dashboard({
       "ai-matic-tree": base,
       "ai-matic-scalp": {
         "Primary Timeframe: 15m for trend, 1m for entry.": true,
-        "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.": true,
+        "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.": true,
         "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).": true,
         "Exec allowed": true,
       },
@@ -185,6 +185,9 @@ export default function Dashboard({
   const CHECKLIST_ALIASES = useMemo(
     () => ({
       "HTF bias": ["Trend bias", "X setup", "Tree setup", "1h bias"],
+      "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.": [
+        "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.",
+      ],
     }),
     []
   );

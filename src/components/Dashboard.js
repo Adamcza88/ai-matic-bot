@@ -126,7 +126,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             "ai-matic-tree": base,
             "ai-matic-scalp": {
                 "Primary Timeframe: 15m for trend, 1m for entry.": true,
-                "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.": true,
+                "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.": true,
                 "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).": true,
                 "Exec allowed": true,
             },
@@ -143,6 +143,9 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     }, [CHECKLIST_DEFAULTS_BY_PROFILE, riskMode]);
     const CHECKLIST_ALIASES = useMemo(() => ({
         "HTF bias": ["Trend bias", "X setup", "Tree setup", "1h bias"],
+        "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.": [
+            "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.",
+        ],
     }), []);
     const gateStorageKey = useMemo(() => `ai-matic-checklist-enabled:${riskMode}`, [riskMode]);
     const [checklistEnabled, setChecklistEnabled] = useState(() => CHECKLIST_DEFAULTS);

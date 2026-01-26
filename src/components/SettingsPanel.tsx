@@ -224,7 +224,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       description: "Adaptive Trend Following (v1.3) pro rychlé scalp vstupy.",
       notes: [
         "Primary Timeframe: 15m for trend, 1m for entry.",
-        "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.",
+        "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.",
         "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
       ],
     },
@@ -322,7 +322,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     "ai-matic-tree": coreV2GateNames,
     "ai-matic-scalp": [
       "Primary Timeframe: 15m for trend, 1m for entry.",
-      "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.",
+      "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.",
       "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
     ],
   };

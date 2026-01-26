@@ -67,7 +67,7 @@ const CORE_V2_BBO_AGE_BY_SYMBOL = {
 };
 const CORE_V2_BBO_AGE_DEFAULT_MS = 1000;
 const SCALP_PRIMARY_GATE = "Primary Timeframe: 15m for trend, 1m for entry.";
-const SCALP_ENTRY_GATE = "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.";
+const SCALP_ENTRY_GATE = "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.";
 const SCALP_EXIT_GATE = "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).";
 const MAX_OPEN_POSITIONS_CAP = 10000;
 const ORDERS_PER_POSITION = 5;
@@ -385,7 +385,7 @@ const computeCoreV2Metrics = (candles, riskMode) => {
     const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
     const ema26 = ema26Arr[ema26Arr.length - 1] ?? Number.NaN;
     const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
-    const emaCrossLookback = Math.min(Math.max(3, SCALP_EMA_CROSS_LOOKBACK + 1), Math.min(ema12Arr.length, ema26Arr.length));
+    const emaCrossLookback = Math.min(Math.max(4, SCALP_EMA_CROSS_LOOKBACK + 2), Math.min(ema12Arr.length, ema26Arr.length));
     let emaCrossDir = "NONE";
     let emaCrossBarsAgo = undefined;
     if (emaCrossLookback >= 3) {

@@ -148,7 +148,7 @@ export const STRATEGY_CHEAT_SHEET = [
         rules: [
             "Adaptive Trend Following (v1.3)",
             "Primary Timeframe: 15m for trend, 1m for entry.",
-            "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.",
+            "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.",
             "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
         ],
     },
