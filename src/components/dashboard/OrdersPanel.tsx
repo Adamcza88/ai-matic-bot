@@ -19,7 +19,8 @@ type OrdersPanelProps = {
   trades: TestnetTrade[];
   tradesLoaded: boolean;
   useTestnet: boolean;
-  onCancelOrder: (order: TestnetOrder) => Promise<boolean> | void;
+  onCancelOrder?: (order: TestnetOrder) => Promise<boolean> | void;
+  allowCancel?: boolean;
 };
 
 type FilterMode = "all" | "symbol" | "last1h";
@@ -73,11 +74,13 @@ export default function OrdersPanel({
   tradesLoaded,
   useTestnet,
   onCancelOrder,
+  allowCancel = true,
 }: OrdersPanelProps) {
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [closingOrderId, setClosingOrderId] = useState<string | null>(null);
+  const showActions = allowCancel !== false;
 
   const symbolOptions = useMemo(() => {
     const symbols = new Set<string>();
@@ -123,6 +126,7 @@ export default function OrdersPanel({
   }, [trades, filterMode, selectedSymbol]);
 
   const handleCancel = async (order: TestnetOrder) => {
+    if (!showActions || !onCancelOrder) return;
     setActionError(null);
     setClosingOrderId(order.orderId);
     try {
@@ -249,7 +253,9 @@ export default function OrdersPanel({
                   <th className="py-2 text-right font-medium">Price</th>
                   <th className="py-2 text-left font-medium">Status</th>
                   <th className="py-2 text-left font-medium">Time</th>
-                  <th className="py-2 text-right font-medium">Actions</th>
+                  {showActions && (
+                    <th className="py-2 text-right font-medium">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -328,19 +334,21 @@ export default function OrdersPanel({
                         ? new Date(order.createdTime).toLocaleString()
                         : "—"}
                     </td>
-                    <td className="py-3 text-right text-xs text-muted-foreground">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 whitespace-nowrap border-sky-500/40 text-xs text-sky-300 hover:bg-sky-500/10 hover:text-white"
-                        onClick={() => handleCancel(order)}
-                        disabled={closingOrderId === order.orderId}
-                      >
-                        {closingOrderId === order.orderId
-                          ? "Closing..."
-                          : "Close position"}
-                      </Button>
-                    </td>
+                    {showActions && (
+                      <td className="py-3 text-right text-xs text-muted-foreground">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 whitespace-nowrap border-sky-500/40 text-xs text-sky-300 hover:bg-sky-500/10 hover:text-white"
+                          onClick={() => handleCancel(order)}
+                          disabled={closingOrderId === order.orderId}
+                        >
+                          {closingOrderId === order.orderId
+                            ? "Closing..."
+                            : "Close position"}
+                        </Button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

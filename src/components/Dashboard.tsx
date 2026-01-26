@@ -44,6 +44,8 @@ export default function Dashboard({
     manualClosePosition,
     cancelOrder,
     updateGateOverrides,
+    allowOrderCancel,
+    allowPositionClose,
   } = bot;
 
   const dailyPnl = portfolioState?.dailyPnl;
@@ -336,6 +338,7 @@ export default function Dashboard({
             positions={positionsLoaded ? activePositions : []}
             positionsLoaded={positionsLoaded}
             onClosePosition={manualClosePosition}
+            allowClose={allowPositionClose}
           />
         </TabsContent>
           <TabsContent value="signals">
@@ -361,6 +364,7 @@ export default function Dashboard({
             tradesLoaded={tradesLoaded}
             useTestnet={useTestnet}
             onCancelOrder={cancelOrder}
+            allowCancel={allowOrderCancel}
           />
         </TabsContent>
         <TabsContent value="logs">

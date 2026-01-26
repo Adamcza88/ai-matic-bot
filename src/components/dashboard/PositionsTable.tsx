@@ -8,7 +8,8 @@ import Panel from "@/components/dashboard/Panel";
 type PositionsTableProps = {
   positions: ActivePosition[];
   positionsLoaded: boolean;
-  onClosePosition: (position: ActivePosition) => void;
+  onClosePosition?: (position: ActivePosition) => void;
+  allowClose?: boolean;
 };
 
 function formatNumber(value?: number, digits = 4) {
@@ -23,8 +24,10 @@ export default function PositionsTable({
   positions,
   positionsLoaded,
   onClosePosition,
+  allowClose = true,
 }: PositionsTableProps) {
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const showActions = allowClose !== false;
 
   const rows = useMemo(() => {
     return positions.map((p) => {
@@ -130,7 +133,9 @@ export default function PositionsTable({
                 <th className="py-2 text-right font-medium">TP</th>
                 <th className="py-2 text-right font-medium">SL</th>
                 <th className="py-2 text-left font-medium">Status</th>
-                <th className="py-2 text-right font-medium">Actions</th>
+                {showActions && (
+                  <th className="py-2 text-right font-medium">Actions</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -232,19 +237,24 @@ export default function PositionsTable({
                           {row.protectionLabel}
                         </Badge>
                       </td>
-                      <td className="py-3 text-right">
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => onClosePosition(row.raw)}
-                        >
-                          Close
-                        </Button>
-                      </td>
+                      {showActions && (
+                        <td className="py-3 text-right">
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => onClosePosition?.(row.raw)}
+                          >
+                            Close
+                          </Button>
+                        </td>
+                      )}
                     </tr>
                     {expanded && (
                       <tr className="border-b border-border/40 bg-background/40">
-                        <td colSpan={9} className="py-3 pl-12 text-xs text-muted-foreground">
+                        <td
+                          colSpan={showActions ? 9 : 8}
+                          className="py-3 pl-12 text-xs text-muted-foreground"
+                        >
                           <div className="flex flex-wrap gap-4">
                             <span>
                               Trailing:{" "}

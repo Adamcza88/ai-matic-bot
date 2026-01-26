@@ -897,6 +897,8 @@ export function useTradingBot(
   useTestnet = false,
   authToken?: string
 ) {
+  const allowOrderCancel = false;
+  const allowPositionClose = false;
   const [settings, setSettings] = useState<AISettings>(
     () => loadStoredSettings() ?? DEFAULT_SETTINGS
   );
@@ -3939,6 +3941,9 @@ export function useTradingBot(
 
   const manualClosePosition = useCallback(
     async (pos: ActivePosition) => {
+      if (!allowPositionClose) {
+        throw new Error("close_disabled");
+      }
       if (!authToken) throw new Error("missing_auth_token");
       const sizeRaw = toNumber(pos.size ?? pos.qty);
       if (!Number.isFinite(sizeRaw) || sizeRaw <= 0) {
@@ -3972,11 +3977,14 @@ export function useTradingBot(
       await refreshFast();
       return true;
     },
-    [apiBase, authToken, refreshFast]
+    [allowPositionClose, apiBase, authToken, refreshFast]
   );
 
   const cancelOrder = useCallback(
     async (order: TestnetOrder) => {
+      if (!allowOrderCancel) {
+        throw new Error("cancel_disabled");
+      }
       if (!authToken) throw new Error("missing_auth_token");
       if (!order?.symbol) throw new Error("missing_order_symbol");
       const orderId = order?.orderId || "";
@@ -4001,7 +4009,7 @@ export function useTradingBot(
       await refreshFast();
       return true;
     },
-    [apiBase, authToken, refreshFast]
+    [allowOrderCancel, apiBase, authToken, refreshFast]
   );
 
   const updateSettings = useCallback((next: AISettings) => {
@@ -4023,6 +4031,8 @@ export function useTradingBot(
     scanDiagnostics,
     manualClosePosition,
     cancelOrder,
+    allowPositionClose,
+    allowOrderCancel,
     dynamicSymbols: null,
     settings,
     updateSettings,

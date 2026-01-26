@@ -374,6 +374,12 @@ app.post("/api/:env/cancel", async (req, res) => {
   const endpoint = req.originalUrl;
   const env = req.params.env === "main" ? "mainnet" : "testnet";
 
+  return sendError(res, 403, "cancel_disabled", {
+    latencyMs: Date.now() - startTs,
+    env,
+    endpoint,
+  });
+
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader) {

@@ -27,6 +27,7 @@ const LEVERAGE_BY_SYMBOL: Record<Symbol, number> = {
   HYPEUSDT: 75,
   FARTCOINUSDT: 75,
 };
+const ALLOW_BOT_CANCELS = false;
 
 const lastLeverageBySymbol = new Map<Symbol, number>();
 const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
@@ -226,12 +227,19 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
     if (s.status !== "ENTRY_PLACED") return;
 
     try {
-      await ctx.bybit.cancelAll(intent.symbol);
-      ctx.audit.write("entry_timeout_cancel", {
-        intentId: intent.intentId,
-        symbol: intent.symbol,
-      });
-      setStatus(ctx, "FLAT", { reason: "ENTRY_TIMEOUT", orders: [] });
+      if (ALLOW_BOT_CANCELS) {
+        await ctx.bybit.cancelAll(intent.symbol);
+        ctx.audit.write("entry_timeout_cancel", {
+          intentId: intent.intentId,
+          symbol: intent.symbol,
+        });
+        setStatus(ctx, "FLAT", { reason: "ENTRY_TIMEOUT", orders: [] });
+      } else {
+        ctx.audit.write("entry_timeout_cancel_skipped", {
+          intentId: intent.intentId,
+          symbol: intent.symbol,
+        });
+      }
     } catch (e) {
       ctx.audit.write("entry_timeout_cancel_error", { e: String(e) });
     }
@@ -273,6 +281,10 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
 
 export async function killSwitch(ctx: Ctx, symbol: Symbol) {
   ctx.audit.write("kill_switch", { symbol });
-  await ctx.bybit.cancelAll(symbol);
-  setStatus(ctx, "FLAT", { reason: "KILL_SWITCH", orders: [] });
+  if (ALLOW_BOT_CANCELS) {
+    await ctx.bybit.cancelAll(symbol);
+    setStatus(ctx, "FLAT", { reason: "KILL_SWITCH", orders: [] });
+  } else {
+    ctx.audit.write("kill_switch_skipped", { symbol });
+  }
 }
