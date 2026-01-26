@@ -910,6 +910,20 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }
         return true;
     }, []);
+
+    const isActiveEntryOrder = useCallback((order) => {
+        if (!isEntryOrder(order))
+            return false;
+        const status = String(order?.status ?? "").toLowerCase();
+        if (!status)
+            return false;
+        return (status.includes("new") ||
+            status.includes("open") ||
+            status.includes("partially") ||
+            status.includes("created") ||
+            status.includes("trigger") ||
+            status.includes("active"));
+    }, [isEntryOrder]);
     const getOpenBiasState = useCallback(() => {
         const biases = new Set();
         let btcBias = null;
@@ -1808,14 +1822,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         });
         if (hasPosition)
             return "MANAGE";
-        const hasOrders = ordersRef.current.some((o) => isEntryOrder(o) && String(o.symbol ?? "") === symbol);
+        const hasOrders = ordersRef.current.some((o) => isActiveEntryOrder(o) && String(o.symbol ?? "") === symbol);
         if (hasOrders)
             return "MANAGE";
-        const hasPendingIntent = intentPendingRef.current.has(symbol);
-        if (hasPendingIntent)
-            return "MANAGE";
         return "SCAN";
-    }, [isEntryOrder]);
+    }, [isActiveEntryOrder]);
     const buildScanDiagnostics = useCallback((symbol, decision, lastScanTs) => {
         const context = getSymbolContext(symbol, decision);
         const symbolState = resolveSymbolState(symbol);
