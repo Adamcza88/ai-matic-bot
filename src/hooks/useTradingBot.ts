@@ -2163,9 +2163,15 @@ export function useTradingBot(
       if (!btcBias) return;
       const cooldown = autoCloseCooldownRef.current;
       const nextOrders = ordersRef.current;
+      const isTriggerEntryOrder = (order: TestnetOrder | any) => {
+        const filter = String(order?.orderFilter ?? order?.order_filter ?? "").toLowerCase();
+        const trigger = toNumber(order?.triggerPrice ?? order?.trigger_price);
+        return filter === "stoporder" || (Number.isFinite(trigger) && trigger > 0);
+      };
 
       const cancelTargets = nextOrders.filter((order) => {
         if (!isEntryOrder(order)) return false;
+        if (isTriggerEntryOrder(order)) return false;
         const bias = normalizeBias(order.side);
         return bias != null && bias !== btcBias;
       });
@@ -2677,6 +2683,11 @@ export function useTradingBot(
           stopType === "trailingstop"
         );
       };
+      const isTriggerEntryOrder = (order: TestnetOrder) => {
+        const filter = String(order.orderFilter ?? "").toLowerCase();
+        const trigger = toNumber(order.triggerPrice);
+        return filter === "stoporder" || (Number.isFinite(trigger) && trigger > 0);
+      };
       const isNewEntryOrder = (order: TestnetOrder) => {
         if (isProtectionOrder(order)) return false;
         const status = String(order.status ?? "").toLowerCase();
@@ -2710,6 +2721,7 @@ export function useTradingBot(
       }
       const next = mapped.filter((order) => {
         if (!isNewEntryOrder(order)) return true;
+        if (isTriggerEntryOrder(order)) return true;
         const latest = latestNewIds.get(order.symbol);
         if (!latest) return true;
         return (
@@ -2743,6 +2755,7 @@ export function useTradingBot(
         authToken
           ? mapped.filter((order) => {
               if (!isNewEntryOrder(order)) return false;
+              if (isTriggerEntryOrder(order)) return false;
               const latest = latestNewIds.get(order.symbol);
               if (!latest) return false;
               const isLatest =

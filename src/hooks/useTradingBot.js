@@ -1822,8 +1822,15 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return;
         const cooldown = autoCloseCooldownRef.current;
         const nextOrders = ordersRef.current;
+        const isTriggerEntryOrder = (order) => {
+            const filter = String(order?.orderFilter ?? order?.order_filter ?? "").toLowerCase();
+            const trigger = toNumber(order?.triggerPrice ?? order?.trigger_price);
+            return filter === "stoporder" || (Number.isFinite(trigger) && trigger > 0);
+        };
         const cancelTargets = nextOrders.filter((order) => {
             if (!isEntryOrder(order))
+                return false;
+            if (isTriggerEntryOrder(order))
                 return false;
             const bias = normalizeBias(order.side);
             return bias != null && bias !== btcBias;
@@ -2177,20 +2184,25 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 return entry;
             })
                 .filter((o) => Boolean(o.orderId || o.orderLinkId));
-            const isProtectionOrder = (order) => {
-                const stopType = String(order.stopOrderType ?? "").toLowerCase();
-                const filter = String(order.orderFilter ?? "").toLowerCase();
-                return (order.reduceOnly ||
-                    filter === "tpsl" ||
-                    stopType === "takeprofit" ||
-                    stopType === "stoploss" ||
-                    stopType === "trailingstop");
-            };
-            const isNewEntryOrder = (order) => {
-                if (isProtectionOrder(order))
-                    return false;
-                const status = String(order.status ?? "").toLowerCase();
-                return status === "new" || status === "created";
+        const isProtectionOrder = (order) => {
+            const stopType = String(order.stopOrderType ?? "").toLowerCase();
+            const filter = String(order.orderFilter ?? "").toLowerCase();
+            return (order.reduceOnly ||
+                filter === "tpsl" ||
+                stopType === "takeprofit" ||
+                stopType === "stoploss" ||
+                stopType === "trailingstop");
+        };
+        const isTriggerEntryOrder = (order) => {
+            const filter = String(order.orderFilter ?? "").toLowerCase();
+            const trigger = toNumber(order.triggerPrice);
+            return filter === "stoporder" || (Number.isFinite(trigger) && trigger > 0);
+        };
+        const isNewEntryOrder = (order) => {
+            if (isProtectionOrder(order))
+                return false;
+            const status = String(order.status ?? "").toLowerCase();
+            return status === "new" || status === "created";
             };
             const latestNewBySymbol = new Map();
             for (const order of mapped) {
@@ -2213,15 +2225,17 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     orderLinkId: data.order.orderLinkId,
                 });
             }
-            const next = mapped.filter((order) => {
-                if (!isNewEntryOrder(order))
-                    return true;
-                const latest = latestNewIds.get(order.symbol);
-                if (!latest)
-                    return true;
-                return ((latest.orderId && order.orderId === latest.orderId) ||
-                    (latest.orderLinkId && order.orderLinkId === latest.orderLinkId));
-            });
+        const next = mapped.filter((order) => {
+            if (!isNewEntryOrder(order))
+                return true;
+            if (isTriggerEntryOrder(order))
+                return true;
+            const latest = latestNewIds.get(order.symbol);
+            if (!latest)
+                return true;
+            return ((latest.orderId && order.orderId === latest.orderId) ||
+                (latest.orderLinkId && order.orderLinkId === latest.orderLinkId));
+        });
         setOrders(next);
         ordersRef.current = next;
         setOrdersError(null);
@@ -2245,11 +2259,13 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             ? mapped.filter((order) => {
                 if (!isNewEntryOrder(order))
                     return false;
-                    const latest = latestNewIds.get(order.symbol);
-                    if (!latest)
-                        return false;
-                    const isLatest = (latest.orderId && order.orderId === latest.orderId) ||
-                        (latest.orderLinkId &&
+                if (isTriggerEntryOrder(order))
+                    return false;
+                const latest = latestNewIds.get(order.symbol);
+                if (!latest)
+                    return false;
+                const isLatest = (latest.orderId && order.orderId === latest.orderId) ||
+                    (latest.orderLinkId &&
                             order.orderLinkId === latest.orderLinkId);
                     return !isLatest;
                 })
