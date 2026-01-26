@@ -2195,13 +2195,13 @@ export function useTradingBot(
     });
     if (hasPosition) return "MANAGE";
     const hasOrders = ordersRef.current.some(
-      (o) => String(o.symbol ?? "") === symbol
+      (o) => isEntryOrder(o) && String(o.symbol ?? "") === symbol
     );
     if (hasOrders) return "MANAGE";
     const hasPendingIntent = intentPendingRef.current.has(symbol);
     if (hasPendingIntent) return "MANAGE";
     return "SCAN";
-  }, []);
+  }, [isEntryOrder]);
 
   const buildScanDiagnostics = useCallback(
     (symbol: string, decision: PriceFeedDecision, lastScanTs: number) => {
@@ -3130,17 +3130,12 @@ export function useTradingBot(
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
       );
       const hasPendingIntent = intentPendingRef.current.has(symbol);
-      const isMajorSymbol = MAJOR_SYMBOLS.has(symbol as Symbol);
-      const coreMaxTotal = isMajorSymbol ? 2 : 1;
       const cooldownMs = CORE_V2_COOLDOWN_MS[context.settings.riskMode];
       const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
       const entryBlockReasons: string[] = [];
       if (hasSymbolPosition) entryBlockReasons.push("open position");
       if (hasSymbolEntryOrder) entryBlockReasons.push("open order");
       if (hasPendingIntent) entryBlockReasons.push("pending intent");
-      if (!isAiMaticX && context.openPositionsCount >= coreMaxTotal) {
-        entryBlockReasons.push(isMajorSymbol ? "core max positions" : "core alt cap");
-      }
       if (lastLossTs && now - lastLossTs < cooldownMs) {
         const remainingMs = Math.max(0, cooldownMs - (now - lastLossTs));
         const remainingMin = Math.ceil(remainingMs / 60_000);

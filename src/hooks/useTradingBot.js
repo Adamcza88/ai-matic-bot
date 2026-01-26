@@ -1808,14 +1808,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         });
         if (hasPosition)
             return "MANAGE";
-        const hasOrders = ordersRef.current.some((o) => String(o.symbol ?? "") === symbol);
+        const hasOrders = ordersRef.current.some((o) => isEntryOrder(o) && String(o.symbol ?? "") === symbol);
         if (hasOrders)
             return "MANAGE";
         const hasPendingIntent = intentPendingRef.current.has(symbol);
         if (hasPendingIntent)
             return "MANAGE";
         return "SCAN";
-    }, []);
+    }, [isEntryOrder]);
     const buildScanDiagnostics = useCallback((symbol, decision, lastScanTs) => {
         const context = getSymbolContext(symbol, decision);
         const symbolState = resolveSymbolState(symbol);
@@ -2613,8 +2613,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const hasSymbolPosition = context.hasPosition;
         const hasSymbolEntryOrder = ordersRef.current.some((order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol);
         const hasPendingIntent = intentPendingRef.current.has(symbol);
-        const isMajorSymbol = MAJOR_SYMBOLS.has(symbol);
-        const coreMaxTotal = isMajorSymbol ? 2 : 1;
         const cooldownMs = CORE_V2_COOLDOWN_MS[context.settings.riskMode];
         const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
         const entryBlockReasons = [];
@@ -2624,9 +2622,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             entryBlockReasons.push("open order");
         if (hasPendingIntent)
             entryBlockReasons.push("pending intent");
-        if (!isAiMaticX && context.openPositionsCount >= coreMaxTotal) {
-            entryBlockReasons.push(isMajorSymbol ? "core max positions" : "core alt cap");
-        }
         if (lastLossTs && now - lastLossTs < cooldownMs) {
             const remainingMs = Math.max(0, cooldownMs - (now - lastLossTs));
             const remainingMin = Math.ceil(remainingMs / 60_000);
