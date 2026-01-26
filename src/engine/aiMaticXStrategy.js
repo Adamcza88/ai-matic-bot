@@ -5,6 +5,9 @@ const OVERLAP_BODY_PCT = 0.002;
 const SIMILAR_HILO_PCT = 0.003;
 const IMPULSE_LOOKBACK = 20;
 const IMPULSE_MULT = 1.2;
+const RISK_OFF_OVERLAP = 0.8;
+const RISK_OFF_NO_IMPULSE_MULT = 1.0;
+const RISK_OFF_DUAL_IMPULSE_MULT = 1.4;
 const STRONG_IMPULSE_MULT = 1.5;
 const RETRACE_MAX = 0.6;
 const RANGE_LOOKBACK_BASE = 30;
@@ -302,20 +305,20 @@ function detectStrongTrendExpanse(candles, swings, dir) {
 }
 function detectRiskOffByStructure(candles) {
     const overlap = overlapRatio(candles, 10, OVERLAP_BODY_PCT);
-    if (overlap > 0.7)
+    if (overlap > RISK_OFF_OVERLAP)
         return true;
     const avg = averageRange(candles, IMPULSE_LOOKBACK);
     if (Number.isFinite(avg)) {
         const noImpulse = candles
             .slice(-IMPULSE_LOOKBACK)
-            .every((c) => c.high - c.low < avg * IMPULSE_MULT);
+            .every((c) => c.high - c.low < avg * RISK_OFF_NO_IMPULSE_MULT);
         if (noImpulse)
             return true;
     }
     const recent = candles.slice(-8);
     const avgRecent = averageRange(candles, IMPULSE_LOOKBACK);
-    const impulseUp = recent.some((c) => c.close > c.open && c.high - c.low >= avgRecent * IMPULSE_MULT);
-    const impulseDown = recent.some((c) => c.close < c.open && c.high - c.low >= avgRecent * IMPULSE_MULT);
+    const impulseUp = recent.some((c) => c.close > c.open && c.high - c.low >= avgRecent * RISK_OFF_DUAL_IMPULSE_MULT);
+    const impulseDown = recent.some((c) => c.close < c.open && c.high - c.low >= avgRecent * RISK_OFF_DUAL_IMPULSE_MULT);
     return impulseUp && impulseDown;
 }
 function buildTp(entry, stop, rr = 2) {
