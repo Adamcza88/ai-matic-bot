@@ -118,6 +118,8 @@ export type ActivePosition = {
   tp?: number;
   trailingStop?: number;
   currentTrailingStop?: number; // Legacy?
+  trailingActivePrice?: number;
+  markPrice?: number;
 
   // Meta
   openedAt: string;

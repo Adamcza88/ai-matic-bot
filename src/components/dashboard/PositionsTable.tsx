@@ -32,6 +32,8 @@ export default function PositionsTable({
       const sideLower = String(p.side ?? "").toLowerCase();
       const isBuy = sideLower === "buy";
       const trail = Number(p.currentTrailingStop);
+      const trailingActivePrice = Number(p.trailingActivePrice);
+      const markPrice = Number(p.markPrice);
       const slValue = Number(p.sl);
       const sl =
         Number.isFinite(trail) && trail > 0
@@ -73,6 +75,14 @@ export default function PositionsTable({
           ? new Date(parsed).toLocaleString()
           : "—";
       })();
+      const hasTrailing =
+        (Number.isFinite(trail) && trail > 0) ||
+        (Number.isFinite(trailingActivePrice) && trailingActivePrice > 0);
+      const activationHit =
+        Number.isFinite(trailingActivePrice) &&
+        trailingActivePrice > 0 &&
+        Number.isFinite(markPrice) &&
+        (isBuy ? markPrice >= trailingActivePrice : markPrice <= trailingActivePrice);
       return {
         key: p.positionId || p.id || p.symbol,
         raw: p,
@@ -86,6 +96,8 @@ export default function PositionsTable({
         updateLabel,
         protectionLabel,
         protectionClass,
+        hasTrailing,
+        activationHit,
       };
     });
   }, [positions]);
@@ -145,7 +157,25 @@ export default function PositionsTable({
                               <ChevronRight className="h-4 w-4" />
                             )}
                           </Button>
-                          <span className="font-mono">{row.raw.symbol}</span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono">{row.raw.symbol}</span>
+                            {row.hasTrailing ? (
+                              <Badge
+                                variant="outline"
+                                className="border-sky-500/50 text-sky-300 text-[10px] uppercase tracking-wide"
+                              >
+                                Trail
+                              </Badge>
+                            ) : null}
+                            {row.activationHit ? (
+                              <Badge
+                                variant="outline"
+                                className="border-emerald-500/50 text-emerald-400 text-[10px] uppercase tracking-wide"
+                              >
+                                Activated
+                              </Badge>
+                            ) : null}
+                          </div>
                         </div>
                       </td>
                       <td className="py-3">

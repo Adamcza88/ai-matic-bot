@@ -2506,6 +2506,12 @@ export function useTradingBot(
           );
           const sl = toNumber(p?.stopLoss ?? p?.sl);
           const tp = toNumber(p?.takeProfit ?? p?.tp);
+          const trailingActivePrice = toNumber(
+            p?.trailingActivePrice ?? p?.activePrice ?? p?.activationPrice
+          );
+          const markPrice = toNumber(
+            p?.markPrice ?? p?.lastPrice ?? p?.indexPrice
+          );
           const trailingStop = toNumber(
             p?.trailingStop ??
               p?.trailingStopDistance ??
@@ -2548,6 +2554,10 @@ export function useTradingBot(
               : undefined,
             sl: Number.isFinite(sl) ? sl : undefined,
             tp: Number.isFinite(tp) ? tp : undefined,
+            trailingActivePrice: Number.isFinite(trailingActivePrice)
+              ? trailingActivePrice
+              : undefined,
+            markPrice: Number.isFinite(markPrice) ? markPrice : undefined,
             currentTrailingStop:
               Number.isFinite(trailingStop) && trailingStop > 0
                 ? trailingStop
