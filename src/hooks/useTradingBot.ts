@@ -9,6 +9,11 @@ import {
   evaluateAiMaticXStrategyForSymbol,
   type AiMaticXContext,
 } from "../engine/aiMaticXStrategy";
+import {
+  decideCombinedEntry,
+  type DependencyFlags as TreeDeps,
+  type MarketSignals as TreeSignals,
+} from "../engine/combinedEntryStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta";
 import type { PriceFeedDecision } from "../engine/priceFeed";
@@ -2377,6 +2382,18 @@ export function useTradingBot(
       ) {
         addBlockReason("risk off");
       }
+      // Hard guard: otevřená pozice nebo order → žádná nová intent ani po přepnutí Exec ON
+      if (entryBlockReasons.includes("pozice") || entryBlockReasons.includes("order")) {
+        addLogEntries([
+          {
+            id: `entry-block:${symbol}:${signalId}`,
+            timestamp: new Date(now).toISOString(),
+            action: "RISK_BLOCK",
+            message: `${symbol} blokováno (open pos/order): ${entryBlockReasons.join(", ")}`,
+          },
+        ]);
+        return;
+      }
       const manageReason =
         entryBlockReasons.length > 0 ? entryBlockReasons.join(" • ") : null;
 
@@ -3310,6 +3327,54 @@ export function useTradingBot(
       if (signalSeenRef.current.has(signalId)) return;
       signalSeenRef.current.add(signalId);
 
+      // === Cheat Sheet override for AI-MATIC-TREE ===
+      let cheatBlocks: string[] = [];
+      let cheatDecision: ReturnType<typeof decideCombinedEntry> | null = null;
+      const cheatEnabled = settingsRef.current.strategyCheatSheetEnabled;
+      const isTreeProfile = settingsRef.current.riskMode === "ai-matic-tree";
+
+      const cheatPayload = (decision as any)?.cheatSignals;
+      const cheatDeps = (decision as any)?.cheatDeps;
+      if (cheatEnabled && isTreeProfile && cheatPayload && cheatDeps) {
+        const depsRaw = cheatDeps ?? {};
+        const sigRaw = cheatPayload ?? {};
+        const deps: TreeDeps = {
+          hasVP: Boolean(depsRaw.hasVP),
+          hasOB: Boolean(depsRaw.hasOB),
+          hasGAP: Boolean(depsRaw.hasGAP),
+          hasTrap: Boolean(depsRaw.hasTrap),
+          hasLowVol: Boolean(depsRaw.hasLowVol),
+        };
+        const signals: TreeSignals = {
+          inLowVolume: Boolean(sigRaw.inLowVolume),
+          htfReactionConfirmed: Boolean(sigRaw.htfReactionConfirmed),
+          structureReadable: Boolean(sigRaw.structureReadable),
+          sessionOk: sigRaw.sessionOk !== false,
+          bosUp: Boolean(sigRaw.bosUp),
+          bosDown: Boolean(sigRaw.bosDown),
+          returnToLevel: Boolean(sigRaw.returnToLevel),
+          rejectionInLVN: Boolean(sigRaw.rejectionInLVN),
+          touchOB: Boolean(sigRaw.touchOB),
+          rejectionInOB: Boolean(sigRaw.rejectionInOB),
+          trapReaction: Boolean(sigRaw.trapReaction),
+        };
+        cheatDecision = decideCombinedEntry(deps, signals);
+        if (cheatDecision.blocks?.length) {
+          cheatBlocks.push(...cheatDecision.blocks);
+        }
+        if (!cheatDecision.ok) {
+          addLogEntries([
+            {
+              id: `cheat-block:${symbol}:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} CHEAT no-trade: ${cheatDecision.blocks.join(", ")}`,
+            },
+          ]);
+          return;
+        }
+      }
+
       const intent = signal.intent;
       const entry = toNumber(intent?.entry);
       const sl = toNumber(intent?.sl);
@@ -3408,6 +3473,9 @@ export function useTradingBot(
         const remainingMin = Math.ceil(remainingMs / 60_000);
         entryBlockReasons.push(`cooldown ${remainingMin}m`);
       }
+      if (cheatBlocks.length) {
+        entryBlockReasons.push(...cheatBlocks);
+      }
       if (!context.maxPositionsOk) entryBlockReasons.push("max positions");
       if (!context.ordersClearOk) entryBlockReasons.push("max orders");
       if (entryBlockReasons.length > 0) {
@@ -3500,6 +3568,16 @@ export function useTradingBot(
           },
         ]);
         return;
+      }
+
+      // Apply cheat decision overrides (entry type / trailing) if present
+      if (cheatDecision) {
+        if (cheatDecision.trailing === "ACTIVATE_AFTER_0_5_TO_0_7_PCT") {
+          const trailOffset = 0.006; // ~0.6% as midpoint of 0.5–0.7
+          trailOffsetRef.current.set(symbol, trailOffset);
+        }
+        // Force limit-maker entries for cheat sheet unless it explicitly asks otherwise
+        entryType = "LIMIT_MAKER_FIRST";
       }
       const checklistGates = [...coreEval.gates];
       if (isScalpProfile) {
