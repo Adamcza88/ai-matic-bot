@@ -2238,12 +2238,10 @@ export function useTradingBot(
         addGate(
           SCALP_ENTRY_GATE,
           scalpPrimary.entryOk,
-          `EMA ${scalpPrimary.emaCrossOk ? "OK" : "no"} | RSI ${
-            scalpPrimary.rsiOk ? "OK" : "no"
-          } | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}${
-            Number.isFinite(scalpPrimary.emaCrossBarsAgo)
-              ? ` | cross ${scalpPrimary.emaCrossBarsAgo}b`
-              : ""
+          `EMA cross ${core?.emaCrossDir ?? "NONE"}${
+            Number.isFinite(scalpPrimary.emaCrossBarsAgo) ? " <=6b" : ""
+          } | RSI ${scalpPrimary.rsiOk ? "OK" : "no"} | Vol ${
+            scalpPrimary.volumeOk ? "OK" : "no"
           }`
         );
         addGate(
