@@ -144,6 +144,38 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
     return;
   }
 
+  try {
+    const snap = await ctx.bybit.getSnapshot(intent.symbol);
+    const size = Number(snap?.position?.size ?? snap?.position?.qty ?? 0);
+    const side = String(snap?.position?.side ?? "").toLowerCase();
+    const intentSide = String(intent.side ?? "").toLowerCase();
+    const posIdx = Number(snap?.position?.positionIdx ?? 0);
+    const oneWay = !Number.isFinite(posIdx) || posIdx === 0;
+    if (
+      oneWay &&
+      Number.isFinite(size) &&
+      size > 0 &&
+      side &&
+      intentSide &&
+      side !== intentSide
+    ) {
+      ctx.audit.write("intent_blocked_opposite", {
+        intentId: intent.intentId,
+        symbol: intent.symbol,
+        positionSide: side,
+        intentSide,
+      });
+      setStatus(ctx, "REJECTED", { reason: "OPPOSITE_POSITION_BLOCKED" });
+      return;
+    }
+  } catch (e) {
+    ctx.audit.write("intent_position_check_error", {
+      intentId: intent.intentId,
+      symbol: intent.symbol,
+      error: String(e),
+    });
+  }
+
   const baseQty =
     intent.qtyMode === "BASE_QTY"
       ? intent.qtyValue
