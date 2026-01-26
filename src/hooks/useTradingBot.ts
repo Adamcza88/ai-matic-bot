@@ -109,6 +109,7 @@ const MAX_OPEN_POSITIONS_CAP = 10000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
 const TS_VERIFY_INTERVAL_MS = 180_000;
+const AUTO_CANCEL_ENTRY_ORDERS = false;
 const TREND_GATE_STRONG_ADX = 25;
 const TREND_GATE_STRONG_SCORE = 3;
 const TREND_GATE_REVERSE_ADX = 19;
@@ -2154,6 +2155,7 @@ export function useTradingBot(
 
   const enforceBtcBiasAlignment = useCallback(
     async (now: number) => {
+      if (!AUTO_CANCEL_ENTRY_ORDERS) return;
       if (!authToken) return;
       const btcBias = resolveBtcBias();
       if (!btcBias) return;
@@ -2336,13 +2338,45 @@ export function useTradingBot(
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
       );
       const hasPendingIntent = intentPendingRef.current.has(symbol);
-      const manageReason = context.hasPosition
-        ? "open position"
-        : hasEntryOrder
-          ? "open order"
-          : hasPendingIntent
-            ? "pending intent"
-            : null;
+      const now = Number.isFinite(lastScanTs) ? lastScanTs : Date.now();
+      const entryBlockReasons: string[] = [];
+      const addBlockReason = (label: string) => {
+        entryBlockReasons.push(label);
+      };
+      const entryLockTs = entryOrderLockRef.current.get(symbol) ?? 0;
+      const lastIntentTs = lastIntentBySymbolRef.current.get(symbol) ?? 0;
+      const lastCloseTs = lastCloseBySymbolRef.current.get(symbol) ?? 0;
+      const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
+      const cooldownMs = CORE_V2_COOLDOWN_MS[context.settings.riskMode];
+      if (context.hasPosition) addBlockReason("otevřená pozice");
+      if (hasEntryOrder) addBlockReason("otevřený order");
+      if (hasPendingIntent) addBlockReason("čeká na intent");
+      if (entryLockTs && now - entryLockTs < ENTRY_ORDER_LOCK_MS) {
+        const remainingMs = Math.max(0, ENTRY_ORDER_LOCK_MS - (now - entryLockTs));
+        addBlockReason(`lock vstupu ${Math.ceil(remainingMs / 1000)}s`);
+      }
+      if (lastIntentTs && now - lastIntentTs < INTENT_COOLDOWN_MS) {
+        const remainingMs = Math.max(0, INTENT_COOLDOWN_MS - (now - lastIntentTs));
+        addBlockReason(`nedávný intent ${Math.ceil(remainingMs / 1000)}s`);
+      }
+      if (lastCloseTs && now - lastCloseTs < REENTRY_COOLDOWN_MS) {
+        const remainingMs = Math.max(0, REENTRY_COOLDOWN_MS - (now - lastCloseTs));
+        addBlockReason(`nedávné uzavření ${Math.ceil(remainingMs / 1000)}s`);
+      }
+      if (lastLossTs && now - lastLossTs < cooldownMs) {
+        const remainingMs = Math.max(0, cooldownMs - (now - lastLossTs));
+        addBlockReason(`cooldown ${Math.ceil(remainingMs / 60_000)}m`);
+      }
+      if (!context.maxPositionsOk) addBlockReason("max pozic");
+      if (!context.ordersClearOk) addBlockReason("max orderů");
+      if (
+        context.settings.riskMode === "ai-matic-x" &&
+        (decision as any)?.xContext?.riskOff
+      ) {
+        addBlockReason("risk off");
+      }
+      const manageReason =
+        entryBlockReasons.length > 0 ? entryBlockReasons.join(" • ") : null;
 
       coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
       if (isScalpProfile) {
@@ -2379,15 +2413,31 @@ export function useTradingBot(
       const softBlocked = softEnabled && quality.pass === false;
       const checklist = evaluateChecklistPass(gates);
       const signalActive = Boolean(signal) || checklist.pass;
-      const executionAllowed = signalActive
-        ? execEnabled
-          ? checklist.pass && !softBlocked
-          : false
-        : null;
+      let executionAllowed: boolean | null = null;
+      let executionReason: string | undefined;
+      if (!execEnabled) {
+        executionAllowed = false;
+        executionReason = "Exec OFF";
+      } else if (entryBlockReasons.length > 0) {
+        executionAllowed = false;
+        executionReason = entryBlockReasons.join(", ");
+      } else if (!signalActive) {
+        executionAllowed = null;
+        executionReason = "čeká na signál";
+      } else if (!checklist.pass) {
+        executionAllowed = false;
+        executionReason = `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`;
+      } else if (softBlocked) {
+        executionAllowed = false;
+        executionReason = `Score ${quality.score ?? "—"} / ${quality.threshold ?? "—"}`;
+      } else {
+        executionAllowed = true;
+      }
 
       return {
         symbolState,
         manageReason,
+        entryBlockReasons,
         hasPosition: context.hasPosition,
         hasEntryOrder,
         hasPendingIntent,
@@ -2397,17 +2447,7 @@ export function useTradingBot(
         hardBlocked,
         hardBlock: hardBlocked ? hardReasons.join(" · ") : undefined,
         executionAllowed,
-        executionReason: signalActive
-          ? execEnabled
-            ? !checklist.pass
-              ? `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`
-              : softBlocked
-                ? `Score ${quality.score ?? "—"} / ${quality.threshold ?? "—"}`
-                : undefined
-            : "Exec allowed (OFF)"
-          : execEnabled
-            ? "Waiting for signal"
-            : "Exec allowed (OFF)",
+        executionReason,
         gates,
         qualityScore: quality.score,
         qualityThreshold: quality.threshold,
@@ -2725,16 +2765,18 @@ export function useTradingBot(
           orderLinkId: data.order.orderLinkId,
         });
       }
-      const next = mapped.filter((order) => {
-        if (!isNewEntryOrder(order)) return true;
-        if (isTriggerEntryOrder(order)) return true;
-        const latest = latestNewIds.get(order.symbol);
-        if (!latest) return true;
-        return (
-          (latest.orderId && order.orderId === latest.orderId) ||
-          (latest.orderLinkId && order.orderLinkId === latest.orderLinkId)
-        );
-      });
+      const next = AUTO_CANCEL_ENTRY_ORDERS
+        ? mapped.filter((order) => {
+            if (!isNewEntryOrder(order)) return true;
+            if (isTriggerEntryOrder(order)) return true;
+            const latest = latestNewIds.get(order.symbol);
+            if (!latest) return true;
+            return (
+              (latest.orderId && order.orderId === latest.orderId) ||
+              (latest.orderLinkId && order.orderLinkId === latest.orderLinkId)
+            );
+          })
+        : mapped;
       setOrders(next);
       ordersRef.current = next;
       setOrdersError(null);
@@ -2758,7 +2800,7 @@ export function useTradingBot(
         }
       }
       const cancelTargets =
-        authToken
+        AUTO_CANCEL_ENTRY_ORDERS && authToken
           ? mapped.filter((order) => {
               if (!isNewEntryOrder(order)) return false;
               if (isTriggerEntryOrder(order)) return false;
@@ -2771,7 +2813,7 @@ export function useTradingBot(
               return !isLatest;
             })
           : [];
-      if (cancelTargets.length) {
+      if (cancelTargets.length && AUTO_CANCEL_ENTRY_ORDERS) {
         void (async () => {
           for (const order of cancelTargets) {
             const key = order.orderId || order.orderLinkId;

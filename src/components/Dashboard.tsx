@@ -59,6 +59,7 @@ export default function Dashboard({
   const logsLoaded = Array.isArray(logEntries);
   const pnlLoaded = Boolean(assetPnlHistory);
   const scanLoaded = scanDiagnostics !== null;
+  const [activeTab, setActiveTab] = useState("overview");
 
   const lastScanTs = useMemo(() => {
     if (!scanDiagnostics) return null;
@@ -297,7 +298,16 @@ export default function Dashboard({
         maxOpenOrders={maxOpenOrders}
       />
 
-      <Tabs defaultValue="overview" className="space-y-4">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          setActiveTab(value);
+          if (value === "logs") {
+            refreshTestnetOrders();
+          }
+        }}
+        className="space-y-4"
+      >
         <TabsList className="w-full justify-start">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="positions">Positions</TabsTrigger>
@@ -358,6 +368,7 @@ export default function Dashboard({
             logEntries={logEntries}
             logsLoaded={logsLoaded}
             useTestnet={useTestnet}
+            isActive={activeTab === "logs"}
           />
         </TabsContent>
       </Tabs>

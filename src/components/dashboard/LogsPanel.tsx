@@ -8,6 +8,7 @@ type LogsPanelProps = {
   logEntries: LogEntry[] | null;
   logsLoaded: boolean;
   useTestnet: boolean;
+  isActive: boolean;
 };
 
 type LevelFilter = "all" | "info" | "warn" | "error";
@@ -25,6 +26,7 @@ export default function LogsPanel({
   logEntries,
   logsLoaded,
   useTestnet,
+  isActive,
 }: LogsPanelProps) {
   const [levelFilter, setLevelFilter] = useState<LevelFilter>("all");
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -40,6 +42,12 @@ export default function LogsPanel({
     if (!scrollRef.current || !stickToBottom) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [filteredEntries, stickToBottom]);
+
+  useEffect(() => {
+    if (!isActive || !scrollRef.current) return;
+    setStickToBottom(true);
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [isActive]);
 
   const handleScroll = () => {
     if (!scrollRef.current) return;

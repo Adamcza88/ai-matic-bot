@@ -31,17 +31,24 @@ function gateSummary(
   checklistEnabled: Record<string, boolean>
 ) {
   if (!scanLoaded || !diag) {
-    return { label: "Gate: —", blocked: false };
+    return { label: "Gate: —", tone: "na" as const };
   }
   if (!diag?.signalActive) {
-    return { label: "Gate: —", blocked: false };
+    return { label: "Gate: —", tone: "na" as const };
   }
-  const execBlocked = diag?.executionAllowed === false;
-  const blocked = execBlocked;
-  return {
-    label: blocked ? "Gate: BLOCKED" : "Gate: PASS",
-    blocked,
-  };
+  const entryBlocks = Array.isArray(diag?.entryBlockReasons)
+    ? diag.entryBlockReasons
+    : [];
+  if (diag?.executionAllowed === false && entryBlocks.length > 0) {
+    return { label: "Gate: HOLD", tone: "hold" as const };
+  }
+  if (diag?.executionAllowed === false) {
+    return { label: "Gate: BLOCKED", tone: "blocked" as const };
+  }
+  if (diag?.executionAllowed === true) {
+    return { label: "Gate: PASS", tone: "pass" as const };
+  }
+  return { label: "Gate: —", tone: "na" as const };
 }
 
 function gateLabel(name: string, detail?: string) {
@@ -148,11 +155,16 @@ export default function SignalsAccordion({
               : "—";
           const symbolState = diag?.symbolState;
           const manageReason = diag?.manageReason;
-          const isManage =
-            Boolean(manageReason) ||
-            Boolean(diag?.hasPosition) ||
-            Boolean(diag?.hasEntryOrder) ||
-            Boolean(diag?.hasPendingIntent);
+          const entryBlockReasons = Array.isArray(diag?.entryBlockReasons)
+            ? diag.entryBlockReasons
+            : [];
+          const manageLabel =
+            entryBlockReasons.length > 0
+              ? entryBlockReasons.join(" • ")
+              : manageReason ?? null;
+          const manageSummary =
+            entryBlockReasons[0] ?? manageReason ?? null;
+          const isManage = entryBlockReasons.length > 0 || Boolean(manageReason);
           const isHold = symbolState === "HOLD";
           const summary = gateSummary(
             diag,
@@ -169,7 +181,18 @@ export default function SignalsAccordion({
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span className="font-mono text-sm">{symbol}</span>
-                  <Badge variant="outline" className={summary.blocked ? "border-red-500/50 text-red-400" : "border-emerald-500/50 text-emerald-400"}>
+                  <Badge
+                    variant="outline"
+                    className={
+                      summary.tone === "blocked"
+                        ? "border-red-500/50 text-red-400"
+                        : summary.tone === "hold"
+                          ? "border-amber-500/50 text-amber-400"
+                          : summary.tone === "pass"
+                            ? "border-emerald-500/50 text-emerald-400"
+                            : "border-border/60 text-muted-foreground"
+                    }
+                  >
                     {summary.label}
                   </Badge>
                   <Badge
@@ -187,7 +210,15 @@ export default function SignalsAccordion({
                       variant="outline"
                       className="border-amber-500/50 text-amber-400"
                     >
-                      HOLD{manageReason ? ` · ${manageReason}` : ""}
+                      HOLD{manageSummary ? ` · ${manageSummary}` : ""}
+                    </Badge>
+                  ) : null}
+                  {!isHold && manageSummary ? (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500/50 text-amber-400"
+                    >
+                      MANAGE · {manageSummary}
                     </Badge>
                   ) : null}
                   <Badge variant="outline" className="border-border/60 text-muted-foreground">
@@ -246,11 +277,11 @@ export default function SignalsAccordion({
                           : "OFF"}
                       </span>
                     </div>
-                    {isManage ? (
+                    {isManage && manageLabel ? (
                       <div className="flex items-center gap-2">
                         <span className="h-2 w-2 rounded-full bg-amber-400" />
                         <span className="text-foreground">
-                          Manage: {manageReason ?? "active"}
+                          Manage: {manageLabel}
                         </span>
                       </div>
                     ) : null}
