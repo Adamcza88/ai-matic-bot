@@ -36,19 +36,8 @@ function gateSummary(
   if (!diag?.signalActive) {
     return { label: "Gate: —", blocked: false };
   }
-  const hardEnabled = diag?.hardEnabled !== false;
-  const softEnabled = diag?.softEnabled !== false;
-  const hardBlocked = Boolean(diag?.hardBlocked);
-  const softBlocked = softEnabled && diag?.qualityPass === false;
   const execBlocked = diag?.executionAllowed === false;
-  const gatesBlocked = gates.some(
-    (g) =>
-      (checklistEnabled[g.name] ?? true) &&
-      g?.ok === false &&
-      g?.detail !== "not required"
-  );
-  const blocked =
-    (hardEnabled && hardBlocked) || softBlocked || execBlocked || gatesBlocked;
+  const blocked = execBlocked;
   return {
     label: blocked ? "Gate: BLOCKED" : "Gate: PASS",
     blocked,

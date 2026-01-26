@@ -54,6 +54,7 @@ const CORE_V2_SCORE_GATE = {
     "ai-matic-scalp": { major: 10, alt: 99 },
     "ai-matic-tree": { major: 11, alt: 13 },
 };
+const MIN_CHECKLIST_PASS = 8;
 const CORE_V2_EMA_SEP1_MIN = 0.18;
 const CORE_V2_EMA_SEP2_MIN = 0.12;
 const CORE_V2_ATR_MIN_PCT_MAJOR = 0.0012;
@@ -870,6 +871,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const value = gateOverridesRef.current?.[name];
         return typeof value === "boolean" ? value : true;
     }, []);
+
+    const evaluateChecklistPass = useCallback((gates) => {
+        const eligible = gates.filter((gate) => isGateEnabled(gate.name) && gate.detail !== "not required");
+        const passed = eligible.filter((gate) => gate.ok).length;
+        return {
+            eligibleCount: eligible.length,
+            passedCount: passed,
+            pass: eligible.length > 0 ? passed >= MIN_CHECKLIST_PASS : false,
+        };
+    }, [isGateEnabled]);
     const normalizeBias = useCallback((value) => {
         const raw = String(value ?? "").trim().toLowerCase();
         if (!raw)
@@ -1869,9 +1880,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const hardBlocked = hardEnabled && hardReasons.length > 0;
         const execEnabled = isGateEnabled("Exec allowed");
         const softBlocked = softEnabled && quality.pass === false;
+        const checklist = evaluateChecklistPass(gates);
         const executionAllowed = signalActive
             ? execEnabled
-                ? hardReasons.length === 0 && !softBlocked
+                ? checklist.pass
                 : false
             : null;
         return {
@@ -1888,11 +1900,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             executionAllowed,
             executionReason: signalActive
                 ? execEnabled
-                    ? hardReasons.length > 0
-                        ? hardReasons.join(" · ")
-                        : softBlocked
-                            ? `Score ${quality.score ?? "—"} / ${quality.threshold ?? "—"}`
-                            : undefined
+                    ? !checklist.pass
+                        ? `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`
+                        : undefined
                     : "Exec allowed (OFF)"
                 : execEnabled
                     ? "Waiting for signal"
@@ -2702,28 +2712,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 }
             }
         }
-        if (hardBlockReasons.length) {
-            addLogEntries([
-                {
-                    id: `signal:block:${signalId}`,
-                    timestamp: new Date(now).toISOString(),
-                    action: "RISK_BLOCK",
-                    message: `${symbol} blocked by: ${hardBlockReasons.join(" · ")}`,
-                },
-            ]);
-            return;
-        }
-        if (!isScalpProfile && softEnabled && coreEval.scorePass === false) {
-            addLogEntries([
-                {
-                    id: `signal:score:${signalId}`,
-                    timestamp: new Date(now).toISOString(),
-                    action: "RISK_BLOCK",
-                    message: `${symbol} score gate ${coreEval.score}/${coreEval.threshold}`,
-                },
-            ]);
-            return;
-        }
         const execEnabled = isGateEnabled("Exec allowed");
         if (!execEnabled) {
             addLogEntries([
@@ -2732,6 +2720,33 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     timestamp: new Date(now).toISOString(),
                     action: "STATUS",
                     message: `${symbol} exec disabled (manual)`,
+                },
+            ]);
+            return;
+        }
+        const checklistGates = [...coreEval.gates];
+        if (isScalpProfile) {
+            checklistGates.push({
+                name: SCALP_PRIMARY_GATE,
+                ok: scalpPrimary.primaryOk,
+            });
+            checklistGates.push({
+                name: SCALP_ENTRY_GATE,
+                ok: scalpPrimary.entryOk,
+            });
+            checklistGates.push({
+                name: SCALP_EXIT_GATE,
+                ok: scalpPrimary.exitOk,
+            });
+        }
+        const checklist = evaluateChecklistPass(checklistGates);
+        if (!checklist.pass) {
+            addLogEntries([
+                {
+                    id: `signal:checklist:${signalId}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "RISK_BLOCK",
+                    message: `${symbol} checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`,
                 },
             ]);
             return;
@@ -2870,10 +2885,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         autoTrade,
         buildScanDiagnostics,
         closedPnlRecords,
-        computeFixedSizing,
-        computeNotionalForSignal,
-        evaluateCoreV2,
-        getEquityValue,
+            computeFixedSizing,
+            computeNotionalForSignal,
+            evaluateChecklistPass,
+            evaluateCoreV2,
+            getEquityValue,
         getSymbolContext,
         isGateEnabled,
         isEntryOrder,

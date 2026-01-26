@@ -38,16 +38,8 @@ function gateSummary(diag: any, scanLoaded: boolean) {
   if (!diag?.signalActive) {
     return { label: "Gate: —", blocked: false };
   }
-  const hardEnabled = diag?.hardEnabled !== false;
-  const softEnabled = diag?.softEnabled !== false;
-  const hardBlocked = Boolean(diag?.hardBlocked);
-  const softBlocked = softEnabled && diag?.qualityPass === false;
   const execBlocked = diag?.executionAllowed === false;
-  const gateBlocked = Array.isArray(diag?.gates)
-    ? diag.gates.some((g: any) => g?.ok === false)
-    : false;
-  const blocked =
-    (hardEnabled && hardBlocked) || softBlocked || execBlocked || gateBlocked;
+  const blocked = execBlocked;
   return {
     label: blocked ? "Gate: BLOCKED" : "Gate: PASS",
     blocked,
