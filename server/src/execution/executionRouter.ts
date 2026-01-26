@@ -23,7 +23,7 @@ const LEVERAGE_BY_SYMBOL: Record<Symbol, number> = {
   DOGEUSDT: 75,
   LINKUSDT: 50,
   MELANIAUSDT: 20,
-  XPLUSDT: 75,
+  XPLUSDT: 50,
   HYPEUSDT: 75,
   FARTCOINUSDT: 75,
 };
