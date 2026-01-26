@@ -1793,5 +1793,26 @@ export function evaluateStrategyForSymbol(
     signal,
     position,
     halted: bot.isHalted(),
+    // Cheat sheet plumbing for AI-MATIC-TREE
+    cheatDeps: {
+      hasVP: true,
+      hasOB: true,
+      hasGAP: true,
+      hasTrap: true,
+      hasLowVol: true,
+    },
+    cheatSignals: {
+      sessionOk: true,
+      htfReactionConfirmed: trendMetrics.adx > 20,
+      structureReadable: true,
+      inLowVolume: false,
+      bosUp: trend === "up",
+      bosDown: trend === "down",
+      returnToLevel: false,
+      rejectionInLVN: false,
+      touchOB: false,
+      rejectionInOB: false,
+      trapReaction: false,
+    },
   };
 }

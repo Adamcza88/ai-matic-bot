@@ -2384,9 +2384,10 @@ export function useTradingBot(
       }
       // Hard guard: otevřená pozice nebo order → žádná nová intent ani po přepnutí Exec ON
       if (entryBlockReasons.includes("pozice") || entryBlockReasons.includes("order")) {
+        const logId = `entry-block:${symbol}:${now}`;
         addLogEntries([
           {
-            id: `entry-block:${symbol}:${signalId}`,
+            id: logId,
             timestamp: new Date(now).toISOString(),
             action: "RISK_BLOCK",
             message: `${symbol} blokováno (open pos/order): ${entryBlockReasons.join(", ")}`,
