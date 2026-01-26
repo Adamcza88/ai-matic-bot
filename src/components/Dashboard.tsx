@@ -97,14 +97,14 @@ export default function Dashboard({
     if (riskMode === "ai-matic-x") {
       return {
         label: "AI-MATIC-X",
-        subtitle: "EMA12/26 HTF bias + 5m pullback + micro break close",
+        subtitle: "Swing OB 15m/1h · OB + Volume Profile + BTC filtr",
         symbols: SUPPORTED_SYMBOLS,
-        timeframes: "1h context · 5m execution",
+        timeframes: "15m vstup · 1h kontext",
         session: "24/7",
-        risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
+        risk: "2 vstupy (60 % / 40 %) · TP1 0.9–1.2 % · TP2 2–3 %",
         entry:
-          "5m pullback do EMA12/EMA12–26 zóny + micro break CLOSE",
-        execution: `BBO filter (fresh/age) · SL pod/nad pivot + ATR buffer · ${cheatSheetNote}`,
+          "Entry 1: reakce z OB/sweep návrat · Entry 2: retest OB (GAP/Fibo)",
+        execution: `SL pod strukturu/OB knot · trailing po +1.0 % (EMA20 / 0.5–0.8 %) · ${cheatSheetNote}`,
       };
     }
     if (riskMode === "ai-matic-tree") {
