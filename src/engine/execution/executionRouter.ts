@@ -70,6 +70,9 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
   },
 };
 
+const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
+const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
+
 export interface TrailingPlan {
   activationPrice: number;
   lockedStopPrice: number;
@@ -98,17 +101,46 @@ function dir(side: Side): 1 | -1 {
   return side === "Buy" ? 1 : -1;
 }
 
-export function buildTpFromR(sig: EntrySignal, tpR: number): { tp: number; r: number } {
-  const r = Math.abs(sig.entry - sig.stopLoss);
-  if (Number.isFinite(sig.takeProfit)) {
-    return { tp: sig.takeProfit as number, r };
-  }
-  const tp = sig.entry + dir(sig.side) * tpR * r;
-  return { tp, r };
+function resolveMinDistance(entry: number) {
+  return entry * MIN_PROTECTION_DISTANCE_PCT;
 }
 
-export function buildTrailing(sig: EntrySignal, cfg: ProfileConfig, r: number): TrailingPlan {
-  const activationPrice = sig.entry + dir(sig.side) * cfg.trailActivateR * r;
+function normalizeProtection(
+  sig: EntrySignal,
+  takeProfit: number
+): { stopLoss: number; takeProfit: number; minDistance: number } {
+  const minDistance = resolveMinDistance(sig.entry);
+  let stopLoss = sig.stopLoss;
+  let tp = takeProfit;
+  if (sig.side === "Buy") {
+    if (stopLoss >= sig.entry - minDistance) {
+      stopLoss = sig.entry - minDistance;
+    }
+    if (tp <= sig.entry + minDistance) {
+      tp = sig.entry + minDistance;
+    }
+  } else {
+    if (stopLoss <= sig.entry + minDistance) {
+      stopLoss = sig.entry + minDistance;
+    }
+    if (tp >= sig.entry - minDistance) {
+      tp = sig.entry - minDistance;
+    }
+  }
+  return { stopLoss, takeProfit: tp, minDistance };
+}
+
+export function buildTrailing(
+  sig: EntrySignal,
+  cfg: ProfileConfig,
+  r: number,
+  minDistance = 0
+): TrailingPlan {
+  const activationDelta = Math.max(
+    cfg.trailActivateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
+    minDistance
+  );
+  const activationPrice = sig.entry + dir(sig.side) * activationDelta;
   const lockedStopPrice = sig.entry + dir(sig.side) * cfg.trailLockR * r;
   return { activationPrice, lockedStopPrice };
 }
@@ -120,8 +152,18 @@ export function decideExecutionPlan(
   qty: number
 ): OrderPlan {
   const cfg = PROFILE[profile];
-  const { tp, r } = buildTpFromR(sig, cfg.tpR);
-  const trailing = buildTrailing(sig, cfg, r);
+  const rawR = Math.abs(sig.entry - sig.stopLoss);
+  const computedTp = Number.isFinite(sig.takeProfit)
+    ? (sig.takeProfit as number)
+    : sig.entry + dir(sig.side) * cfg.tpR * rawR;
+  const normalized = normalizeProtection(sig, computedTp);
+  const r = Math.abs(sig.entry - normalized.stopLoss);
+  const trailing = buildTrailing(
+    { ...sig, stopLoss: normalized.stopLoss },
+    cfg,
+    r,
+    normalized.minDistance
+  );
   const distBps = bpsDistance(market.last, sig.entry);
   const spreadOk = market.spreadBps == null ? true : market.spreadBps <= 12;
 
@@ -131,8 +173,8 @@ export function decideExecutionPlan(
     mode: "MARKET",
     qty,
     timeInForce: "IOC",
-    stopLoss: sig.stopLoss,
-    takeProfit: tp,
+    stopLoss: normalized.stopLoss,
+    takeProfit: normalized.takeProfit,
     trailing,
     reason,
   });
@@ -144,8 +186,8 @@ export function decideExecutionPlan(
     qty,
     entryPrice: sig.entry,
     timeInForce: tif,
-    stopLoss: sig.stopLoss,
-    takeProfit: tp,
+    stopLoss: normalized.stopLoss,
+    takeProfit: normalized.takeProfit,
     trailing,
     reason,
   });
@@ -161,8 +203,8 @@ export function decideExecutionPlan(
       triggerPrice: sig.entry,
       limitPrice,
       timeInForce: "GTC",
-      stopLoss: sig.stopLoss,
-      takeProfit: tp,
+      stopLoss: normalized.stopLoss,
+      takeProfit: normalized.takeProfit,
       trailing,
       reason,
     };

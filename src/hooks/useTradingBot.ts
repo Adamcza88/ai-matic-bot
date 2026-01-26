@@ -816,6 +816,49 @@ function computeLossStreak(
   return streak;
 }
 
+const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
+const MIN_PROTECTION_ATR_FACTOR = 0.05;
+const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
+
+function resolveMinProtectionDistance(entry: number, atr?: number) {
+  const pctDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
+  const atrDistance = Number.isFinite(atr)
+    ? (atr as number) * MIN_PROTECTION_ATR_FACTOR
+    : 0;
+  return Math.max(pctDistance, atrDistance);
+}
+
+function normalizeProtectionLevels(
+  entry: number,
+  side: "Buy" | "Sell",
+  sl?: number,
+  tp?: number,
+  atr?: number
+) {
+  if (!Number.isFinite(entry) || entry <= 0) {
+    return { sl, tp, minDistance: Number.NaN };
+  }
+  const minDistance = resolveMinProtectionDistance(entry, atr);
+  let nextSl = sl;
+  let nextTp = tp;
+  if (side === "Buy") {
+    if (Number.isFinite(nextSl) && nextSl >= entry - minDistance) {
+      nextSl = entry - minDistance;
+    }
+    if (Number.isFinite(nextTp) && nextTp <= entry + minDistance) {
+      nextTp = entry + minDistance;
+    }
+  } else {
+    if (Number.isFinite(nextSl) && nextSl <= entry + minDistance) {
+      nextSl = entry + minDistance;
+    }
+    if (Number.isFinite(nextTp) && nextTp >= entry - minDistance) {
+      nextTp = entry - minDistance;
+    }
+  }
+  return { sl: nextSl, tp: nextTp, minDistance };
+}
+
 const TRAIL_PROFILE_BY_RISK_MODE: Record<
   AISettings["riskMode"],
   { activateR: number; lockR: number; retracementRate?: number }
@@ -1408,7 +1451,9 @@ export function useTradingBot(
       if (!forceTrail && !settings.lockProfitsWithTrail && symbolMode !== "on") {
         return null;
       }
-      const r = Math.abs(entry - sl);
+      const normalized = normalizeProtectionLevels(entry, side, sl);
+      const normalizedSl = Number.isFinite(normalized.sl) ? normalized.sl : sl;
+      const r = Math.abs(entry - normalizedSl);
       if (!Number.isFinite(r) || r <= 0) return null;
       const profile =
         TRAIL_PROFILE_BY_RISK_MODE[settings.riskMode] ??
@@ -1420,14 +1465,21 @@ export function useTradingBot(
         Number.isFinite(overrideRate) && overrideRate > 0
           ? overrideRate
           : profile.retracementRate;
-      const distance = Number.isFinite(effectiveRate)
+      const minDistance = resolveMinProtectionDistance(entry);
+      const rawDistance = Number.isFinite(effectiveRate)
         ? entry * (effectiveRate as number)
         : Math.abs(activateR - lockR) * r;
+      const distance = Math.max(rawDistance, minDistance);
       if (!Number.isFinite(distance) || distance <= 0) return null;
       const dir = side === "Buy" ? 1 : -1;
       const activePrice = isScalpProfile
         ? entry + dir * distance
-        : entry + dir * activateR * r;
+        : entry +
+          dir *
+            Math.max(
+              activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
+              minDistance
+            );
       if (!Number.isFinite(activePrice) || activePrice <= 0) return null;
       return { trailingStop: distance, trailingActivePrice: activePrice };
     },
@@ -2107,20 +2159,10 @@ export function useTradingBot(
   const enforceBtcBiasAlignment = useCallback(
     async (now: number) => {
       if (!authToken) return;
-      const settings = settingsRef.current;
-      if (settings.riskMode === "ai-matic-x") return;
       const btcBias = resolveBtcBias();
       if (!btcBias) return;
       const cooldown = autoCloseCooldownRef.current;
-      const nextPositions = positionsRef.current;
       const nextOrders = ordersRef.current;
-
-      const closeTargets = nextPositions.filter((pos) => {
-        const size = toNumber(pos.size ?? pos.qty);
-        if (!Number.isFinite(size) || size <= 0) return false;
-        const bias = normalizeBias(pos.side);
-        return bias != null && bias !== btcBias;
-      });
 
       const cancelTargets = nextOrders.filter((order) => {
         if (!isEntryOrder(order)) return false;
@@ -2128,48 +2170,7 @@ export function useTradingBot(
         return bias != null && bias !== btcBias;
       });
 
-      if (!closeTargets.length && !cancelTargets.length) return;
-
-      for (const pos of closeTargets) {
-        const key = `pos:${pos.symbol}`;
-        const last = cooldown.get(key) ?? 0;
-        if (now - last < 15_000) continue;
-        cooldown.set(key, now);
-        const size = Math.abs(toNumber(pos.size ?? pos.qty));
-        if (!Number.isFinite(size) || size <= 0) continue;
-        const closeSide =
-          String(pos.side).toLowerCase() === "buy" ? "Sell" : "Buy";
-        try {
-          await postJson("/order", {
-            symbol: pos.symbol,
-            side: closeSide,
-            qty: size,
-            orderType: "Market",
-            reduceOnly: true,
-            timeInForce: "IOC",
-            positionIdx: Number.isFinite(pos.positionIdx)
-              ? pos.positionIdx
-              : undefined,
-          });
-          addLogEntries([
-            {
-              id: `btc-bias-close:${pos.symbol}:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "AUTO_CLOSE",
-              message: `BTC bias ${btcBias} -> CLOSE ${pos.symbol} ${pos.side}`,
-            },
-          ]);
-        } catch (err) {
-          addLogEntries([
-            {
-              id: `btc-bias-close:error:${pos.symbol}:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "ERROR",
-              message: `BTC bias close failed ${pos.symbol}: ${asErrorMessage(err)}`,
-            },
-          ]);
-        }
-      }
+      if (!cancelTargets.length) return;
 
       for (const order of cancelTargets) {
         const orderId = order.orderId || "";
@@ -3465,6 +3466,16 @@ export function useTradingBot(
               : entry - 1.5 * risk;
         }
       }
+
+      const normalized = normalizeProtectionLevels(
+        entry,
+        side,
+        resolvedSl,
+        resolvedTp,
+        core?.atr14
+      );
+      resolvedSl = normalized.sl;
+      resolvedTp = normalized.tp;
 
       if (
         !Number.isFinite(entry) ||

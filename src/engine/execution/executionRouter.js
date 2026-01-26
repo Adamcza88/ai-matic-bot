@@ -34,29 +34,54 @@ export const PROFILE = {
         limitChaseMaxBps: 70,
     },
 };
+const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
+const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
 function bpsDistance(a, b) {
     return Math.abs(a - b) / Math.max(b, 1e-8) * 10_000;
 }
 function dir(side) {
     return side === "Buy" ? 1 : -1;
 }
-export function buildTpFromR(sig, tpR) {
-    const r = Math.abs(sig.entry - sig.stopLoss);
-    if (Number.isFinite(sig.takeProfit)) {
-        return { tp: sig.takeProfit, r };
-    }
-    const tp = sig.entry + dir(sig.side) * tpR * r;
-    return { tp, r };
+function resolveMinDistance(entry) {
+    return entry * MIN_PROTECTION_DISTANCE_PCT;
 }
-export function buildTrailing(sig, cfg, r) {
-    const activationPrice = sig.entry + dir(sig.side) * cfg.trailActivateR * r;
+function normalizeProtection(sig, takeProfit) {
+    const minDistance = resolveMinDistance(sig.entry);
+    let stopLoss = sig.stopLoss;
+    let tp = takeProfit;
+    if (sig.side === "Buy") {
+        if (stopLoss >= sig.entry - minDistance) {
+            stopLoss = sig.entry - minDistance;
+        }
+        if (tp <= sig.entry + minDistance) {
+            tp = sig.entry + minDistance;
+        }
+    }
+    else {
+        if (stopLoss <= sig.entry + minDistance) {
+            stopLoss = sig.entry + minDistance;
+        }
+        if (tp >= sig.entry - minDistance) {
+            tp = sig.entry - minDistance;
+        }
+    }
+    return { stopLoss, takeProfit: tp, minDistance };
+}
+export function buildTrailing(sig, cfg, r, minDistance = 0) {
+    const activationDelta = Math.max(cfg.trailActivateR * TRAIL_ACTIVATION_R_MULTIPLIER * r, minDistance);
+    const activationPrice = sig.entry + dir(sig.side) * activationDelta;
     const lockedStopPrice = sig.entry + dir(sig.side) * cfg.trailLockR * r;
     return { activationPrice, lockedStopPrice };
 }
 export function decideExecutionPlan(sig, market, profile, qty) {
     const cfg = PROFILE[profile];
-    const { tp, r } = buildTpFromR(sig, cfg.tpR);
-    const trailing = buildTrailing(sig, cfg, r);
+    const rawR = Math.abs(sig.entry - sig.stopLoss);
+    const computedTp = Number.isFinite(sig.takeProfit)
+        ? sig.takeProfit
+        : sig.entry + dir(sig.side) * cfg.tpR * rawR;
+    const normalized = normalizeProtection(sig, computedTp);
+    const r = Math.abs(sig.entry - normalized.stopLoss);
+    const trailing = buildTrailing({ ...sig, stopLoss: normalized.stopLoss }, cfg, r, normalized.minDistance);
     const distBps = bpsDistance(market.last, sig.entry);
     const spreadOk = market.spreadBps == null ? true : market.spreadBps <= 12;
     const marketPlan = (reason) => ({
@@ -65,8 +90,8 @@ export function decideExecutionPlan(sig, market, profile, qty) {
         mode: "MARKET",
         qty,
         timeInForce: "IOC",
-        stopLoss: sig.stopLoss,
-        takeProfit: tp,
+        stopLoss: normalized.stopLoss,
+        takeProfit: normalized.takeProfit,
         trailing,
         reason,
     });
@@ -77,8 +102,8 @@ export function decideExecutionPlan(sig, market, profile, qty) {
         qty,
         entryPrice: sig.entry,
         timeInForce: tif,
-        stopLoss: sig.stopLoss,
-        takeProfit: tp,
+        stopLoss: normalized.stopLoss,
+        takeProfit: normalized.takeProfit,
         trailing,
         reason,
     });
@@ -93,8 +118,8 @@ export function decideExecutionPlan(sig, market, profile, qty) {
             triggerPrice: sig.entry,
             limitPrice,
             timeInForce: "GTC",
-            stopLoss: sig.stopLoss,
-            takeProfit: tp,
+            stopLoss: normalized.stopLoss,
+            takeProfit: normalized.takeProfit,
             trailing,
             reason,
         };

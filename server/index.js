@@ -93,6 +93,7 @@ app.post("/api/:env/order", async (req, res) => {
     FARTCOINUSDT: 75,
   };
   const roiSymbols = new Set(Object.keys(leverageMap));
+  const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
   const roiTargets = { tp: 1.10, sl: -0.40 }; // percent ROI targets
 
   const resolveLeverage = (sym, requested) => {
@@ -107,10 +108,27 @@ app.post("/api/:env/order", async (req, res) => {
     const isBuy = dir?.toLowerCase() === "buy";
     const tpPrice = entry * (1 + (roiTargets.tp / 100) / Math.max(1, lev) * (isBuy ? 1 : -1));
     const slPrice = entry * (1 - (Math.abs(roiTargets.sl) / 100) / Math.max(1, lev) * (isBuy ? 1 : -1));
-    return {
-      tp: Number.isFinite(tpPrice) ? tpPrice : curTp,
-      sl: Number.isFinite(slPrice) ? slPrice : curSl,
-    };
+    let nextTp = Number.isFinite(tpPrice) ? tpPrice : curTp;
+    let nextSl = Number.isFinite(slPrice) ? slPrice : curSl;
+    const minDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
+    if (Number.isFinite(minDistance) && minDistance > 0) {
+      if (isBuy) {
+        if (Number.isFinite(nextTp) && nextTp <= entry + minDistance) {
+          nextTp = entry + minDistance;
+        }
+        if (Number.isFinite(nextSl) && nextSl >= entry - minDistance) {
+          nextSl = entry - minDistance;
+        }
+      } else {
+        if (Number.isFinite(nextTp) && nextTp >= entry - minDistance) {
+          nextTp = entry - minDistance;
+        }
+        if (Number.isFinite(nextSl) && nextSl <= entry + minDistance) {
+          nextSl = entry + minDistance;
+        }
+      }
+    }
+    return { tp: nextTp, sl: nextSl };
   };
 
   try {

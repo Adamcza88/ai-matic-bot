@@ -29,6 +29,48 @@ const LEVERAGE_BY_SYMBOL: Record<Symbol, number> = {
 };
 
 const lastLeverageBySymbol = new Map<Symbol, number>();
+const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
+
+function normalizeProtection(intent: TradeIntent) {
+  const entry = Number(intent.entryPrice ?? 0);
+  if (!Number.isFinite(entry) || entry <= 0) {
+    return {
+      slPrice: intent.slPrice,
+      tp1: intent.tpPrices?.[0],
+      trailingActivePrice: intent.trailingActivePrice,
+    };
+  }
+  const minDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
+  const isBuy = intent.side === "Buy";
+  let slPrice = intent.slPrice;
+  let tp1 = intent.tpPrices?.[0];
+  if (isBuy) {
+    if (Number.isFinite(slPrice) && slPrice >= entry - minDistance) {
+      slPrice = entry - minDistance;
+    }
+    if (Number.isFinite(tp1) && tp1 <= entry + minDistance) {
+      tp1 = entry + minDistance;
+    }
+  } else {
+    if (Number.isFinite(slPrice) && slPrice <= entry + minDistance) {
+      slPrice = entry + minDistance;
+    }
+    if (Number.isFinite(tp1) && tp1 >= entry - minDistance) {
+      tp1 = entry - minDistance;
+    }
+  }
+  let trailingActivePrice = intent.trailingActivePrice;
+  if (Number.isFinite(trailingActivePrice)) {
+    const minActive = entry + (isBuy ? 1 : -1) * minDistance;
+    if (isBuy && trailingActivePrice <= minActive) {
+      trailingActivePrice = minActive;
+    }
+    if (!isBuy && trailingActivePrice >= minActive) {
+      trailingActivePrice = minActive;
+    }
+  }
+  return { slPrice, tp1, trailingActivePrice };
+}
 
 async function ensureLeverage(ctx: Ctx, symbol: Symbol) {
   const target = LEVERAGE_BY_SYMBOL[symbol] ?? 1;
@@ -88,6 +130,7 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
     setStatus(ctx, "REJECTED", { reason: "MISSING_ENTRY_PRICE" });
     return;
   }
+  const normalized = normalizeProtection(intent);
 
   try {
     await ensureLeverage(ctx, intent.symbol);
@@ -162,7 +205,7 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
     }
   }, intent.expireAfterMs);
 
-  const tp1 = intent.tpPrices?.[0];
+  const tp1 = normalized.tp1;
   void (async () => {
     const waitMs = Math.max(0, Math.min(intent.expireAfterMs, 30_000));
     const ready = await waitForPositionOpen(ctx, intent.symbol, waitMs);
@@ -177,10 +220,10 @@ export async function handleIntent(ctx: Ctx, intent: TradeIntent) {
     try {
       await ctx.bybit.setTradingStop({
         symbol: intent.symbol,
-        stopLoss: intent.slPrice,
+        stopLoss: normalized.slPrice,
         takeProfit: tp1,
         trailingStop: intent.trailingStop,
-        trailingActivePrice: intent.trailingActivePrice,
+        trailingActivePrice: normalized.trailingActivePrice,
       });
       ctx.audit.write("trading_stop_set", {
         intentId: intent.intentId,
