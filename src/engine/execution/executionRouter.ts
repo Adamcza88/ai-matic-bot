@@ -49,7 +49,7 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
     trailLockR: 1.3,
     trailActivateR: 1.0,
     stopLimitBufferBps: 8,
-    marketDistanceBps: 12,
+    marketDistanceBps: 10,
     limitChaseMaxBps: 35,
   },
   "ai-matic": {
@@ -57,7 +57,7 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
     trailLockR: 1.3,
     trailActivateR: 1.0,
     stopLimitBufferBps: 12,
-    marketDistanceBps: 18,
+    marketDistanceBps: 10,
     limitChaseMaxBps: 70,
   },
   "ai-matic-tree": {
@@ -65,7 +65,7 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
     trailLockR: 1.3,
     trailActivateR: 1.0,
     stopLimitBufferBps: 12,
-    marketDistanceBps: 18,
+    marketDistanceBps: 10,
     limitChaseMaxBps: 70,
   },
 };
