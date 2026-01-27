@@ -175,6 +175,10 @@ export function decideExecutionPlan(
     ? market.last >= normalized.stopLoss + minSafeDist
     : market.last <= normalized.stopLoss - minSafeDist;
 
+  const isMarketable = sig.side === "Buy"
+    ? market.last < sig.entry
+    : market.last > sig.entry;
+
   const marketPlan = (reason: string): OrderPlan => ({
     symbol: sig.symbol,
     side: sig.side,
@@ -221,6 +225,9 @@ export function decideExecutionPlan(
   if (sig.kind === "PULLBACK" || sig.kind === "MEAN_REVERSION") {
     if (distBps <= cfg.marketDistanceBps && spreadOk && isSlSafe) {
       return marketPlan(`MARKET: ${sig.kind} dist ${distBps.toFixed(1)}bps`);
+    }
+    if (isMarketable && isSlSafe) {
+      return limitPlan(`LIMIT(GTC): ${sig.kind} better price`, "GTC");
     }
     return limitPlan(`LIMIT(PostOnly): ${sig.kind}`, "PostOnly");
   }
