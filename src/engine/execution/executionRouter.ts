@@ -184,7 +184,7 @@ export function decideExecutionPlan(
     side: sig.side,
     mode: "MARKET",
     qty,
-    timeInForce: "IOC",
+    timeInForce: "GTC",
     stopLoss: normalized.stopLoss,
     takeProfit: normalized.takeProfit,
     trailing,
