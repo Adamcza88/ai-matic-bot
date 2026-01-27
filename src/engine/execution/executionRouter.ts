@@ -45,33 +45,33 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
     limitChaseMaxBps: 25,
   },
   "ai-matic-x": {
-    tpR: 1.6,
-    trailLockR: 0.6,
-    trailActivateR: 1.4,
+    tpR: 1.5,
+    trailLockR: 0.3,
+    trailActivateR: 0.9,
     stopLimitBufferBps: 8,
     marketDistanceBps: 12,
     limitChaseMaxBps: 35,
   },
   "ai-matic": {
-    tpR: 2.2,
-    trailLockR: 1.1,
-    trailActivateR: 2.0,
+    tpR: 1.5,
+    trailLockR: 0.3,
+    trailActivateR: 0.9,
     stopLimitBufferBps: 12,
     marketDistanceBps: 18,
     limitChaseMaxBps: 70,
   },
   "ai-matic-tree": {
-    tpR: 2.2,
-    trailLockR: 1.1,
-    trailActivateR: 2.0,
+    tpR: 1.5,
+    trailLockR: 0.3,
+    trailActivateR: 0.9,
     stopLimitBufferBps: 12,
     marketDistanceBps: 18,
     limitChaseMaxBps: 70,
   },
 };
 
-const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
-const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
+const MIN_PROTECTION_DISTANCE_PCT = 0.5;
+const TRAIL_ACTIVATION_R_MULTIPLIER = 0.3;
 
 export interface TrailingPlan {
   activationPrice: number;
