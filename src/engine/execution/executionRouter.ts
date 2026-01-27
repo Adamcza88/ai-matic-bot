@@ -167,6 +167,12 @@ export function decideExecutionPlan(
   const distBps = bpsDistance(market.last, sig.entry);
   const spreadOk = market.spreadBps == null ? true : market.spreadBps <= 12;
 
+  // Prevent market entry if price is too close to SL (or beyond it)
+  const minSafeDist = resolveMinDistance(market.last);
+  const isSlSafe = sig.side === "Buy"
+    ? market.last >= normalized.stopLoss + minSafeDist
+    : market.last <= normalized.stopLoss - minSafeDist;
+
   const marketPlan = (reason: string): OrderPlan => ({
     symbol: sig.symbol,
     side: sig.side,
@@ -211,21 +217,21 @@ export function decideExecutionPlan(
   };
 
   if (sig.kind === "PULLBACK" || sig.kind === "MEAN_REVERSION") {
-    if (distBps <= cfg.marketDistanceBps && spreadOk) {
+    if (distBps <= cfg.marketDistanceBps && spreadOk && isSlSafe) {
       return marketPlan(`MARKET: ${sig.kind} dist ${distBps.toFixed(1)}bps`);
     }
     return limitPlan(`LIMIT(PostOnly): ${sig.kind}`, "PostOnly");
   }
 
   if (sig.kind === "BREAKOUT") {
-    if (distBps <= cfg.marketDistanceBps && spreadOk) {
+    if (distBps <= cfg.marketDistanceBps && spreadOk && isSlSafe) {
       return marketPlan(`MARKET: BREAKOUT dist ${distBps.toFixed(1)}bps`);
     }
     return stopLimitPlan(`STOP_LIMIT: BREAKOUT trigger@entry buffer ${cfg.stopLimitBufferBps}bps`);
   }
 
   if (sig.kind === "MOMENTUM") {
-    if (distBps <= cfg.marketDistanceBps && spreadOk) {
+    if (distBps <= cfg.marketDistanceBps && spreadOk && isSlSafe) {
       return marketPlan(`MARKET: MOMENTUM dist ${distBps.toFixed(1)}bps`);
     }
     if (distBps <= cfg.limitChaseMaxBps) {
