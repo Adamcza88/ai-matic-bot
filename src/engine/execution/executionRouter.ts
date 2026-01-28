@@ -72,7 +72,7 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
 
 const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
 const TRAIL_ACTIVATION_R_MULTIPLIER = 11.0;
-const TRAILING_RETRACEMENT_PCT = 0.3;
+const TRAILING_RETRACEMENT_PCT = 0.012;
 
 export interface TrailingPlan {
   activationPrice: number;
