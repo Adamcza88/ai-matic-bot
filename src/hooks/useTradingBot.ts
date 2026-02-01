@@ -903,7 +903,7 @@ export function useTradingBot(
   useTestnet = false,
   authToken?: string
 ) {
-  const allowOrderCancel = false;
+  const allowOrderCancel = true;
   const allowPositionClose = true;
   const [settings, setSettings] = useState<AISettings>(
     () => loadStoredSettings() ?? DEFAULT_SETTINGS

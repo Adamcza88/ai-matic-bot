@@ -125,6 +125,25 @@ export default function OrdersPanel({
     });
   }, [trades, filterMode, selectedSymbol]);
 
+  const canCancelOrder = (order: TestnetOrder) => {
+    const status = String(order.status ?? "").trim().toLowerCase();
+    if (!status) return true;
+    if (
+      status.includes("cancel") ||
+      status.includes("reject") ||
+      status.includes("filled")
+    ) {
+      return false;
+    }
+    return (
+      status === "new" ||
+      status === "created" ||
+      status === "untriggered" ||
+      status === "open" ||
+      status === "partiallyfilled"
+    );
+  };
+
   const handleCancel = async (order: TestnetOrder) => {
     if (!showActions || !onCancelOrder) return;
     setActionError(null);
@@ -336,17 +355,21 @@ export default function OrdersPanel({
                     </td>
                     {showActions && (
                       <td className="py-3 text-right text-xs text-muted-foreground">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 whitespace-nowrap border-sky-500/40 text-xs text-sky-300 hover:bg-sky-500/10 hover:text-white"
-                          onClick={() => handleCancel(order)}
-                          disabled={closingOrderId === order.orderId}
-                        >
-                          {closingOrderId === order.orderId
-                            ? "Closing..."
-                            : "Close position"}
-                        </Button>
+                        {canCancelOrder(order) ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 whitespace-nowrap border-sky-500/40 text-xs text-sky-300 hover:bg-sky-500/10 hover:text-white"
+                            onClick={() => handleCancel(order)}
+                            disabled={closingOrderId === order.orderId}
+                          >
+                            {closingOrderId === order.orderId
+                              ? "Closing..."
+                              : "Close position"}
+                          </Button>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                     )}
                   </tr>

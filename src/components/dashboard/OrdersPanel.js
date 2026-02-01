@@ -40,11 +40,12 @@ function getOrderTypeBadge(order) {
     }
     return null;
 }
-export default function OrdersPanel({ orders, ordersLoaded, ordersError, refreshOrders, trades, tradesLoaded, useTestnet, onCancelOrder, }) {
+export default function OrdersPanel({ orders, ordersLoaded, ordersError, refreshOrders, trades, tradesLoaded, useTestnet, onCancelOrder, allowCancel = true, }) {
     const [filterMode, setFilterMode] = useState("all");
     const [selectedSymbol, setSelectedSymbol] = useState("");
     const [actionError, setActionError] = useState(null);
     const [closingOrderId, setClosingOrderId] = useState(null);
+    const showActions = allowCancel !== false;
     const symbolOptions = useMemo(() => {
         const symbols = new Set();
         orders.forEach((o) => o.symbol && symbols.add(o.symbol));
@@ -84,7 +85,24 @@ export default function OrdersPanel({ orders, ordersLoaded, ordersError, refresh
             return true;
         });
     }, [trades, filterMode, selectedSymbol]);
+    const canCancelOrder = (order) => {
+        const status = String(order.status ?? "").trim().toLowerCase();
+        if (!status)
+            return true;
+        if (status.includes("cancel") ||
+            status.includes("reject") ||
+            status.includes("filled")) {
+            return false;
+        }
+        return (status === "new" ||
+            status === "created" ||
+            status === "untriggered" ||
+            status === "open" ||
+            status === "partiallyfilled");
+    };
     const handleCancel = async (order) => {
+        if (!showActions || !onCancelOrder)
+            return;
         setActionError(null);
         setClosingOrderId(order.orderId);
         try {
@@ -128,9 +146,11 @@ export default function OrdersPanel({ orders, ordersLoaded, ordersError, refresh
                                                             return badge ? (_jsx(Badge, { variant: "outline", className: badge.className, children: badge.label })) : null;
                                                         })(), _jsx("span", { children: order.status || "—" })] }) }), _jsx("td", { className: "py-3 text-xs text-muted-foreground", children: order.createdTime
                                                     ? new Date(order.createdTime).toLocaleString()
-                                                    : "—" }), _jsx("td", { className: "py-3 text-right text-xs text-muted-foreground", children: _jsx(Button, { variant: "outline", size: "sm", className: "h-7 whitespace-nowrap border-sky-500/40 text-xs text-sky-300 hover:bg-sky-500/10 hover:text-white", onClick: () => handleCancel(order), disabled: closingOrderId === order.orderId, children: closingOrderId === order.orderId
-                                                        ? "Closing..."
-                                                        : "Close position" }) })] }, order.orderId))) })] }) }))] }), _jsx(Panel, { title: "Fills", children: !tradesLoaded ? (_jsx("div", { className: "rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground", children: "Loading fills..." })) : filteredTrades.length === 0 ? (_jsx("div", { className: "rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground", children: "No fills yet." })) : (_jsx("div", { className: "overflow-x-auto", children: _jsxs("table", { className: "w-full text-sm", children: [_jsx("thead", { className: "text-xs text-muted-foreground", children: _jsxs("tr", { className: "border-b border-border/60", children: [_jsx("th", { className: "py-2 text-left font-medium", children: "Symbol" }), _jsx("th", { className: "py-2 text-left font-medium", children: "Side" }), _jsx("th", { className: "py-2 text-right font-medium", children: "Qty" }), _jsx("th", { className: "py-2 text-right font-medium", children: "Price" }), _jsx("th", { className: "py-2 text-right font-medium", children: "Fee" }), _jsx("th", { className: "py-2 text-right font-medium", children: "PnL" }), _jsx("th", { className: "py-2 text-left font-medium", children: "Time" })] }) }), _jsx("tbody", { children: filteredTrades.map((trade) => (_jsxs("tr", { className: "border-b border-border/40", children: [_jsx("td", { className: "py-3 font-mono", children: trade.symbol }), _jsx("td", { className: "py-3", children: _jsx(Badge, { variant: "outline", className: trade.side === "Buy"
+                                                    : "—" }), _jsx("td", { className: "py-3 text-right text-xs text-muted-foreground", children: canCancelOrder(order)
+                                                        ? _jsx(Button, { variant: "outline", size: "sm", className: "h-7 whitespace-nowrap border-sky-500/40 text-xs text-sky-300 hover:bg-sky-500/10 hover:text-white", onClick: () => handleCancel(order), disabled: closingOrderId === order.orderId, children: closingOrderId === order.orderId
+                                                                ? "Closing..."
+                                                                : "Close position" })
+                                                        : "—" })] }, order.orderId))) })] }) }))] }), _jsx(Panel, { title: "Fills", children: !tradesLoaded ? (_jsx("div", { className: "rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground", children: "Loading fills..." })) : filteredTrades.length === 0 ? (_jsx("div", { className: "rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground", children: "No fills yet." })) : (_jsx("div", { className: "overflow-x-auto", children: _jsxs("table", { className: "w-full text-sm", children: [_jsx("thead", { className: "text-xs text-muted-foreground", children: _jsxs("tr", { className: "border-b border-border/60", children: [_jsx("th", { className: "py-2 text-left font-medium", children: "Symbol" }), _jsx("th", { className: "py-2 text-left font-medium", children: "Side" }), _jsx("th", { className: "py-2 text-right font-medium", children: "Qty" }), _jsx("th", { className: "py-2 text-right font-medium", children: "Price" }), _jsx("th", { className: "py-2 text-right font-medium", children: "Fee" }), _jsx("th", { className: "py-2 text-right font-medium", children: "PnL" }), _jsx("th", { className: "py-2 text-left font-medium", children: "Time" })] }) }), _jsx("tbody", { children: filteredTrades.map((trade) => (_jsxs("tr", { className: "border-b border-border/40", children: [_jsx("td", { className: "py-3 font-mono", children: trade.symbol }), _jsx("td", { className: "py-3", children: _jsx(Badge, { variant: "outline", className: trade.side === "Buy"
                                                     ? "border-emerald-500/50 text-emerald-400"
                                                     : "border-red-500/50 text-red-400", children: trade.side }) }), _jsx("td", { className: "py-3 text-right font-mono tabular-nums", children: Number.isFinite(trade.qty) ? trade.qty : "—" }), _jsx("td", { className: "py-3 text-right font-mono tabular-nums", children: Number.isFinite(trade.price) ? trade.price : "—" }), _jsx("td", { className: "py-3 text-right font-mono tabular-nums", children: Number.isFinite(trade.fee) ? trade.fee : "—" }), _jsx("td", { className: "py-3 text-right font-mono tabular-nums text-muted-foreground", children: "\u2014" }), _jsx("td", { className: "py-3 text-xs text-muted-foreground", children: trade.time
                                                 ? new Date(trade.time).toLocaleTimeString([], {

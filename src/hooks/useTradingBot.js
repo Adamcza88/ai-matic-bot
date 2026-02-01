@@ -701,6 +701,7 @@ const PROFILE_BY_RISK_MODE = {
 };
 export function useTradingBot(mode, useTestnet = false, authToken) {
     const allowPositionClose = true;
+    const allowOrderCancel = true;
     const [settings, setSettings] = useState(() => loadStoredSettings() ?? DEFAULT_SETTINGS);
     const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
     const activeSymbols = useMemo(() => {
@@ -3317,6 +3318,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         return true;
     }, [apiBase, authToken, refreshFast]);
     const cancelOrder = useCallback(async (order) => {
+        if (!allowOrderCancel) {
+            throw new Error("cancel_disabled");
+        }
         if (!authToken)
             throw new Error("missing_auth_token");
         if (!order?.symbol)
@@ -3343,7 +3347,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }
         await refreshFast();
         return true;
-    }, [apiBase, authToken, refreshFast]);
+    }, [allowOrderCancel, apiBase, authToken, refreshFast]);
     const updateSettings = useCallback((next) => {
         setSettings(next);
     }, []);
@@ -3363,6 +3367,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         manualClosePosition,
         allowPositionClose,
         cancelOrder,
+        allowOrderCancel,
         dynamicSymbols: null,
         settings,
         updateSettings,

@@ -121,7 +121,7 @@ export default function Dashboard({
           session: "24/7",
           risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
           entry: "SWING: HTF reaction · INTRADAY: OB/BOS return · SCALP: rejection/BOS return",
-          execution: `LIMIT_MAKER_FIRST · scalp trailing po +0.5–0.7 % · ${cheatSheetNote}`,
+          execution: `LIMIT_MAKER_FIRST · scalp trailing po +0.5–0.7 % · limit wait: S 5–10m / I 15–30m / W 60–180m · ${cheatSheetNote}`,
         };
       }
       return {

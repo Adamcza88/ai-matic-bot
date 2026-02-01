@@ -16,10 +16,6 @@ export default async function handler(req, res) {
     return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
-  return res
-    .status(403)
-    .json({ ok: false, error: "cancel_disabled" });
-
   try {
     const useTestnet = req.query.net !== "mainnet";
     const authHeader = req.headers.authorization || "";
