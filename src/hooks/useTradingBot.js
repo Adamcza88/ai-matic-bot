@@ -80,6 +80,7 @@ const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const TREND_GATE_STRONG_ADX = 25;
+const TREND_DAY_ADX_MIN = 20;
 const TREND_GATE_STRONG_SCORE = 3;
 const TREND_GATE_REVERSE_ADX = 19;
 const TREND_GATE_REVERSE_SCORE = 1;
@@ -1184,6 +1185,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const activateR = profile.activateR;
         const lockR = profile.lockR;
         const overrideRate = trailOffsetRef.current.get(symbol);
+        const usePercentActivation = isScalpProfile ||
+            (settings.riskMode === "ai-matic-tree" &&
+                Number.isFinite(overrideRate) &&
+                overrideRate > 0);
         const effectiveRate = Number.isFinite(overrideRate) && overrideRate > 0
             ? overrideRate
             : profile.retracementRate;
@@ -1195,7 +1200,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (!Number.isFinite(distance) || distance <= 0)
             return null;
         const dir = side === "Buy" ? 1 : -1;
-        const activePrice = isScalpProfile
+        const activePrice = usePercentActivation
             ? entry + dir * distance
             : entry + dir * Math.max(activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r, minDistance);
         if (!Number.isFinite(activePrice) || activePrice <= 0)

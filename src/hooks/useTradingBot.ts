@@ -116,6 +116,7 @@ const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
 const TS_VERIFY_INTERVAL_MS = 180_000;
 const AUTO_CANCEL_ENTRY_ORDERS = false;
 const TREND_GATE_STRONG_ADX = 25;
+const TREND_DAY_ADX_MIN = 20;
 const TREND_GATE_STRONG_SCORE = 3;
 const TREND_GATE_REVERSE_ADX = 19;
 const TREND_GATE_REVERSE_SCORE = 1;
@@ -1470,6 +1471,11 @@ export function useTradingBot(
       const activateR = profile.activateR;
       const lockR = profile.lockR;
       const overrideRate = trailOffsetRef.current.get(symbol);
+      const usePercentActivation =
+        isScalpProfile ||
+        (settings.riskMode === "ai-matic-tree" &&
+          Number.isFinite(overrideRate) &&
+          (overrideRate as number) > 0);
       const effectiveRate =
         Number.isFinite(overrideRate) && overrideRate > 0
           ? overrideRate
@@ -1481,7 +1487,7 @@ export function useTradingBot(
       const distance = Math.max(rawDistance, minDistance);
       if (!Number.isFinite(distance) || distance <= 0) return null;
       const dir = side === "Buy" ? 1 : -1;
-      const activePrice = isScalpProfile
+      const activePrice = usePercentActivation
         ? entry + dir * distance
         : entry +
           dir *
@@ -3342,6 +3348,7 @@ export function useTradingBot(
       // === Cheat Sheet override for AI-MATIC-TREE ===
       let cheatBlocks: string[] = [];
       let cheatDecision: ReturnType<typeof decideCombinedEntry> | null = null;
+      let cheatTrailOverride: number | null = null;
       const cheatEnabled = settingsRef.current.strategyCheatSheetEnabled;
       const isTreeProfile = settingsRef.current.riskMode === "ai-matic-tree";
 
@@ -3584,8 +3591,23 @@ export function useTradingBot(
       // Apply cheat decision overrides (entry type / trailing) if present
       if (cheatDecision) {
         if (cheatDecision.trailing === "ACTIVATE_AFTER_0_5_TO_0_7_PCT") {
-          const trailOffset = 0.006; // ~0.6% as midpoint of 0.5–0.7
-          trailOffsetRef.current.set(symbol, trailOffset);
+          const trendAdx = toNumber((decision as any)?.trendAdx);
+          const trendScore = toNumber((decision as any)?.trendScore);
+          const alignedCount = toNumber((decision as any)?.htfTrend?.alignedCount);
+          const trendRaw = String(
+            (decision as any)?.trend ?? (decision as any)?.trendH1 ?? ""
+          ).toUpperCase();
+          const trendDirectional =
+            trendRaw.includes("BULL") ||
+            trendRaw.includes("BEAR") ||
+            trendRaw === "UP" ||
+            trendRaw === "DOWN";
+          const trendDay =
+            trendDirectional &&
+            ((Number.isFinite(trendAdx) && trendAdx >= TREND_DAY_ADX_MIN) ||
+              (Number.isFinite(trendScore) && trendScore >= TREND_GATE_STRONG_SCORE) ||
+              (Number.isFinite(alignedCount) && alignedCount >= 2));
+          cheatTrailOverride = trendDay ? 0.008 : 0.006;
         }
         // Force limit-maker entries for cheat sheet unless it explicitly asks otherwise
         entryType = "LIMIT_MAKER_FIRST";
@@ -3716,6 +3738,9 @@ export function useTradingBot(
       const qtyValue = useFixedQty ? sizing.qty : sizing.notional;
 
       let trailOffset = toNumber((decision as any)?.trailOffsetPct);
+      if (cheatTrailOverride != null) {
+        trailOffset = cheatTrailOverride;
+      }
       if (
         isScalpProfile &&
         (!Number.isFinite(trailOffset) || trailOffset <= 0) &&
@@ -3728,7 +3753,7 @@ export function useTradingBot(
       }
       if (Number.isFinite(trailOffset) && trailOffset > 0) {
         trailOffsetRef.current.set(symbol, trailOffset);
-      } else {
+      } else if (cheatTrailOverride == null) {
         trailOffsetRef.current.delete(symbol);
       }
 
