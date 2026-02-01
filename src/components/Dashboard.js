@@ -49,6 +49,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     const cheatSheetStatus = bot.settings?.strategyCheatSheetEnabled ? "On" : "Off";
     const cheatSheetLabel = cheatSheetSetup?.name ?? "Cheat sheet";
     const cheatSheetNote = `Cheat sheet: ${cheatSheetLabel} (${cheatSheetStatus})`;
+    const cheatEnabled = bot.settings?.strategyCheatSheetEnabled === true;
     const profileMeta = useMemo(() => {
         if (riskMode === "ai-matic-scalp") {
             return {
@@ -75,15 +76,27 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             };
         }
         if (riskMode === "ai-matic-tree") {
+            if (cheatEnabled) {
+                return {
+                    label: "AI-MATIC-TREE",
+                    subtitle: "Decision Tree Gate (SWING/INTRADAY/SCALP)",
+                    symbols: SUPPORTED_SYMBOLS,
+                    timeframes: "SWING 4h/15m · INTRADAY 1h/5m/3m · SCALP 15m/1m/3m",
+                    session: "24/7",
+                    risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
+                    entry: "SWING: HTF reaction · INTRADAY: OB/BOS return · SCALP: rejection/BOS return",
+                    execution: `LIMIT_MAKER_FIRST · scalp trailing po +0.5–0.7 % · ${cheatSheetNote}`,
+                };
+            }
             return {
                 label: "AI-MATIC-TREE",
-                subtitle: "Fibonacci Strategy (trend pullbacks / confluence)",
+                subtitle: "Multi-TF Trend Engine (Cheat Sheet OFF)",
                 symbols: SUPPORTED_SYMBOLS,
-                timeframes: "1h context · 5m execution",
-                session: "Bybit Linear Perpetuals · ~40 markets scan",
+                timeframes: "HTF 1h/15m · LTF 5m/1m",
+                session: "24/7",
                 risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
-                entry: "Fib retracement pullback v trendu · confluence se strukturou",
-                execution: `Targets přes Fib extensions · SL za další Fib nebo swing · ${cheatSheetNote}`,
+                entry: "Momentum / Pullback / Breakout (Mean reversion jen v range režimu)",
+                execution: `TP ~2.2R + partial 1R · time stop ~2h · ${cheatSheetNote}`,
             };
         }
         return {
@@ -96,7 +109,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             entry: "FVG/OB/Breaker + liquidity pools (0.2% tol, min 3 touches)",
             execution: `EMA50 trend gate · 1m timing + swing/ATR stop · ${cheatSheetNote}`,
         };
-    }, [cheatSheetNote, riskMode]);
+    }, [cheatEnabled, cheatSheetNote, riskMode]);
     const selectedSymbols = bot.settings?.selectedSymbols?.length ? bot.settings.selectedSymbols : null;
     const allowedSymbols = selectedSymbols ?? profileMeta.symbols;
     const exchangeOrders = ordersLoaded ? testnetOrders : [];

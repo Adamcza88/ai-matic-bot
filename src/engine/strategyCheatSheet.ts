@@ -182,7 +182,7 @@ export const STRATEGY_CHEAT_SHEET: StrategyCheatSheetSetup[] = [
   },
   {
     id: "ai-matic-decision-tree",
-    name: "AI-MATIC-TREE Fibonacci Strategy",
+    name: "AI-MATIC-TREE Decision Tree",
     description:
       "Deterministická kombinovaná entry logika s dopady pro chybějící moduly (CombinedEntryStrategy).",
     entryType: "LIMIT_MAKER_FIRST",
