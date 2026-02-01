@@ -293,6 +293,8 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
             "NO TRADE: pokud decision vrátí ok=false.",
             "Závislosti: VP/OB/GAP/TRAP/LOWVOL; chybějící modul = dopady/blokace (např. SCALP_DISABLED).",
             "Exekuce: vynucuje LIMIT_MAKER_FIRST; trailing pro scalp se aktivuje po 0.5-0.7%.",
+            "Čekající limit entry (doporučení): SCALP 5–10 min, INTRADAY 15–30 min, SWING 60–180 min.",
+            "Pokud limit nestihne fill v okně nebo se změní struktura/rrr, setup zrušit a čekat na nový.",
         ],
     };
     const coreMeta = local.riskMode === "ai-matic-tree"

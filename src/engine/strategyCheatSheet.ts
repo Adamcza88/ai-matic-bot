@@ -205,6 +205,8 @@ export const STRATEGY_CHEAT_SHEET: StrategyCheatSheetSetup[] = [
       "Trailing je aktivní jen pro scalping (ACTIVATE_AFTER_0_5_TO_0_7_PCT); jinak NONE.",
       "Strategie řídí blocks (např. IMPACT:LOWVOL_MISSING=>SCALP_DISABLED) a vrací no-trade pokud dependency chybí.",
       "Všechny signály jsou deterministické: závislosti + MarketSignals definují entryMode, TF, SL/TP a trailing.",
+      "Čekající limit entry (doporučení): SCALP 5–10 min, INTRADAY 15–30 min, SWING 60–180 min.",
+      "Pokud limit nestihne fill v okně nebo se změní struktura/rrr, setup zrušit a čekat na nový.",
     ]
   },
 ];

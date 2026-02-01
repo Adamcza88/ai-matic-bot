@@ -700,6 +700,7 @@ const PROFILE_BY_RISK_MODE = {
     "ai-matic-tree": "AI-MATIC-TREE",
 };
 export function useTradingBot(mode, useTestnet = false, authToken) {
+    const allowPositionClose = true;
     const [settings, setSettings] = useState(() => loadStoredSettings() ?? DEFAULT_SETTINGS);
     const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
     const activeSymbols = useMemo(() => {
@@ -3279,6 +3280,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         pnlSeenRef.current = new Set();
     }, [activeSymbols, assetPnlHistory, positions]);
     const manualClosePosition = useCallback(async (pos) => {
+        if (!allowPositionClose) {
+            throw new Error("close_disabled");
+        }
         if (!authToken)
             throw new Error("missing_auth_token");
         const sizeRaw = toNumber(pos.size ?? pos.qty);
@@ -3357,6 +3361,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         resetPnlHistory,
         scanDiagnostics,
         manualClosePosition,
+        allowPositionClose,
         cancelOrder,
         dynamicSymbols: null,
         settings,

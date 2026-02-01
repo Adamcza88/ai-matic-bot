@@ -904,7 +904,7 @@ export function useTradingBot(
   authToken?: string
 ) {
   const allowOrderCancel = false;
-  const allowPositionClose = false;
+  const allowPositionClose = true;
   const [settings, setSettings] = useState<AISettings>(
     () => loadStoredSettings() ?? DEFAULT_SETTINGS
   );
