@@ -271,7 +271,7 @@ export const defaultConfig: BotConfig = {
   maxRiskPerTradeCap: 0.07,
   maxOpenPositions: 3,
   maxExitChunks: 3,
-  trailingActivationR: 1,   //2
+  trailingActivationR: 2.5,   //2
   minStopPercent: 0.02,  //0.003
   pyramidAddScale: 0.5,
   pyramidLevels: [
@@ -687,22 +687,22 @@ export class TradingBot {
   private applyStrategyTrailing(rMultiple: number): void {
     if (!this.position) return;
     const tpMap: Record<BotConfig["strategyProfile"], number> = {
-      "ai-matic": 1.2,  //2.2
-      "ai-matic-tree": 1.2, //2.2
-      "ai-matic-x": 1.0,  //1.2
-      "ai-matic-scalp": 1.0,  //1.2
+      "ai-matic": 2.0,  //2.2
+      "ai-matic-tree": 2.0, //2.2
+      "ai-matic-x": 1.8,  //1.2
+      "ai-matic-scalp": 1.8,  //1.2
     };
     const widthMap: Record<BotConfig["strategyProfile"], number> = {
-      "ai-matic": 1.0,  //1.2
-      "ai-matic-tree": 1.0, //1.2
-      "ai-matic-x": 0.8,  //0.6
-      "ai-matic-scalp": 0.8,  //0.4
+      "ai-matic": 1.8,  //1.2
+      "ai-matic-tree": 1.8, //1.2
+      "ai-matic-x": 1.5,  //0.6
+      "ai-matic-scalp": 1.5,  //0.4
     };
     const profile = this.config.strategyProfile;
-    const tpR = tpMap[profile] ?? 1.2;  //2.2
-    const widthR = widthMap[profile] ?? 0.8;  //0.4
+    const tpR = tpMap[profile] ?? 1.8;  //2.2
+    const widthR = widthMap[profile] ?? 1.2;  //0.4
     // Trigger těsně pod TP: blízko cíle (např. scalp 1.5R -> trigger 1.45R)
-    const triggerR = tpR - 0.04;  //0.6
+    const triggerR = tpR - 1.0;  //0.6
     if (rMultiple < triggerR || this.position.slDistance <= 0) return;
     const widthAbs = widthR * this.position.slDistance;
     const target = this.position.side === "long"
