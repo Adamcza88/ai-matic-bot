@@ -5,6 +5,7 @@ import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import { evaluateStrategyForSymbol, resampleCandles, computeATR } from "../engine/botEngine";
 import { evaluateAiMaticXStrategyForSymbol, } from "../engine/aiMaticXStrategy";
+import { decideCombinedEntry, } from "../engine/combinedEntryStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta";
 import { TradingMode } from "../types";
@@ -97,6 +98,13 @@ const SCALP_EMA_PERIOD = 21;
 const SCALP_SWING_LOOKBACK = 2;
 const SCALP_EMA_FLAT_PCT = 0.02;
 const SCALP_EMA_CROSS_LOOKBACK = 6;
+const CHEAT_LIMIT_WAIT_WINDOWS_MIN = {
+    SCALP: { min: 5, max: 10 },
+    INTRADAY: { min: 15, max: 30 },
+    SWING: { min: 60, max: 180 },
+};
+const CHEAT_LIMIT_RUNAWAY_BPS = 30;
+const CHEAT_LIMIT_MIN_RRR = 1;
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
     trendGateMode: "adaptive",
@@ -192,6 +200,26 @@ function persistSettings(settings) {
 function toNumber(value) {
     const n = Number(value);
     return Number.isFinite(n) ? n : Number.NaN;
+}
+function resolveCheatLimitWindowMs(mode, timeframeMin) {
+    if (mode && mode in CHEAT_LIMIT_WAIT_WINDOWS_MIN) {
+        const window = CHEAT_LIMIT_WAIT_WINDOWS_MIN[mode];
+        return {
+            minMs: window.min * 60_000,
+            maxMs: window.max * 60_000,
+            label: `${window.min}–${window.max}m`,
+        };
+    }
+    if (Number.isFinite(timeframeMin) && timeframeMin > 0) {
+        const min = Math.max(1, Math.round(timeframeMin * 2));
+        const max = Math.max(min, Math.round(timeframeMin * 4));
+        return {
+            minMs: min * 60_000,
+            maxMs: max * 60_000,
+            label: `${min}–${max}m`,
+        };
+    }
+    return null;
 }
 function resolveOrderNotional(symbol) {
     const value = ORDER_VALUE_BY_SYMBOL[symbol];
@@ -810,6 +838,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const ordersRef = useRef([]);
     const cancelingOrdersRef = useRef(new Set());
     const autoCloseCooldownRef = useRef(new Map());
+    const cheatLimitMetaRef = useRef(new Map());
     const decisionRef = useRef({});
     const signalSeenRef = useRef(new Set());
     const intentPendingRef = useRef(new Set());
@@ -1884,6 +1913,176 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             }
         }
     }, [addLogEntries, authToken, isEntryOrder, normalizeBias, postJson, resolveBtcBias]);
+    const enforceCheatLimitExpiry = useCallback(async (now, nextOrders) => {
+        const settings = settingsRef.current;
+        if (!authToken)
+            return;
+        if (!settings.strategyCheatSheetEnabled)
+            return;
+        if (settings.riskMode !== "ai-matic-tree")
+            return;
+        if (!Array.isArray(nextOrders) || nextOrders.length === 0)
+            return;
+        const cooldown = autoCloseCooldownRef.current;
+        const isTriggerEntryOrder = (order) => {
+            const filter = String(order.orderFilter ?? "").toLowerCase();
+            const trigger = toNumber(order.triggerPrice);
+            return filter === "stoporder" || (Number.isFinite(trigger) && trigger > 0);
+        };
+        for (const order of nextOrders) {
+            if (!isEntryOrder(order))
+                continue;
+            if (isTriggerEntryOrder(order))
+                continue;
+            const status = String(order.status ?? "").toLowerCase();
+            if (status.includes("filled") ||
+                status.includes("cancel") ||
+                status.includes("reject")) {
+                continue;
+            }
+            const active = status.includes("new") ||
+                status.includes("created") ||
+                status.includes("open") ||
+                status.includes("partially") ||
+                status.includes("active");
+            if (!active)
+                continue;
+            const symbol = String(order.symbol ?? "");
+            const orderId = String(order.orderId ?? "");
+            const orderLinkId = String(order.orderLinkId ?? "");
+            const metaKey = orderLinkId || orderId;
+            if (!metaKey)
+                continue;
+            const side = String(order.side ?? "Buy").toLowerCase() === "sell" ? "Sell" : "Buy";
+            const entryPrice = toNumber(order.price);
+            const createdTs = toEpoch(order.createdTime);
+            const decision = decisionRef.current[symbol]?.decision;
+            let meta = (orderLinkId && cheatLimitMetaRef.current.get(orderLinkId)) ||
+                (orderId && cheatLimitMetaRef.current.get(orderId)) ||
+                null;
+            if (!meta) {
+                const depsRaw = decision?.cheatDeps ?? {};
+                const sigRaw = decision?.cheatSignals ?? {};
+                if (decision && depsRaw && sigRaw) {
+                    const deps = {
+                        hasVP: Boolean(depsRaw.hasVP),
+                        hasOB: Boolean(depsRaw.hasOB),
+                        hasGAP: Boolean(depsRaw.hasGAP),
+                        hasTrap: Boolean(depsRaw.hasTrap),
+                        hasLowVol: Boolean(depsRaw.hasLowVol),
+                    };
+                    const signals = {
+                        inLowVolume: Boolean(sigRaw.inLowVolume),
+                        htfReactionConfirmed: Boolean(sigRaw.htfReactionConfirmed),
+                        structureReadable: Boolean(sigRaw.structureReadable),
+                        sessionOk: sigRaw.sessionOk !== false,
+                        bosUp: Boolean(sigRaw.bosUp),
+                        bosDown: Boolean(sigRaw.bosDown),
+                        returnToLevel: Boolean(sigRaw.returnToLevel),
+                        rejectionInLVN: Boolean(sigRaw.rejectionInLVN),
+                        touchOB: Boolean(sigRaw.touchOB),
+                        rejectionInOB: Boolean(sigRaw.rejectionInOB),
+                        trapReaction: Boolean(sigRaw.trapReaction),
+                    };
+                    const derived = decideCombinedEntry(deps, signals);
+                    const ltfMinRaw = toNumber(decision?.coreV2?.ltfTimeframeMin);
+                    const createdAt = Number.isFinite(createdTs) ? createdTs : now;
+                    meta = {
+                        intentId: metaKey,
+                        symbol,
+                        side,
+                        entryPrice: Number.isFinite(entryPrice) ? entryPrice : Number.NaN,
+                        createdAt,
+                        mode: derived.mode ?? null,
+                        timeframeMin: Number.isFinite(ltfMinRaw) ? ltfMinRaw : null,
+                    };
+                    cheatLimitMetaRef.current.set(metaKey, meta);
+                }
+            }
+            const ltfMin = meta?.timeframeMin ??
+                toNumber(decision?.coreV2?.ltfTimeframeMin);
+            const window = resolveCheatLimitWindowMs(meta?.mode ?? null, Number.isFinite(ltfMin) ? ltfMin : null);
+            if (!window)
+                continue;
+            const createdAt = Number.isFinite(createdTs)
+                ? createdTs
+                : meta?.createdAt ?? Number.NaN;
+            if (!Number.isFinite(createdAt))
+                continue;
+            const ageMs = now - createdAt;
+            if (!Number.isFinite(ageMs) || ageMs < 0)
+                continue;
+            const currentPrice = toNumber(decision?.coreV2?.ltfClose);
+            let runaway = false;
+            let runawayBps = Number.NaN;
+            if (Number.isFinite(currentPrice) && Number.isFinite(entryPrice) && entryPrice > 0) {
+                const move = side === "Buy" ? currentPrice - entryPrice : entryPrice - currentPrice;
+                if (move > 0) {
+                    runawayBps = (move / entryPrice) * 10000;
+                    runaway = runawayBps >= CHEAT_LIMIT_RUNAWAY_BPS;
+                }
+            }
+            let rrrInvalid = false;
+            let rrr = Number.NaN;
+            if (Number.isFinite(currentPrice) &&
+                Number.isFinite(meta?.slPrice) &&
+                Number.isFinite(meta?.tpPrice)) {
+                const sl = meta.slPrice;
+                const tp = meta.tpPrice;
+                const reward = side === "Buy" ? tp - currentPrice : currentPrice - tp;
+                const risk = side === "Buy" ? currentPrice - sl : sl - currentPrice;
+                if (reward <= 0 || risk <= 0) {
+                    rrrInvalid = true;
+                }
+                else {
+                    rrr = reward / risk;
+                    rrrInvalid = rrr < CHEAT_LIMIT_MIN_RRR;
+                }
+            }
+            const expired = ageMs >= window.maxMs;
+            if (!expired && !runaway && !rrrInvalid)
+                continue;
+            const last = cooldown.get(metaKey) ?? 0;
+            if (now - last < 15000)
+                continue;
+            cooldown.set(metaKey, now);
+            cancelingOrdersRef.current.add(metaKey);
+            const reason = expired
+                ? `limit_wait ${window.label}`
+                : runaway
+                    ? `price_away ${formatNumber(runawayBps, 1)}bps`
+                    : `rrr ${Number.isFinite(rrr) ? rrr.toFixed(2) : "n/a"}`;
+            try {
+                await postJson("/cancel", {
+                    symbol: order.symbol,
+                    orderId: order.orderId || undefined,
+                    orderLinkId: order.orderLinkId || undefined,
+                });
+                cheatLimitMetaRef.current.delete(metaKey);
+                addLogEntries([
+                    {
+                        id: `cheat-limit-cancel:${metaKey}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `${symbol} CHEAT LIMIT CANCEL (${reason})`,
+                    },
+                ]);
+            }
+            catch (err) {
+                addLogEntries([
+                    {
+                        id: `cheat-limit-cancel:error:${metaKey}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "ERROR",
+                        message: `${symbol} cheat limit cancel failed: ${asErrorMessage(err)}`,
+                    },
+                ]);
+            }
+            finally {
+                cancelingOrdersRef.current.delete(metaKey);
+            }
+        }
+    }, [addLogEntries, authToken, isEntryOrder, postJson]);
     const resolveQualityScore = useCallback((symbol, decision, signal, feedAgeMs) => {
         if (!decision)
             return { score: null, threshold: null, pass: undefined };
@@ -2191,6 +2390,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                         price: Number.isFinite(price) ? price : null,
                         side,
                         symbol,
+                        orderLinkId: orderLinkId || undefined,
                     });
                 }
                 return entry;
@@ -2248,6 +2448,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return ((latest.orderId && order.orderId === latest.orderId) ||
                 (latest.orderLinkId && order.orderLinkId === latest.orderLinkId));
         });
+        for (const order of mapped) {
+            const orderId = order.orderId;
+            const orderLinkId = order.orderLinkId;
+            if (!orderId || !orderLinkId)
+                continue;
+            const meta = cheatLimitMetaRef.current.get(orderLinkId);
+            if (meta && !cheatLimitMetaRef.current.has(orderId)) {
+                cheatLimitMetaRef.current.set(orderId, meta);
+            }
+        }
         setOrders(next);
         ordersRef.current = next;
         setOrdersError(null);
@@ -2345,6 +2555,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             }
             for (const [orderId, prevOrder] of prevOrders.entries()) {
                 if (!nextOrders.has(orderId)) {
+                    cheatLimitMetaRef.current.delete(orderId);
+                    if (prevOrder.orderLinkId) {
+                        cheatLimitMetaRef.current.delete(prevOrder.orderLinkId);
+                    }
                     newLogs.push({
                         id: `order-closed:${orderId}:${now}`,
                         timestamp: new Date(now).toISOString(),
@@ -2355,6 +2569,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             }
             orderSnapshotRef.current = nextOrders;
             if (positionsRes.status === "fulfilled") {
+                void enforceCheatLimitExpiry(now, next);
                 void enforceBtcBiasAlignment(now);
             }
         }
@@ -2468,6 +2683,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         apiBase,
         authToken,
         enforceBtcBiasAlignment,
+        enforceCheatLimitExpiry,
         fetchJson,
         refreshDiagnosticsFromDecisions,
         syncTrailingProtection,

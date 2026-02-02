@@ -201,7 +201,7 @@ export const STRATEGY_CHEAT_SHEET: StrategyCheatSheetSetup[] = [
       "Režimy: SWING (potvrzená HTF reakce), INTRADAY (OB návraty, BOS/trap), SCALP (LVN/OB rejekce + BOS return).",
       "SWING: pouze HTF reaction, entry HTF_REACTION_ONLY, SL UNDER_SWING, TP SWING_PERCENT_4_6.",
       "INTRADAY: OB_RETURN nebo BOS_RETURN; TP1 GAP/structure, TP2 VP/HTF S/R, slisky OB nebo swing.",
-      "SCALP: rejekce LVN/OB nebo BOS return, TP1 PoC/VP/nearsr, trailing 0.5–0.7 % aktivace.",
+      "SCALP: rejekce LVN/OB nebo BOS return, TP1 PoC/VP/nearsr, trailing dle profilu (R-based).",
       "Trailing je aktivní jen pro scalping (ACTIVATE_AFTER_0_5_TO_0_7_PCT); jinak NONE.",
       "Strategie řídí blocks (např. IMPACT:LOWVOL_MISSING=>SCALP_DISABLED) a vrací no-trade pokud dependency chybí.",
       "Všechny signály jsou deterministické: závislosti + MarketSignals definují entryMode, TF, SL/TP a trailing.",
