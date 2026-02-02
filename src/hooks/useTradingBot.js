@@ -647,7 +647,7 @@ const MIN_PROTECTION_ATR_FACTOR = 0.05;
 const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
 const AI_MATIC_X_CHEAT_DEFAULT_MAX_LEVERAGE = 100;
 const AI_MATIC_X_CHEAT_TRAIL_UPNL_ACTIVATE = 0.15;
-const AI_MATIC_X_CHEAT_TRAIL_UPNL_DISTANCE = 0.11;
+const AI_MATIC_X_CHEAT_TRAIL_UPNL_DISTANCE = 0.03;
 function resolveAiMaticXCheatLeverage(maxLeverage) {
     const leverage = toNumber(maxLeverage);
     return Number.isFinite(leverage) && leverage > 0
