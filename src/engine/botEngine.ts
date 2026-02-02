@@ -263,7 +263,7 @@ export const defaultConfig: BotConfig = {
   atrTrailMultiplier: 2,
   minAtrFractionOfPrice: 0.0006,
   swingBackoffAtr: 0.7,
-  partialExitRatio: 0.5,
+  partialExitRatio: 0.35,
   partialTakeProfitR: 1.5,
   breakevenBufferAtr: 0.2,
   lookbackZones: 100,
@@ -279,8 +279,8 @@ export const defaultConfig: BotConfig = {
     { triggerR: 2, stopToR: 1 },
   ],
   partialSteps: [
-    { r: 1, exitFraction: 0.3 },
-    { r: 2, exitFraction: 0.3 },
+    { r: 1, exitFraction: 0.35 },
+    { r: 2, exitFraction: 0.25 },
   ],
   liquiditySweepAtrMult: 0.5,
   liquiditySweepLookback: 15,   //5

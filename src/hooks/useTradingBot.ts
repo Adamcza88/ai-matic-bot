@@ -171,6 +171,9 @@ const SCALP_SL_ATR_BUFFER = 0.3;
 const SCALP_TRAIL_TIGHTEN_ATR = 1.5;
 const SCALP_EXIT_TRAIL_ATR = 2.5;
 const SCALP_HTF_NEAR_ATR = 0.6;
+const NONSCALP_PARTIAL_TAKE_R = 1.0;
+const NONSCALP_PARTIAL_FRACTION = 0.35;
+const NONSCALP_PARTIAL_COOLDOWN_MS = 60_000;
 const CHEAT_LIMIT_WAIT_WINDOWS_MIN = {
   SCALP: { min: 5, max: 10 },
   INTRADAY: { min: 15, max: 30 },
@@ -1655,7 +1658,10 @@ export function useTradingBot(
         aiMaticEntryTimeframe: "5m",
         aiMaticExecTimeframe: "1m",
         entryStrictness: strictness,
-        partialSteps: [{ r: 1.0, exitFraction: 0.5 }],
+        partialSteps: [
+          { r: 1.0, exitFraction: 0.35 },
+          { r: 2.0, exitFraction: 0.25 },
+        ],
         adxThreshold: 20,
         aggressiveAdxThreshold: 28,
         minAtrFractionOfPrice: 0.0004,
@@ -1687,6 +1693,10 @@ export function useTradingBot(
       return {
         ...baseConfig,
         strategyProfile: "ai-matic-x",
+        partialSteps: [
+          { r: 1.0, exitFraction: 0.35 },
+          { r: 2.0, exitFraction: 0.25 },
+        ],
         cooldownBars: 0,
       };
     }
@@ -1750,6 +1760,9 @@ export function useTradingBot(
   const cancelingOrdersRef = useRef<Set<string>>(new Set());
   const autoCloseCooldownRef = useRef<Map<string, number>>(new Map());
   const cheatLimitMetaRef = useRef<Map<string, CheatLimitMeta>>(new Map());
+  const partialExitRef = useRef<Map<string, { taken: boolean; lastAttempt: number }>>(
+    new Map()
+  );
   const decisionRef = useRef<
     Record<string, { decision: PriceFeedDecision; ts: number }>
   >({});
@@ -2269,15 +2282,28 @@ export function useTradingBot(
           scalpTrailCooldownRef.current.delete(symbol);
         }
       }
+      const activePositionKeys = new Set(
+        positions
+          .map((pos) =>
+            String(pos.positionId || pos.id || `${pos.symbol}:${pos.openedAt}`)
+          )
+          .filter(Boolean)
+      );
+      for (const key of partialExitRef.current.keys()) {
+        if (!activePositionKeys.has(key)) {
+          partialExitRef.current.delete(key);
+        }
+      }
 
       for (const pos of positions) {
         const symbol = String(pos.symbol ?? "");
         if (!symbol) continue;
+        const settings = settingsRef.current;
+        const isScalpProfile = settings.riskMode === "ai-matic-scalp";
+        const positionKey = String(
+          pos.positionId || pos.id || `${pos.symbol}:${pos.openedAt}`
+        );
         const currentTrail = toNumber(pos.currentTrailingStop);
-        if (Number.isFinite(currentTrail) && currentTrail > 0) {
-          trailingSyncRef.current.delete(symbol);
-          continue;
-        }
         const entry = toNumber(pos.entryPrice);
         const sl = toNumber(pos.sl);
         if (
@@ -2289,6 +2315,86 @@ export function useTradingBot(
           continue;
         }
         const side = pos.side === "Sell" ? "Sell" : "Buy";
+        if (!isScalpProfile && positionKey) {
+          const partialState = partialExitRef.current.get(positionKey);
+          const lastAttempt = partialState?.lastAttempt ?? 0;
+          const price = toNumber(pos.markPrice);
+          const rMultiple =
+            Number.isFinite(price) && Number.isFinite(sl)
+              ? computeRMultiple(entry, sl, price, side)
+              : Number.NaN;
+          if (
+            Number.isFinite(rMultiple) &&
+            rMultiple >= NONSCALP_PARTIAL_TAKE_R &&
+            (!partialState || !partialState.taken) &&
+            now - lastAttempt >= NONSCALP_PARTIAL_COOLDOWN_MS
+          ) {
+            partialExitRef.current.set(positionKey, {
+              taken: false,
+              lastAttempt: now,
+            });
+            const sizeRaw = Math.abs(toNumber(pos.size ?? pos.qty));
+            const reduceQty = Math.min(
+              sizeRaw,
+              sizeRaw * NONSCALP_PARTIAL_FRACTION
+            );
+            if (Number.isFinite(reduceQty) && reduceQty > 0) {
+              const closeSide = side === "Buy" ? "Sell" : "Buy";
+              try {
+                await postJson("/order", {
+                  symbol,
+                  side: closeSide,
+                  qty: reduceQty,
+                  orderType: "Market",
+                  reduceOnly: true,
+                  timeInForce: "IOC",
+                  positionIdx: Number.isFinite(pos.positionIdx)
+                    ? pos.positionIdx
+                    : undefined,
+                });
+                partialExitRef.current.set(positionKey, {
+                  taken: true,
+                  lastAttempt: now,
+                });
+                const minDistance = resolveMinProtectionDistance(entry);
+                const beSl =
+                  side === "Buy"
+                    ? entry - minDistance
+                    : entry + minDistance;
+                await postJson("/protection", {
+                  symbol,
+                  sl: beSl,
+                  positionIdx: Number.isFinite(pos.positionIdx)
+                    ? pos.positionIdx
+                    : undefined,
+                });
+                addLogEntries([
+                  {
+                    id: `partial:non-scalp:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "STATUS",
+                    message: `${symbol} partial ${Math.round(
+                      NONSCALP_PARTIAL_FRACTION * 100
+                    )}% @ ${NONSCALP_PARTIAL_TAKE_R}R + BE`,
+                  },
+                ]);
+              } catch (err) {
+                addLogEntries([
+                  {
+                    id: `partial:non-scalp:error:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "ERROR",
+                    message: `${symbol} partial failed: ${asErrorMessage(err)}`,
+                  },
+                ]);
+              }
+            }
+          }
+        }
+        if (Number.isFinite(currentTrail) && currentTrail > 0) {
+          trailingSyncRef.current.delete(symbol);
+          continue;
+        }
         const plan = computeTrailingPlan(
           entry,
           sl,
@@ -5588,6 +5694,7 @@ export function useTradingBot(
     scalpPartialCooldownRef.current.clear();
     scalpTrailCooldownRef.current.clear();
     cheatLimitMetaRef.current.clear();
+    partialExitRef.current.clear();
     decisionRef.current = {};
     setScanDiagnostics(null);
 
