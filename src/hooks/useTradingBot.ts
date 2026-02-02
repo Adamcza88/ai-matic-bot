@@ -826,6 +826,13 @@ function computeLossStreak(
 const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
 const MIN_PROTECTION_ATR_FACTOR = 0.05;
 const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
+const AI_MATIC_X_CHEAT_LEVERAGE = 100;
+const AI_MATIC_X_CHEAT_TRAIL_ROI_ACTIVATE = 0.15;
+const AI_MATIC_X_CHEAT_TRAIL_ROI_DISTANCE = 0.05;
+const AI_MATIC_X_CHEAT_TRAIL_ACTIVATE_RATE =
+  AI_MATIC_X_CHEAT_TRAIL_ROI_ACTIVATE / AI_MATIC_X_CHEAT_LEVERAGE;
+const AI_MATIC_X_CHEAT_TRAIL_DISTANCE_RATE =
+  AI_MATIC_X_CHEAT_TRAIL_ROI_DISTANCE / AI_MATIC_X_CHEAT_LEVERAGE;
 
 function resolveMinProtectionDistance(entry: number, atr?: number) {
   const pctDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
@@ -1034,6 +1041,7 @@ export function useTradingBot(
   const feedPauseRef = useRef<Set<string>>(new Set());
   const trailingSyncRef = useRef<Map<string, number>>(new Map());
   const trailOffsetRef = useRef<Map<string, number>>(new Map());
+  const trailActivationRef = useRef<Map<string, number>>(new Map());
   const settingsRef = useRef<AISettings>(settings);
   const walletRef = useRef<typeof walletSnapshot | null>(walletSnapshot);
   const handleDecisionRef = useRef<
@@ -1471,11 +1479,17 @@ export function useTradingBot(
       const activateR = profile.activateR;
       const lockR = profile.lockR;
       const overrideRate = trailOffsetRef.current.get(symbol);
+      const activationOverrideRate = trailActivationRef.current.get(symbol);
+      const isAiMaticXCheat =
+        settings.riskMode === "ai-matic-x" && settings.strategyCheatSheetEnabled;
       const usePercentActivation =
         isScalpProfile ||
         (settings.riskMode === "ai-matic-tree" &&
           Number.isFinite(overrideRate) &&
-          (overrideRate as number) > 0);
+          (overrideRate as number) > 0) ||
+        (isAiMaticXCheat &&
+          Number.isFinite(activationOverrideRate) &&
+          (activationOverrideRate as number) > 0);
       const effectiveRate =
         Number.isFinite(overrideRate) && overrideRate > 0
           ? overrideRate
@@ -1485,10 +1499,15 @@ export function useTradingBot(
         ? entry * (effectiveRate as number)
         : Math.abs(activateR - lockR) * r;
       const distance = Math.max(rawDistance, minDistance);
+      const rawActivationDistance =
+        Number.isFinite(activationOverrideRate) && activationOverrideRate > 0
+          ? entry * (activationOverrideRate as number)
+          : distance;
+      const activationDistance = Math.max(rawActivationDistance, minDistance);
       if (!Number.isFinite(distance) || distance <= 0) return null;
       const dir = side === "Buy" ? 1 : -1;
       const activePrice = usePercentActivation
-        ? entry + dir * distance
+        ? entry + dir * activationDistance
         : entry +
           dir *
             Math.max(
@@ -1520,6 +1539,16 @@ export function useTradingBot(
         );
         if (!hasPosition && !hasOrder && !hasPending) {
           trailOffsetRef.current.delete(symbol);
+        }
+      }
+      for (const symbol of trailActivationRef.current.keys()) {
+        const hasPosition = seenSymbols.has(symbol);
+        const hasPending = intentPendingRef.current.has(symbol);
+        const hasOrder = ordersRef.current.some(
+          (order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol
+        );
+        if (!hasPosition && !hasOrder && !hasPending) {
+          trailActivationRef.current.delete(symbol);
         }
       }
 
@@ -3741,8 +3770,16 @@ export function useTradingBot(
       if (cheatTrailOverride != null) {
         trailOffset = cheatTrailOverride;
       }
+      const useAiMaticXCheatTrail =
+        settings.riskMode === "ai-matic-x" && settings.strategyCheatSheetEnabled;
+      let trailActivationOverride: number | null = null;
+      if (useAiMaticXCheatTrail) {
+        trailActivationOverride = AI_MATIC_X_CHEAT_TRAIL_ACTIVATE_RATE;
+        trailOffset = AI_MATIC_X_CHEAT_TRAIL_DISTANCE_RATE;
+      }
       if (
         isScalpProfile &&
+        !useAiMaticXCheatTrail &&
         (!Number.isFinite(trailOffset) || trailOffset <= 0) &&
         Number.isFinite(core?.atr14) &&
         core!.atr14 > 0 &&
@@ -3753,8 +3790,17 @@ export function useTradingBot(
       }
       if (Number.isFinite(trailOffset) && trailOffset > 0) {
         trailOffsetRef.current.set(symbol, trailOffset);
-      } else if (cheatTrailOverride == null) {
+      } else if (cheatTrailOverride == null && !useAiMaticXCheatTrail) {
         trailOffsetRef.current.delete(symbol);
+      }
+      if (
+        useAiMaticXCheatTrail &&
+        Number.isFinite(trailActivationOverride) &&
+        trailActivationOverride > 0
+      ) {
+        trailActivationRef.current.set(symbol, trailActivationOverride);
+      } else if (!useAiMaticXCheatTrail) {
+        trailActivationRef.current.delete(symbol);
       }
 
       if (intentPendingRef.current.has(symbol)) {

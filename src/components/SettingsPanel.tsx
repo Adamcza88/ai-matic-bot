@@ -161,7 +161,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         "• SL: vždy pod strukturu nebo OB knot, ne těsně",
         "• TP1: první likviditní nebo objemová úroveň, zpravidla +0.9–1.2 % (uzavřít 70 %)",
         "• TP2: vyšší timeframe struktura nebo extended cíl (+2–3 %)",
-        "• Trailing SL: aktivace při +1.0 %, posun dle EMA20 nebo retracement max. 0.5–0.8 %",
+        "• Trailing SL: aktivace při ROI +15 % na margin (≈ +0.15 % cena při 100×), distance 5 % ROI (≈ 0.05 %)",
         "⸻",
         "🔹 4. BTC KORELACE – POVINNÝ FILTR",
         "• Vždy vyžadován screenshot BTC (1h nebo 15m)",

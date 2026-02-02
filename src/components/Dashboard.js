@@ -72,7 +72,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
                 session: "24/7",
                 risk: "2 vstupy (60 % / 40 %) · TP1 0.9–1.2 % · TP2 2–3 %",
                 entry: "Entry 1: reakce z OB/sweep návrat · Entry 2: retest OB (GAP/Fibo)",
-                execution: `SL pod strukturu/OB knot · trailing po +1.0 % (EMA20 / 0.5–0.8 %) · ${cheatSheetNote}`,
+                execution: `SL pod strukturu/OB knot · trailing ROI +15 % (margin) / distance 5 % (margin, ≈0.15 %/0.05 % při 100×) · ${cheatSheetNote}`,
             };
         }
         if (riskMode === "ai-matic-tree") {
