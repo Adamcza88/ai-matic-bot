@@ -765,6 +765,17 @@ function formatNumber(value: number, digits = 4) {
   return Number.isFinite(value) ? value.toFixed(digits) : "";
 }
 
+function normalizeTrendDir(value: string) {
+  const upper = value.trim().toUpperCase();
+  if (!upper || upper === "—") return "—";
+  if (upper.startsWith("BULL") || upper === "UP") return "BULL";
+  if (upper.startsWith("BEAR") || upper === "DOWN") return "BEAR";
+  if (upper.startsWith("RANGE") || upper === "NONE" || upper === "NEUTRAL") {
+    return "RANGE";
+  }
+  return upper;
+}
+
 function asErrorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err ?? "unknown_error");
 }
@@ -3402,6 +3413,52 @@ export function useTradingBot(
             },
           ]);
           return;
+        }
+      }
+
+      const trendGateSetting = settingsRef.current.trendGateMode ?? "adaptive";
+      const treeAdaptiveGate =
+        cheatEnabled && isTreeProfile && trendGateSetting === "adaptive";
+      if (treeAdaptiveGate) {
+        const trendAdx = toNumber((decision as any)?.trendAdx);
+        const trendScore = toNumber((decision as any)?.trendScore);
+        const alignedCount = toNumber((decision as any)?.htfTrend?.alignedCount);
+        const trendRaw = String(
+          (decision as any)?.trend ?? (decision as any)?.trendH1 ?? ""
+        );
+        const trendDir = normalizeTrendDir(trendRaw);
+        const structureStrong =
+          (Number.isFinite(trendScore) &&
+            trendScore >= TREND_GATE_STRONG_SCORE) ||
+          (Number.isFinite(alignedCount) && alignedCount >= 2) ||
+          trendDir === "BULL" ||
+          trendDir === "BEAR";
+        let expectedKind: "MEAN_REVERSION" | "PULLBACK" | null = null;
+        if (Number.isFinite(trendAdx) && trendAdx < TREND_DAY_ADX_MIN) {
+          expectedKind = "MEAN_REVERSION";
+        } else if (
+          Number.isFinite(trendAdx) &&
+          trendAdx >= TREND_GATE_STRONG_ADX &&
+          structureStrong
+        ) {
+          expectedKind = "PULLBACK";
+        }
+        if (expectedKind) {
+          const kind = signal.kind ?? "OTHER";
+          if (kind !== expectedKind) {
+            addLogEntries([
+              {
+                id: `tree-trend-gate:${symbol}:${signalId}`,
+                timestamp: new Date(now).toISOString(),
+                action: "RISK_BLOCK",
+                message: `${symbol} TREE adaptive gate: ADX ${formatNumber(
+                  trendAdx,
+                  1
+                )} → expect ${expectedKind}, got ${kind}`,
+              },
+            ]);
+            return;
+          }
         }
       }
 
