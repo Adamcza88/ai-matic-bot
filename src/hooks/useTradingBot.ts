@@ -1904,94 +1904,6 @@ export function useTradingBot(
     [getEquityValue, useTestnet]
   );
 
-  const submitReduceOnlyOrder = useCallback(
-    async (pos: ActivePosition, qty: number) => {
-      if (!authToken) throw new Error("missing_auth_token");
-      if (!Number.isFinite(qty) || qty <= 0) {
-        throw new Error("invalid_reduce_qty");
-      }
-      const closeSide =
-        String(pos.side).toLowerCase() === "buy" ? "Sell" : "Buy";
-      const payload = {
-        symbol: pos.symbol,
-        side: closeSide,
-        qty: Math.abs(qty),
-        orderType: "Market",
-        reduceOnly: true,
-        timeInForce: "IOC",
-        positionIdx: Number.isFinite(pos.positionIdx)
-          ? pos.positionIdx
-          : undefined,
-      };
-      await postJson("/order", payload as unknown as Record<string, unknown>);
-      await refreshFast();
-      return true;
-    },
-    [authToken, postJson, refreshFast]
-  );
-
-  const updateProtection = useCallback(
-    async (payload: {
-      symbol: string;
-      sl?: number;
-      tp?: number;
-      trailingStop?: number;
-      trailingActivePrice?: number;
-      positionIdx?: number;
-    }) => {
-      await postJson("/protection", payload as unknown as Record<string, unknown>);
-    },
-    [postJson]
-  );
-
-  const resolveScalpExitMode = useCallback(
-    (
-      symbol: Symbol,
-      decision: PriceFeedDecision,
-      side: "Buy" | "Sell",
-      entry: number
-    ) => {
-      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
-      if (!core || !Number.isFinite(entry) || entry <= 0) {
-        return { mode: "TP" as const, reason: "missing_core" };
-      }
-      const adx = toNumber((decision as any)?.trendAdx);
-      const isMajor = MAJOR_SYMBOLS.has(symbol);
-      const atrMin = isMajor
-        ? CORE_V2_ATR_MIN_PCT_MAJOR
-        : CORE_V2_ATR_MIN_PCT_ALT;
-      const biasOk =
-        side === "Buy" ? core.htfBias === "BULL" : core.htfBias === "BEAR";
-      const m15Aligned =
-        side === "Buy" ? core.ema15mTrend === "BULL" : core.ema15mTrend === "BEAR";
-      const strongTrend =
-        biasOk &&
-        m15Aligned &&
-        ((Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
-          (Number.isFinite(core.htfAtrPct) && core.htfAtrPct >= atrMin));
-      const htfLevels = [
-        core.htfPivotHigh,
-        core.htfPivotLow,
-        core.htfEma12,
-        core.htfEma26,
-      ].filter((v): v is number => Number.isFinite(v));
-      const nearestLevel = htfLevels.reduce((min, lvl) => {
-        const dist = Math.abs(entry - lvl);
-        return dist < min ? dist : min;
-      }, Number.POSITIVE_INFINITY);
-      const nearHtf =
-        Number.isFinite(core.htfAtr14) &&
-        Number.isFinite(nearestLevel) &&
-        nearestLevel <= core.htfAtr14 * SCALP_HTF_NEAR_ATR;
-      if (strongTrend && !nearHtf) {
-        return { mode: "TRAIL" as const, reason: "strong_trend" };
-      }
-      return { mode: "TP" as const, reason: nearHtf ? "near_htf" : "weak_trend" };
-    },
-    []
-  );
-
-
   const computeTrailingPlan = useCallback(
     (entry: number, sl: number, side: "Buy" | "Sell", symbol: Symbol) => {
       const settings = settingsRef.current;
@@ -2155,348 +2067,6 @@ export function useTradingBot(
       }
     },
     [addLogEntries, computeTrailingPlan, isEntryOrder, postJson]
-  );
-
-  const handleScalpInTrade = useCallback(
-    async (symbol: string, decision: PriceFeedDecision, now: number) => {
-      const pos = positionsRef.current.find((p) => p.symbol === symbol);
-      if (!pos) return;
-      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
-      if (!core) return;
-      const sizeRaw = toNumber(pos.size ?? pos.qty);
-      if (!Number.isFinite(sizeRaw) || sizeRaw <= 0) return;
-      const side = pos.side === "Sell" ? "Sell" : "Buy";
-      const entry = toNumber(pos.entryPrice);
-      const sl = toNumber(pos.sl);
-      const price = Number.isFinite(pos.markPrice)
-        ? toNumber(pos.markPrice)
-        : toNumber(core.ltfClose);
-      if (
-        !Number.isFinite(entry) ||
-        !Number.isFinite(sl) ||
-        !Number.isFinite(price)
-      ) {
-        return;
-      }
-
-      const exitKey = symbol;
-      if (!scalpExitStateRef.current.has(exitKey)) {
-        const resolved = resolveScalpExitMode(
-          symbol as Symbol,
-          decision,
-          side,
-          entry
-        );
-        scalpExitStateRef.current.set(exitKey, {
-          mode: resolved.mode,
-          switched: false,
-          decidedAt: now,
-        });
-        if (resolved.mode === "TRAIL" && Number.isFinite(core.atr14) && core.atr14 > 0) {
-          const offset = (core.atr14 * SCALP_EXIT_TRAIL_ATR) / entry;
-          if (Number.isFinite(offset) && offset > 0) {
-            trailOffsetRef.current.set(symbol, offset);
-          }
-        } else {
-          trailOffsetRef.current.delete(symbol);
-        }
-        addLogEntries([
-          {
-            id: `scalp-exit:${symbol}:${now}`,
-            timestamp: new Date(now).toISOString(),
-            action: "STATUS",
-            message: `${symbol} scalp exit mode ${resolved.mode} (${resolved.reason})`,
-          },
-        ]);
-      }
-
-      const currentExit = scalpExitStateRef.current.get(exitKey);
-      if (currentExit && !currentExit.switched) {
-        const nextPref = resolveScalpExitMode(
-          symbol as Symbol,
-          decision,
-          side,
-          entry
-        );
-        if (nextPref.mode !== currentExit.mode) {
-          scalpExitStateRef.current.set(exitKey, {
-            ...currentExit,
-            mode: nextPref.mode,
-            switched: true,
-          });
-          if (nextPref.mode === "TRAIL") {
-            if (Number.isFinite(core.atr14) && core.atr14 > 0) {
-              const distance = Math.max(
-                core.atr14 * SCALP_EXIT_TRAIL_ATR,
-                resolveMinProtectionDistance(entry, core.atr14)
-              );
-              const dir = side === "Buy" ? 1 : -1;
-              const activePrice = entry + dir * distance;
-              if (Number.isFinite(activePrice) && activePrice > 0) {
-                try {
-                  await updateProtection({
-                    symbol,
-                    trailingStop: distance,
-                    trailingActivePrice: activePrice,
-                    positionIdx: Number.isFinite(pos.positionIdx)
-                      ? pos.positionIdx
-                      : undefined,
-                  });
-                  trailOffsetRef.current.set(symbol, distance / entry);
-                } catch (err) {
-                  addLogEntries([
-                    {
-                      id: `scalp-exit:trail:error:${symbol}:${now}`,
-                      timestamp: new Date(now).toISOString(),
-                      action: "ERROR",
-                      message: `${symbol} scalp trail switch failed: ${asErrorMessage(err)}`,
-                    },
-                  ]);
-                }
-              }
-            }
-          } else {
-            const risk = Math.abs(entry - sl);
-            if (Number.isFinite(risk) && risk > 0) {
-              const tp =
-                side === "Buy" ? entry + 1.5 * risk : entry - 1.5 * risk;
-              try {
-                await updateProtection({
-                  symbol,
-                  tp,
-                  positionIdx: Number.isFinite(pos.positionIdx)
-                    ? pos.positionIdx
-                    : undefined,
-                });
-              } catch (err) {
-                addLogEntries([
-                  {
-                    id: `scalp-exit:tp:error:${symbol}:${now}`,
-                    timestamp: new Date(now).toISOString(),
-                    action: "ERROR",
-                    message: `${symbol} scalp TP switch failed: ${asErrorMessage(err)}`,
-                  },
-                ]);
-              }
-            }
-          }
-          addLogEntries([
-            {
-              id: `scalp-exit:switch:${symbol}:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "STATUS",
-              message: `${symbol} scalp exit switch -> ${nextPref.mode}`,
-            },
-          ]);
-        }
-      }
-
-      const shouldRun = (key: string, cooldownMs: number) => {
-        const last = scalpActionCooldownRef.current.get(key) ?? 0;
-        if (now - last < cooldownMs) return false;
-        scalpActionCooldownRef.current.set(key, now);
-        return true;
-      };
-
-      const candleAgainst =
-        side === "Buy"
-          ? Number.isFinite(core.ltfClose) && Number.isFinite(core.ltfOpen)
-            ? core.ltfClose < core.ltfOpen
-            : false
-          : Number.isFinite(core.ltfClose) && Number.isFinite(core.ltfOpen)
-            ? core.ltfClose > core.ltfOpen
-            : false;
-      const killReasons: string[] = [];
-      const chochAgainst = side === "Buy" ? core.microBreakShort : core.microBreakLong;
-      if (chochAgainst) killReasons.push("CHoCH");
-      const closeBreak =
-        side === "Buy"
-          ? Number.isFinite(core.lastPivotLow) && core.ltfClose < (core.lastPivotLow as number)
-          : Number.isFinite(core.lastPivotHigh) && core.ltfClose > (core.lastPivotHigh as number);
-      if (closeBreak) killReasons.push("HL/LH break");
-      if (core.ltfRangeExpansion && core.ltfRangeExpVolume && candleAgainst) {
-        killReasons.push("range exp + vol");
-      }
-
-      if (killReasons.length && shouldRun(`${symbol}:kill`, 15_000)) {
-        try {
-          await submitReduceOnlyOrder(pos, Math.abs(sizeRaw));
-          addLogEntries([
-            {
-              id: `scalp-kill:${symbol}:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "RISK_BLOCK",
-              message: `${symbol} scalp kill-switch: ${killReasons.join(", ")} -> EXIT`,
-            },
-          ]);
-        } catch (err) {
-          addLogEntries([
-            {
-              id: `scalp-kill:error:${symbol}:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "ERROR",
-              message: `${symbol} scalp kill failed: ${asErrorMessage(err)}`,
-            },
-          ]);
-        }
-        return;
-      }
-
-      const timeDecay =
-        (side === "Buy" ? core.ltfNoNewHigh : core.ltfNoNewLow) &&
-        core.ltfRsiNeutral &&
-        core.volumeFalling;
-      if (timeDecay && shouldRun(`${symbol}:decay`, 30_000)) {
-        const rMultiple = computeRMultiple(entry, sl, price, side);
-        if (!Number.isFinite(rMultiple) || rMultiple < 1) {
-          try {
-            await submitReduceOnlyOrder(pos, Math.abs(sizeRaw));
-            addLogEntries([
-              {
-                id: `scalp-decay:exit:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "STATUS",
-                message: `${symbol} time decay <1R -> EXIT`,
-              },
-            ]);
-          } catch (err) {
-            addLogEntries([
-              {
-                id: `scalp-decay:error:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "ERROR",
-                message: `${symbol} time decay exit failed: ${asErrorMessage(err)}`,
-              },
-            ]);
-          }
-          return;
-        }
-        const lastPartial = scalpPartialCooldownRef.current.get(symbol) ?? 0;
-        if (now - lastPartial >= 30_000) {
-          const partialQty = Math.abs(sizeRaw) * 0.5;
-          try {
-            await submitReduceOnlyOrder(pos, partialQty);
-            scalpPartialCooldownRef.current.set(symbol, now);
-            await updateProtection({
-              symbol,
-              sl: entry,
-              positionIdx: Number.isFinite(pos.positionIdx)
-                ? pos.positionIdx
-                : undefined,
-            });
-            addLogEntries([
-              {
-                id: `scalp-decay:partial:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "STATUS",
-                message: `${symbol} time decay >=1R -> PARTIAL + BE`,
-              },
-            ]);
-          } catch (err) {
-            addLogEntries([
-              {
-                id: `scalp-decay:partial:error:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "ERROR",
-                message: `${symbol} time decay partial failed: ${asErrorMessage(err)}`,
-              },
-            ]);
-          }
-        }
-        return;
-      }
-
-      const volumeSpikeAgainst =
-        candleAgainst &&
-        Number.isFinite(core.volumeCurrent) &&
-        Number.isFinite(core.volumeP70) &&
-        core.volumeCurrent > core.volumeP70;
-      const priceStalled = side === "Buy" ? core.ltfNoNewHigh : core.ltfNoNewLow;
-      const volumeReversal =
-        volumeSpikeAgainst && priceStalled && core.volumeRising;
-
-      if (volumeReversal && shouldRun(`${symbol}:vol`, 20_000)) {
-        const lastTrail = scalpTrailCooldownRef.current.get(symbol) ?? 0;
-        if (
-          Number.isFinite(core.atr14) &&
-          core.atr14 > 0 &&
-          now - lastTrail >= 20_000
-        ) {
-          const distance = Math.max(
-            core.atr14 * SCALP_TRAIL_TIGHTEN_ATR,
-            resolveMinProtectionDistance(entry, core.atr14)
-          );
-          const dir = side === "Buy" ? 1 : -1;
-          const activePrice = entry + dir * distance;
-          if (Number.isFinite(activePrice) && activePrice > 0) {
-            try {
-              await updateProtection({
-                symbol,
-                trailingStop: distance,
-                trailingActivePrice: activePrice,
-                positionIdx: Number.isFinite(pos.positionIdx)
-                  ? pos.positionIdx
-                  : undefined,
-              });
-              scalpTrailCooldownRef.current.set(symbol, now);
-              trailOffsetRef.current.set(symbol, distance / entry);
-              addLogEntries([
-                {
-                  id: `scalp-vol:trail:${symbol}:${now}`,
-                  timestamp: new Date(now).toISOString(),
-                  action: "STATUS",
-                  message: `${symbol} vol reversal -> tighten trail ${formatNumber(
-                    distance,
-                    6
-                  )}`,
-                },
-              ]);
-              return;
-            } catch (err) {
-              addLogEntries([
-                {
-                  id: `scalp-vol:trail:error:${symbol}:${now}`,
-                  timestamp: new Date(now).toISOString(),
-                  action: "ERROR",
-                  message: `${symbol} vol trail tighten failed: ${asErrorMessage(err)}`,
-                },
-              ]);
-            }
-          }
-        }
-        const lastPartial = scalpPartialCooldownRef.current.get(symbol) ?? 0;
-        if (now - lastPartial >= 30_000) {
-          const partialQty = Math.abs(sizeRaw) * 0.5;
-          try {
-            await submitReduceOnlyOrder(pos, partialQty);
-            scalpPartialCooldownRef.current.set(symbol, now);
-            addLogEntries([
-              {
-                id: `scalp-vol:partial:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "STATUS",
-                message: `${symbol} vol reversal -> partial 50%`,
-              },
-            ]);
-          } catch (err) {
-            addLogEntries([
-              {
-                id: `scalp-vol:partial:error:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "ERROR",
-                message: `${symbol} vol partial failed: ${asErrorMessage(err)}`,
-              },
-            ]);
-          }
-        }
-      }
-    },
-    [
-      addLogEntries,
-      resolveScalpExitMode,
-      submitReduceOnlyOrder,
-      updateProtection,
-    ]
   );
 
   const getSymbolContext = useCallback(
@@ -3993,6 +3563,435 @@ export function useTradingBot(
     syncTrailingProtection,
     useTestnet,
   ]);
+
+  const submitReduceOnlyOrder = useCallback(
+    async (pos: ActivePosition, qty: number) => {
+      if (!authToken) throw new Error("missing_auth_token");
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new Error("invalid_reduce_qty");
+      }
+      const closeSide =
+        String(pos.side).toLowerCase() === "buy" ? "Sell" : "Buy";
+      const payload = {
+        symbol: pos.symbol,
+        side: closeSide,
+        qty: Math.abs(qty),
+        orderType: "Market",
+        reduceOnly: true,
+        timeInForce: "IOC",
+        positionIdx: Number.isFinite(pos.positionIdx)
+          ? pos.positionIdx
+          : undefined,
+      };
+      await postJson("/order", payload as unknown as Record<string, unknown>);
+      await refreshFast();
+      return true;
+    },
+    [authToken, postJson, refreshFast]
+  );
+
+  const updateProtection = useCallback(
+    async (payload: {
+      symbol: string;
+      sl?: number;
+      tp?: number;
+      trailingStop?: number;
+      trailingActivePrice?: number;
+      positionIdx?: number;
+    }) => {
+      await postJson("/protection", payload as unknown as Record<string, unknown>);
+    },
+    [postJson]
+  );
+
+  const resolveScalpExitMode = useCallback(
+    (
+      symbol: Symbol,
+      decision: PriceFeedDecision,
+      side: "Buy" | "Sell",
+      entry: number
+    ) => {
+      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      if (!core || !Number.isFinite(entry) || entry <= 0) {
+        return { mode: "TP" as const, reason: "missing_core" };
+      }
+      const adx = toNumber((decision as any)?.trendAdx);
+      const isMajor = MAJOR_SYMBOLS.has(symbol);
+      const atrMin = isMajor
+        ? CORE_V2_ATR_MIN_PCT_MAJOR
+        : CORE_V2_ATR_MIN_PCT_ALT;
+      const biasOk =
+        side === "Buy" ? core.htfBias === "BULL" : core.htfBias === "BEAR";
+      const m15Aligned =
+        side === "Buy" ? core.ema15mTrend === "BULL" : core.ema15mTrend === "BEAR";
+      const strongTrend =
+        biasOk &&
+        m15Aligned &&
+        ((Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
+          (Number.isFinite(core.htfAtrPct) && core.htfAtrPct >= atrMin));
+      const htfLevels = [
+        core.htfPivotHigh,
+        core.htfPivotLow,
+        core.htfEma12,
+        core.htfEma26,
+      ].filter((v): v is number => Number.isFinite(v));
+      const nearestLevel = htfLevels.reduce((min, lvl) => {
+        const dist = Math.abs(entry - lvl);
+        return dist < min ? dist : min;
+      }, Number.POSITIVE_INFINITY);
+      const nearHtf =
+        Number.isFinite(core.htfAtr14) &&
+        Number.isFinite(nearestLevel) &&
+        nearestLevel <= core.htfAtr14 * SCALP_HTF_NEAR_ATR;
+      if (strongTrend && !nearHtf) {
+        return { mode: "TRAIL" as const, reason: "strong_trend" };
+      }
+      return { mode: "TP" as const, reason: nearHtf ? "near_htf" : "weak_trend" };
+    },
+    []
+  );
+
+  const handleScalpInTrade = useCallback(
+    async (symbol: string, decision: PriceFeedDecision, now: number) => {
+      const pos = positionsRef.current.find((p) => p.symbol === symbol);
+      if (!pos) return;
+      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      if (!core) return;
+      const sizeRaw = toNumber(pos.size ?? pos.qty);
+      if (!Number.isFinite(sizeRaw) || sizeRaw <= 0) return;
+      const side = pos.side === "Sell" ? "Sell" : "Buy";
+      const entry = toNumber(pos.entryPrice);
+      const sl = toNumber(pos.sl);
+      const price = Number.isFinite(pos.markPrice)
+        ? toNumber(pos.markPrice)
+        : toNumber(core.ltfClose);
+      if (
+        !Number.isFinite(entry) ||
+        !Number.isFinite(sl) ||
+        !Number.isFinite(price)
+      ) {
+        return;
+      }
+
+      const exitKey = symbol;
+      if (!scalpExitStateRef.current.has(exitKey)) {
+        const resolved = resolveScalpExitMode(
+          symbol as Symbol,
+          decision,
+          side,
+          entry
+        );
+        scalpExitStateRef.current.set(exitKey, {
+          mode: resolved.mode,
+          switched: false,
+          decidedAt: now,
+        });
+        if (resolved.mode === "TRAIL" && Number.isFinite(core.atr14) && core.atr14 > 0) {
+          const offset = (core.atr14 * SCALP_EXIT_TRAIL_ATR) / entry;
+          if (Number.isFinite(offset) && offset > 0) {
+            trailOffsetRef.current.set(symbol, offset);
+          }
+        } else {
+          trailOffsetRef.current.delete(symbol);
+        }
+        addLogEntries([
+          {
+            id: `scalp-exit:${symbol}:${now}`,
+            timestamp: new Date(now).toISOString(),
+            action: "STATUS",
+            message: `${symbol} scalp exit mode ${resolved.mode} (${resolved.reason})`,
+          },
+        ]);
+      }
+
+      const currentExit = scalpExitStateRef.current.get(exitKey);
+      if (currentExit && !currentExit.switched) {
+        const nextPref = resolveScalpExitMode(
+          symbol as Symbol,
+          decision,
+          side,
+          entry
+        );
+        if (nextPref.mode !== currentExit.mode) {
+          scalpExitStateRef.current.set(exitKey, {
+            ...currentExit,
+            mode: nextPref.mode,
+            switched: true,
+          });
+          if (nextPref.mode === "TRAIL") {
+            if (Number.isFinite(core.atr14) && core.atr14 > 0) {
+              const distance = Math.max(
+                core.atr14 * SCALP_EXIT_TRAIL_ATR,
+                resolveMinProtectionDistance(entry, core.atr14)
+              );
+              const dir = side === "Buy" ? 1 : -1;
+              const activePrice = entry + dir * distance;
+              if (Number.isFinite(activePrice) && activePrice > 0) {
+                try {
+                  await updateProtection({
+                    symbol,
+                    trailingStop: distance,
+                    trailingActivePrice: activePrice,
+                    positionIdx: Number.isFinite(pos.positionIdx)
+                      ? pos.positionIdx
+                      : undefined,
+                  });
+                  trailOffsetRef.current.set(symbol, distance / entry);
+                } catch (err) {
+                  addLogEntries([
+                    {
+                      id: `scalp-exit:trail:error:${symbol}:${now}`,
+                      timestamp: new Date(now).toISOString(),
+                      action: "ERROR",
+                      message: `${symbol} scalp trail switch failed: ${asErrorMessage(err)}`,
+                    },
+                  ]);
+                }
+              }
+            }
+          } else {
+            const risk = Math.abs(entry - sl);
+            if (Number.isFinite(risk) && risk > 0) {
+              const tp =
+                side === "Buy" ? entry + 1.5 * risk : entry - 1.5 * risk;
+              try {
+                await updateProtection({
+                  symbol,
+                  tp,
+                  positionIdx: Number.isFinite(pos.positionIdx)
+                    ? pos.positionIdx
+                    : undefined,
+                });
+              } catch (err) {
+                addLogEntries([
+                  {
+                    id: `scalp-exit:tp:error:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "ERROR",
+                    message: `${symbol} scalp TP switch failed: ${asErrorMessage(err)}`,
+                  },
+                ]);
+              }
+            }
+          }
+          addLogEntries([
+            {
+              id: `scalp-exit:switch:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} scalp exit switch -> ${nextPref.mode}`,
+            },
+          ]);
+        }
+      }
+
+      const shouldRun = (key: string, cooldownMs: number) => {
+        const last = scalpActionCooldownRef.current.get(key) ?? 0;
+        if (now - last < cooldownMs) return false;
+        scalpActionCooldownRef.current.set(key, now);
+        return true;
+      };
+
+      const candleAgainst =
+        side === "Buy"
+          ? Number.isFinite(core.ltfClose) && Number.isFinite(core.ltfOpen)
+            ? core.ltfClose < core.ltfOpen
+            : false
+          : Number.isFinite(core.ltfClose) && Number.isFinite(core.ltfOpen)
+            ? core.ltfClose > core.ltfOpen
+            : false;
+      const killReasons: string[] = [];
+      const chochAgainst = side === "Buy" ? core.microBreakShort : core.microBreakLong;
+      if (chochAgainst) killReasons.push("CHoCH");
+      const closeBreak =
+        side === "Buy"
+          ? Number.isFinite(core.lastPivotLow) && core.ltfClose < (core.lastPivotLow as number)
+          : Number.isFinite(core.lastPivotHigh) && core.ltfClose > (core.lastPivotHigh as number);
+      if (closeBreak) killReasons.push("HL/LH break");
+      if (core.ltfRangeExpansion && core.ltfRangeExpVolume && candleAgainst) {
+        killReasons.push("range exp + vol");
+      }
+
+      if (killReasons.length && shouldRun(`${symbol}:kill`, 15_000)) {
+        try {
+          await submitReduceOnlyOrder(pos, Math.abs(sizeRaw));
+          addLogEntries([
+            {
+              id: `scalp-kill:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} scalp kill-switch: ${killReasons.join(", ")} -> EXIT`,
+            },
+          ]);
+        } catch (err) {
+          addLogEntries([
+            {
+              id: `scalp-kill:error:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "ERROR",
+              message: `${symbol} scalp kill failed: ${asErrorMessage(err)}`,
+            },
+          ]);
+        }
+        return;
+      }
+
+      const timeDecay =
+        (side === "Buy" ? core.ltfNoNewHigh : core.ltfNoNewLow) &&
+        core.ltfRsiNeutral &&
+        core.volumeFalling;
+      if (timeDecay && shouldRun(`${symbol}:decay`, 30_000)) {
+        const rMultiple = computeRMultiple(entry, sl, price, side);
+        if (!Number.isFinite(rMultiple) || rMultiple < 1) {
+          try {
+            await submitReduceOnlyOrder(pos, Math.abs(sizeRaw));
+            addLogEntries([
+              {
+                id: `scalp-decay:exit:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} time decay <1R -> EXIT`,
+              },
+            ]);
+          } catch (err) {
+            addLogEntries([
+              {
+                id: `scalp-decay:error:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "ERROR",
+                message: `${symbol} time decay exit failed: ${asErrorMessage(err)}`,
+              },
+            ]);
+          }
+          return;
+        }
+        const lastPartial = scalpPartialCooldownRef.current.get(symbol) ?? 0;
+        if (now - lastPartial >= 30_000) {
+          const partialQty = Math.abs(sizeRaw) * 0.5;
+          try {
+            await submitReduceOnlyOrder(pos, partialQty);
+            scalpPartialCooldownRef.current.set(symbol, now);
+            await updateProtection({
+              symbol,
+              sl: entry,
+              positionIdx: Number.isFinite(pos.positionIdx)
+                ? pos.positionIdx
+                : undefined,
+            });
+            addLogEntries([
+              {
+                id: `scalp-decay:partial:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} time decay >=1R -> PARTIAL + BE`,
+              },
+            ]);
+          } catch (err) {
+            addLogEntries([
+              {
+                id: `scalp-decay:partial:error:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "ERROR",
+                message: `${symbol} time decay partial failed: ${asErrorMessage(err)}`,
+              },
+            ]);
+          }
+        }
+        return;
+      }
+
+      const volumeSpikeAgainst =
+        candleAgainst &&
+        Number.isFinite(core.volumeCurrent) &&
+        Number.isFinite(core.volumeP70) &&
+        core.volumeCurrent > core.volumeP70;
+      const priceStalled = side === "Buy" ? core.ltfNoNewHigh : core.ltfNoNewLow;
+      const volumeReversal =
+        volumeSpikeAgainst && priceStalled && core.volumeRising;
+
+      if (volumeReversal && shouldRun(`${symbol}:vol`, 20_000)) {
+        const lastTrail = scalpTrailCooldownRef.current.get(symbol) ?? 0;
+        if (
+          Number.isFinite(core.atr14) &&
+          core.atr14 > 0 &&
+          now - lastTrail >= 20_000
+        ) {
+          const distance = Math.max(
+            core.atr14 * SCALP_TRAIL_TIGHTEN_ATR,
+            resolveMinProtectionDistance(entry, core.atr14)
+          );
+          const dir = side === "Buy" ? 1 : -1;
+          const activePrice = entry + dir * distance;
+          if (Number.isFinite(activePrice) && activePrice > 0) {
+            try {
+              await updateProtection({
+                symbol,
+                trailingStop: distance,
+                trailingActivePrice: activePrice,
+                positionIdx: Number.isFinite(pos.positionIdx)
+                  ? pos.positionIdx
+                  : undefined,
+              });
+              scalpTrailCooldownRef.current.set(symbol, now);
+              trailOffsetRef.current.set(symbol, distance / entry);
+              addLogEntries([
+                {
+                  id: `scalp-vol:trail:${symbol}:${now}`,
+                  timestamp: new Date(now).toISOString(),
+                  action: "STATUS",
+                  message: `${symbol} vol reversal -> tighten trail ${formatNumber(
+                    distance,
+                    6
+                  )}`,
+                },
+              ]);
+              return;
+            } catch (err) {
+              addLogEntries([
+                {
+                  id: `scalp-vol:trail:error:${symbol}:${now}`,
+                  timestamp: new Date(now).toISOString(),
+                  action: "ERROR",
+                  message: `${symbol} vol trail tighten failed: ${asErrorMessage(err)}`,
+                },
+              ]);
+            }
+          }
+        }
+        const lastPartial = scalpPartialCooldownRef.current.get(symbol) ?? 0;
+        if (now - lastPartial >= 30_000) {
+          const partialQty = Math.abs(sizeRaw) * 0.5;
+          try {
+            await submitReduceOnlyOrder(pos, partialQty);
+            scalpPartialCooldownRef.current.set(symbol, now);
+            addLogEntries([
+              {
+                id: `scalp-vol:partial:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} vol reversal -> partial 50%`,
+              },
+            ]);
+          } catch (err) {
+            addLogEntries([
+              {
+                id: `scalp-vol:partial:error:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "ERROR",
+                message: `${symbol} vol partial failed: ${asErrorMessage(err)}`,
+              },
+            ]);
+          }
+        }
+      }
+    },
+    [
+      addLogEntries,
+      resolveScalpExitMode,
+      submitReduceOnlyOrder,
+      updateProtection,
+    ]
+  );
 
   const refreshSlow = useCallback(async () => {
     if (slowPollRef.current) return;
