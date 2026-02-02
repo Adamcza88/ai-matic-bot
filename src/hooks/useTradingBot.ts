@@ -3083,8 +3083,10 @@ export function useTradingBot(
     async (now: number, nextOrders: TestnetOrder[]) => {
       const settings = settingsRef.current;
       if (!authToken) return;
-      if (!settings.strategyCheatSheetEnabled) return;
-      if (settings.riskMode !== "ai-matic-tree") return;
+      const cheatEnabled = settings.strategyCheatSheetEnabled;
+      const useCheatTree = cheatEnabled && settings.riskMode === "ai-matic-tree";
+      const useCoreOff = !cheatEnabled;
+      if (!useCheatTree && !useCoreOff) return;
       if (!Array.isArray(nextOrders) || nextOrders.length === 0) return;
       const cooldown = autoCloseCooldownRef.current;
 
@@ -3129,52 +3131,61 @@ export function useTradingBot(
           null;
 
         if (!meta) {
-          const depsRaw = (decision as any)?.cheatDeps ?? {};
-          const sigRaw = (decision as any)?.cheatSignals ?? {};
-          if (decision && depsRaw && sigRaw) {
-            const deps: TreeDeps = {
-              hasVP: Boolean(depsRaw.hasVP),
-              hasOB: Boolean(depsRaw.hasOB),
-              hasGAP: Boolean(depsRaw.hasGAP),
-              hasTrap: Boolean(depsRaw.hasTrap),
-              hasLowVol: Boolean(depsRaw.hasLowVol),
-            };
-            const signals: TreeSignals = {
-              inLowVolume: Boolean(sigRaw.inLowVolume),
-              htfReactionConfirmed: Boolean(sigRaw.htfReactionConfirmed),
-              structureReadable: Boolean(sigRaw.structureReadable),
-              sessionOk: sigRaw.sessionOk !== false,
-              bosUp: Boolean(sigRaw.bosUp),
-              bosDown: Boolean(sigRaw.bosDown),
-              returnToLevel: Boolean(sigRaw.returnToLevel),
-              rejectionInLVN: Boolean(sigRaw.rejectionInLVN),
-              touchOB: Boolean(sigRaw.touchOB),
-              rejectionInOB: Boolean(sigRaw.rejectionInOB),
-              trapReaction: Boolean(sigRaw.trapReaction),
-            };
-            const derived = decideCombinedEntry(deps, signals);
-            const ltfMinRaw = toNumber((decision as any)?.coreV2?.ltfTimeframeMin);
-            const createdAt = Number.isFinite(createdTs) ? createdTs : now;
-            meta = {
-              intentId: metaKey,
-              symbol,
-              side,
-              entryPrice: Number.isFinite(entryPrice) ? entryPrice : Number.NaN,
-              createdAt,
-              mode: derived.mode ?? null,
-              timeframeMin: Number.isFinite(ltfMinRaw) ? ltfMinRaw : null,
-            };
-            cheatLimitMetaRef.current.set(metaKey, meta);
+          const createdAt = Number.isFinite(createdTs) ? createdTs : now;
+          const ltfMinRaw = toNumber((decision as any)?.coreV2?.ltfTimeframeMin);
+          let mode: CheatLimitMeta["mode"] | null = null;
+          if (useCheatTree) {
+            const depsRaw = (decision as any)?.cheatDeps ?? {};
+            const sigRaw = (decision as any)?.cheatSignals ?? {};
+            if (decision && depsRaw && sigRaw) {
+              const deps: TreeDeps = {
+                hasVP: Boolean(depsRaw.hasVP),
+                hasOB: Boolean(depsRaw.hasOB),
+                hasGAP: Boolean(depsRaw.hasGAP),
+                hasTrap: Boolean(depsRaw.hasTrap),
+                hasLowVol: Boolean(depsRaw.hasLowVol),
+              };
+              const signals: TreeSignals = {
+                inLowVolume: Boolean(sigRaw.inLowVolume),
+                htfReactionConfirmed: Boolean(sigRaw.htfReactionConfirmed),
+                structureReadable: Boolean(sigRaw.structureReadable),
+                sessionOk: sigRaw.sessionOk !== false,
+                bosUp: Boolean(sigRaw.bosUp),
+                bosDown: Boolean(sigRaw.bosDown),
+                returnToLevel: Boolean(sigRaw.returnToLevel),
+                rejectionInLVN: Boolean(sigRaw.rejectionInLVN),
+                touchOB: Boolean(sigRaw.touchOB),
+                rejectionInOB: Boolean(sigRaw.rejectionInOB),
+                trapReaction: Boolean(sigRaw.trapReaction),
+              };
+              const derived = decideCombinedEntry(deps, signals);
+              mode = derived.mode ?? null;
+            }
           }
+          meta = {
+            intentId: metaKey,
+            symbol,
+            side,
+            entryPrice: Number.isFinite(entryPrice) ? entryPrice : Number.NaN,
+            createdAt,
+            mode,
+            timeframeMin: Number.isFinite(ltfMinRaw) ? ltfMinRaw : null,
+          };
+          cheatLimitMetaRef.current.set(metaKey, meta);
         }
 
         const ltfMin =
           meta?.timeframeMin ??
           toNumber((decision as any)?.coreV2?.ltfTimeframeMin);
-        const window = resolveCheatLimitWindowMs(
+        let window = resolveCheatLimitWindowMs(
           meta?.mode ?? null,
           Number.isFinite(ltfMin) ? ltfMin : null
         );
+        if (!window) {
+          const fallbackMode =
+            settings.riskMode === "ai-matic-scalp" ? "SCALP" : "INTRADAY";
+          window = resolveCheatLimitWindowMs(fallbackMode, null);
+        }
         if (!window) continue;
         const createdAt = Number.isFinite(createdTs)
           ? createdTs
@@ -5577,8 +5588,6 @@ export function useTradingBot(
 
       const intentId = crypto.randomUUID();
       const trackCheatLimit =
-        cheatEnabled &&
-        isTreeProfile &&
         (entryType === "LIMIT" || entryType === "LIMIT_MAKER_FIRST");
       if (trackCheatLimit && Number.isFinite(entry) && entry > 0) {
         cheatLimitMetaRef.current.set(intentId, {
