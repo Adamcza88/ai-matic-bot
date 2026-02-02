@@ -54,8 +54,8 @@ export type StrategyDecision = {
   mode: Mode | null;
   side: Side | null;
   entryType: EntryType | null;
-  tfContext: "15m" | "1h" | "4h" | "1D" | null;
-  tfEntry: "1m" | "3m" | "5m" | "15m" | "1h" | null;
+  tfContext: "15m" | "1h" | null; //"15m" | "1h" | "4h" | "1D" | null;
+  tfEntry: "1m" | "5m" | null;  //"1m" | "3m" | "5m" | "15m" | "1h" | null;
   slRule: SlRule | null;
   tpPlan: { tp1: TpRule; tp2?: TpRule } | null;
   trailing: TrailingRule;
@@ -95,8 +95,8 @@ export function decideCombinedEntry(
       mode: "SWING",
       side: inferSideFromBOS(s),
       entryType: "HTF_REACTION_ONLY",
-      tfContext: "4h",
-      tfEntry: "15m",
+      tfContext: "1h",
+      tfEntry: "5m",
       slRule: "UNDER_SWING",
       tpPlan: { tp1: "SWING_PERCENT_4_6" },
       trailing: "NONE",
@@ -134,7 +134,7 @@ export function decideCombinedEntry(
         side: bosSide,
         entryType: "BOS_RETURN",
         tfContext: "1h",
-        tfEntry: "3m",
+        tfEntry: "5m",
         slRule: "UNDER_SWING",
         tpPlan: {
           tp1: deps.hasGAP ? "GAP_OR_STRUCTURE" : "STRUCTURE_NEAREST",
@@ -152,7 +152,7 @@ export function decideCombinedEntry(
         side: bosSide,
         entryType: "BOS_RETURN",
         tfContext: "1h",
-        tfEntry: "3m",
+        tfEntry: "5m",
         slRule: "UNDER_SWING",
         tpPlan: {
           tp1: deps.hasGAP ? "GAP_OR_STRUCTURE" : "STRUCTURE_NEAREST",
@@ -180,8 +180,8 @@ export function decideCombinedEntry(
       mode: "SCALP",
       side: scalpSide,
       entryType: "REJECTION_ZONE",
-      tfContext: "15m",
-      tfEntry: "1m",
+      tfContext: "1h",
+      tfEntry: "5m",
       slRule: deps.hasOB ? "UNDER_OB_WICK" : "UNDER_SWING",
       tpPlan: { tp1: "POC_VP_NEAREST" },
       trailing: "ACTIVATE_AFTER_0_5_TO_0_7_PCT",
@@ -195,8 +195,8 @@ export function decideCombinedEntry(
       mode: "SCALP",
       side: scalpSide,
       entryType: "REJECTION_ZONE",
-      tfContext: "15m",
-      tfEntry: "1m",
+      tfContext: "1h",
+      tfEntry: "5m",
       slRule: "UNDER_OB_WICK",
       tpPlan: deps.hasVP ? { tp1: "POC_VP_NEAREST" } : { tp1: "STRUCTURE_NEAREST" },
       trailing: "ACTIVATE_AFTER_0_5_TO_0_7_PCT",
@@ -210,8 +210,8 @@ export function decideCombinedEntry(
       mode: "SCALP",
       side: scalpSide,
       entryType: "BOS_RETURN",
-      tfContext: "15m",
-      tfEntry: "3m",
+      tfContext: "1h",
+      tfEntry: "5m",
       slRule: "UNDER_SWING",
       tpPlan: deps.hasVP ? { tp1: "POC_VP_NEAREST" } : { tp1: "STRUCTURE_NEAREST" },
       trailing: "ACTIVATE_AFTER_0_5_TO_0_7_PCT",

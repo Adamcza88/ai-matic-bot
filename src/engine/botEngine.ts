@@ -251,9 +251,9 @@ export const defaultConfig: BotConfig = {
   targetTradesPerDay: 100,
   riskPerTrade: 0.04,
   strategyProfile: "ai-matic",
-  entryStrictness: "ultra",
-  useStrategyCheatSheet: false,
-  accountBalance: 200000,
+  entryStrictness: "base",  //ultra
+  useStrategyCheatSheet: true,  //false
+  accountBalance: 2500, //20000
   atrPeriod: 14,
   adxPeriod: 14,
   adxThreshold: 25,
@@ -266,13 +266,13 @@ export const defaultConfig: BotConfig = {
   partialExitRatio: 0.5,
   partialTakeProfitR: 1.5,
   breakevenBufferAtr: 0.2,
-  lookbackZones: 50,
+  lookbackZones: 100,
   cooldownBars: 0,
   maxRiskPerTradeCap: 0.07,
   maxOpenPositions: 3,
   maxExitChunks: 3,
-  trailingActivationR: 2,
-  minStopPercent: 0.0035,
+  trailingActivationR: 1,   //2
+  minStopPercent: 0.002,  //0.003
   pyramidAddScale: 0.5,
   pyramidLevels: [
     { triggerR: 1, stopToR: 0 },
@@ -283,15 +283,15 @@ export const defaultConfig: BotConfig = {
     { r: 2, exitFraction: 0.3 },
   ],
   liquiditySweepAtrMult: 0.5,
-  liquiditySweepLookback: 5,
-  liquiditySweepVolumeMult: 1.05,
+  liquiditySweepLookback: 15,   //5
+  liquiditySweepVolumeMult: 1.1,  //1.05
   volExpansionAtrMult: 1.3,
   volExpansionVolMult: 1.2,
-  pullbackEmaPeriod: 20,
+  pullbackEmaPeriod: 50,    //20
   pullbackRsiPeriod: 14,
-  pullbackRsiMin: 45,
-  pullbackRsiMax: 55,
-  emaTrendPeriod: 50,
+  pullbackRsiMin: 35, //45
+  pullbackRsiMax: 65, //55
+  emaTrendPeriod: 150,  //50
   emaTrendConfirmBars: 2,
   emaTrendTouchLookback: 2,
 };
@@ -420,11 +420,11 @@ export class TradingBot {
   private bosDirection: "up" | "down" | null = null;
   private returnedToLevel = false;
   private rejectedLvn = false;
-  private touchedOb = false;
-  private rejectedOb = false;
-  private trapReaction = false;
+  private touchedOb = true;  //false
+  private rejectedOb = true; //false
+  private trapReaction = true; //false
   private lowVolFlag = false;
-  private htfReaction = false;
+  private htfReaction = true;  //false
   private structureReadable = true;
 
   getBosDirection() { return this.bosDirection; }
@@ -687,22 +687,22 @@ export class TradingBot {
   private applyStrategyTrailing(rMultiple: number): void {
     if (!this.position) return;
     const tpMap: Record<BotConfig["strategyProfile"], number> = {
-      "ai-matic": 2.2,
-      "ai-matic-tree": 2.2,
-      "ai-matic-x": 1.6,
-      "ai-matic-scalp": 1.5,
+      "ai-matic": 1.2,  //2.2
+      "ai-matic-tree": 1.2, //2.2
+      "ai-matic-x": 1.0,  //1.2
+      "ai-matic-scalp": 1.0,  //1.2
     };
     const widthMap: Record<BotConfig["strategyProfile"], number> = {
-      "ai-matic": 1.1,
-      "ai-matic-tree": 1.1,
-      "ai-matic-x": 0.6,
-      "ai-matic-scalp": 0.4,
+      "ai-matic": 1.0,  //1.2
+      "ai-matic-tree": 1.0, //1.2
+      "ai-matic-x": 0.8,  //0.6
+      "ai-matic-scalp": 0.8,  //0.4
     };
     const profile = this.config.strategyProfile;
-    const tpR = tpMap[profile] ?? 1.4;
-    const widthR = widthMap[profile] ?? 0.4;
+    const tpR = tpMap[profile] ?? 1.2;  //2.2
+    const widthR = widthMap[profile] ?? 0.8;  //0.4
     // Trigger těsně pod TP: blízko cíle (např. scalp 1.5R -> trigger 1.45R)
-    const triggerR = tpR - 0.05;
+    const triggerR = tpR - 0.04;  //0.6
     if (rMultiple < triggerR || this.position.slDistance <= 0) return;
     const widthAbs = widthR * this.position.slDistance;
     const target = this.position.side === "long"
@@ -784,10 +784,10 @@ export class TradingBot {
     if (this.cooldownUntil && new Date() < this.cooldownUntil) return null;
 
     if (this.config.aiMaticMultiTf) {
-      const htfTf = this.config.aiMaticHtfTimeframe ?? this.config.baseTimeframe;
+      const htfTf = this.config.aiMaticHtfTimeframe ?? "60m"; //this.config.baseTimeframe;
       const midTf = this.config.aiMaticMidTimeframe ?? "15m";
-      const ltfTf = this.config.aiMaticEntryTimeframe ?? this.config.signalTimeframe;
-      const execTf = this.config.aiMaticExecTimeframe ?? this.config.signalTimeframe;
+      const ltfTf = this.config.aiMaticEntryTimeframe ?? "5m";  //this.config.signalTimeframe;
+      const execTf = this.config.aiMaticExecTimeframe ?? "1m";  //this.config.signalTimeframe;
       const ht = await this.fetchOHLCV(htfTf);
       const mid = await this.fetchOHLCV(midTf);
       const lt = await this.fetchOHLCV(ltfTf);
@@ -815,9 +815,9 @@ export class TradingBot {
   ): void {
     const profileRisk =
       this.config.strategyProfile === "ai-matic"
-        ? 0.05
+        ? 0.03  //0.05
         : this.config.strategyProfile === "ai-matic-scalp"
-          ? 0.015
+          ? 0.03  //0.05
           : this.config.strategyProfile === "ai-matic-x"
             ? 0.03
             : 0.05;
@@ -836,10 +836,10 @@ export class TradingBot {
       return;
     }
     const rrMap: Record<BotConfig["strategyProfile"], number> = {
-      "ai-matic": 2.2,
-      "ai-matic-tree": 2.2,
+      "ai-matic": 1.8,  //2.2
+      "ai-matic-tree": 1.6, //2.2
       "ai-matic-x": 1.6,
-      "ai-matic-scalp": 1.5,
+      "ai-matic-scalp": 1.2,  //1.5
     };
     const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
     this.position = {
@@ -1735,10 +1735,10 @@ export function evaluateStrategyForSymbol(
       botConfig.aiMaticMidTimeframe ?? "15m"
     );
     const tfLtfMin = timeframeToMinutes(
-      botConfig.aiMaticEntryTimeframe ?? botConfig.signalTimeframe
+      botConfig.aiMaticEntryTimeframe ?? "5m"//botConfig.signalTimeframe
     );
     const tfExecMin = timeframeToMinutes(
-      botConfig.aiMaticExecTimeframe ?? botConfig.signalTimeframe
+      botConfig.aiMaticExecTimeframe ?? "1m"//botConfig.signalTimeframe
     );
     const mid = resampleCandles(candles, tfMidMin);
     const lt = resampleCandles(candles, tfLtfMin);
@@ -1836,9 +1836,9 @@ export function evaluateStrategyForSymbol(
     bosDown: trend === Trend.Bear,
     returnToLevel: false,
     rejectionInLVN: false,
-    touchOB: false,
-    rejectionInOB: false,
-    trapReaction: false,
+    touchOB: true,  //false
+    rejectionInOB: true,  //false
+    trapReaction: true,  //false
   };
 
   return {

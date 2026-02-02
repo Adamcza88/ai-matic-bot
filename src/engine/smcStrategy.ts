@@ -22,15 +22,15 @@ type AnalyzerCandle = {
 
 type Bias = "long" | "short" | null;
 
-const DISPLACEMENT_LOOKBACK = 10;
+const DISPLACEMENT_LOOKBACK = 100;
 const DISPLACEMENT_BODY_MULT = 1.4;
 const DISPLACEMENT_RANGE_MULT = 1.2;
-const H4_MIN_BARS = 20;
-const H12_MIN_BARS = 20;
-const D1_MIN_BARS = 20;
-const H1_MIN_BARS = 20;
-const LTF_MIN_BARS = 20;
-const LIQUIDITY_LOOKBACK = 60;
+const H4_MIN_BARS = 50;
+const H12_MIN_BARS = 50;
+const D1_MIN_BARS = 50;
+const H1_MIN_BARS = 100;
+const LTF_MIN_BARS = 100;
+const LIQUIDITY_LOOKBACK = 100;
 const LIQUIDITY_TOUCHES = 2;
 const LIQUIDITY_TOLERANCE_MULT = 0.15;
 const BOS_VOLUME_MULT = 1.1;
