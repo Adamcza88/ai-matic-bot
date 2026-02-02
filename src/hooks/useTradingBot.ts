@@ -826,13 +826,16 @@ function computeLossStreak(
 const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
 const MIN_PROTECTION_ATR_FACTOR = 0.05;
 const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
-const AI_MATIC_X_CHEAT_LEVERAGE = 100;
+const AI_MATIC_X_CHEAT_DEFAULT_MAX_LEVERAGE = 100;
 const AI_MATIC_X_CHEAT_TRAIL_UPNL_ACTIVATE = 0.15;
 const AI_MATIC_X_CHEAT_TRAIL_UPNL_DISTANCE = 0.11;
-const AI_MATIC_X_CHEAT_TRAIL_ACTIVATE_RATE =
-  AI_MATIC_X_CHEAT_TRAIL_UPNL_ACTIVATE / AI_MATIC_X_CHEAT_LEVERAGE;
-const AI_MATIC_X_CHEAT_TRAIL_DISTANCE_RATE =
-  AI_MATIC_X_CHEAT_TRAIL_UPNL_DISTANCE / AI_MATIC_X_CHEAT_LEVERAGE;
+
+function resolveAiMaticXCheatLeverage(maxLeverage?: number) {
+  const leverage = toNumber(maxLeverage);
+  return Number.isFinite(leverage) && leverage > 0
+    ? leverage
+    : AI_MATIC_X_CHEAT_DEFAULT_MAX_LEVERAGE;
+}
 
 function resolveMinProtectionDistance(entry: number, atr?: number) {
   const pctDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
@@ -1004,6 +1007,7 @@ export function useTradingBot(
     totalEquity: number;
     availableBalance: number;
     totalWalletBalance: number;
+    maxLeverage?: number;
   } | null>(null);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [systemError, setSystemError] = useState<string | null>(null);
@@ -3115,10 +3119,14 @@ export function useTradingBot(
         row?.totalAvailableBalance ?? row?.availableBalance
       );
       const totalWalletBalance = toNumber(row?.totalWalletBalance);
+      const maxLeverage = toNumber(
+        row?.maxLeverage ?? row?.max_leverage ?? row?.max_leverage?.value
+      );
       setWalletSnapshot({
         totalEquity,
         availableBalance,
         totalWalletBalance,
+        maxLeverage: Number.isFinite(maxLeverage) ? maxLeverage : undefined,
       });
       setLastSuccessAt(now);
     } else {
@@ -3774,8 +3782,11 @@ export function useTradingBot(
         settings.riskMode === "ai-matic-x" && settings.strategyCheatSheetEnabled;
       let trailActivationOverride: number | null = null;
       if (useAiMaticXCheatTrail) {
-        trailActivationOverride = AI_MATIC_X_CHEAT_TRAIL_ACTIVATE_RATE;
-        trailOffset = AI_MATIC_X_CHEAT_TRAIL_DISTANCE_RATE;
+        const maxLeverage = resolveAiMaticXCheatLeverage(
+          walletRef.current?.maxLeverage
+        );
+        trailActivationOverride = AI_MATIC_X_CHEAT_TRAIL_UPNL_ACTIVATE / maxLeverage;
+        trailOffset = AI_MATIC_X_CHEAT_TRAIL_UPNL_DISTANCE / maxLeverage;
       }
       if (
         isScalpProfile &&

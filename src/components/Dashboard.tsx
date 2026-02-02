@@ -108,7 +108,7 @@ export default function Dashboard({
         risk: "2 vstupy (60 % / 40 %) · TP1 0.9–1.2 % · TP2 2–3 %",
         entry:
           "Entry 1: reakce z OB/sweep návrat · Entry 2: retest OB (GAP/Fibo)",
-        execution: `SL pod strukturu/OB knot · trailing Unrealized PnL +15 % / distance 11 % (≈0.15 %/0.11 % při 100×) · ${cheatSheetNote}`,
+        execution: `SL pod strukturu/OB knot · trailing Unrealized PnL +15 % / distance 11 % (dle max leverage) · ${cheatSheetNote}`,
       };
     }
     if (riskMode === "ai-matic-tree") {
