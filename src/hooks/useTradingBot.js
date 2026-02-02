@@ -678,7 +678,7 @@ function normalizeProtectionLevels(entry, side, sl, tp, atr) {
 const TRAIL_PROFILE_BY_RISK_MODE = {
   "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
   "ai-matic-x": { activateR: 1.0, lockR: 0.3, retracementRate: 0.002 },
-  "ai-matic-scalp": { activateR: 1.2, lockR: 0.6 },
+  "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
   "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
 };
 const TRAIL_SYMBOL_MODE = {
@@ -2999,7 +2999,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             core.atr14 > 0 &&
             Number.isFinite(entry) &&
             entry > 0) {
-            trailOffset = (core.atr14 * 5.0) / entry;
+            trailOffset = (core.atr14 * 2.5) / entry;
         }
         if (Number.isFinite(trailOffset) && trailOffset > 0) {
             trailOffsetRef.current.set(symbol, trailOffset);
