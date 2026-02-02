@@ -3791,6 +3791,7 @@ export function useTradingBot(
           price: number | null;
           side: string;
           symbol: string;
+          orderLinkId?: string;
         }
       >();
       const mapped = list
