@@ -136,6 +136,22 @@ const SCALP_EMA_PERIOD = 21;
 const SCALP_SWING_LOOKBACK = 2;
 const SCALP_EMA_FLAT_PCT = 0.02;
 const SCALP_EMA_CROSS_LOOKBACK = 6;
+const SCALP_DIV_LOOKBACK = 20;
+const SCALP_PIVOT_MIN_GAP = 5;
+const SCALP_PIVOT_MAX_GAP = 20;
+const SCALP_VOL_LEN = 20;
+const SCALP_VOL_SPIKE_MULT = 1.8;
+const SCALP_VOL_Z_MIN = 2.0;
+const SCALP_RANGE_SMA_LEN = 20;
+const SCALP_RANGE_EXP_MULT = 1.8;
+const SCALP_TREND_MIN_SPREAD = 0.0015;
+const SCALP_OVERLAP_RATIO = 0.6;
+const SCALP_OVERLAP_BARS = 4;
+const SCALP_COOLDOWN_MS = 5 * 60_000;
+const SCALP_RISK_OFF_MULT = 0.25;
+const SCALP_ATR_MULT_INITIAL = 1.3;
+const SCALP_MAX_LOSSES_IN_ROW = 2;
+const SCALP_MAX_DAILY_LOSS_R = -2.0;
 const SCALP_M15_EMA_COMPRESSION_ATR = 0.35;
 const SCALP_M15_EMA_COMPRESSION_SOFT_ATR = 0.55;
 const SCALP_M15_WICK_RATIO = 0.6;
@@ -150,7 +166,8 @@ const SCALP_RSI_NEUTRAL_LOW = 45;
 const SCALP_RSI_NEUTRAL_HIGH = 55;
 const SCALP_VOLUME_TREND_LOOKBACK = 3;
 const SCALP_PROTECTED_RISK_MULT = 0.5;
-const SCALP_PROTECTED_SL_ATR_BUFFER = 0.6;
+const SCALP_PROTECTED_SL_ATR_BUFFER = 0.3;
+const SCALP_SL_ATR_BUFFER = 0.3;
 const SCALP_TRAIL_TIGHTEN_ATR = 1.5;
 const SCALP_EXIT_TRAIL_ATR = 2.5;
 const SCALP_HTF_NEAR_ATR = 0.6;
@@ -505,6 +522,18 @@ type CoreV2Metrics = {
   volumeP60: number;
   volumeP65: number;
   volumeP70: number;
+  volumeSma: number;
+  volumeStd: number;
+  volumeZ: number;
+  volumeSpike: boolean;
+  ltfRange: number;
+  ltfRangeSma: number;
+  ltfRangeExpansionSma: boolean;
+  ltfUp3: boolean;
+  ltfDown3: boolean;
+  ltfVolDown3: boolean;
+  ltfFakeBreakHigh: boolean;
+  ltfFakeBreakLow: boolean;
   volumeSpikeCurrent: number;
   volumeSpikePrev: number;
   volumeSpikeFading: boolean;
@@ -529,6 +558,11 @@ type CoreV2Metrics = {
   m15Close: number;
   m15Atr14: number;
   m15AtrPct: number;
+  m15EmaSpreadPct: number;
+  m15OverlapWicky: boolean;
+  m15TrendLongOk: boolean;
+  m15TrendShortOk: boolean;
+  m15DriftBlocked: boolean;
   m15EmaCompression: boolean;
   m15EmaCompressionSoft: boolean;
   m15MacdHist: number;
@@ -647,6 +681,28 @@ const computeCoreV2Metrics = (
   const volumeP60 = percentile(recentVols, 60);
   const volumeP65 = percentile(recentVols, 65);
   const volumeP70 = percentile(recentVols, 70);
+  const volSlice = recentVols.slice(-SCALP_VOL_LEN);
+  const volumeSma =
+    volSlice.length > 0
+      ? volSlice.reduce((s, v) => s + v, 0) / volSlice.length
+      : Number.NaN;
+  const volumeStd =
+    volSlice.length > 1 && Number.isFinite(volumeSma)
+      ? Math.sqrt(
+          volSlice.reduce((s, v) => s + Math.pow(v - volumeSma, 2), 0) /
+            volSlice.length
+        )
+      : Number.NaN;
+  const volumeZ =
+    Number.isFinite(volumeStd) && volumeStd > 0 && Number.isFinite(volumeCurrent)
+      ? (volumeCurrent - volumeSma) / volumeStd
+      : Number.NaN;
+  const volumeSpike =
+    Number.isFinite(volumeCurrent) &&
+    Number.isFinite(volumeSma) &&
+    volumeSma > 0 &&
+    (volumeCurrent >= volumeSma * SCALP_VOL_SPIKE_MULT ||
+      (Number.isFinite(volumeZ) && volumeZ >= SCALP_VOL_Z_MIN));
   let volumeSpikeCurrent = Number.NaN;
   let volumeSpikePrev = Number.NaN;
   let volumeSpikeFading = false;
@@ -677,6 +733,23 @@ const computeCoreV2Metrics = (
     Number.isFinite(recentAvgVol) && Number.isFinite(prevAvgVol)
       ? recentAvgVol > prevAvgVol
       : false;
+  const ltfRange =
+    Number.isFinite(ltfHigh) && Number.isFinite(ltfLow)
+      ? ltfHigh - ltfLow
+      : Number.NaN;
+  const rangeSlice = ltf
+    .slice(-SCALP_RANGE_SMA_LEN)
+    .map((c) => c.high - c.low)
+    .filter((v) => Number.isFinite(v));
+  const ltfRangeSma =
+    rangeSlice.length > 0
+      ? rangeSlice.reduce((s, v) => s + v, 0) / rangeSlice.length
+      : Number.NaN;
+  const ltfRangeExpansionSma =
+    Number.isFinite(ltfRange) &&
+    Number.isFinite(ltfRangeSma) &&
+    ltfRangeSma > 0 &&
+    ltfRange > ltfRangeSma * SCALP_RANGE_EXP_MULT;
   const ltfRangeExpansion =
     Number.isFinite(atr14) &&
     Number.isFinite(ltfHigh) &&
@@ -747,6 +820,18 @@ const computeCoreV2Metrics = (
       recentLow >= prevLow
     );
   })();
+  const ltfUp3 =
+    ltfCloses.length >= 3 &&
+    ltfCloses[ltfCloses.length - 1] > ltfCloses[ltfCloses.length - 2] &&
+    ltfCloses[ltfCloses.length - 2] > ltfCloses[ltfCloses.length - 3];
+  const ltfDown3 =
+    ltfCloses.length >= 3 &&
+    ltfCloses[ltfCloses.length - 1] < ltfCloses[ltfCloses.length - 2] &&
+    ltfCloses[ltfCloses.length - 2] < ltfCloses[ltfCloses.length - 3];
+  const ltfVolDown3 =
+    recentVols.length >= 3 &&
+    recentVols[recentVols.length - 1] < recentVols[recentVols.length - 2] &&
+    recentVols[recentVols.length - 2] < recentVols[recentVols.length - 3];
 
   const htf = resampleCandles(candles, 60);
   const htfCloses = htf.map((c) => c.close);
@@ -804,6 +889,39 @@ const computeCoreV2Metrics = (
     Number.isFinite(m15Atr14) && Number.isFinite(m15Close) && m15Close > 0
       ? m15Atr14 / m15Close
       : Number.NaN;
+  const m15EmaSpreadPct =
+    Number.isFinite(ema15m12) &&
+    Number.isFinite(ema15m26) &&
+    Number.isFinite(m15Close) &&
+    m15Close > 0
+      ? Math.abs(ema15m12 - ema15m26) / m15Close
+      : Number.NaN;
+  let m15OverlapWicky = false;
+  if (m15.length >= SCALP_OVERLAP_BARS + 1) {
+    let overlapCount = 0;
+    for (let i = m15.length - SCALP_OVERLAP_BARS; i < m15.length; i++) {
+      const curr = m15[i];
+      const prev = m15[i - 1];
+      if (!curr || !prev) continue;
+      const overlap =
+        Math.min(curr.high, prev.high) - Math.max(curr.low, prev.low);
+      const range = Math.max(curr.high - curr.low, 1e-8);
+      if (overlap / range >= SCALP_OVERLAP_RATIO) overlapCount += 1;
+    }
+    m15OverlapWicky = overlapCount >= SCALP_OVERLAP_BARS - 1;
+  }
+  const m15TrendLongOk =
+    Number.isFinite(m15Close) &&
+    Number.isFinite(ema15m26) &&
+    Number.isFinite(ema15m12) &&
+    m15Close > ema15m26 &&
+    ema15m12 > ema15m26;
+  const m15TrendShortOk =
+    Number.isFinite(m15Close) &&
+    Number.isFinite(ema15m26) &&
+    Number.isFinite(ema15m12) &&
+    m15Close < ema15m26 &&
+    ema15m12 < ema15m26;
   const m15EmaSep =
     Number.isFinite(ema15m12) && Number.isFinite(ema15m26)
       ? Math.abs(ema15m12 - ema15m26)
@@ -895,6 +1013,11 @@ const computeCoreV2Metrics = (
     m15WickIndecision = wickCount >= SCALP_M15_WICK_MIN_COUNT;
     m15WickIndecisionSoft = wickCount >= SCALP_M15_WICK_MIN_COUNT_SOFT;
   }
+  const m15DriftBlocked =
+    (Number.isFinite(m15EmaSpreadPct) &&
+      m15EmaSpreadPct < SCALP_TREND_MIN_SPREAD) ||
+    m15MacdWeak3 ||
+    m15OverlapWicky;
 
   const pullbackLookback = 12;
   let pullbackLong = false;
@@ -933,18 +1056,52 @@ const computeCoreV2Metrics = (
     Boolean(prevLow && lastHigh) &&
     Number.isFinite(ltfClose) &&
     ltfClose < prevLow!.price;
-  const rsiBullDiv =
-    Boolean(prevLowPivot && lastLow) &&
-    lastLow!.price < prevLowPivot!.price &&
-    Number.isFinite(rsiArr[lastLow!.idx]) &&
-    Number.isFinite(rsiArr[prevLowPivot!.idx]) &&
-    rsiArr[lastLow!.idx] > rsiArr[prevLowPivot!.idx];
-  const rsiBearDiv =
-    Boolean(prevHighPivot && lastHigh) &&
-    lastHigh!.price > prevHighPivot!.price &&
-    Number.isFinite(rsiArr[lastHigh!.idx]) &&
-    Number.isFinite(rsiArr[prevHighPivot!.idx]) &&
-    rsiArr[lastHigh!.idx] < rsiArr[prevHighPivot!.idx];
+  const rsiBullDiv = (() => {
+    if (!pivotsLow.length || ltfCloses.length < SCALP_DIV_LOOKBACK) return false;
+    const startIdx = Math.max(0, ltfCloses.length - SCALP_DIV_LOOKBACK);
+    const candidates = pivotsLow.filter((p) => p.idx >= startIdx);
+    if (candidates.length < 2) return false;
+    const last = candidates[candidates.length - 1];
+    let prev: typeof last | undefined;
+    for (let i = candidates.length - 2; i >= 0; i--) {
+      const cand = candidates[i];
+      const gap = last.idx - cand.idx;
+      if (gap >= SCALP_PIVOT_MIN_GAP && gap <= SCALP_PIVOT_MAX_GAP) {
+        prev = cand;
+        break;
+      }
+    }
+    if (!prev) return false;
+    return (
+      last.price < prev.price &&
+      Number.isFinite(rsiArr[last.idx]) &&
+      Number.isFinite(rsiArr[prev.idx]) &&
+      rsiArr[last.idx] > rsiArr[prev.idx]
+    );
+  })();
+  const rsiBearDiv = (() => {
+    if (!pivotsHigh.length || ltfCloses.length < SCALP_DIV_LOOKBACK) return false;
+    const startIdx = Math.max(0, ltfCloses.length - SCALP_DIV_LOOKBACK);
+    const candidates = pivotsHigh.filter((p) => p.idx >= startIdx);
+    if (candidates.length < 2) return false;
+    const last = candidates[candidates.length - 1];
+    let prev: typeof last | undefined;
+    for (let i = candidates.length - 2; i >= 0; i--) {
+      const cand = candidates[i];
+      const gap = last.idx - cand.idx;
+      if (gap >= SCALP_PIVOT_MIN_GAP && gap <= SCALP_PIVOT_MAX_GAP) {
+        prev = cand;
+        break;
+      }
+    }
+    if (!prev) return false;
+    return (
+      last.price > prev.price &&
+      Number.isFinite(rsiArr[last.idx]) &&
+      Number.isFinite(rsiArr[prev.idx]) &&
+      rsiArr[last.idx] < rsiArr[prev.idx]
+    );
+  })();
   const ltfRsi = rsiArr[rsiArr.length - 1] ?? Number.NaN;
   const ltfRsiNeutral =
     Number.isFinite(ltfRsi) &&
@@ -953,6 +1110,18 @@ const computeCoreV2Metrics = (
   const ltfCrossRsiAgainst =
     (emaCrossDir === "BULL" && rsiBearDiv) ||
     (emaCrossDir === "BEAR" && rsiBullDiv);
+  const ltfFakeBreakHigh =
+    Number.isFinite(lastHigh?.price) &&
+    Number.isFinite(ltfHigh) &&
+    Number.isFinite(ltfClose) &&
+    ltfHigh > (lastHigh?.price as number) &&
+    ltfClose < (lastHigh?.price as number);
+  const ltfFakeBreakLow =
+    Number.isFinite(lastLow?.price) &&
+    Number.isFinite(ltfLow) &&
+    Number.isFinite(ltfClose) &&
+    ltfLow < (lastLow?.price as number) &&
+    ltfClose > (lastLow?.price as number);
   const lastPivotHigh = lastHigh?.price;
   const lastPivotLow = lastLow?.price;
   const prevPivotHigh = prevHighPivot?.price;
@@ -983,6 +1152,18 @@ const computeCoreV2Metrics = (
     volumeP60,
     volumeP65,
     volumeP70,
+    volumeSma,
+    volumeStd,
+    volumeZ,
+    volumeSpike,
+    ltfRange,
+    ltfRangeSma,
+    ltfRangeExpansionSma,
+    ltfUp3,
+    ltfDown3,
+    ltfVolDown3,
+    ltfFakeBreakHigh,
+    ltfFakeBreakLow,
     volumeSpikeCurrent,
     volumeSpikePrev,
     volumeSpikeFading,
@@ -1007,6 +1188,11 @@ const computeCoreV2Metrics = (
     m15Close,
     m15Atr14,
     m15AtrPct,
+    m15EmaSpreadPct,
+    m15OverlapWicky,
+    m15TrendLongOk,
+    m15TrendShortOk,
+    m15DriftBlocked,
     m15EmaCompression,
     m15EmaCompressionSoft,
     m15MacdHist,
@@ -1038,37 +1224,41 @@ const computeCoreV2Metrics = (
   };
 };
 
-const computeScalpPrimaryChecklist = (
-  core: CoreV2Metrics | undefined,
-  volumeOk: boolean
-) => {
-  const ema15mTrend = core?.ema15mTrend ?? "NONE";
+const computeScalpPrimaryChecklist = (core: CoreV2Metrics | undefined) => {
   const ltfOk = core?.ltfTimeframeMin === 1;
-  const primaryOk = ema15mTrend !== "NONE" && ltfOk;
-  const emaCrossOk =
-    ema15mTrend === "BULL"
-      ? core?.emaCrossDir === "BULL"
-      : ema15mTrend === "BEAR"
-        ? core?.emaCrossDir === "BEAR"
-        : false;
-  const rsiOk =
-    ema15mTrend === "BULL"
-      ? Boolean(core?.rsiBullDiv)
-      : ema15mTrend === "BEAR"
-        ? Boolean(core?.rsiBearDiv)
-        : false;
-  const entryOk = Boolean(emaCrossOk && rsiOk && volumeOk);
+  const trendLongOk = Boolean(core?.m15TrendLongOk);
+  const trendShortOk = Boolean(core?.m15TrendShortOk);
+  const primaryOk = ltfOk && (trendLongOk || trendShortOk);
+  const crossBullOk =
+    core?.emaCrossDir === "BULL" &&
+    Number.isFinite(core?.emaCrossBarsAgo) &&
+    (core?.emaCrossBarsAgo as number) <= SCALP_EMA_CROSS_LOOKBACK;
+  const crossBearOk =
+    core?.emaCrossDir === "BEAR" &&
+    Number.isFinite(core?.emaCrossBarsAgo) &&
+    (core?.emaCrossBarsAgo as number) <= SCALP_EMA_CROSS_LOOKBACK;
+  const divBullOk = Boolean(core?.rsiBullDiv);
+  const divBearOk = Boolean(core?.rsiBearDiv);
+  const volumeOk = Boolean(core?.volumeSpike);
+  const entryOk = trendLongOk
+    ? Boolean(crossBullOk && divBullOk && volumeOk)
+    : trendShortOk
+      ? Boolean(crossBearOk && divBearOk && volumeOk)
+      : false;
   const exitOk = Number.isFinite(core?.atr14);
   return {
     primaryOk,
     entryOk,
     exitOk,
-    ema15mTrend,
     ltfOk,
-    emaCrossOk,
-    emaCrossBarsAgo: core?.emaCrossBarsAgo,
-    rsiOk,
+    trendLongOk,
+    trendShortOk,
+    crossBullOk,
+    crossBearOk,
+    divBullOk,
+    divBearOk,
     volumeOk,
+    emaCrossBarsAgo: core?.emaCrossBarsAgo,
   };
 };
 
@@ -1095,40 +1285,69 @@ const evaluateScalpGuards = (
     };
   }
   const driftReasons: string[] = [];
-  if (core.m15EmaCompression) driftReasons.push("EMA 15m compression");
-  if (core.m15ImpulseWeak) driftReasons.push("Impulse weakening");
-  if (core.m15MacdWeak3) driftReasons.push("MACD hist weakening");
-  if (core.m15WickIndecision) driftReasons.push("Wicks both sides");
+  if (
+    Number.isFinite(core.m15EmaSpreadPct) &&
+    core.m15EmaSpreadPct < SCALP_TREND_MIN_SPREAD
+  ) {
+    driftReasons.push("EMA spread low");
+  }
+  if (core.m15MacdWeak3) driftReasons.push("MACD weakening");
+  if (core.m15OverlapWicky) driftReasons.push("15m overlap/wicky");
   const driftBlocked = driftReasons.length > 0;
 
   const fakeReasons: string[] = [];
-  if (
-    core.ltfCrossRsiAgainst &&
-    (!Number.isFinite(core.emaCrossBarsAgo) ||
-      (core.emaCrossBarsAgo as number) <= SCALP_EMA_CROSS_LOOKBACK)
-  ) {
-    fakeReasons.push("EMA cross vs RSI div");
+  const trendLongOk = core.m15TrendLongOk;
+  const trendShortOk = core.m15TrendShortOk;
+  if (trendLongOk && core.ltfUp3 && core.ltfVolDown3) {
+    fakeReasons.push("price up / vol down");
   }
-  if (core.volumeSpikeFading) fakeReasons.push("Volume spike fading");
-  if (core.ltfSweepBackInside) fakeReasons.push("Sweep back inside range");
-  const fakeBlocked = fakeReasons.length > 0;
+  if (trendShortOk && core.ltfDown3 && core.ltfVolDown3) {
+    fakeReasons.push("price down / vol down");
+  }
+  if (core.ltfCrossRsiAgainst) {
+    fakeReasons.push("RSI divergence vs cross");
+  }
+  if (core.volumeSpikeFading) {
+    fakeReasons.push("volume spike fading");
+  }
+  if (core.ltfSweepBackInside) {
+    fakeReasons.push("sweep back inside");
+  }
+  if (trendLongOk && core.ltfFakeBreakHigh) {
+    fakeReasons.push("fake break high");
+  }
+  if (trendShortOk && core.ltfFakeBreakLow) {
+    fakeReasons.push("fake break low");
+  }
+  const rsiExtremeLong =
+    trendLongOk && Number.isFinite(core.ltfRsi) && core.ltfRsi > 75;
+  const rsiExtremeShort =
+    trendShortOk && Number.isFinite(core.ltfRsi) && core.ltfRsi < 25;
+  if (rsiExtremeLong || rsiExtremeShort) {
+    fakeReasons.push("RSI extreme");
+  }
+  const onlyRsiExtreme =
+    fakeReasons.length === 1 && fakeReasons[0] === "RSI extreme";
+  const fakeBlocked = fakeReasons.length > 0 && !onlyRsiExtreme;
 
   const protectedReasons: string[] = [];
-  const momentumWeak =
-    core.m15MacdWeak2 ||
-    core.m15EmaCompressionSoft ||
-    core.m15WickIndecisionSoft ||
-    (core.ltfRsiNeutral && core.volumeFalling);
-  if (core.ema15mTrend !== "NONE" && momentumWeak) {
-    if (core.m15MacdWeak2) protectedReasons.push("MACD soft fade");
-    if (core.m15EmaCompressionSoft) protectedReasons.push("EMA 15m soft compress");
-    if (core.m15WickIndecisionSoft) protectedReasons.push("15m indecision");
-    if (core.ltfRsiNeutral && core.volumeFalling) {
-      protectedReasons.push("RSI neutral + vol fade");
+  const trendOk = trendLongOk || trendShortOk;
+  const momentumReasons: string[] = [];
+  if (core.m15MacdWeak2) momentumReasons.push("MACD soft");
+  if (core.m15ImpulseWeak) momentumReasons.push("impulse soft");
+  if (core.m15WickIndecisionSoft) momentumReasons.push("wicky");
+  if (core.m15EmaCompressionSoft) momentumReasons.push("EMA compression");
+  const momentumWeakening = momentumReasons.length > 0;
+  const protectedEntry =
+    onlyRsiExtreme ||
+    (trendOk && momentumWeakening && !driftBlocked && !fakeBlocked);
+  if (protectedEntry) {
+    if (onlyRsiExtreme) {
+      protectedReasons.push("RSI extreme");
+    } else {
+      protectedReasons.push(...momentumReasons);
     }
   }
-  const protectedEntry =
-    !driftBlocked && !fakeBlocked && protectedReasons.length > 0;
 
   return {
     driftBlocked,
@@ -1908,8 +2127,7 @@ export function useTradingBot(
     (entry: number, sl: number, side: "Buy" | "Sell", symbol: Symbol) => {
       const settings = settingsRef.current;
       const isScalpProfile = settings.riskMode === "ai-matic-scalp";
-      const scalpExit = scalpExitStateRef.current.get(symbol);
-      if (isScalpProfile && scalpExit?.mode === "TP") {
+      if (isScalpProfile) {
         return null;
       }
       const symbolMode = TRAIL_SYMBOL_MODE[symbol];
@@ -2816,11 +3034,7 @@ export function useTradingBot(
         feedAgeMs
       );
       const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
-      const volumeGate = coreEval.gates.find((g) => g.name === "Volume Pxx");
-      const scalpPrimary = computeScalpPrimaryChecklist(
-        core,
-        volumeGate?.ok ?? false
-      );
+      const scalpPrimary = computeScalpPrimaryChecklist(core);
       const isScalpProfile = context.settings.riskMode === "ai-matic-scalp";
       const scalpGuards = isScalpProfile ? evaluateScalpGuards(core) : null;
       const hasEntryOrder = ordersRef.current.some(
@@ -2838,6 +3052,9 @@ export function useTradingBot(
       const lastCloseTs = lastCloseBySymbolRef.current.get(symbol) ?? 0;
       const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
       const cooldownMs = CORE_V2_COOLDOWN_MS[context.settings.riskMode];
+      const closeCooldownMs = isScalpProfile
+        ? SCALP_COOLDOWN_MS
+        : REENTRY_COOLDOWN_MS;
       if (context.hasPosition) addBlockReason("pozice");
       if (hasEntryOrder) addBlockReason("order");
       if (hasPendingIntent) addBlockReason("intent");
@@ -2849,8 +3066,8 @@ export function useTradingBot(
         const remainingMs = Math.max(0, INTENT_COOLDOWN_MS - (now - lastIntentTs));
         addBlockReason(`intent ${Math.ceil(remainingMs / 1000)}s`);
       }
-      if (lastCloseTs && now - lastCloseTs < REENTRY_COOLDOWN_MS) {
-        const remainingMs = Math.max(0, REENTRY_COOLDOWN_MS - (now - lastCloseTs));
+      if (lastCloseTs && now - lastCloseTs < closeCooldownMs) {
+        const remainingMs = Math.max(0, closeCooldownMs - (now - lastCloseTs));
         addBlockReason(`re-entry ${Math.ceil(remainingMs / 1000)}s`);
       }
       if (lastLossTs && now - lastLossTs < cooldownMs) {
@@ -2886,18 +3103,34 @@ export function useTradingBot(
         addGate(
           SCALP_PRIMARY_GATE,
           scalpPrimary.primaryOk,
-          `15m ${scalpPrimary.ema15mTrend} | LTF ${core?.ltfTimeframeMin ?? "—"}m`
+          `15m ${
+            scalpPrimary.trendLongOk
+              ? "LONG"
+              : scalpPrimary.trendShortOk
+                ? "SHORT"
+                : "NONE"
+          } | spread ${
+            Number.isFinite(core?.m15EmaSpreadPct)
+              ? formatNumber(core!.m15EmaSpreadPct, 4)
+              : "—"
+          } | LTF ${core?.ltfTimeframeMin ?? "—"}m`
         );
         addGate(
           SCALP_ENTRY_GATE,
           scalpPrimary.entryOk,
           `EMA cross ${
-            core?.emaCrossDir === "NONE" ? "no cross" : core?.emaCrossDir ?? "no cross"
-          }${
-            Number.isFinite(scalpPrimary.emaCrossBarsAgo) ? " <=6b" : ""
-          } | RSI ${scalpPrimary.rsiOk ? "OK" : "no"} | Vol ${
-            scalpPrimary.volumeOk ? "OK" : "no"
-          }`
+            scalpPrimary.crossBullOk
+              ? "BULL"
+              : scalpPrimary.crossBearOk
+                ? "BEAR"
+                : "no cross"
+          }${Number.isFinite(scalpPrimary.emaCrossBarsAgo) ? " <=6b" : ""} | Div ${
+            scalpPrimary.divBullOk
+              ? "BULL"
+              : scalpPrimary.divBearOk
+                ? "BEAR"
+                : "no"
+          } | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`
         );
         addGate(
           SCALP_EXIT_GATE,
@@ -3613,40 +3846,36 @@ export function useTradingBot(
     ) => {
       const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
       if (!core || !Number.isFinite(entry) || entry <= 0) {
-        return { mode: "TP" as const, reason: "missing_core" };
+        return { mode: "TRAIL" as const, reason: "default" };
       }
-      const adx = toNumber((decision as any)?.trendAdx);
-      const isMajor = MAJOR_SYMBOLS.has(symbol);
-      const atrMin = isMajor
-        ? CORE_V2_ATR_MIN_PCT_MAJOR
-        : CORE_V2_ATR_MIN_PCT_ALT;
-      const biasOk =
-        side === "Buy" ? core.htfBias === "BULL" : core.htfBias === "BEAR";
-      const m15Aligned =
-        side === "Buy" ? core.ema15mTrend === "BULL" : core.ema15mTrend === "BEAR";
-      const strongTrend =
-        biasOk &&
-        m15Aligned &&
-        ((Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
-          (Number.isFinite(core.htfAtrPct) && core.htfAtrPct >= atrMin));
-      const htfLevels = [
-        core.htfPivotHigh,
-        core.htfPivotLow,
-        core.htfEma12,
-        core.htfEma26,
-      ].filter((v): v is number => Number.isFinite(v));
-      const nearestLevel = htfLevels.reduce((min, lvl) => {
-        const dist = Math.abs(entry - lvl);
-        return dist < min ? dist : min;
-      }, Number.POSITIVE_INFINITY);
+      const trendOk = core.m15TrendLongOk || core.m15TrendShortOk;
+      const trendWeak =
+        !trendOk ||
+        core.m15MacdWeak2 ||
+        core.m15MacdWeak3 ||
+        core.m15EmaCompression ||
+        core.m15WickIndecisionSoft ||
+        core.m15ImpulseWeak;
+      const atr =
+        Number.isFinite(core.m15Atr14) && core.m15Atr14 > 0
+          ? core.m15Atr14
+          : core.htfAtr14;
+      const htfLevel =
+        side === "Buy"
+          ? core.htfPivotHigh ?? core.htfPivotLow
+          : core.htfPivotLow ?? core.htfPivotHigh;
       const nearHtf =
-        Number.isFinite(core.htfAtr14) &&
-        Number.isFinite(nearestLevel) &&
-        nearestLevel <= core.htfAtr14 * SCALP_HTF_NEAR_ATR;
-      if (strongTrend && !nearHtf) {
-        return { mode: "TRAIL" as const, reason: "strong_trend" };
+        Number.isFinite(htfLevel) &&
+        Number.isFinite(atr) &&
+        atr > 0 &&
+        Math.abs((htfLevel as number) - entry) <= atr * SCALP_HTF_NEAR_ATR;
+      if (nearHtf) {
+        return { mode: "TP" as const, reason: "near_htf" };
       }
-      return { mode: "TP" as const, reason: nearHtf ? "near_htf" : "weak_trend" };
+      if (trendWeak) {
+        return { mode: "TP" as const, reason: "weak_trend" };
+      }
+      return { mode: "TRAIL" as const, reason: "strong_trend" };
     },
     []
   );
@@ -3672,6 +3901,10 @@ export function useTradingBot(
       ) {
         return;
       }
+      const risk = Math.abs(entry - sl);
+      const rMultiple = computeRMultiple(entry, sl, price, side);
+      const hasTrailing =
+        Number.isFinite(pos.currentTrailingStop) && (pos.currentTrailingStop as number) > 0;
 
       const exitKey = symbol;
       if (!scalpExitStateRef.current.has(exitKey)) {
@@ -3725,7 +3958,9 @@ export function useTradingBot(
                 resolveMinProtectionDistance(entry, core.atr14)
               );
               const dir = side === "Buy" ? 1 : -1;
-              const activePrice = entry + dir * distance;
+              const riskDistance =
+                Number.isFinite(risk) && risk > 0 ? risk : distance;
+              const activePrice = entry + dir * riskDistance;
               if (Number.isFinite(activePrice) && activePrice > 0) {
                 try {
                   await updateProtection({
@@ -3785,6 +4020,59 @@ export function useTradingBot(
         }
       }
 
+      const exitMode = scalpExitStateRef.current.get(exitKey)?.mode ?? "TRAIL";
+      if (
+        exitMode === "TRAIL" &&
+        !hasTrailing &&
+        Number.isFinite(rMultiple) &&
+        rMultiple >= 1 &&
+        Number.isFinite(core.atr14) &&
+        core.atr14 > 0 &&
+        Number.isFinite(risk) &&
+        risk > 0
+      ) {
+        const distance = Math.max(
+          core.atr14 * SCALP_EXIT_TRAIL_ATR,
+          resolveMinProtectionDistance(entry, core.atr14)
+        );
+        const dir = side === "Buy" ? 1 : -1;
+        const activePrice = entry + dir * risk;
+        if (Number.isFinite(activePrice) && activePrice > 0) {
+          try {
+            await updateProtection({
+              symbol,
+              trailingStop: distance,
+              trailingActivePrice: activePrice,
+              positionIdx: Number.isFinite(pos.positionIdx)
+                ? pos.positionIdx
+                : undefined,
+            });
+            trailOffsetRef.current.set(symbol, distance / entry);
+            scalpTrailCooldownRef.current.set(symbol, now);
+            addLogEntries([
+              {
+                id: `scalp-trail:activate:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} trail active @ +1R | dist ${formatNumber(
+                  distance,
+                  6
+                )}`,
+              },
+            ]);
+          } catch (err) {
+            addLogEntries([
+              {
+                id: `scalp-trail:activate:error:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "ERROR",
+                message: `${symbol} trail activation failed: ${asErrorMessage(err)}`,
+              },
+            ]);
+          }
+        }
+      }
+
       const shouldRun = (key: string, cooldownMs: number) => {
         const last = scalpActionCooldownRef.current.get(key) ?? 0;
         if (now - last < cooldownMs) return false;
@@ -3808,7 +4096,7 @@ export function useTradingBot(
           ? Number.isFinite(core.lastPivotLow) && core.ltfClose < (core.lastPivotLow as number)
           : Number.isFinite(core.lastPivotHigh) && core.ltfClose > (core.lastPivotHigh as number);
       if (closeBreak) killReasons.push("HL/LH break");
-      if (core.ltfRangeExpansion && core.ltfRangeExpVolume && candleAgainst) {
+      if (core.ltfRangeExpansionSma && core.volumeSpike && candleAgainst) {
         killReasons.push("range exp + vol");
       }
 
@@ -3839,9 +4127,11 @@ export function useTradingBot(
       const timeDecay =
         (side === "Buy" ? core.ltfNoNewHigh : core.ltfNoNewLow) &&
         core.ltfRsiNeutral &&
-        core.volumeFalling;
+        (core.volumeFalling ||
+          (Number.isFinite(core.volumeCurrent) &&
+            Number.isFinite(core.volumeSma) &&
+            core.volumeCurrent < core.volumeSma));
       if (timeDecay && shouldRun(`${symbol}:decay`, 30_000)) {
-        const rMultiple = computeRMultiple(entry, sl, price, side);
         if (!Number.isFinite(rMultiple) || rMultiple < 1) {
           try {
             await submitReduceOnlyOrder(pos, Math.abs(sizeRaw));
@@ -3903,8 +4193,8 @@ export function useTradingBot(
       const volumeSpikeAgainst =
         candleAgainst &&
         Number.isFinite(core.volumeCurrent) &&
-        Number.isFinite(core.volumeP70) &&
-        core.volumeCurrent > core.volumeP70;
+        Number.isFinite(core.volumeSma) &&
+        core.volumeCurrent >= core.volumeSma * SCALP_VOL_SPIKE_MULT;
       const priceStalled = side === "Buy" ? core.ltfNoNewHigh : core.ltfNoNewLow;
       const volumeReversal =
         volumeSpikeAgainst && priceStalled && core.volumeRising;
@@ -4466,8 +4756,11 @@ export function useTradingBot(
         const remainingSec = Math.ceil(remainingMs / 1000);
         entryBlockReasons.push(`recent intent ${remainingSec}s`);
       }
-      if (lastCloseTs && now - lastCloseTs < REENTRY_COOLDOWN_MS) {
-        const remainingMs = Math.max(0, REENTRY_COOLDOWN_MS - (now - lastCloseTs));
+      const closeCooldownMs = isScalpProfile
+        ? SCALP_COOLDOWN_MS
+        : REENTRY_COOLDOWN_MS;
+      if (lastCloseTs && now - lastCloseTs < closeCooldownMs) {
+        const remainingMs = Math.max(0, closeCooldownMs - (now - lastCloseTs));
         const remainingSec = Math.ceil(remainingMs / 1000);
         entryBlockReasons.push(`recent close ${remainingSec}s`);
       }
@@ -4509,6 +4802,39 @@ export function useTradingBot(
           riskReasons.push("chop");
         }
       }
+      if (isScalpProfile) {
+        const lossStreak = computeLossStreak(
+          closedPnlRecords,
+          SCALP_MAX_LOSSES_IN_ROW
+        );
+        const equity = getEquityValue();
+        const riskBudget =
+          Number.isFinite(equity) && equity > 0
+            ? equity * (CORE_V2_RISK_PCT["ai-matic-scalp"] ?? 0)
+            : Number.NaN;
+        const dayAgo = now - 24 * 60 * 60_000;
+        const dailyPnlUsd = Array.isArray(closedPnlRecords)
+          ? closedPnlRecords.reduce((sum, r) => {
+              if (r.ts < dayAgo) return sum;
+              return sum + r.pnl;
+            }, 0)
+          : Number.NaN;
+        const dailyLossR =
+          Number.isFinite(riskBudget) && riskBudget > 0
+            ? dailyPnlUsd / riskBudget
+            : Number.NaN;
+        if (lossStreak >= SCALP_MAX_LOSSES_IN_ROW) {
+          riskOff = true;
+          riskReasons.push(`loss_streak ${lossStreak}`);
+        }
+        if (
+          Number.isFinite(dailyLossR) &&
+          dailyLossR <= SCALP_MAX_DAILY_LOSS_R
+        ) {
+          riskOff = true;
+          riskReasons.push(`daily_R ${dailyLossR.toFixed(2)}`);
+        }
+      }
       const riskOn = !riskOff;
       if (!riskOn) {
         addLogEntries([
@@ -4516,27 +4842,29 @@ export function useTradingBot(
             id: `signal:risk:${signalId}`,
             timestamp: new Date(now).toISOString(),
             action: "RISK_BLOCK",
-            message: `${symbol} risk block: ${riskReasons.join(", ")}`,
+            message: `${symbol} risk off: ${riskReasons.join(", ")}`,
           },
         ]);
-        return;
+        if (!isScalpProfile) {
+          return;
+        }
       }
 
       // reuse feedAgeMs + coreEval computed above
       const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
-      const volumeGate = coreEval.gates.find((g) => g.name === "Volume Pxx");
-      const scalpPrimary = computeScalpPrimaryChecklist(
-        core,
-        volumeGate?.ok ?? false
-      );
+      const scalpPrimary = computeScalpPrimaryChecklist(core);
       const scalpGuards = isScalpProfile ? evaluateScalpGuards(core) : null;
       if (isScalpProfile && scalpGuards) {
         const guardReasons: string[] = [];
         if (isGateEnabled(SCALP_DRIFT_GATE)) {
-          guardReasons.push(...scalpGuards.driftReasons);
+          if (scalpGuards.driftBlocked) {
+            guardReasons.push(...scalpGuards.driftReasons);
+          }
         }
         if (isGateEnabled(SCALP_FAKE_MOMENTUM_GATE)) {
-          guardReasons.push(...scalpGuards.fakeReasons);
+          if (scalpGuards.fakeBlocked) {
+            guardReasons.push(...scalpGuards.fakeReasons);
+          }
         }
         if (guardReasons.length > 0) {
           const guardKey = `scalp-guard:${symbol}:${guardReasons.join("|")}`;
@@ -4559,6 +4887,25 @@ export function useTradingBot(
         isScalpProfile &&
         isGateEnabled(SCALP_PROTECTED_ENTRY_GATE) &&
         Boolean(scalpGuards?.protectedEntry);
+      if (isScalpProfile) {
+        const primaryBlocked =
+          isGateEnabled(SCALP_PRIMARY_GATE) && !scalpPrimary.primaryOk;
+        const entryBlocked =
+          isGateEnabled(SCALP_ENTRY_GATE) && !scalpPrimary.entryOk;
+        if (primaryBlocked || entryBlocked) {
+          addLogEntries([
+            {
+              id: `signal:scalp-gate:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} scalp gate: ${
+                primaryBlocked ? "trend" : "entry"
+              } -> NO TRADE`,
+            },
+          ]);
+          return;
+        }
+      }
       const hardEnabled = false;
       const softEnabled = context.settings.enableSoftGates !== false;
       const hardBlockReasons: string[] = [];
@@ -4632,15 +4979,33 @@ export function useTradingBot(
         checklistGates.push({
           name: SCALP_PRIMARY_GATE,
           ok: scalpPrimary.primaryOk,
-          detail: `15m ${scalpPrimary.ema15mTrend} | LTF ${core?.ltfTimeframeMin ?? "—"}m`,
+          detail: `15m ${
+            scalpPrimary.trendLongOk
+              ? "LONG"
+              : scalpPrimary.trendShortOk
+                ? "SHORT"
+                : "NONE"
+          } | spread ${
+            Number.isFinite(core?.m15EmaSpreadPct)
+              ? formatNumber(core!.m15EmaSpreadPct, 4)
+              : "—"
+          } | LTF ${core?.ltfTimeframeMin ?? "—"}m`,
         });
         checklistGates.push({
           name: SCALP_ENTRY_GATE,
           ok: scalpPrimary.entryOk,
           detail: `EMA cross ${
-            core?.emaCrossDir === "NONE" ? "no cross" : core?.emaCrossDir ?? "no cross"
-          }${Number.isFinite(scalpPrimary.emaCrossBarsAgo) ? " <=6b" : ""} | RSI ${
-            scalpPrimary.rsiOk ? "OK" : "no"
+            scalpPrimary.crossBullOk
+              ? "BULL"
+              : scalpPrimary.crossBearOk
+                ? "BEAR"
+                : "no cross"
+          }${Number.isFinite(scalpPrimary.emaCrossBarsAgo) ? " <=6b" : ""} | Div ${
+            scalpPrimary.divBullOk
+              ? "BULL"
+              : scalpPrimary.divBearOk
+                ? "BEAR"
+                : "no"
           } | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`,
         });
         checklistGates.push({
@@ -4681,29 +5046,47 @@ export function useTradingBot(
       let resolvedTp = tp;
       if (
         isScalpProfile &&
-        (!Number.isFinite(resolvedSl) || resolvedSl <= 0) &&
         Number.isFinite(entry) &&
         entry > 0 &&
         Number.isFinite(core?.atr14) &&
         core!.atr14 > 0
       ) {
-        const offset = core!.atr14 * 2.5;
-        resolvedSl = side === "Buy" ? entry - offset : entry + offset;
-      }
-      if (
-        isScalpProfile &&
-        (!Number.isFinite(resolvedTp) || resolvedTp <= 0) &&
-        Number.isFinite(resolvedSl) &&
-        resolvedSl > 0 &&
-        Number.isFinite(entry) &&
-        entry > 0
-      ) {
-        const risk = Math.abs(entry - resolvedSl);
-        if (Number.isFinite(risk) && risk > 0) {
-          resolvedTp =
+        const atr = core!.atr14;
+        const structure =
+          side === "Buy"
+            ? core.lastPivotLow ?? core.pivotLow
+            : core.lastPivotHigh ?? core.pivotHigh;
+        const atrStop =
+          side === "Buy"
+            ? entry - SCALP_ATR_MULT_INITIAL * atr
+            : entry + SCALP_ATR_MULT_INITIAL * atr;
+        let baseStop = Number.isFinite(structure) ? (structure as number) : atrStop;
+        if (Number.isFinite(structure)) {
+          baseStop =
             side === "Buy"
-              ? entry + 1.5 * risk
-              : entry - 1.5 * risk;
+              ? Math.min(structure as number, atrStop)
+              : Math.max(structure as number, atrStop);
+        }
+        const bufferedStop =
+          side === "Buy"
+            ? baseStop - atr * SCALP_SL_ATR_BUFFER
+            : baseStop + atr * SCALP_SL_ATR_BUFFER;
+        if (
+          !Number.isFinite(resolvedSl) ||
+          resolvedSl <= 0 ||
+          (side === "Buy" && bufferedStop < resolvedSl) ||
+          (side === "Sell" && bufferedStop > resolvedSl)
+        ) {
+          resolvedSl = bufferedStop;
+        }
+        if (Number.isFinite(resolvedSl) && resolvedSl > 0) {
+          const risk = Math.abs(entry - resolvedSl);
+          if (Number.isFinite(risk) && risk > 0) {
+            resolvedTp =
+              side === "Buy"
+                ? entry + 1.5 * risk
+                : entry - 1.5 * risk;
+          }
         }
       }
       if (protectedEntry) {
@@ -4771,9 +5154,6 @@ export function useTradingBot(
         );
         scalpExitMode = exitPref.mode;
         scalpExitReason = exitPref.reason;
-        if (exitPref.mode === "TRAIL") {
-          resolvedTp = Number.NaN;
-        }
       }
 
       const fixedSizing = computeFixedSizing(symbol as Symbol, entry, resolvedSl);
@@ -4790,7 +5170,12 @@ export function useTradingBot(
         ]);
         return;
       }
-      const riskMultiplier = protectedEntry ? SCALP_PROTECTED_RISK_MULT : 1;
+      const riskOffMultiplier =
+        isScalpProfile && riskOff ? SCALP_RISK_OFF_MULT : 1;
+      const riskMultiplier = Math.min(
+        protectedEntry ? SCALP_PROTECTED_RISK_MULT : 1,
+        riskOffMultiplier
+      );
       const useFixedQty = fixedSizing?.ok === true;
       const qtyMode = useFixedQty ? "BASE_QTY" : "USDT_NOTIONAL";
       const baseQty = sizing.qty;
@@ -4814,23 +5199,24 @@ export function useTradingBot(
           },
         ]);
       }
+      if (isScalpProfile && riskOff) {
+        addLogEntries([
+          {
+            id: `signal:riskoff:${signalId}`,
+            timestamp: new Date(now).toISOString(),
+            action: "STATUS",
+            message: `${symbol} risk-off sizing (${Math.round(
+              SCALP_RISK_OFF_MULT * 100
+            )}%)`,
+          },
+        ]);
+      }
 
       let trailOffset = toNumber((decision as any)?.trailOffsetPct);
       if (cheatTrailOverride != null) {
         trailOffset = cheatTrailOverride;
       }
-      const allowScalpTrail = !isScalpProfile || scalpExitMode !== "TP";
-      if (
-        isScalpProfile &&
-        allowScalpTrail &&
-        (!Number.isFinite(trailOffset) || trailOffset <= 0) &&
-        Number.isFinite(core?.atr14) &&
-        core!.atr14 > 0 &&
-        Number.isFinite(entry) &&
-        entry > 0
-      ) {
-        trailOffset = (core!.atr14 * SCALP_EXIT_TRAIL_ATR) / entry;
-      }
+      const allowScalpTrail = !isScalpProfile;
       if (allowScalpTrail && Number.isFinite(trailOffset) && trailOffset > 0) {
         trailOffsetRef.current.set(symbol, trailOffset);
       } else if (cheatTrailOverride == null) {
