@@ -133,6 +133,6 @@ export function createRiskSnapshotV2(input: Partial<RiskSnapshotV2>): RiskSnapsh
     feeModel: input.feeModel ?? "taker",
     maxLeverage: input.maxLeverage ?? 100,
     minNotional: input.minNotional ?? 5,
-    stopDistancePct: input.stopDistancePct ?? 0.0015,
+    stopDistancePct: input.stopDistancePct ?? 0.015,
   };
 }

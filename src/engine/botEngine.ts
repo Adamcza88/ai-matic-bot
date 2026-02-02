@@ -229,7 +229,7 @@ function applyProfileOverrides(cfg: BotConfig): BotConfig {
     maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
     maxOpenPositions: 3,
     trailingActivationR: 1,
-    minStopPercent: Math.min(cfg.minStopPercent, 0.0012),
+    minStopPercent: Math.min(cfg.minStopPercent, 0.02),
     partialSteps: [{ r: 1, exitFraction: 0.5 }],
     maxExitChunks: 2,
     pyramidAddScale: 0.5,
@@ -272,7 +272,7 @@ export const defaultConfig: BotConfig = {
   maxOpenPositions: 3,
   maxExitChunks: 3,
   trailingActivationR: 1,   //2
-  minStopPercent: 0.002,  //0.003
+  minStopPercent: 0.02,  //0.003
   pyramidAddScale: 0.5,
   pyramidLevels: [
     { triggerR: 1, stopToR: 0 },
