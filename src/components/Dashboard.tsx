@@ -74,15 +74,27 @@ export default function Dashboard({
 
   const riskMode = bot.settings?.riskMode ?? "ai-matic";
   const cheatSheetSetupId =
-    {
-      "ai-matic": "ai-matic-core",
-      "ai-matic-x": "ai-matic-x-smart-money-combo",
-      "ai-matic-scalp": "ai-matic-scalp-scalpera",
-      "ai-matic-tree": "ai-matic-decision-tree",
-    }[riskMode] ?? "ai-matic-core";
-  const cheatSheetSetup = getCheatSheetSetup(cheatSheetSetupId);
-  const cheatSheetStatus = bot.settings?.strategyCheatSheetEnabled ? "On" : "Off";
-  const cheatSheetLabel = cheatSheetSetup?.name ?? "Cheat sheet";
+    riskMode === "ai-matic-pro"
+      ? null
+      : {
+          "ai-matic": "ai-matic-core",
+          "ai-matic-x": "ai-matic-x-smart-money-combo",
+          "ai-matic-scalp": "ai-matic-scalp-scalpera",
+          "ai-matic-tree": "ai-matic-decision-tree",
+        }[riskMode] ?? "ai-matic-core";
+  const cheatSheetSetup = cheatSheetSetupId
+    ? getCheatSheetSetup(cheatSheetSetupId)
+    : null;
+  const cheatSheetStatus =
+    riskMode === "ai-matic-pro"
+      ? "N/A"
+      : bot.settings?.strategyCheatSheetEnabled
+        ? "On"
+        : "Off";
+  const cheatSheetLabel =
+    riskMode === "ai-matic-pro"
+      ? "N/A"
+      : cheatSheetSetup?.name ?? "Cheat sheet";
   const cheatSheetNote = `Cheat sheet: ${cheatSheetLabel} (${cheatSheetStatus})`;
   const cheatEnabled = bot.settings?.strategyCheatSheetEnabled === true;
   const profileMeta = useMemo(() => {
@@ -135,6 +147,18 @@ export default function Dashboard({
         execution: `TP ~2.2R + partial 1R · time stop ~2h · ${cheatSheetNote}`,
       };
     }
+    if (riskMode === "ai-matic-pro") {
+      return {
+        label: "AI-MATIC-PRO",
+        subtitle: "Sideways only · Market Profile + Orderflow",
+        symbols: SUPPORTED_SYMBOLS,
+        timeframes: "1h režim · 15m/mid · 5m entry · 1m exec",
+        session: "24/7",
+        risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
+        entry: "VA edge + OFI/Delta absorpce (LIMIT_MAKER_FIRST)",
+        execution: `T1 ~VWAP/mid (60%) · T2 POC/VAH/VAL · time stop 10 svíček/60m · ${cheatSheetNote}`,
+      };
+    }
     return {
       label: "AI-MATIC",
       subtitle: "AI-MATIC Core (HTF 1h/15m · LTF 5m/1m)",
@@ -178,6 +202,15 @@ export default function Dashboard({
       "ai-matic": base,
       "ai-matic-x": base,
       "ai-matic-tree": base,
+      "ai-matic-pro": {
+        "Hurst < 0.45": true,
+        "CHOP > 60": true,
+        "HMM state0 p>=0.7": true,
+        "VPIN < 0.8": true,
+        "OFI/Delta trigger": true,
+        "VA edge": true,
+        "Exec allowed": true,
+      },
       "ai-matic-scalp": {
         "Primary Timeframe: 15m for trend, 1m for entry.": true,
         "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.": true,

@@ -54,8 +54,8 @@ export type StrategyDecision = {
   mode: Mode | null;
   side: Side | null;
   entryType: EntryType | null;
-  tfContext: "15m" | "1h" | null; //"15m" | "1h" | "4h" | "1D" | null;
-  tfEntry: "1m" | "5m" | null;  //"1m" | "3m" | "5m" | "15m" | "1h" | null;
+  tfContext: "15m" | "1h" | "4h" | null; //"15m" | "1h" | "4h" | "1D" | null;
+  tfEntry: "1m" | "5m" | "15m" |null;  //"1m" | "3m" | "5m" | "15m" | "1h" | null;
   slRule: SlRule | null;
   tpPlan: { tp1: TpRule; tp2?: TpRule } | null;
   trailing: TrailingRule;

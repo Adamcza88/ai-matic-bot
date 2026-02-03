@@ -1,6 +1,7 @@
 // src/engine/priceFeed.ts
 // Public realtime feed z Bybitu přes WebSocket s automatickým pingem
 import { evaluateStrategyForSymbol, } from "@/engine/botEngine";
+import { updateOrderbook, updateTrades } from "@/engine/orderflow";
 const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
 const FEED_URL_TESTNET = "wss://stream.bybit.com/v5/public/linear";
 const REST_URL_MAINNET = "https://api.bybit.com";
@@ -110,6 +111,8 @@ export function startPriceFeed(symbols, onDecision, opts) {
     const maxCandles = opts?.maxCandles ?? 500;
     const decisionFn = opts?.decisionFn ?? evaluateStrategyForSymbol;
     const backfill = opts?.backfill;
+    const orderflowEnabled = Boolean(opts?.orderflow?.enabled);
+    const orderflowDepth = opts?.orderflow?.depth ?? 50;
     let pingTimer = null;
     if (backfill?.enabled) {
         const interval = backfill.interval ?? timeframe;
@@ -146,6 +149,15 @@ export function startPriceFeed(symbols, onDecision, opts) {
             op: "subscribe",
             args: symbols.map((s) => `kline.${timeframe}.${s}`),
         }));
+        if (orderflowEnabled) {
+            ws.send(JSON.stringify({
+                op: "subscribe",
+                args: [
+                    ...symbols.map((s) => `orderbook.${orderflowDepth}.${s}`),
+                    ...symbols.map((s) => `publicTrade.${s}`),
+                ],
+            }));
+        }
         // ping nutný pro udržení spojení
         pingTimer = setInterval(() => {
             if (ws.readyState === WebSocket.OPEN) {
@@ -163,6 +175,27 @@ export function startPriceFeed(symbols, onDecision, opts) {
                 return;
             if (!msg.topic || !msg.data)
                 return;
+            if (orderflowEnabled) {
+                if (msg.topic.startsWith("orderbook.")) {
+                    const [, , symbol] = msg.topic.split(".");
+                    if (!symbol)
+                        return;
+                    const data = msg.data ?? {};
+                    const bids = Array.isArray(data.b) ? data.b : [];
+                    const asks = Array.isArray(data.a) ? data.a : [];
+                    const isSnapshot = String(msg.type ?? "").toLowerCase() === "snapshot";
+                    updateOrderbook(symbol, bids, asks, isSnapshot);
+                    return;
+                }
+                if (msg.topic.startsWith("publicTrade.")) {
+                    const [, symbol] = msg.topic.split(".");
+                    if (!symbol)
+                        return;
+                    const trades = Array.isArray(msg.data) ? msg.data : [];
+                    updateTrades(symbol, trades);
+                    return;
+                }
+            }
             const [, , symbol] = msg.topic.split(".");
             if (!symbol)
                 return;

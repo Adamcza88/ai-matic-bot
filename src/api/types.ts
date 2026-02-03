@@ -23,7 +23,8 @@ export type Profile =
   | "AI-MATIC"
   | "AI-MATIC-X"
   | "AI-MATIC-SCALP"
-  | "AI-MATIC-TREE";
+  | "AI-MATIC-TREE"
+  | "AI-MATIC-PRO";
 
 export type TradeIntent = {
   intentId: string;

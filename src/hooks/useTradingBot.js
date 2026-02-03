@@ -5,6 +5,7 @@ import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import { evaluateStrategyForSymbol, resampleCandles, computeATR } from "../engine/botEngine";
 import { evaluateAiMaticXStrategyForSymbol, } from "../engine/aiMaticXStrategy";
+import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy";
 import { decideCombinedEntry, } from "../engine/combinedEntryStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta";
@@ -36,24 +37,28 @@ const CORE_V2_RISK_PCT = {
     "ai-matic-x": 0.003,
     "ai-matic-scalp": 0.0025,
     "ai-matic-tree": 0.003,
+    "ai-matic-pro": 0.003,
 };
 const CORE_V2_COOLDOWN_MS = {
     "ai-matic": 0,
     "ai-matic-x": 0,
     "ai-matic-scalp": 0,
     "ai-matic-tree": 0,
+    "ai-matic-pro": 0,
 };
 const CORE_V2_VOLUME_PCTL = {
     "ai-matic": 60,
     "ai-matic-x": 70,
     "ai-matic-scalp": 50,
     "ai-matic-tree": 65,
+    "ai-matic-pro": 65,
 };
 const CORE_V2_SCORE_GATE = {
     "ai-matic": { major: 11, alt: 12 },
     "ai-matic-x": { major: 12, alt: 13 },
     "ai-matic-scalp": { major: 10, alt: 99 },
     "ai-matic-tree": { major: 11, alt: 13 },
+    "ai-matic-pro": { major: 10, alt: 10 },
 };
 const MIN_CHECKLIST_PASS = 8;
 const REENTRY_COOLDOWN_MS = 15000;
@@ -714,16 +719,18 @@ function computeRMultiple(entry, sl, price, side) {
     return move / risk;
 }
 const TRAIL_PROFILE_BY_RISK_MODE = {
-  "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
-  "ai-matic-x": { activateR: 1.0, lockR: 0.3, retracementRate: 0.002 },
-  "ai-matic-scalp": { activateR: 1.2, lockR: 0.6 },
-  "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
+    "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
+    "ai-matic-x": { activateR: 1.0, lockR: 0.3, retracementRate: 0.002 },
+    "ai-matic-scalp": { activateR: 1.2, lockR: 0.6 },
+    "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
+    "ai-matic-pro": { activateR: 0.5, lockR: 0.3 },
 };
 const TRAIL_PROFILE_BY_RISK_MODE_CHEAT = {
-  "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
-  "ai-matic-x": { activateR: 0.6, lockR: 0.3, retracementRate: 0.002 },
-  "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
-  "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
+    "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
+    "ai-matic-x": { activateR: 0.6, lockR: 0.3, retracementRate: 0.002 },
+    "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
+    "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
+    "ai-matic-pro": { activateR: 0.5, lockR: 0.3 },
 };
 const TRAIL_SYMBOL_MODE = {
     SOLUSDT: "on",
@@ -742,6 +749,7 @@ const PROFILE_BY_RISK_MODE = {
     "ai-matic-x": "AI-MATIC-X",
     "ai-matic-scalp": "AI-MATIC-SCALP",
     "ai-matic-tree": "AI-MATIC-TREE",
+    "ai-matic-pro": "AI-MATIC-PRO",
 };
 export function useTradingBot(mode, useTestnet = false, authToken) {
     const allowPositionClose = true;
@@ -758,11 +766,13 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         return ["BTCUSDT", ...activeSymbols];
     }, [activeSymbols]);
     const engineConfig = useMemo(() => {
-        const cheatSheetSetupId = settings.strategyCheatSheetEnabled
+        const proMode = settings.riskMode === "ai-matic-pro";
+        const cheatSheetEnabled = settings.strategyCheatSheetEnabled && !proMode;
+        const cheatSheetSetupId = cheatSheetEnabled
             ? CHEAT_SHEET_SETUP_BY_RISK_MODE[settings.riskMode]
             : undefined;
         const baseConfig = {
-            useStrategyCheatSheet: settings.strategyCheatSheetEnabled,
+            useStrategyCheatSheet: cheatSheetEnabled,
             ...(cheatSheetSetupId ? { cheatSheetSetupId } : {}),
         };
         const strictness = settings.entryStrictness === "base"
@@ -821,6 +831,16 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 cooldownBars: 0,
             };
         }
+        if (settings.riskMode === "ai-matic-pro") {
+            return {
+                ...baseConfig,
+                strategyProfile: "ai-matic-pro",
+                baseTimeframe: "1h",
+                signalTimeframe: "5m",
+                entryStrictness: "base",
+                cooldownBars: 0,
+            };
+        }
         return baseConfig;
     }, [settings.entryStrictness, settings.riskMode, settings.strategyCheatSheetEnabled]);
     const [positions, setPositions] = useState(null);
@@ -857,6 +877,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const autoCloseCooldownRef = useRef(new Map());
     const cheatLimitMetaRef = useRef(new Map());
     const partialExitRef = useRef(new Map());
+    const proTargetsRef = useRef(new Map());
+    const proPartialRef = useRef(new Map());
     const decisionRef = useRef({});
     const signalSeenRef = useRef(new Set());
     const intentPendingRef = useRef(new Set());
@@ -1281,6 +1303,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 trailOffsetRef.current.delete(symbol);
             }
         }
+        for (const symbol of proTargetsRef.current.keys()) {
+            const hasPosition = seenSymbols.has(symbol);
+            const hasPending = intentPendingRef.current.has(symbol);
+            const hasOrder = ordersRef.current.some((order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol);
+            if (!hasPosition && !hasOrder && !hasPending) {
+                proTargetsRef.current.delete(symbol);
+            }
+        }
         const activePositionKeys = new Set(positions
             .map((pos) => String(pos.positionId || pos.id || `${pos.symbol}:${pos.openedAt}`))
             .filter(Boolean));
@@ -1289,12 +1319,18 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 partialExitRef.current.delete(key);
             }
         }
+        for (const key of proPartialRef.current.keys()) {
+            if (!activePositionKeys.has(key)) {
+                proPartialRef.current.delete(key);
+            }
+        }
         for (const pos of positions) {
             const symbol = String(pos.symbol ?? "");
             if (!symbol)
                 continue;
             const settings = settingsRef.current;
             const isScalpProfile = settings.riskMode === "ai-matic-scalp";
+            const isProProfile = settings.riskMode === "ai-matic-pro";
             const positionKey = String(pos.positionId || pos.id || `${pos.symbol}:${pos.openedAt}`);
             const currentTrail = toNumber(pos.currentTrailingStop);
             const entry = toNumber(pos.entryPrice);
@@ -1306,7 +1342,125 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 continue;
             }
             const side = pos.side === "Sell" ? "Sell" : "Buy";
-            if (!isScalpProfile && positionKey) {
+            if (isProProfile && positionKey) {
+                const price = toNumber(pos.markPrice);
+                const sizeRaw = Math.abs(toNumber(pos.size ?? pos.qty));
+                let proState = proPartialRef.current.get(positionKey);
+                if (!proState) {
+                    const seed = proTargetsRef.current.get(symbol);
+                    if (seed &&
+                        Number.isFinite(seed.entryPrice) &&
+                        Number.isFinite(entry) &&
+                        Math.abs(seed.entryPrice - entry) / entry <= 0.01) {
+                        proState = {
+                            t1: seed.t1,
+                            t2: seed.t2,
+                            timeStopMinutes: seed.timeStopMinutes,
+                            entryPrice: seed.entryPrice,
+                            side: seed.side,
+                            t1Taken: false,
+                            lastAttempt: 0,
+                        };
+                        proPartialRef.current.set(positionKey, proState);
+                    }
+                }
+                if (proState) {
+                    const openedAtMs = Date.parse(pos.openedAt);
+                    if (Number.isFinite(openedAtMs) &&
+                        proState.timeStopMinutes > 0 &&
+                        now - openedAtMs >= proState.timeStopMinutes * 60_000 &&
+                        now - proState.lastAttempt >= 30_000) {
+                        proState.lastAttempt = now;
+                        proPartialRef.current.set(positionKey, proState);
+                        try {
+                            await postJson("/order", {
+                                symbol,
+                                side: side === "Buy" ? "Sell" : "Buy",
+                                qty: sizeRaw,
+                                orderType: "Market",
+                                reduceOnly: true,
+                                timeInForce: "IOC",
+                                positionIdx: Number.isFinite(pos.positionIdx)
+                                    ? pos.positionIdx
+                                    : undefined,
+                            });
+                            addLogEntries([
+                                {
+                                    id: `pro-timestop:${symbol}:${now}`,
+                                    timestamp: new Date(now).toISOString(),
+                                    action: "STATUS",
+                                    message: `${symbol} PRO time stop -> EXIT`,
+                                },
+                            ]);
+                        }
+                        catch (err) {
+                            addLogEntries([
+                                {
+                                    id: `pro-timestop:error:${symbol}:${now}`,
+                                    timestamp: new Date(now).toISOString(),
+                                    action: "ERROR",
+                                    message: `${symbol} PRO time stop failed: ${asErrorMessage(err)}`,
+                                },
+                            ]);
+                        }
+                        continue;
+                    }
+                    const t1Hit = Number.isFinite(price) &&
+                        Number.isFinite(proState.t1) &&
+                        (side === "Buy" ? price >= proState.t1 : price <= proState.t1);
+                    if (t1Hit &&
+                        !proState.t1Taken &&
+                        now - proState.lastAttempt >= 30_000 &&
+                        Number.isFinite(sizeRaw) &&
+                        sizeRaw > 0) {
+                        proState.lastAttempt = now;
+                        const reduceQty = Math.min(sizeRaw, sizeRaw * 0.6);
+                        try {
+                            await postJson("/order", {
+                                symbol,
+                                side: side === "Buy" ? "Sell" : "Buy",
+                                qty: reduceQty,
+                                orderType: "Market",
+                                reduceOnly: true,
+                                timeInForce: "IOC",
+                                positionIdx: Number.isFinite(pos.positionIdx)
+                                    ? pos.positionIdx
+                                    : undefined,
+                            });
+                            proState.t1Taken = true;
+                            proPartialRef.current.set(positionKey, proState);
+                            const minDistance = resolveMinProtectionDistance(entry);
+                            const beSl = side === "Buy" ? entry - minDistance : entry + minDistance;
+                            await postJson("/protection", {
+                                symbol,
+                                sl: beSl,
+                                positionIdx: Number.isFinite(pos.positionIdx)
+                                    ? pos.positionIdx
+                                    : undefined,
+                            });
+                            addLogEntries([
+                                {
+                                    id: `pro-t1:${symbol}:${now}`,
+                                    timestamp: new Date(now).toISOString(),
+                                    action: "STATUS",
+                                    message: `${symbol} PRO T1 partial 60% + BE`,
+                                },
+                            ]);
+                        }
+                        catch (err) {
+                            addLogEntries([
+                                {
+                                    id: `pro-t1:error:${symbol}:${now}`,
+                                    timestamp: new Date(now).toISOString(),
+                                    action: "ERROR",
+                                    message: `${symbol} PRO T1 partial failed: ${asErrorMessage(err)}`,
+                                },
+                            ]);
+                        }
+                    }
+                }
+            }
+            if (!isScalpProfile && !isProProfile && positionKey) {
                 const partialState = partialExitRef.current.get(positionKey);
                 const lastAttempt = partialState?.lastAttempt ?? 0;
                 const price = toNumber(pos.markPrice);
@@ -1950,6 +2104,83 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             isMajor,
         };
     }, []);
+    const evaluateProGates = useCallback((decision, signal) => {
+        const regime = decision?.proRegime;
+        const profile = decision?.marketProfile;
+        const orderflow = decision?.orderflow;
+        const hurstOk = Number.isFinite(regime?.hurst) && (regime?.hurst ?? 1) < 0.45;
+        const chopOk = Number.isFinite(regime?.chop) && (regime?.chop ?? 0) > 60;
+        const hmmOk = Number.isFinite(regime?.hmmProb) && (regime?.hmmProb ?? 0) >= 0.7;
+        const vpinOk = Number.isFinite(regime?.vpin ?? orderflow?.vpin) &&
+            (regime?.vpin ?? orderflow?.vpin ?? 1) < 0.8;
+        const ofiDeltaOk = Number.isFinite(orderflow?.ofi) ||
+            Number.isFinite(orderflow?.delta) ||
+            Boolean(signal);
+        const vaOk = Number.isFinite(profile?.vah) &&
+            Number.isFinite(profile?.val) &&
+            (profile?.vah ?? 0) > 0 &&
+            (profile?.val ?? 0) > 0;
+        const gates = [
+            {
+                name: "Hurst < 0.45",
+                ok: hurstOk,
+                detail: Number.isFinite(regime?.hurst)
+                    ? `H ${formatNumber(regime.hurst, 3)}`
+                    : "missing",
+            },
+            {
+                name: "CHOP > 60",
+                ok: chopOk,
+                detail: Number.isFinite(regime?.chop)
+                    ? `CHOP ${formatNumber(regime.chop, 1)}`
+                    : "missing",
+            },
+            {
+                name: "HMM state0 p>=0.7",
+                ok: hmmOk,
+                detail: Number.isFinite(regime?.hmmProb)
+                    ? `p ${formatNumber(regime.hmmProb, 2)}`
+                    : "missing",
+            },
+            {
+                name: "VPIN < 0.8",
+                ok: vpinOk,
+                detail: Number.isFinite(regime?.vpin ?? orderflow?.vpin)
+                    ? `VPIN ${formatNumber((regime?.vpin ?? orderflow?.vpin ?? 0), 2)}`
+                    : "missing",
+            },
+            {
+                name: "OFI/Delta trigger",
+                ok: ofiDeltaOk,
+                detail: Number.isFinite(orderflow?.ofi) || Number.isFinite(orderflow?.delta)
+                    ? `OFI ${formatNumber(orderflow?.ofi ?? 0, 2)} | Δ ${formatNumber(orderflow?.delta ?? 0, 2)}`
+                    : signal
+                        ? "signal"
+                        : "missing",
+            },
+            {
+                name: "VA edge",
+                ok: vaOk,
+                detail: Number.isFinite(profile?.vah) && Number.isFinite(profile?.val)
+                    ? `VAL ${formatNumber(profile.val, 2)} | VAH ${formatNumber(profile.vah, 2)}`
+                    : "missing",
+            },
+        ];
+        const score = gates.filter((g) => g.ok).length;
+        const scoreTotal = gates.length;
+        const scorePass = scoreTotal > 0 ? gates.every((g) => g.ok) : true;
+        return {
+            gates,
+            score,
+            scoreTotal,
+            threshold: scoreTotal,
+            scorePass,
+            hardFailures: gates.filter((g) => !g.ok).map((g) => g.name),
+            atrMin: Number.NaN,
+            volumePct: 0,
+            isMajor: false,
+        };
+    }, []);
     const enforceBtcBiasAlignment = useCallback(async (now) => {
         if (!authToken)
             return;
@@ -2223,7 +2454,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const addGate = (name, ok, detail) => {
             gates.push({ name, ok, detail });
         };
-        const coreEval = evaluateCoreV2(symbol, decision, signal, feedAgeMs);
+        const isProProfile = context.settings.riskMode === "ai-matic-pro";
+        const coreEval = isProProfile
+            ? evaluateProGates(decision, signal)
+            : evaluateCoreV2(symbol, decision, signal, feedAgeMs);
         const core = decision?.coreV2;
         const volumeGate = coreEval.gates.find((g) => g.name === "Volume Pxx");
         const scalpPrimary = computeScalpPrimaryChecklist(core, volumeGate?.ok ?? false);
@@ -2296,6 +2530,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     }, [
         evaluateChecklistPass,
         evaluateCoreV2,
+        evaluateProGates,
         getSymbolContext,
         isGateEnabled,
         resolveQualityScore,
@@ -2966,6 +3201,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const handleDecision = useCallback((symbol, decision) => {
         const now = Date.now();
         const isSelected = activeSymbols.includes(symbol);
+        const scalpActive = settingsRef.current.riskMode === "ai-matic-scalp";
+        const isProProfile = settingsRef.current.riskMode === "ai-matic-pro";
         feedLastTickRef.current = now;
         symbolTickRef.current.set(symbol, now);
         decisionRef.current[symbol] = { decision, ts: now };
@@ -2985,6 +3222,38 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return Number.isFinite(size) && size > 0;
         });
         const hasEntryOrder = ordersRef.current.some((order) => isActiveEntryOrder(order) && String(order?.symbol ?? "") === symbol);
+        if (isProProfile && decision?.proRegime?.shock) {
+            const shockKey = `pro-shock:${symbol}`;
+            const last = autoCloseCooldownRef.current.get(shockKey) ?? 0;
+            if (now - last >= 15000) {
+                autoCloseCooldownRef.current.set(shockKey, now);
+                const cancelTargets = ordersRef.current.filter((order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol);
+                cancelTargets.forEach((order) => {
+                    const orderId = order.orderId || "";
+                    const orderLinkId = order.orderLinkId || "";
+                    postJson("/cancel", {
+                        symbol,
+                        orderId: orderId || undefined,
+                        orderLinkId: orderLinkId || undefined,
+                    }).catch(() => null);
+                });
+                if (hasPosition) {
+                    const pos = positionsRef.current.find((p) => p.symbol === symbol);
+                    if (pos) {
+                        submitReduceOnlyOrder(pos, Math.abs(toNumber(pos.size ?? pos.qty))).catch(() => null);
+                    }
+                }
+                addLogEntries([
+                    {
+                        id: `pro-shock:${symbol}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "RISK_BLOCK",
+                        message: `${symbol} PRO shock regime -> CLOSE & CANCEL`,
+                    },
+                ]);
+            }
+            return;
+        }
         const cheatHold = settingsRef.current.riskMode === "ai-matic-x" &&
             settingsRef.current.strategyCheatSheetEnabled;
         if (cheatHold) {
@@ -3027,10 +3296,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const rawSignal = decision?.signal ?? null;
         const lastTick = symbolTickRef.current.get(symbol) ?? 0;
         const feedAgeMs = lastTick > 0 ? Math.max(0, now - lastTick) : null;
-        const coreEval = evaluateCoreV2(symbol, decision, rawSignal, feedAgeMs);
+        const coreEval = isProProfile
+            ? evaluateProGates(decision, rawSignal)
+            : evaluateCoreV2(symbol, decision, rawSignal, feedAgeMs);
         const checklistBase = evaluateChecklistPass(coreEval.gates);
         let signal = rawSignal;
-        if (!signal && checklistBase.pass) {
+        if (!signal && checklistBase.pass && !isProProfile) {
             signal = buildChecklistSignal(symbol, decision, now);
         }
         if (!signal)
@@ -3242,7 +3513,13 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     : "ATR missing",
             });
         }
-        const checklistExec = evaluateChecklistPass(checklistGates);
+        const checklistExec = isProProfile
+            ? {
+                eligibleCount: coreEval.scoreTotal,
+                passedCount: coreEval.score,
+                pass: coreEval.scorePass !== false,
+            }
+            : evaluateChecklistPass(checklistGates);
         if (!checklistExec.pass) {
             addLogEntries([
                 {
@@ -3265,6 +3542,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 ? signal.triggerPrice
                 : entry
             : undefined;
+        const proTargets = isProProfile ? signal?.proTargets : null;
         let resolvedSl = sl;
         let resolvedTp = tp;
         if (isScalpProfile &&
@@ -3292,6 +3570,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const normalized = normalizeProtectionLevels(entry, side, resolvedSl, resolvedTp, core?.atr14);
         resolvedSl = normalized.sl;
         resolvedTp = normalized.tp;
+        if (isProProfile && proTargets && Number.isFinite(proTargets.t2)) {
+            resolvedTp = proTargets.t2;
+        }
         if (!Number.isFinite(entry) ||
             !Number.isFinite(resolvedSl) ||
             entry <= 0 ||
@@ -3305,6 +3586,25 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 },
             ]);
             return;
+        }
+        if (isProProfile &&
+            proTargets &&
+            Number.isFinite(entry) &&
+            Number.isFinite(proTargets.t1) &&
+            Number.isFinite(proTargets.t2)) {
+            proTargetsRef.current.set(symbol, {
+                t1: proTargets.t1,
+                t2: proTargets.t2,
+                timeStopMinutes: Number.isFinite(proTargets.timeStopMinutes)
+                    ? proTargets.timeStopMinutes
+                    : 60,
+                entryTfMin: Number.isFinite(proTargets.entryTfMin)
+                    ? proTargets.entryTfMin
+                    : 5,
+                entryPrice: entry,
+                side,
+                setAt: now,
+            });
         }
         const fixedSizing = computeFixedSizing(symbol, entry, resolvedSl);
         const sizing = fixedSizing ?? computeNotionalForSignal(symbol, entry, resolvedSl);
@@ -3366,6 +3666,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         intentPendingRef.current.add(symbol);
         lastIntentBySymbolRef.current.set(symbol, now);
         entryOrderLockRef.current.set(symbol, now);
+        const tpPrices = isProProfile && proTargets
+            ? [proTargets.t1, proTargets.t2].filter((value) => Number.isFinite(value) && value > 0)
+            : Number.isFinite(resolvedTp)
+                ? [resolvedTp]
+                : [];
         void (async () => {
             try {
                 await autoTrade({
@@ -3375,7 +3680,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     entryType,
                     triggerPrice,
                     slPrice: resolvedSl,
-                    tpPrices: Number.isFinite(resolvedTp) ? [resolvedTp] : [],
+                    tpPrices,
                     qtyMode,
                     qtyValue,
                     intentId,
@@ -3413,14 +3718,17 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         buildScanDiagnostics,
         buildChecklistSignal,
         closedPnlRecords,
-            computeFixedSizing,
-            computeNotionalForSignal,
-            evaluateChecklistPass,
-            evaluateCoreV2,
-            getEquityValue,
+        computeFixedSizing,
+        computeNotionalForSignal,
+        evaluateChecklistPass,
+        evaluateCoreV2,
+        evaluateProGates,
+        getEquityValue,
         getSymbolContext,
         isGateEnabled,
         isEntryOrder,
+        postJson,
+        submitReduceOnlyOrder,
     ]);
     useEffect(() => {
         handleDecisionRef.current = handleDecision;
@@ -3432,16 +3740,24 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         intentPendingRef.current.clear();
         cheatLimitMetaRef.current.clear();
         partialExitRef.current.clear();
+        proTargetsRef.current.clear();
+        proPartialRef.current.clear();
         decisionRef.current = {};
         setScanDiagnostics(null);
         const riskMode = settingsRef.current.riskMode;
         const isAiMaticX = riskMode === "ai-matic-x";
         const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
         const isScalp = riskMode === "ai-matic-scalp";
+        const isPro = riskMode === "ai-matic-pro";
         const decisionFn = (symbol, candles, config) => {
-            const baseDecision = isAiMaticX
-                ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
-                : evaluateStrategyForSymbol(symbol, candles, config);
+            const baseDecision = isPro
+                ? evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin: 5 })
+                : isAiMaticX
+                    ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
+                    : evaluateStrategyForSymbol(symbol, candles, config);
+            if (isPro) {
+                return baseDecision;
+            }
             const htfTimeframes = isAiMatic
                 ? AI_MATIC_HTF_TIMEFRAMES_MIN
                 : HTF_TIMEFRAMES_MIN;
@@ -3465,12 +3781,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             const coreV2 = computeCoreV2Metrics(candles, riskMode);
             return { ...baseDecision, htfTrend, ltfTrend, emaTrend, scalpContext, coreV2 };
         };
-        const maxCandles = isAiMaticX ? 5000 : isAiMatic ? 5000 : undefined;
+        const maxCandles = isAiMaticX || isAiMatic || isPro ? 5000 : undefined;
         const backfill = isAiMaticX
             ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
             : isAiMatic
                 ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
-                : undefined;
+                : isPro
+                    ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
+                    : undefined;
         const stop = startPriceFeed(feedSymbols, (symbol, decision) => {
             handleDecisionRef.current?.(symbol, decision);
         }, {
@@ -3480,6 +3798,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             decisionFn,
             maxCandles,
             backfill,
+            orderflow: isPro ? { enabled: true, depth: 50 } : undefined,
         });
         const envLabel = useTestnet ? "testnet" : "mainnet";
         const lastLog = feedLogRef.current;

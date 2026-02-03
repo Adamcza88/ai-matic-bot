@@ -15,6 +15,7 @@ const CHEAT_SHEET_SETUP_BY_RISK_MODE = {
     "ai-matic-x": "ai-matic-x-smart-money-combo",
     "ai-matic-scalp": "ai-matic-scalp-scalpera",
     "ai-matic-tree": "ai-matic-decision-tree",
+    "ai-matic-pro": "",
 };
 function loadProfileSettingsMap() {
     if (typeof localStorage === "undefined")
@@ -281,6 +282,19 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                 "Time stop: po ~2h, pokud trade není aspoň +0.5R -> exit.",
             ],
         },
+        "ai-matic-pro": {
+            title: "AI-MATIC-PRO (Sideways)",
+            summary: "Sideways only · VA/POC · OFI/VPIN/HMM",
+            description: "Mean-reversion engine pro laterální trhy (bez Cheat Sheet).",
+            notes: [
+                ORDER_VALUE_NOTE,
+                "Aktivace: Hurst < 0.45, CHOP > 60, HMM state0 p>=0.7, VPIN < 0.8.",
+                "Market Profile: VAH/VAL/POC + VWAP/VA mid pro cíle.",
+                "Entry: VA edge + OFI/Delta absorpce (LIMIT_MAKER_FIRST).",
+                "Exit: T1 ~VWAP/mid (60%), T2 POC/VAH/VAL, time stop 10 svíček / 60m.",
+                "SL: za LVN nebo 2x ATR, po T1 SL na BE.",
+            ],
+        },
     };
     const treeMetaCheatOn = {
         title: "AI-MATIC-TREE Core",
@@ -304,9 +318,15 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         : coreProfiles[local.riskMode];
     const cheatSheetSetupId = CHEAT_SHEET_SETUP_BY_RISK_MODE[local.riskMode];
     const cheatSheetSetup = cheatSheetSetupId ? getCheatSheetSetup(cheatSheetSetupId) : null;
-    const cheatSheetLabel = cheatSheetSetup?.name ?? "Cheat sheet";
+    const cheatSheetLabel = local.riskMode === "ai-matic-pro"
+        ? "N/A"
+        : cheatSheetSetup?.name ?? "Cheat sheet";
     const cheatSheetNotes = cheatSheetSetup?.rules ?? ["Cheat sheet se nepodařilo načíst."];
-    const cheatSheetStatus = local.strategyCheatSheetEnabled ? "On" : "Off";
+    const cheatSheetStatus = local.riskMode === "ai-matic-pro"
+        ? "N/A"
+        : local.strategyCheatSheetEnabled
+            ? "On"
+            : "Off";
     const coreBlocks = useMemo(() => buildCheatBlocks(coreMeta.notes), [coreMeta.notes]);
     const cheatBlocks = useMemo(() => buildCheatBlocks(cheatSheetNotes), [cheatSheetNotes]);
     const summaryText = `${coreMeta.title} · ${coreMeta.summary} · Cheat sheet: ${cheatSheetLabel} (${cheatSheetStatus})`;
@@ -335,8 +355,17 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
             "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.",
             "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
         ],
+        "ai-matic-pro": [
+            "Hurst < 0.45",
+            "CHOP > 60",
+            "HMM state0 p>=0.7",
+            "VPIN < 0.8",
+            "OFI/Delta trigger",
+            "VA edge",
+        ],
     };
     const activeGateNames = checklistGatesByProfile[local.riskMode] ?? checklistGatesByProfile["ai-matic"];
+    const cheatDisabled = local.riskMode === "ai-matic-pro";
     const statusItems = [
         {
             label: "Cheat Sheet",
@@ -471,11 +500,41 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         takerFeePct: 0.06,
         slippageBufferPct: 0.02,
     };
+    const AI_MATIC_PRO_PRESET_UI = {
+        riskMode: "ai-matic-pro",
+        trendGateMode: "adaptive",
+        pauseOnHighVolatility: false,
+        avoidLowLiquidity: false,
+        useTrendFollowing: true,
+        smcScalpMode: false,
+        useLiquiditySweeps: false,
+        strategyCheatSheetEnabled: false,
+        enableHardGates: true,
+        enableSoftGates: true,
+        maxOpenPositions: 1,
+        maxOpenOrders: 4,
+        selectedSymbols: [...SUPPORTED_SYMBOLS],
+        entryStrictness: "base",
+        useDynamicPositionSizing: true,
+        lockProfitsWithTrail: true,
+        autoRefreshEnabled: false,
+        autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
+        requireConfirmationInAuto: false,
+        customInstructions: "",
+        customStrategy: "",
+        min24hVolume: 50,
+        minProfitFactor: 1.0,
+        minWinRate: 65,
+        makerFeePct: 0.01,
+        takerFeePct: 0.06,
+        slippageBufferPct: 0.02,
+    };
     const presets = {
         "ai-matic": AI_MATIC_PRESET_UI,
         "ai-matic-x": AI_MATIC_X_PRESET_UI,
         "ai-matic-scalp": AI_MATIC_SCALP_PRESET_UI,
         "ai-matic-tree": AI_MATIC_TREE_PRESET_UI,
+        "ai-matic-pro": AI_MATIC_PRO_PRESET_UI,
     };
     const stashProfileSettings = (mode, next) => {
         profileSettingsRef.current = {
@@ -558,7 +617,9 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
                                                 ? "bg-emerald-600 text-white"
                                                 : "bg-slate-800 text-secondary-foreground"}`, children: "AI-Matic-Scalp" }), _jsx("button", { onClick: () => applyPreset("ai-matic-tree"), className: `rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic-tree"
                                                 ? "bg-emerald-600 text-white"
-                                                : "bg-slate-800 text-secondary-foreground"}`, children: "AI-Matic-Tree" })] })] }), })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Auto-refresh" }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: local.autoRefreshEnabled ? "On" : "Off" }), _jsxs("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: ["Obnov\u00ED aplikaci ka\u017Ed\u00FDch ", local.autoRefreshMinutes, " min."] })] }), _jsxs("div", { className: "flex items-center gap-2", children: [_jsx("input", { type: "number", min: MIN_AUTO_REFRESH_MINUTES, step: 1, value: local.autoRefreshMinutes, onChange: (event) => {
+                                                : "bg-slate-800 text-secondary-foreground"}`, children: "AI-Matic-Tree" }), _jsx("button", { onClick: () => applyPreset("ai-matic-pro"), className: `rounded-md border border-input px-3 py-2 text-sm ${local.riskMode === "ai-matic-pro"
+                                                ? "bg-emerald-600 text-white"
+                                                : "bg-slate-800 text-secondary-foreground"}`, children: "AI-Matic-Pro" })] })] }), })] }), _jsxs("div", { className: "grid gap-2", children: [_jsx("label", { className: "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", children: "Auto-refresh" }), _jsxs("div", { className: "flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm", children: [_jsxs("div", { children: [_jsx("div", { className: "font-medium", children: local.autoRefreshEnabled ? "On" : "Off" }), _jsxs("div", { className: "text-xs text-secondary-foreground/70 mt-1", children: ["Obnov\u00ED aplikaci ka\u017Ed\u00FDch ", local.autoRefreshMinutes, " min."] })] }), _jsxs("div", { className: "flex items-center gap-2", children: [_jsx("input", { type: "number", min: MIN_AUTO_REFRESH_MINUTES, step: 1, value: local.autoRefreshMinutes, onChange: (event) => {
                                                         const next = event.currentTarget.valueAsNumber;
                                                         setLocal({
                                                             ...local,

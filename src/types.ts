@@ -9,7 +9,12 @@ export type Theme = "dark" | "light";
 export type Language = "en" | "cs";
 
 export interface AISettings {
-  riskMode: "ai-matic" | "ai-matic-x" | "ai-matic-scalp" | "ai-matic-tree";
+  riskMode:
+    | "ai-matic"
+    | "ai-matic-x"
+    | "ai-matic-scalp"
+    | "ai-matic-tree"
+    | "ai-matic-pro";
   trendGateMode: "adaptive" | "follow" | "reverse";
   pauseOnHighVolatility: boolean;
   avoidLowLiquidity: boolean;
