@@ -27,7 +27,7 @@ import {
 } from "../constants/symbols";
 import type {
   AISettings,
-  ActivePosition,
+  ActivePosition as BaseActivePosition,
   LogEntry,
   PortfolioState,
   SystemState,
@@ -40,6 +40,8 @@ import {
   resetPnlHistoryMap,
 } from "../lib/pnlHistory";
 import type { AssetPnlMap } from "../lib/pnlHistory";
+
+export type ActivePosition = BaseActivePosition & { isBreakeven?: boolean };
 
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
@@ -4058,6 +4060,12 @@ export function useTradingBot(
               ? Math.abs(tp - resolvedEntry) /
                 Math.abs(resolvedEntry - sl)
               : Number.NaN;
+          
+          // Calculate Breakeven Status
+          const isBreakeven = side === "Buy" 
+            ? Number.isFinite(sl) && sl >= resolvedEntry
+            : Number.isFinite(sl) && sl <= resolvedEntry;
+
           nextPositions.set(symbol, { size, side });
           return {
             positionId: String(p?.positionId ?? `${p?.symbol}-${sideRaw}`),
@@ -4092,6 +4100,7 @@ export function useTradingBot(
             timestamp: updatedAt || openedAt || "",
             env: useTestnet ? "testnet" : "mainnet",
             positionIdx,
+            isBreakeven, // Pass to UI
           } satisfies ActivePosition;
         })
         .filter((p: ActivePosition | null): p is ActivePosition => Boolean(p));

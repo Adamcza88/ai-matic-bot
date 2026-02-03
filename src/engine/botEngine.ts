@@ -139,6 +139,7 @@ export interface Position {
   closed?: number;
   exitCount: number;
   sosScore?: number;
+  isBreakeven?: boolean;
 }
 
 /**
@@ -623,6 +624,7 @@ export class TradingBot {
           this.position.stopLoss = target;
           this.position.trailingStop = Math.max(this.position.trailingStop, target);
         }
+        this.position.isBreakeven = true;
       } else {
         const target = this.position.entryPrice - buffer;
         if (this.position.stopLoss > target) {
@@ -630,6 +632,7 @@ export class TradingBot {
           this.position.trailingStop = Math.min(this.position.trailingStop, target);
         }
       }
+      this.position.isBreakeven = true;
     }
   }
 
@@ -866,6 +869,7 @@ export class TradingBot {
       partialIndex: 0,
       exitCount: 0,
       sosScore,
+      isBreakeven: false,
     };
     this.state = State.Manage;
   }
