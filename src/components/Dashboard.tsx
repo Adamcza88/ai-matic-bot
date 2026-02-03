@@ -156,7 +156,7 @@ export default function Dashboard({
         session: "24/7",
         risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
         entry: "VA edge + OFI/Delta absorpce (LIMIT_MAKER_FIRST)",
-        execution: `T1 ~VWAP/mid (60%) · T2 POC/VAH/VAL · time stop 10 svíček/60m · ${cheatSheetNote}`,
+        execution: "T1 ~VWAP/mid (60%) · T2 POC/VAH/VAL · time stop 10 svíček/60m",
       };
     }
     return {

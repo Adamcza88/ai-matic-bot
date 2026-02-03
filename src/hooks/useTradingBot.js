@@ -1611,6 +1611,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     }, [isSessionAllowed, useTestnet]);
     const resolveTrendGate = useCallback((decision, signal) => {
         const settings = settingsRef.current;
+        if (settings.riskMode === "ai-matic-pro") {
+            return { ok: true, detail: "disabled (PRO)" };
+        }
         const isAiMaticX = settings.riskMode === "ai-matic-x";
         const xContext = decision?.xContext;
         if (isAiMaticX && xContext) {

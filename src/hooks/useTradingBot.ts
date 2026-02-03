@@ -2689,6 +2689,9 @@ export function useTradingBot(
       signal?: PriceFeedDecision["signal"] | null
     ) => {
       const settings = settingsRef.current;
+      if (settings.riskMode === "ai-matic-pro") {
+        return { ok: true, detail: "disabled (PRO)" };
+      }
       const isAiMaticX = settings.riskMode === "ai-matic-x";
       const xContext = (decision as any)?.xContext as AiMaticXContext | undefined;
       if (isAiMaticX && xContext) {

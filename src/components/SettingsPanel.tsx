@@ -422,7 +422,13 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         ? `${local.autoRefreshMinutes}m`
         : "Off",
     },
-    { label: "Trend gate", value: local.trendGateMode },
+    {
+      label: "Trend gate",
+      value:
+        local.riskMode === "ai-matic-pro"
+          ? "Off (PRO)"
+          : local.trendGateMode,
+    },
     { label: "Max pos", value: String(local.maxOpenPositions) },
     { label: "Max orders", value: String(local.maxOpenOrders) },
     { label: "Symbols", value: local.selectedSymbols.join(", ") },
@@ -918,7 +924,8 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             </div>
           </div>
 
-          {local.riskMode !== "ai-matic-scalp" ? (
+          {local.riskMode !== "ai-matic-scalp" &&
+          local.riskMode !== "ai-matic-pro" ? (
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Trend Gate Mode
