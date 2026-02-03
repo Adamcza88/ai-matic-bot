@@ -1585,7 +1585,7 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
 > = {
   "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
   "ai-matic-x": { activateR: 1.0, lockR: 0.3, retracementRate: 0.002 },
-  "ai-matic-scalp": { activateR: 1.2, lockR: 0.6 },
+  "ai-matic-scalp": { activateR: 0.5, lockR: 0.3 },
   "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
   "ai-matic-pro": { activateR: 0.5, lockR: 0.3 },
 };
@@ -1595,7 +1595,7 @@ const TRAIL_PROFILE_BY_RISK_MODE_CHEAT: Record<
 > = {
   "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
   "ai-matic-x": { activateR: 0.6, lockR: 0.3, retracementRate: 0.002 },
-  "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
+  "ai-matic-scalp": { activateR: 0.5, lockR: 0.3 },
   "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
   "ai-matic-pro": { activateR: 0.5, lockR: 0.3 },
 };
