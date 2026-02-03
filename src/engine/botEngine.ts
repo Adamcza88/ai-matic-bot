@@ -606,6 +606,33 @@ export class TradingBot {
     }
   }
 
+  private applyBreakeven(rMultiple: number, df: DataFrame): void {
+    if (!this.position) return;
+    // Trigger BE at 1R
+    if (rMultiple >= 1.0) {
+      const highs = df.map((c) => c.high);
+      const lows = df.map((c) => c.low);
+      const closes = df.map((c) => c.close);
+      const atrArr = computeATR(highs, lows, closes, this.config.atrPeriod);
+      const atr = atrArr[atrArr.length - 1] || 0;
+      const buffer = atr * this.config.breakevenBufferAtr;
+      
+      if (this.position.side === "long") {
+        const target = this.position.entryPrice + buffer;
+        if (this.position.stopLoss < target) {
+          this.position.stopLoss = target;
+          this.position.trailingStop = Math.max(this.position.trailingStop, target);
+        }
+      } else {
+        const target = this.position.entryPrice - buffer;
+        if (this.position.stopLoss > target) {
+          this.position.stopLoss = target;
+          this.position.trailingStop = Math.min(this.position.trailingStop, target);
+        }
+      }
+    }
+  }
+
   private applyPyramiding(rMultiple: number): void {
     if (!this.position) return;
     const steps = this.config.pyramidLevels || [];
@@ -661,6 +688,10 @@ export class TradingBot {
     const triggerR = tpR - 1.0;  //0.6
     if (rMultiple < triggerR || this.position.slDistance <= 0) return;
     const widthAbs = widthR * this.position.slDistance;
+    
+    // Safety check: Don't set target beyond current R multiple (avoid immediate exit)
+    if (widthR > rMultiple) return;
+
     const target = this.position.side === "long"
       ? this.position.entryPrice + widthAbs
       : this.position.entryPrice - widthAbs;
@@ -697,6 +728,7 @@ export class TradingBot {
     if (rMultiple >= this.config.trailingActivationR) {
       this.updateTrailingStop(lt);
     }
+    this.applyBreakeven(rMultiple, lt);
     this.applyStrategyTrailing(rMultiple);
     this.updateTakeProfit(ht, lt);
     this.applyPyramiding(rMultiple);
