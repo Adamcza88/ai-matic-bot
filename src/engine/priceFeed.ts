@@ -6,7 +6,7 @@ import {
   evaluateStrategyForSymbol,
 } from "@/engine/botEngine";
 import type { BotConfig } from "@/engine/botEngine";
-import { updateOpenInterest } from "./orderflow";
+import { updateOpenInterest, updateOrderbook, updateTrades } from "./orderflow";
 import { startLiquidationFeed } from "./liquidationFeed";
 
 const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
@@ -142,6 +142,7 @@ interface BybitWsMessage {
   op?: "pong" | "ping" | "subscribe";
   success?: boolean;
   topic?: string;
+  type?: "snapshot" | "delta";
   data?: BybitWsKlineRow[] | any;
 }
 
@@ -165,6 +166,10 @@ export function startPriceFeed(
       interval?: string;
       lookbackMinutes?: number;
       limit?: number;
+    };
+    orderflow?: {
+      enabled?: boolean;
+      depth?: number;
     };
   }
 ): () => void {
@@ -217,6 +222,12 @@ export function startPriceFeed(
       ...symbols.map((s) => `tickers.${s}`),
     ];
 
+    if (opts?.orderflow?.enabled) {
+      const depth = opts.orderflow.depth ?? 50;
+      args.push(...symbols.map((s) => `publicTrade.${s}`));
+      args.push(...symbols.map((s) => `orderbook.${depth}.${s}`));
+    }
+
     ws.send(
       JSON.stringify({
         op: "subscribe",
@@ -250,6 +261,24 @@ export function startPriceFeed(
         const oi = data?.openInterest;
         if (symbol && oi) {
           updateOpenInterest(symbol, parseFloat(oi));
+        }
+        return;
+      }
+
+      if (msg.topic.startsWith("publicTrade.")) {
+        const data = msg.data;
+        if (Array.isArray(data) && data.length > 0) {
+          const symbol = data[0].s;
+          updateTrades(symbol, data);
+        }
+        return;
+      }
+
+      if (msg.topic.startsWith("orderbook.")) {
+        const data = msg.data;
+        const symbol = data?.s;
+        if (symbol) {
+          updateOrderbook(symbol, data.b, data.a, msg.type === "snapshot");
         }
         return;
       }
