@@ -13,6 +13,7 @@ type ProTargets = {
 
 type ProState =
   | "RANGE_TRADING"
+  | "TRENDING"
   | "MANIPULATION_WATCH"
   | "PRE_ENTRY"
   | "EXECUTION"
@@ -288,6 +289,16 @@ export function evaluateAiMaticProStrategyForSymbol(
     liqProximityPct: liqProximity,
   };
 
+  // --- Regime Definitions (Prompt) ---
+  const isTrending =
+    regime.hurst > 0.55 &&
+    regime.chop < 38.2 &&
+    regime.trendProb >= 0.7 &&
+    orderflow.vpin < 0.8;
+
+  const isManipulation =
+    regime.manipProb >= 0.7 || (Number.isFinite(orderflow.vpin) && orderflow.vpin > 0.8);
+
   const manipActive =
     regime.manipActive || (liqProximity != null && liqProximity <= 1);
   
@@ -296,10 +307,18 @@ export function evaluateAiMaticProStrategyForSymbol(
 
   // --- FSM Logic (Chapter 9) ---
   if (prevData.state === "RANGE_TRADING") {
-    if (manipActive) {
+    if (isTrending) {
+      nextData.state = "TRENDING";
+    } else if (isManipulation || manipActive) {
       nextData.state = "MANIPULATION_WATCH";
     }
+  } else if (prevData.state === "TRENDING") {
+    if (!isTrending) {
+      if (isManipulation || manipActive) nextData.state = "MANIPULATION_WATCH";
+      else nextData.state = "RANGE_TRADING";
+    }
   } else if (prevData.state === "MANIPULATION_WATCH") {
+    if (isTrending) nextData.state = "TRENDING"; // Escape to trending if strong move
     const invalidation =
       (last.close > prev.close && orderflow.openInterestTrend === "rising") ||
       (last.close < prev.close && orderflow.openInterestTrend === "falling");
@@ -361,6 +380,19 @@ export function evaluateAiMaticProStrategyForSymbol(
       proState,
       proSignals,
       marketProfile: null,
+      orderflow,
+    } as EngineDecision;
+  }
+
+  if (proState === "TRENDING") {
+    return {
+      state: "SCAN",
+      trend: "range", // V budoucnu zde lze vracet "bull"/"bear" pro trendové strategie
+      signal: null,
+      proRegime: { ...regime, rfSignal },
+      proState,
+      proSignals,
+      marketProfile: profile,
       orderflow,
     } as EngineDecision;
   }
