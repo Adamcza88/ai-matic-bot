@@ -1468,6 +1468,33 @@ function normalizeTrendDir(value: string) {
   return upper;
 }
 
+function buildTreeInputs(
+  depsRaw: any,
+  sigRaw: any
+): { deps: TreeDeps; signals: TreeSignals } {
+  const deps: TreeDeps = {
+    hasVP: Boolean(depsRaw?.hasVP),
+    hasOB: Boolean(depsRaw?.hasOB),
+    hasGAP: Boolean(depsRaw?.hasGAP),
+    hasTrap: Boolean(depsRaw?.hasTrap),
+    hasLowVol: Boolean(depsRaw?.hasLowVol),
+  };
+  const signals: TreeSignals = {
+    inLowVolume: Boolean(sigRaw?.inLowVolume),
+    htfReactionConfirmed: Boolean(sigRaw?.htfReactionConfirmed),
+    structureReadable: Boolean(sigRaw?.structureReadable),
+    sessionOk: sigRaw?.sessionOk !== false,
+    bosUp: Boolean(sigRaw?.bosUp),
+    bosDown: Boolean(sigRaw?.bosDown),
+    returnToLevel: Boolean(sigRaw?.returnToLevel),
+    rejectionInLVN: Boolean(sigRaw?.rejectionInLVN),
+    touchOB: Boolean(sigRaw?.touchOB),
+    rejectionInOB: Boolean(sigRaw?.rejectionInOB),
+    trapReaction: Boolean(sigRaw?.trapReaction),
+  };
+  return { deps, signals };
+}
+
 function resolveH1M15TrendGate(
   core: CoreV2Metrics | undefined,
   signal: PriceFeedDecision["signal"] | null
@@ -2003,9 +2030,15 @@ export function useTradingBot(
     [isGateEnabled]
   );
 
-  const buildChecklistSignal = useCallback(
-    (symbol: Symbol, decision: PriceFeedDecision, now: number) => {
-      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+  const buildBiasSignal = useCallback(
+    (
+      symbol: Symbol,
+      core: CoreV2Metrics,
+      now: number,
+      bias: "BULL" | "BEAR",
+      message: string,
+      risk = 0.6
+    ) => {
       if (!core) return null;
       const normalizedEntry = toNumber(core.ltfClose);
       const normalizedAtr = toNumber(core.atr14);
@@ -2022,15 +2055,6 @@ export function useTradingBot(
           Math.min(normalizedPivotHigh, normalizedEntry);
         if (ratio >= 5) scale = normalizedEntry / normalizedPivotHigh;
       }
-      const bias =
-        core.htfBias !== "NONE"
-          ? core.htfBias
-          : core.ema15mTrend !== "NONE"
-            ? core.ema15mTrend
-            : core.emaCrossDir !== "NONE"
-              ? core.emaCrossDir
-              : "NONE";
-      if (bias === "NONE") return null;
       const entry = normalizedEntry;
       if (!Number.isFinite(entry) || entry <= 0) return null;
       const atr = Number.isFinite(normalizedAtr) ? normalizedAtr * scale : Number.NaN;
@@ -2051,11 +2075,11 @@ export function useTradingBot(
         sl = Number.isFinite(fallbackOffset) ? entry + fallbackOffset : Number.NaN;
       }
       if (!Number.isFinite(sl) || sl <= 0 || sl === entry) return null;
-      const risk = Math.abs(entry - sl);
-      const tp = bias === "BULL" ? entry + 2 * risk : entry - 2 * risk;
+      const riskSize = Math.abs(entry - sl);
+      const tp = bias === "BULL" ? entry + 2 * riskSize : entry - 2 * riskSize;
       if (!Number.isFinite(tp) || tp <= 0) return null;
       return {
-        id: `${symbol}-${now}-checklist`,
+        id: `${symbol}-${now}-bias`,
         symbol,
         intent: {
           side: bias === "BULL" ? "buy" : "sell",
@@ -2065,12 +2089,41 @@ export function useTradingBot(
         },
         entryType: "LIMIT_MAKER_FIRST",
         kind: "PULLBACK",
-        risk: 0.6,
-        message: "Checklist auto-signál",
+        risk,
+        message,
         createdAt: new Date(now).toISOString(),
       } as PriceFeedDecision["signal"];
     },
     []
+  );
+
+  const buildChecklistSignal = useCallback(
+    (symbol: Symbol, decision: PriceFeedDecision, now: number) => {
+      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      if (!core) return null;
+      const bias =
+        core.htfBias !== "NONE"
+          ? core.htfBias
+          : core.ema15mTrend !== "NONE"
+            ? core.ema15mTrend
+            : core.emaCrossDir !== "NONE"
+              ? core.emaCrossDir
+              : "NONE";
+      if (bias !== "BULL" && bias !== "BEAR") return null;
+      const next = buildBiasSignal(
+        symbol,
+        core,
+        now,
+        bias,
+        "Checklist auto-signál",
+        0.6
+      );
+      if (next) {
+        next.id = `${symbol}-${now}-checklist`;
+      }
+      return next;
+    },
+    [buildBiasSignal]
   );
 
   const normalizeBias = useCallback((value: unknown): "bull" | "bear" | null => {
@@ -5445,39 +5498,74 @@ export function useTradingBot(
       if (signalSeenRef.current.has(signalId)) return;
       signalSeenRef.current.add(signalId);
 
+      const cheatEnabled = settingsRef.current.strategyCheatSheetEnabled;
+      const isTreeProfile = settingsRef.current.riskMode === "ai-matic-tree";
+      const treePayload = (decision as any)?.cheatSignals;
+      const treeDepsRaw = (decision as any)?.cheatDeps;
+      let treeInputs: { deps: TreeDeps; signals: TreeSignals } | null = null;
+      let treeDecision: ReturnType<typeof decideCombinedEntry> | null = null;
+      if (isTreeProfile && treePayload && treeDepsRaw) {
+        treeInputs = buildTreeInputs(treeDepsRaw, treePayload);
+        treeDecision = decideCombinedEntry(treeInputs.deps, treeInputs.signals);
+      }
+      const treeAddonActive =
+        isTreeProfile &&
+        Boolean(treeDecision?.ok) &&
+        Boolean(treeInputs?.signals.structureReadable);
+
+      if (treeAddonActive) {
+        const kind = signal.kind ?? "OTHER";
+        if (kind !== "PULLBACK" && kind !== "MEAN_REVERSION") {
+          addLogEntries([
+            {
+              id: `tree-kind-block:${symbol}:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} TREE kind block: ${kind}`,
+            },
+          ]);
+          return;
+        }
+      }
+
+      if (treeAddonActive && treeDecision?.side) {
+        const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
+        const signalSide =
+          sideRaw === "buy" ? "LONG" : sideRaw === "sell" ? "SHORT" : null;
+        if (signalSide && signalSide !== treeDecision.side) {
+          const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+          const forcedBias = treeDecision.side === "LONG" ? "BULL" : "BEAR";
+          const forcedMessage = signal.message
+            ? `${signal.message} | TREE side forced ${treeDecision.side}`
+            : `TREE side forced ${treeDecision.side}`;
+          const forcedSignal = core
+            ? buildBiasSignal(symbol as Symbol, core, now, forcedBias, forcedMessage)
+            : null;
+          if (!forcedSignal) {
+            addLogEntries([
+              {
+                id: `tree-force-fail:${symbol}:${signalId}`,
+                timestamp: new Date(now).toISOString(),
+                action: "RISK_BLOCK",
+                message: `${symbol} TREE force failed: missing core/pivots/atr`,
+              },
+            ]);
+            return;
+          }
+          forcedSignal.id = signalId;
+          signal = forcedSignal;
+        }
+      }
+
       // === Cheat Sheet override for AI-MATIC-TREE ===
       let cheatBlocks: string[] = [];
       let cheatDecision: ReturnType<typeof decideCombinedEntry> | null = null;
       let cheatTrailOverride: number | null = null;
-      const cheatEnabled = settingsRef.current.strategyCheatSheetEnabled;
-      const isTreeProfile = settingsRef.current.riskMode === "ai-matic-tree";
-
-      const cheatPayload = (decision as any)?.cheatSignals;
-      const cheatDeps = (decision as any)?.cheatDeps;
-      if (cheatEnabled && isTreeProfile && cheatPayload && cheatDeps) {
-        const depsRaw = cheatDeps ?? {};
-        const sigRaw = cheatPayload ?? {};
-        const deps: TreeDeps = {
-          hasVP: Boolean(depsRaw.hasVP),
-          hasOB: Boolean(depsRaw.hasOB),
-          hasGAP: Boolean(depsRaw.hasGAP),
-          hasTrap: Boolean(depsRaw.hasTrap),
-          hasLowVol: Boolean(depsRaw.hasLowVol),
-        };
-        const signals: TreeSignals = {
-          inLowVolume: Boolean(sigRaw.inLowVolume),
-          htfReactionConfirmed: Boolean(sigRaw.htfReactionConfirmed),
-          structureReadable: Boolean(sigRaw.structureReadable),
-          sessionOk: sigRaw.sessionOk !== false,
-          bosUp: Boolean(sigRaw.bosUp),
-          bosDown: Boolean(sigRaw.bosDown),
-          returnToLevel: Boolean(sigRaw.returnToLevel),
-          rejectionInLVN: Boolean(sigRaw.rejectionInLVN),
-          touchOB: Boolean(sigRaw.touchOB),
-          rejectionInOB: Boolean(sigRaw.rejectionInOB),
-          trapReaction: Boolean(sigRaw.trapReaction),
-        };
-        cheatDecision = decideCombinedEntry(deps, signals);
+      if (cheatEnabled && isTreeProfile && treeInputs) {
+        cheatDecision = decideCombinedEntry(
+          treeInputs.deps,
+          treeInputs.signals
+        );
         if (cheatDecision.blocks?.length) {
           cheatBlocks.push(...cheatDecision.blocks);
         }
