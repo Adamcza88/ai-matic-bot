@@ -95,7 +95,9 @@ export function computeMarketProfile(args: {
       }
     }
   }
-  const includedPrices = Array.from(included).map((i) => bucketArr[i].price);
+  const includedPrices = Array.from(included)
+    .map((i) => bucketArr[i]?.price)
+    .filter((p): p is number => Number.isFinite(p));
   const vah = Math.max(...includedPrices);
   const val = Math.min(...includedPrices);
 
@@ -124,4 +126,3 @@ export function computeMarketProfile(args: {
     buckets: bucketArr,
   };
 }
-

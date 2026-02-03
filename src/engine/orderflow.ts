@@ -299,6 +299,7 @@ function recalcLiqProximity(state: OrderFlowState) {
 
   let minDist = Infinity;
   for (const level of state.liquidationLevels) {
+    if (!level) continue;
     const dist = Math.abs(price - level.price);
     if (dist < minDist) minDist = dist;
   }
