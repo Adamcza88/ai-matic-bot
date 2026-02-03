@@ -2127,6 +2127,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 detail: Number.isFinite(regime?.hurst)
                     ? `H ${formatNumber(regime.hurst, 3)}`
                     : "missing",
+                hard: false,
             },
             {
                 name: "CHOP > 60",
@@ -2134,6 +2135,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 detail: Number.isFinite(regime?.chop)
                     ? `CHOP ${formatNumber(regime.chop, 1)}`
                     : "missing",
+                hard: false,
             },
             {
                 name: "HMM state0 p>=0.7",
@@ -2141,6 +2143,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 detail: Number.isFinite(regime?.hmmProb)
                     ? `p ${formatNumber(regime.hmmProb, 2)}`
                     : "missing",
+                hard: false,
             },
             {
                 name: "VPIN < 0.8",
@@ -2148,6 +2151,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 detail: Number.isFinite(regime?.vpin ?? orderflow?.vpin)
                     ? `VPIN ${formatNumber((regime?.vpin ?? orderflow?.vpin ?? 0), 2)}`
                     : "missing",
+                hard: false,
             },
             {
                 name: "OFI/Delta trigger",
@@ -2157,6 +2161,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     : signal
                         ? "signal"
                         : "missing",
+                hard: false,
             },
             {
                 name: "VA edge",
@@ -2164,6 +2169,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 detail: Number.isFinite(profile?.vah) && Number.isFinite(profile?.val)
                     ? `VAL ${formatNumber(profile.val, 2)} | VAH ${formatNumber(profile.vah, 2)}`
                     : "missing",
+                hard: false,
             },
         ];
         const score = gates.filter((g) => g.ok).length;

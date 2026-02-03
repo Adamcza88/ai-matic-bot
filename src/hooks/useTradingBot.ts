@@ -3259,6 +3259,7 @@ export function useTradingBot(
           detail: Number.isFinite(regime?.hurst)
             ? `H ${formatNumber(regime!.hurst, 3)}`
             : "missing",
+          hard: false,
         },
         {
           name: "CHOP > 60",
@@ -3266,6 +3267,7 @@ export function useTradingBot(
           detail: Number.isFinite(regime?.chop)
             ? `CHOP ${formatNumber(regime!.chop, 1)}`
             : "missing",
+          hard: false,
         },
         {
           name: "HMM state0 p>=0.7",
@@ -3273,6 +3275,7 @@ export function useTradingBot(
           detail: Number.isFinite(regime?.hmmProb)
             ? `p ${formatNumber(regime!.hmmProb, 2)}`
             : "missing",
+          hard: false,
         },
         {
           name: "VPIN < 0.8",
@@ -3283,6 +3286,7 @@ export function useTradingBot(
                 2
               )}`
             : "missing",
+          hard: false,
         },
         {
           name: "OFI/Delta trigger",
@@ -3296,6 +3300,7 @@ export function useTradingBot(
               : signal
                 ? "signal"
                 : "missing",
+          hard: false,
         },
         {
           name: "VA edge",
@@ -3307,6 +3312,7 @@ export function useTradingBot(
                   2
                 )}`
               : "missing",
+          hard: false,
         },
       ];
       const score = gates.filter((g) => g.ok).length;

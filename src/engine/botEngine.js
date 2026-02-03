@@ -490,12 +490,14 @@ export class TradingBot {
             "ai-matic-tree": 2.2,
             "ai-matic-x": 1.6,
             "ai-matic-scalp": 1.5,
+            "ai-matic-pro": 1.6,
         };
         const widthMap = {
             "ai-matic": 1.1,
             "ai-matic-tree": 1.1,
             "ai-matic-x": 0.6,
             "ai-matic-scalp": 0.4,
+            "ai-matic-pro": 0.5,
         };
         const profile = this.config.strategyProfile;
         const tpR = tpMap[profile] ?? 1.4;
@@ -622,6 +624,7 @@ export class TradingBot {
             "ai-matic-tree": 2.2,
             "ai-matic-x": 1.6,
             "ai-matic-scalp": 1.5,
+            "ai-matic-pro": 1.4,
         };
         const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
         this.position = {

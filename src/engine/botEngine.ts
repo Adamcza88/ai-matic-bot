@@ -152,7 +152,8 @@ export interface BotConfig {
     | "ai-matic"
     | "ai-matic-x"
     | "ai-matic-scalp"
-    | "ai-matic-tree";
+    | "ai-matic-tree"
+    | "ai-matic-pro";
   entryStrictness: "base" | "relaxed" | "ultra" | "test";
   useStrategyCheatSheet?: boolean;
   cheatSheetSetupId?: string;
@@ -691,12 +692,14 @@ export class TradingBot {
       "ai-matic-tree": 2.0, //2.2
       "ai-matic-x": 1.8,  //1.2
       "ai-matic-scalp": 1.8,  //1.2
+      "ai-matic-pro": 1.6,
     };
     const widthMap: Record<BotConfig["strategyProfile"], number> = {
       "ai-matic": 1.8,  //1.2
       "ai-matic-tree": 1.8, //1.2
       "ai-matic-x": 1.5,  //0.6
       "ai-matic-scalp": 1.5,  //0.4
+      "ai-matic-pro": 1.2,
     };
     const profile = this.config.strategyProfile;
     const tpR = tpMap[profile] ?? 1.8;  //2.2
@@ -840,6 +843,7 @@ export class TradingBot {
       "ai-matic-tree": 1.6, //2.2
       "ai-matic-x": 1.6,
       "ai-matic-scalp": 1.2,  //1.5
+      "ai-matic-pro": 1.4,
     };
     const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
     this.position = {
