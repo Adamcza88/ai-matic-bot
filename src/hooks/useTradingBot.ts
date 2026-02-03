@@ -4,7 +4,7 @@ import { sendIntent } from "../api/botApi";
 import { EntryType, Profile, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
-import { evaluateStrategyForSymbol, resampleCandles, computeATR } from "../engine/botEngine";
+import { evaluateStrategyForSymbol, resampleCandles } from "../engine/botEngine";
 import {
   evaluateAiMaticXStrategyForSymbol,
   type AiMaticXContext,
@@ -15,7 +15,7 @@ import {
   type MarketSignals as TreeSignals,
 } from "../engine/combinedEntryStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
-import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta";
+import { computeEma, computeRsi, findPivotsHigh, findPivotsLow, computeATR } from "../engine/ta";
 import type { PriceFeedDecision } from "../engine/priceFeed";
 import type { BotConfig, Candle } from "../engine/botEngine";
 import { TradingMode } from "../types";
