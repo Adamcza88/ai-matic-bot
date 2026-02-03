@@ -1,5 +1,5 @@
 import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet";
-import { computeEma, computeRsi } from "./ta";
+import { computeEma, computeRsi, computeATR, computeADX } from "./ta";
 import { evaluateAiMaticProStrategyForSymbol } from "./aiMaticProStrategy";
 
 export enum Trend {
@@ -214,12 +214,14 @@ export type EntryKind =
   | "MEAN_REVERSION"
   | "OTHER";
 
-type EntrySignal = {
+export type EntrySignal = {
   side: "long" | "short";
   entry: number;
   stopLoss: number;
   kind: EntryKind;
   sosScore?: number;
+  blocked?: boolean;
+  blockedReason?: string;
 };
 
 function applyProfileOverrides(cfg: BotConfig): BotConfig {
@@ -255,9 +257,9 @@ export const defaultConfig: BotConfig = {
   targetTradesPerDay: 100,
   riskPerTrade: 0.04,
   strategyProfile: "ai-matic",
-  entryStrictness: "base",  //ultra
-  useStrategyCheatSheet: true,  //false
-  accountBalance: 2500, //20000
+  entryStrictness: "base",
+  useStrategyCheatSheet: true,
+  accountBalance: 2500,
   atrPeriod: 14,
   adxPeriod: 14,
   adxThreshold: 25,
@@ -275,8 +277,8 @@ export const defaultConfig: BotConfig = {
   maxRiskPerTradeCap: 0.07,
   maxOpenPositions: 3,
   maxExitChunks: 3,
-  trailingActivationR: 2.5,   //2
-  minStopPercent: 0.02,  //0.003
+  trailingActivationR: 2.5,
+  minStopPercent: 0.02,
   pyramidAddScale: 0.5,
   pyramidLevels: [
     { triggerR: 1, stopToR: 0 },
@@ -287,116 +289,18 @@ export const defaultConfig: BotConfig = {
     { r: 2, exitFraction: 0.25 },
   ],
   liquiditySweepAtrMult: 0.5,
-  liquiditySweepLookback: 15,   //5
-  liquiditySweepVolumeMult: 1.1,  //1.05
+  liquiditySweepLookback: 15,
+  liquiditySweepVolumeMult: 1.1,
   volExpansionAtrMult: 1.3,
   volExpansionVolMult: 1.2,
-  pullbackEmaPeriod: 50,    //20
+  pullbackEmaPeriod: 50,
   pullbackRsiPeriod: 14,
-  pullbackRsiMin: 35, //45
-  pullbackRsiMax: 65, //55
-  emaTrendPeriod: 150,  //50
+  pullbackRsiMin: 35,
+  pullbackRsiMax: 65,
+  emaTrendPeriod: 150,
   emaTrendConfirmBars: 2,
   emaTrendTouchLookback: 2,
 };
-
-/**
- * Utility function: Compute Average True Range (ATR).
- * Returns an array of ATR values of the same length as input arrays.
- */
-export function computeATR(
-  highs: number[],
-  lows: number[],
-  closes: number[],
-  period: number,
-): number[] {
-  const result: number[] = [];
-  for (let i = 0; i < highs.length; i++) {
-    const hl = highs[i] - lows[i];
-    const hc = i > 0 ? Math.abs(highs[i] - closes[i - 1]) : hl;
-    const lc = i > 0 ? Math.abs(lows[i] - closes[i - 1]) : hl;
-    const tr = Math.max(hl, hc, lc);
-    if (i === 0) {
-      result.push(tr);
-    } else {
-      // Wilder's smoothing: simple moving average for clarity
-      const prev = result[i - 1] * (period - 1);
-      result.push((prev + tr) / period);
-    }
-  }
-  return result;
-}
-
-/**
- * Utility function: Compute Average Directional Index (ADX).
- * Returns an array of ADX values aligned to the input length.
- */
-export function computeADX(
-  highs: number[],
-  lows: number[],
-  closes: number[],
-  period: number,
-): number[] {
-  const plusDM: number[] = [];
-  const minusDM: number[] = [];
-  for (let i = 1; i < highs.length; i++) {
-    const upMove = highs[i] - highs[i - 1];
-    const downMove = lows[i - 1] - lows[i];
-    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
-    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
-  }
-  const tr = computeATR(highs, lows, closes, 1);
-  // Smoothed TR over period
-  const smoothedTR: number[] = [];
-  for (let i = 0; i < tr.length; i++) {
-    if (i === 0) smoothedTR.push(tr[0]);
-    else smoothedTR.push((smoothedTR[i - 1] * (period - 1) + tr[i]) / period);
-  }
-  // Smoothed plus and minus DM
-  const smoothedPlus: number[] = [];
-  const smoothedMinus: number[] = [];
-  for (let i = 0; i < plusDM.length; i++) {
-    if (i === 0) {
-      smoothedPlus.push(plusDM[0]);
-      smoothedMinus.push(minusDM[0]);
-    } else {
-      smoothedPlus.push(
-        (smoothedPlus[i - 1] * (period - 1) + plusDM[i]) / period,
-      );
-      smoothedMinus.push(
-        (smoothedMinus[i - 1] * (period - 1) + minusDM[i]) / period,
-      );
-    }
-  }
-  // Calculate DI and DX
-  const plusDI: number[] = [];
-  const minusDI: number[] = [];
-  const dx: number[] = [];
-  for (let i = 0; i < smoothedPlus.length; i++) {
-    const trVal = smoothedTR[i + 1] || smoothedTR[i];
-    const pdi = (smoothedPlus[i] / trVal) * 100;
-    const mdi = (smoothedMinus[i] / trVal) * 100;
-    plusDI.push(pdi);
-    minusDI.push(mdi);
-    dx.push(((Math.abs(pdi - mdi) / (pdi + mdi || 1)) || 0) * 100);
-  }
-  // Smooth DX to get ADX
-  const adx: number[] = [];
-  for (let i = 0; i < dx.length; i++) {
-    if (i < period) {
-      adx.push(0);
-    } else if (i === period) {
-      let sum = 0;
-      for (let j = i - period + 1; j <= i; j++) sum += dx[j];
-      adx.push(sum / period);
-    } else {
-      adx.push(((adx[i - 1] * (period - 1)) + dx[i]) / period);
-    }
-  }
-  // Align the length: pad initial zeros for first period elements
-  const padding = new Array(period).fill(0);
-  return padding.concat(adx).slice(0, highs.length);
-}
 
 /**
  * DataFrame type alias for readability: array of candles.
@@ -420,6 +324,9 @@ export class TradingBot {
   private history: Record<string, DataFrame>;
   // Exchange client interface (optional)
   private exchange?: Exchange;
+  // Ephemeral state for UI feedback
+  private lastBlockedSignal: EntrySignal | null = null;
+  private lastCorrelationExit: boolean = false;
   // Derived flags for cheat sheet
   private bosDirection: "up" | "down" | null = null;
   private returnedToLevel = false;
@@ -456,6 +363,10 @@ export class TradingBot {
     this.history = {};
     this.exchange = exchange;
   }
+
+  getLastBlockedSignal() { return this.lastBlockedSignal; }
+  getLastCorrelationExit() { return this.lastCorrelationExit; }
+  clearEphemeralFlags() { this.lastBlockedSignal = null; this.lastCorrelationExit = false; }
 
   updateConfig(config: Partial<BotConfig>): void {
     this.config = applyProfileOverrides({ ...this.config, ...config });
@@ -762,6 +673,20 @@ export class TradingBot {
 
   private handleManage(ht: DataFrame, lt: DataFrame): void {
     if (!this.position) return;
+
+    // BTC Correlation Check (Active Position)
+    if (this.config.symbol !== "BTCUSDT") {
+      const btcBot = botRegistry["BTCUSDT"];
+      const btcPos = btcBot?.getPosition();
+      // Strict: Close if BTC is flat OR side differs
+      if (!btcPos || btcPos.side !== this.position.side) {
+        const currentPrice = lt[lt.length - 1].close;
+        this.exitPosition(currentPrice);
+        this.lastCorrelationExit = true;
+        return;
+      }
+    }
+
     const currentPrice = lt[lt.length - 1].close;
     this.updateWaterMarks(currentPrice);
     const rMultiple = this.position.slDistance > 0
@@ -1264,7 +1189,7 @@ export class TradingBot {
   async step(): Promise<void> {
     if (this.state === State.Scan) {
       const signal = await this.scanForEntry();
-      if (signal) {
+      if (signal && !signal.blocked) {
         const score = signal.sosScore ?? 50;
         const sizeScale = score >= 80 ? 1.0 : 0.6;
         this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, sizeScale, score);
@@ -1285,7 +1210,7 @@ export class TradingBot {
     }
     if (this.state === State.Scan) {
       const signal = this.scanForEntryFromFrames(ht, lt);
-      if (signal) {
+      if (signal && !signal.blocked) {
         const score = signal.sosScore ?? 50;
         const sizeScale = score >= 80 ? 1.0 : 0.6;
         this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, sizeScale, score);
@@ -1311,7 +1236,7 @@ export class TradingBot {
     }
     if (this.state === State.Scan) {
       const signal = this.scanForEntryFromMultiFrames(ht, mid, lt, exec);
-      if (signal) {
+      if (signal && !signal.blocked) {
         const score = signal.sosScore ?? 50;
         const sizeScale = score >= 80 ? 1.0 : 0.6;
         this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, sizeScale, score);
@@ -1374,6 +1299,8 @@ export class TradingBot {
       stopLoss: stop,
       kind: candidate.kind,
       sosScore: candidate.sosScore,
+      blocked: candidate.blocked,
+      blockedReason: candidate.blockedReason,
     };
   }
 
@@ -1382,6 +1309,7 @@ export class TradingBot {
     lt: DataFrame,
   ): EntrySignal | null {
     if (this.cooldownUntil && new Date() < this.cooldownUntil) return null;
+    this.clearEphemeralFlags();
 
     // 0. ABSOLUTE CHAOS GATE
     if (this.isVolatileChaos(ht)) {
@@ -1488,6 +1416,21 @@ export class TradingBot {
         candidate.side === emaTrendBias
       );
       candidate.sosScore = score;
+
+      // BTC Correlation Check
+      if (this.config.symbol !== "BTCUSDT") {
+        const btcBot = botRegistry["BTCUSDT"];
+        const btcPos = btcBot?.getPosition();
+        // Strict: Block if BTC is flat OR side differs
+        if (!btcPos || btcPos.side !== candidate.side) {
+          candidate.blocked = true;
+          candidate.blockedReason = !btcPos ? "BTC Flat" : `BTC ${btcPos.side}`;
+          this.lastBlockedSignal = candidate;
+          // Return candidate so we can log it, but marked blocked
+          return candidate;
+        }
+      }
+
       return candidate;
     };
 
@@ -1747,6 +1690,7 @@ export type EngineSignal = {
   risk: number;
   message: string;
   createdAt: string;
+  blocked?: boolean;
 };
 
 export type EngineDecision = {
@@ -1756,6 +1700,8 @@ export type EngineDecision = {
   trendScore?: number;
   trendAdx?: number;
   signal?: EngineSignal | null;
+  blockedSignal?: EngineSignal | null;
+  correlationExit?: boolean;
   position?: Position | null;
   halted?: boolean;
   xContext?: any;
@@ -1793,7 +1739,36 @@ export function evaluateStrategyForSymbol(
   // INTEGRACE AI-MATIC-PRO
   if (botConfig.strategyProfile === "ai-matic-pro") {
     const entryTfMin = timeframeToMinutes(botConfig.aiMaticEntryTimeframe ?? "5m");
-    return evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin });
+    const decision = evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin });
+
+    // BTC Correlation Check for PRO
+    if (symbol !== "BTCUSDT") {
+      const btcBot = botRegistry["BTCUSDT"];
+      const btcPos = btcBot?.getPosition();
+      
+      // Strict Correlation Check
+      if (decision.signal) {
+        const btcSide = btcPos ? (btcPos.side === "long" ? "buy" : "sell") : null;
+        if (!btcSide || decision.signal.intent.side !== btcSide) {
+          decision.blockedSignal = { 
+            ...decision.signal, 
+            blocked: true, 
+            message: `Blocked: BTC ${btcSide || "Flat"}` 
+          };
+          decision.signal = null;
+        }
+      }
+      
+      // Check active position
+      const myPos = bot.getPosition();
+      if (myPos && (!btcPos || myPos.side !== btcPos.side)) {
+        const currentPrice = candles[candles.length - 1].close;
+        bot.exitPosition(currentPrice);
+        decision.position = null;
+        decision.correlationExit = true;
+      }
+    }
+    return decision;
   }
 
   const useMultiTf = botConfig.aiMaticMultiTf;
@@ -1859,45 +1834,7 @@ export function evaluateStrategyForSymbol(
   // (placeholder) cheat flags – real modules should populate these in future
 
   const trend = trendMetrics.trend;
-  let signal: EngineSignal | null = null;
-  const position = bot.getPosition();
-  if (
-    prevState === State.Scan &&
-    bot.getState() === State.Manage &&
-    position &&
-    position.opened !== prevOpened
-  ) {
-    // Note: This block is for logging/UI feedback after a trade is opened, not for execution.
-    signal = {
-      id: `${symbol}-${Date.now()}`,
-      symbol,
-      intent: {
-        side: position.side === "long" ? "buy" : "sell",
-        entry: position.entryPrice,
-        sl: position.stopLoss,
-        tp: position.initialTakeProfit,
-      },
-      kind: position.entryKind ?? "OTHER",
-      risk: 1.0, // Default display risk
-      message: `Entered ${position.side} | SL ${position.stopLoss.toFixed(2)} | TP ${position.initialTakeProfit.toFixed(2)} | SOS ${position.sosScore ?? "-"}`,
-      createdAt: new Date().toISOString(),
-    };
-  }
-  if (signal && botConfig.useStrategyCheatSheet) {
-    const setupId =
-      botConfig.cheatSheetSetupId ?? getDefaultCheatSheetSetupId();
-    const setup = setupId ? getCheatSheetSetup(setupId) : null;
-    if (setup) {
-      signal.setupId = setup.id;
-      signal.entryType = setup.entryType;
-      if (setup.entryType === "CONDITIONAL") {
-        const dir = signal.intent.side === "buy" ? 1 : -1;
-        const offsetBps = setup.triggerOffsetBps ?? 0;
-        signal.triggerPrice =
-          signal.intent.entry * (1 + (dir * offsetBps) / 10000);
-      }
-    }
-  }
+
   // Build cheat sheet dependency/signal payloads for AI-MATIC-TREE.
   // These are conservative defaults so the cheat-sheet pipeline works
   // end-to-end even without dedicated market-structure modules wired in yet.
@@ -1926,6 +1863,75 @@ export function evaluateStrategyForSymbol(
     trapReaction: true,  //false
   };
 
+  let signal: EngineSignal | null = null;
+  const position = bot.getPosition();
+  if (
+    prevState === State.Scan &&
+    bot.getState() === State.Manage &&
+    position &&
+    position.opened !== prevOpened
+  ) {
+    // Note: This block is for logging/UI feedback after a trade is opened, not for execution.
+    signal = {
+      id: `${symbol}-${Date.now()}`,
+      symbol,
+      intent: {
+        side: position.side === "long" ? "buy" : "sell",
+        entry: position.entryPrice,
+        sl: position.stopLoss,
+        tp: position.initialTakeProfit,
+      },
+      kind: position.entryKind ?? "OTHER",
+      risk: 1.0, // Default display risk
+      message: `Entered ${position.side} | SL ${position.stopLoss.toFixed(2)} | TP ${position.initialTakeProfit.toFixed(2)} | SOS ${position.sosScore ?? "-"}`,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  // Expose blocked signal if any
+  const blocked = bot.getLastBlockedSignal();
+  if (blocked && !signal) {
+    return {
+      state: bot.getState(),
+      trend,
+      trendH1: trend,
+      trendScore: trendMetrics.score,
+      trendAdx: trendMetrics.adx,
+      signal: null,
+      blockedSignal: {
+        id: `${symbol}-blocked-${Date.now()}`,
+        symbol,
+        intent: { side: blocked.side === "long" ? "buy" : "sell", entry: blocked.entry, sl: blocked.stopLoss, tp: 0 },
+        kind: blocked.kind,
+        risk: 0,
+        message: `Blocked: ${blocked.blockedReason}`,
+        createdAt: new Date().toISOString(),
+        blocked: true,
+      },
+      correlationExit: bot.getLastCorrelationExit(),
+      position,
+      halted: bot.isHalted(),
+      cheatDeps,
+      cheatSignals,
+    };
+  }
+
+  if (signal && botConfig.useStrategyCheatSheet) {
+    const setupId =
+      botConfig.cheatSheetSetupId ?? getDefaultCheatSheetSetupId();
+    const setup = setupId ? getCheatSheetSetup(setupId) : null;
+    if (setup) {
+      signal.setupId = setup.id;
+      signal.entryType = setup.entryType;
+      if (setup.entryType === "CONDITIONAL") {
+        const dir = signal.intent.side === "buy" ? 1 : -1;
+        const offsetBps = setup.triggerOffsetBps ?? 0;
+        signal.triggerPrice =
+          signal.intent.entry * (1 + (dir * offsetBps) / 10000);
+      }
+    }
+  }
+
   return {
     state: bot.getState(),
     trend,
@@ -1933,6 +1939,7 @@ export function evaluateStrategyForSymbol(
     trendScore: trendMetrics.score,
     trendAdx: trendMetrics.adx,
     signal,
+    correlationExit: bot.getLastCorrelationExit(),
     position,
     halted: bot.isHalted(),
     cheatDeps,

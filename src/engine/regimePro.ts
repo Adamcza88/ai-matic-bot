@@ -1,4 +1,4 @@
-import { computeATR } from "./botEngine";
+import { computeATR } from "./ta";
 
 type HMMModel = {
   pi: number[];

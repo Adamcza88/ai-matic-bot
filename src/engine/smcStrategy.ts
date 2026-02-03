@@ -6,8 +6,8 @@ import {
   Trend,
   resampleCandles,
   type Candle as EngineCandle,
-  computeADX,
 } from "./botEngine";
+import { computeADX } from "./ta";
 import { CandlestickAnalyzer } from "./universal-candlestick-analyzer";
 import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet";
 
