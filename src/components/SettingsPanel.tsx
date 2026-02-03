@@ -324,19 +324,19 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     },
   };
   const treeMetaCheatOn: CoreProfile = {
-    title: "AI-MATIC-TREE Core",
-    summary: "Decision tree gate · SWING/INTRADAY/SCALP · deterministic",
+    title: "AI-MATIC-TREE (High-Precision)",
+    summary: "Decision tree · High WR · ~100 trades/day",
     description:
-      "Core engine (Cheat Sheet ON): AI-MATIC-TREE decision tree gate (CombinedEntryStrategy) + dependency impacts.",
+      "Core engine (Cheat Sheet ON): AI-MATIC-TREE decision tree gate (CombinedEntryStrategy) optimized for High Win Rate & Frequency.",
     notes: [
       ORDER_VALUE_NOTE,
-      "Cheat Sheet ON: obchody se filtrují/override přes AI-MATIC-TREE decision tree.",
-      "Režimy: SWING (HTF reaction) / INTRADAY (OB/BOS returns) / SCALP (rejection + trailing).",
-      "NO TRADE: pokud decision vrátí ok=false.",
-      "Závislosti: VP/OB/GAP/TRAP/LOWVOL; chybějící modul = dopady/blokace (např. SCALP_DISABLED).",
-      "Exekuce: vynucuje LIMIT_MAKER_FIRST; trailing dle profilu (R-based).",
-      "Čekající limit entry (doporučení): SCALP 5–10 min, INTRADAY 15–30 min, SWING 60–180 min.",
-      "Pokud limit nestihne fill v okně nebo se změní struktura/rrr, setup zrušit a čekat na nový.",
+      "Cheat Sheet ON: Decision tree override. Cíl: Max Win Rate při zachování frekvence (~100/den).",
+      "Režimy: SCALP (priorita, 1m/5m) > INTRADAY (15m) > SWING (1h).",
+      "Exekuce: 'Smart Limit' – start na BBO, agresivní přecenění po 30s. Fill or Kill do 5 min.",
+      "Entry Logic: Pouze setupy s konfluencí (Trend + Momentum + Volume).",
+      "Exit: Rychlý fixní TP1 (skalp) pro zajištění WR, TP2 trailing.",
+      "Risk Management: Dynamický SL dle volatility, okamžitý posun na BE po TP1.",
+      "NO TRADE: Pokud je spread > 0.1% nebo nízká likvidita.",
     ],
   };
   const coreMeta =
@@ -528,15 +528,15 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     riskMode: "ai-matic-tree",
     trendGateMode: "adaptive",
     pauseOnHighVolatility: false,
-    avoidLowLiquidity: false,
+    avoidLowLiquidity: true,
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: true,
     strategyCheatSheetEnabled: true,
     enableHardGates: true,
     enableSoftGates: true,
-    maxOpenPositions: 2,
-    maxOpenOrders: 8,
+    maxOpenPositions: 5,
+    maxOpenOrders: 20,
     selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "base",
     useDynamicPositionSizing: true,
@@ -551,7 +551,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     minWinRate: 65,
     makerFeePct: 0.01,
     takerFeePct: 0.06,
-    slippageBufferPct: 0.02,
+    slippageBufferPct: 0.01,
   };
 
   const AI_MATIC_PRO_PRESET_UI: AISettings = {
@@ -1112,64 +1112,43 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             </div>
             <div className="flex items-center justify-between text-xs text-slate-500">
               <div>
-                View: {compactCheatSheet ? "Compact" : "Detail"}
+                View: {compactCheatSheet ? "Compact" : "Full"}
               </div>
               <button
                 type="button"
-                onClick={() => setCompactCheatSheet((v) => !v)}
-                className={`rounded-md border px-2 py-1 text-[11px] ${
-                  compactCheatSheet
-                    ? "border-slate-700 bg-slate-900/60 text-slate-200"
-                    : "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                }`}
+                onClick={() => setCompactCheatSheet(!compactCheatSheet)}
+                className="text-sky-400 hover:text-sky-300 underline underline-offset-2"
               >
-                {compactCheatSheet ? "Compact" : "Detail"}
+                {compactCheatSheet ? "Show all" : "Compact view"}
               </button>
             </div>
-            {renderCheatBlocks(coreBlocks)}
           </div>
 
-          <div className="mt-3 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="font-semibold text-white">Cheat Sheet</div>
-                <div className="text-slate-300">
-                  {cheatSheetSetup?.description ??
-                    "Cheat sheet se nepodařilo načíst."}
-                </div>
-              </div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                {cheatSheetStatus}
-              </div>
+          <div className="mt-4 border-t border-slate-800 pt-4">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-medium text-slate-200">
+                {cheatDisabled ? "Strategy Notes" : "Cheat Sheet & Notes"}
+              </h3>
             </div>
-            <div className="text-xs text-slate-500">
-              Setup: {cheatSheetLabel}
-            </div>
-            {renderCheatBlocks(cheatBlocks)}
-          </div>
-
-          <div className="text-xs text-slate-500">
-            Parametry: Max positions {local.maxOpenPositions} • Max orders{" "}
-            {local.maxOpenOrders}
+            {renderCheatBlocks(cheatDisabled ? coreBlocks : cheatBlocks)}
           </div>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end mt-6">
+
+        <div className="mt-6 flex justify-end gap-2">
           <button
-            type="button"
+            onClick={onClose}
+            className="rounded-md border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
+          >
+            Cancel
+          </button>
+          <button
             onClick={() => {
-              stashProfileSettings(local.riskMode, local);
               onUpdateSettings(local);
               onClose();
             }}
-            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-emerald-600 text-white hover:bg-emerald-500 h-10 px-4 py-2 w-full sm:w-auto"
+            className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
           >
-            Save
-          </button>
-          <button
-            onClick={onClose}
-            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full sm:w-auto"
-          >
-            Close
+            Save Changes
           </button>
         </div>
       </div>

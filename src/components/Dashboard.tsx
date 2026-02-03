@@ -127,13 +127,13 @@ export default function Dashboard({
       if (cheatEnabled) {
         return {
           label: "AI-MATIC-TREE",
-          subtitle: "Decision Tree Gate (SWING/INTRADAY/SCALP)",
+          subtitle: "High-Precision Tree (~100 trades/day)",
           symbols: SUPPORTED_SYMBOLS,
-          timeframes: "SWING 4h/15m · INTRADAY 1h/5m/3m · SCALP 15m/1m/3m",
+          timeframes: "SCALP 1m/5m (Priority) · INTRADAY 15m · SWING 1h",
           session: "24/7",
           risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
-          entry: "SWING: HTF reaction · INTRADAY: OB/BOS return · SCALP: rejection/BOS return",
-          execution: `LIMIT_MAKER_FIRST · trailing dle profilu (R-based) · limit wait: S 5–10m / I 15–30m / W 60–180m · ${cheatSheetNote}`,
+          entry: "High WR Focus: Trend + Momentum + Volume confluence",
+          execution: `Smart Limit (BBO chase) · Quick TP1 (WR guard) · ${cheatSheetNote}`,
         };
       }
       return {
@@ -400,38 +400,38 @@ export default function Dashboard({
               profileGateNames={checklistGateNames}
             />
           </TabsContent>
-        <TabsContent value="orders">
-          <OrdersPanel
-            orders={exchangeOrders}
-            ordersLoaded={ordersLoaded}
-            ordersError={ordersError}
-            refreshOrders={refreshOrders}
-            trades={exchangeTrades}
-            tradesLoaded={tradesLoaded}
-            useTestnet={useTestnet}
-            onCancelOrder={cancelOrder}
-            allowCancel={allowOrderCancel}
-          />
-        </TabsContent>
-        <TabsContent value="logs">
-          <LogsPanel
-            logEntries={logEntries}
-            logsLoaded={logsLoaded}
-            useTestnet={useTestnet}
-            isActive={activeTab === "logs"}
-          />
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="orders">
+            <OrdersPanel
+              orders={exchangeOrders}
+              trades={exchangeTrades}
+              ordersLoaded={ordersLoaded}
+              tradesLoaded={tradesLoaded}
+              onCancelOrder={cancelOrder}
+              allowCancel={allowOrderCancel}
+              refreshOrders={refreshOrders}
+              ordersError={ordersError}
+              useTestnet={useTestnet}
+            />
+          </TabsContent>
+          <TabsContent value="logs">
+            <LogsPanel
+              logEntries={logEntries}
+              logsLoaded={logsLoaded}
+              useTestnet={useTestnet}
+              isActive={activeTab === "logs"}
+            />
+          </TabsContent>
+        </Tabs>
 
-      {showSettings && bot.settings && (
-        <SettingsPanel
-          theme="dark"
-          lang="en"
-          settings={bot.settings}
-          onUpdateSettings={bot.updateSettings}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
-    </div>
-  );
-}
+        {showSettings && bot.settings && (
+          <SettingsPanel
+            theme="dark"
+            lang="en"
+            settings={bot.settings}
+            onUpdateSettings={bot.updateSettings}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
+      </div>
+    );
+  }
