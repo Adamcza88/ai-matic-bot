@@ -2117,9 +2117,24 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const hmmOk = Number.isFinite(regime?.hmmProb) && (regime?.hmmProb ?? 0) >= 0.7;
         const vpinOk = Number.isFinite(regime?.vpin ?? orderflow?.vpin) &&
             (regime?.vpin ?? orderflow?.vpin ?? 1) < 0.8;
-        const ofiDeltaOk = Number.isFinite(orderflow?.ofi) ||
-            Number.isFinite(orderflow?.delta) ||
-            Boolean(signal);
+        const absorptionScore = orderflow?.absorptionScore ?? 0;
+        const absorptionOk = Number.isFinite(absorptionScore) && absorptionScore >= 2;
+        const ofi = orderflow?.ofi ?? 0;
+        const delta = orderflow?.delta ?? 0;
+        const ofiPrev = orderflow?.ofiPrev ?? 0;
+        const deltaPrev = orderflow?.deltaPrev ?? 0;
+        const ofiUp = Number.isFinite(ofi) && ofi > 0;
+        const ofiDown = Number.isFinite(ofi) && ofi < 0;
+        const deltaUp = Number.isFinite(delta) && delta > 0;
+        const deltaDown = Number.isFinite(delta) && delta < 0;
+        const ofiFlipUp = ofiUp && ofiPrev <= 0;
+        const ofiFlipDown = ofiDown && ofiPrev >= 0;
+        const deltaFlipUp = deltaUp && deltaPrev <= 0;
+        const deltaFlipDown = deltaDown && deltaPrev >= 0;
+        const flowBuy = absorptionOk && ofiUp && deltaUp && (ofiFlipUp || deltaFlipUp);
+        const flowSell = absorptionOk && ofiDown && deltaDown && (ofiFlipDown || deltaFlipDown);
+        const ofiDeltaOk = flowBuy || flowSell || Boolean(signal);
+        const absorptionGateOk = absorptionOk || Boolean(signal);
         const vaOk = Number.isFinite(profile?.vah) &&
             Number.isFinite(profile?.val) &&
             (profile?.vah ?? 0) > 0 &&
@@ -2158,7 +2173,17 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 hard: false,
             },
             {
-                name: "OFI/Delta trigger",
+                name: "Absorption >= 2",
+                ok: absorptionGateOk,
+                detail: Number.isFinite(absorptionScore)
+                    ? `Abs ${formatNumber(absorptionScore, 2)}`
+                    : signal
+                        ? "signal"
+                        : "missing",
+                hard: false,
+            },
+            {
+                name: "OFI/Delta absorpce",
                 ok: ofiDeltaOk,
                 detail: Number.isFinite(orderflow?.ofi) || Number.isFinite(orderflow?.delta)
                     ? `OFI ${formatNumber(orderflow?.ofi ?? 0, 2)} | Δ ${formatNumber(orderflow?.delta ?? 0, 2)}`

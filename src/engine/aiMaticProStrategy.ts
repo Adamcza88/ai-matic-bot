@@ -1,6 +1,6 @@
 import type { Candle, EngineDecision, EngineSignal } from "./botEngine";
 import { computeATR } from "./botEngine";
-import { computeRsi, findPivotsHigh, findPivotsLow } from "./ta";
+import { findPivotsHigh, findPivotsLow } from "./ta";
 import { computeMarketProfile } from "./marketProfile";
 import { getOrderFlowSnapshot } from "./orderflow";
 import { analyzeRegimePro } from "./regimePro";
@@ -21,59 +21,43 @@ type ProState =
 
 const proStateBySymbol = new Map<string, ProState>();
 
-function buildRfPredictor() {
-  let seed = 1337;
-  const nextRand = () => {
-    seed = (seed * 16807) % 2147483647;
-    return seed / 2147483647;
-  };
-  const trees = Array.from({ length: 20 }, () => {
-    const hurst = 0.45 + (nextRand() - 0.5) * 0.04;
-    const chop = 60 + (nextRand() - 0.5) * 6;
-    const hmm = 0.7 + (nextRand() - 0.5) * 0.1;
-    const rsiBuy = 50 - nextRand() * 8;
-    const rsiSell = 50 + nextRand() * 8;
-    return { hurst, chop, hmm, rsiBuy, rsiSell };
-  });
-  return (features: {
-    hurst: number;
-    chop: number;
-    hmmProb: number;
-    vpin: number;
-    ofi: number;
-    delta: number;
-    rsi: number;
-  }) => {
-    const votes = { BUY: 0, SELL: 0, WAIT: 0 };
-    for (const t of trees) {
-      if (
-        features.hurst < t.hurst &&
-        features.chop > t.chop &&
-        features.hmmProb >= t.hmm &&
-        features.vpin < 0.8
-      ) {
-        if (features.ofi > 0 && features.delta > 0 && features.rsi <= t.rsiBuy) {
-          votes.BUY += 1;
-        } else if (
-          features.ofi < 0 &&
-          features.delta < 0 &&
-          features.rsi >= t.rsiSell
-        ) {
-          votes.SELL += 1;
-        } else {
-          votes.WAIT += 1;
-        }
-      } else {
-        votes.WAIT += 1;
-      }
-    }
-    if (votes.BUY > votes.SELL && votes.BUY > votes.WAIT) return "BUY";
-    if (votes.SELL > votes.BUY && votes.SELL > votes.WAIT) return "SELL";
-    return "WAIT";
-  };
-}
+function resolveFlowSignal(args: {
+  ofi: number;
+  ofiPrev: number;
+  delta: number;
+  deltaPrev: number;
+  absorptionScore: number;
+  lastClose: number;
+  prevClose: number;
+}) {
+  const absorptionOk =
+    Number.isFinite(args.absorptionScore) && args.absorptionScore >= 2;
+  if (!absorptionOk) return "WAIT";
+  const ofiUp = Number.isFinite(args.ofi) && args.ofi > 0;
+  const ofiDown = Number.isFinite(args.ofi) && args.ofi < 0;
+  const deltaUp = Number.isFinite(args.delta) && args.delta > 0;
+  const deltaDown = Number.isFinite(args.delta) && args.delta < 0;
+  const ofiFlipUp = ofiUp && args.ofiPrev <= 0;
+  const ofiFlipDown = ofiDown && args.ofiPrev >= 0;
+  const deltaFlipUp = deltaUp && args.deltaPrev <= 0;
+  const deltaFlipDown = deltaDown && args.deltaPrev >= 0;
+  const priceDownOrFlat =
+    Number.isFinite(args.lastClose) &&
+    Number.isFinite(args.prevClose) &&
+    args.lastClose <= args.prevClose;
+  const priceUpOrFlat =
+    Number.isFinite(args.lastClose) &&
+    Number.isFinite(args.prevClose) &&
+    args.lastClose >= args.prevClose;
 
-const rfPredict = buildRfPredictor();
+  if (ofiUp && deltaUp && (ofiFlipUp || deltaFlipUp) && priceDownOrFlat) {
+    return "BUY";
+  }
+  if (ofiDown && deltaDown && (ofiFlipDown || deltaFlipDown) && priceUpOrFlat) {
+    return "SELL";
+  }
+  return "WAIT";
+}
 
 function findNearestLVN(lvn: number[], entry: number, side: "Buy" | "Sell") {
   if (!lvn.length) return null;
@@ -211,17 +195,17 @@ export function evaluateAiMaticProStrategyForSymbol(
     delta: orderflow.delta,
   });
 
-  const rsiArr = computeRsi(closes, 14);
-  const rsi = rsiArr.length ? rsiArr[rsiArr.length - 1] : 50;
-  const rfSignal = rfPredict({
-    hurst: regime.hurst,
-    chop: regime.chop,
-    hmmProb: regime.hmmProb,
-    vpin: regime.vpin,
-    ofi: regime.ofi,
-    delta: regime.delta,
-    rsi,
+  const absorptionScore = orderflow.absorptionScore ?? 0;
+  const flowSignal = resolveFlowSignal({
+    ofi: orderflow.ofi,
+    ofiPrev: orderflow.ofiPrev,
+    delta: orderflow.delta,
+    deltaPrev: orderflow.deltaPrev,
+    absorptionScore,
+    lastClose: last.close,
+    prevClose: prev.close,
   });
+  const rfSignal = flowSignal;
 
   const entryTfMin = config?.entryTfMin ?? 5;
   const timeStopMinutes = Math.max(entryTfMin * 10, 60);
@@ -231,9 +215,10 @@ export function evaluateAiMaticProStrategyForSymbol(
   const lastSwingLow = findLastPivot(candles, "low", 30);
   const swingHigh = lastSwingHigh?.price ?? Math.max(...highs.slice(-30));
   const swingLow = lastSwingLow?.price ?? Math.min(...lows.slice(-30));
-  const tradesInCandle = orderflow.trades?.filter(
+  const lastOpenTime = Number(last.openTime);
+  const tradesInCandle = (orderflow.trades ?? []).filter(
     (t: any) =>
-      t.ts >= last.openTime && t.ts < last.openTime + timeframeMs
+      t.ts >= lastOpenTime && t.ts < lastOpenTime + timeframeMs
   );
   const totalTradeVol = tradesInCandle.reduce(
     (sum: number, t: any) => sum + t.size,
@@ -270,7 +255,7 @@ export function evaluateAiMaticProStrategyForSymbol(
     "Buy"
   );
   const iceberg = Boolean(orderflow.icebergDetected);
-  const absorption = (orderflow.absorptionScore ?? 0) >= 2;
+  const absorption = Number.isFinite(absorptionScore) && absorptionScore >= 2;
   const liqProximity = orderflow.liqProximityPct ?? null;
 
   const proSignals = {
@@ -281,7 +266,7 @@ export function evaluateAiMaticProStrategyForSymbol(
     oiBear,
     oiBull,
     iceberg,
-    absorptionScore: orderflow.absorptionScore ?? 0,
+    absorptionScore,
     liqProximityPct: liqProximity,
   };
 
@@ -309,7 +294,7 @@ export function evaluateAiMaticProStrategyForSymbol(
   }
   proStateBySymbol.set(symbol, proState);
 
-  const regimeOk = regime.regimeOk && rfSignal !== "WAIT";
+  const regimeOk = regime.regimeOk;
   const useRangeLogic = regimeOk && !manipActive;
 
   const atrArr = computeATR(highs, lows, closes, 14);
@@ -330,16 +315,12 @@ export function evaluateAiMaticProStrategyForSymbol(
   if (useRangeLogic) {
     const longZone = price <= profile.val;
     const shortZone = price >= profile.vah;
-    const ofiLong = orderflow.ofi > 0 && orderflow.ofiPrev <= 0;
-    const ofiShort = orderflow.ofi < 0 && orderflow.ofiPrev >= 0;
-    const deltaLong = prev.close > price && orderflow.delta > 0;
-    const deltaShort = prev.close < price && orderflow.delta < 0;
-    const longTrigger = ofiLong || deltaLong;
-    const shortTrigger = ofiShort || deltaShort;
+    const longTrigger = flowSignal === "BUY";
+    const shortTrigger = flowSignal === "SELL";
 
     let side: "Buy" | "Sell" | null = null;
-    if (longZone && longTrigger && rfSignal === "BUY") side = "Buy";
-    if (shortZone && shortTrigger && rfSignal === "SELL") side = "Sell";
+    if (longZone && longTrigger) side = "Buy";
+    if (shortZone && shortTrigger) side = "Sell";
 
     if (!side) {
       return {
@@ -450,9 +431,11 @@ export function evaluateAiMaticProStrategyForSymbol(
   const midRange = (profile.vah + profile.val) / 2;
   const t1 = Number.isFinite(profile.vwap) ? profile.vwap : midRange;
   const t2 =
-    side === "Buy"
-      ? profile.vah
-      : profile.val;
+    Number.isFinite(profile.poc) && profile.poc > 0
+      ? profile.poc
+      : side === "Buy"
+        ? profile.vah
+        : profile.val;
 
   const signal: EngineSignal = {
     id: `${symbol}-${Date.now()}`,

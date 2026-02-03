@@ -305,7 +305,7 @@ export function analyzeRegimePro(args) {
     hurst < 0.45 &&
     Number.isFinite(chop) &&
     chop > 60 &&
-    rangeProb >= 0.8 &&
+    rangeProb >= 0.7 &&
     vpin < 0.8;
   return {
     hurst,
