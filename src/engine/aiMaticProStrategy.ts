@@ -19,7 +19,14 @@ type ProState =
   | "EXECUTION"
   | "MANAGEMENT";
 
-const proStateBySymbol = new Map<string, ProState>();
+interface ProStateData {
+  state: ProState;
+  confirmationLevel?: number;
+  pendingSide?: "Buy" | "Sell";
+  invalidationLevel?: number;
+}
+
+const proStateMap = new Map<string, ProStateData>();
 
 function resolveFlowSignal(args: {
   ofi: number;
@@ -93,6 +100,18 @@ function findLastPivot(
   const cutoff = Math.max(0, candles.length - lookback);
   const filtered = pivots.filter((p) => p.idx >= cutoff);
   return filtered.length ? filtered[filtered.length - 1] : null;
+}
+
+function findConfirmationLevel(candles: Candle[], swingIdx: number, sfpIdx: number, side: "Buy" | "Sell") {
+  if (swingIdx < 0 || sfpIdx >= candles.length || swingIdx >= sfpIdx) return null;
+  const slice = candles.slice(swingIdx, sfpIdx + 1);
+  if (side === "Sell") {
+    // Bearish SFP: Confirmation is the lowest Low between Swing High and SFP candle
+    return Math.min(...slice.map(c => c.low));
+  } else {
+    // Bullish SFP: Confirmation is the highest High between Swing Low and SFP candle
+    return Math.max(...slice.map(c => c.high));
+  }
 }
 
 function detectFvgMid(candles: Candle[], side: "Buy" | "Sell") {
@@ -272,27 +291,62 @@ export function evaluateAiMaticProStrategyForSymbol(
 
   const manipActive =
     regime.manipActive || (liqProximity != null && liqProximity <= 1);
-  const prevState = proStateBySymbol.get(symbol) ?? "RANGE_TRADING";
-  let proState: ProState = prevState;
-  if (prevState === "RANGE_TRADING" && manipActive) {
-    proState = "MANIPULATION_WATCH";
-  } else if (prevState === "MANIPULATION_WATCH") {
+  
+  const prevData = proStateMap.get(symbol) ?? { state: "RANGE_TRADING" };
+  let nextData: ProStateData = { ...prevData };
+
+  // --- FSM Logic (Chapter 9) ---
+  if (prevData.state === "RANGE_TRADING") {
+    if (manipActive) {
+      nextData.state = "MANIPULATION_WATCH";
+    }
+  } else if (prevData.state === "MANIPULATION_WATCH") {
     const invalidation =
       (last.close > prev.close && orderflow.openInterestTrend === "rising") ||
       (last.close < prev.close && orderflow.openInterestTrend === "falling");
-    if (bearishSfp && (cvdBear || iceberg || absorption)) {
-      proState = "EXECUTION";
-    } else if (bullishSfp && (cvdBull || iceberg || absorption)) {
-      proState = "EXECUTION";
-    } else if (invalidation && !bearishSfp && !bullishSfp) {
-      proState = "RANGE_TRADING";
+    
+    // Transition to PRE_ENTRY on SFP detection
+    if (bearishSfp && (cvdBear || iceberg || absorption) && lastSwingHigh) {
+      const confLevel = findConfirmationLevel(candles, lastSwingHigh.idx, candles.length - 1, "Sell");
+      if (confLevel) {
+        nextData.state = "PRE_ENTRY";
+        nextData.pendingSide = "Sell";
+        nextData.confirmationLevel = confLevel;
+        nextData.invalidationLevel = Math.max(last.high, swingHigh);
+      }
+    } else if (bullishSfp && (cvdBull || iceberg || absorption) && lastSwingLow) {
+      const confLevel = findConfirmationLevel(candles, lastSwingLow.idx, candles.length - 1, "Buy");
+      if (confLevel) {
+        nextData.state = "PRE_ENTRY";
+        nextData.pendingSide = "Buy";
+        nextData.confirmationLevel = confLevel;
+        nextData.invalidationLevel = Math.min(last.low, swingLow);
+      }
+    } else if (invalidation) {
+      nextData.state = "RANGE_TRADING";
     }
-  } else if (prevState === "EXECUTION") {
-    proState = "MANAGEMENT";
-  } else if (prevState === "MANAGEMENT" && !manipActive) {
-    proState = "RANGE_TRADING";
+  } else if (prevData.state === "PRE_ENTRY") {
+    // Validate Confirmation Level
+    if (nextData.pendingSide === "Sell") {
+      if (last.close < (nextData.confirmationLevel ?? -Infinity)) {
+        nextData.state = "EXECUTION";
+      } else if (last.high > (nextData.invalidationLevel ?? Infinity)) {
+        nextData.state = "RANGE_TRADING"; // Invalidated
+      }
+    } else if (nextData.pendingSide === "Buy") {
+      if (last.close > (nextData.confirmationLevel ?? Infinity)) {
+        nextData.state = "EXECUTION";
+      } else if (last.low < (nextData.invalidationLevel ?? -Infinity)) {
+        nextData.state = "RANGE_TRADING"; // Invalidated
+      }
+    }
+  } else if (prevData.state === "EXECUTION") {
+    nextData.state = "MANAGEMENT";
+  } else if (prevData.state === "MANAGEMENT" && !manipActive) {
+    nextData.state = "RANGE_TRADING";
   }
-  proStateBySymbol.set(symbol, proState);
+  proStateMap.set(symbol, nextData);
+  const proState = nextData.state;
 
   const regimeOk = regime.regimeOk;
   const useRangeLogic = regimeOk && !manipActive;
@@ -404,7 +458,7 @@ export function evaluateAiMaticProStrategyForSymbol(
     } as EngineDecision;
   }
 
-  const side: "Buy" | "Sell" | null = bearishSfp ? "Sell" : bullishSfp ? "Buy" : null;
+  const side = nextData.pendingSide ?? (bearishSfp ? "Sell" : bullishSfp ? "Buy" : null);
   if (!side) {
     return {
       state: "SCAN",

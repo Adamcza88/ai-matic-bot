@@ -5,14 +5,6 @@ type TradeTick = {
   size: number;
   side: "Buy" | "Sell";
 };
-type LiquidationTick = {
-  ts: number;
-  price: number;
-  size: number;
-  side: "Buy" | "Sell";
-};
-type CvdPoint = { ts: number; value: number };
-type OiPoint = { ts: number; value: number };
 
 type OrderFlowState = {
   bids: Map<number, number>;
@@ -23,31 +15,33 @@ type OrderFlowState = {
   bestAskSize?: number;
   prevBestBidSize?: number;
   prevBestAskSize?: number;
-  lastBookDelta?: number;
   ofiHistory: number[];
   trades: TradeTick[];
   vpinBuckets: number[];
   bucketBuy: number;
   bucketSell: number;
   bucketSize: number;
-  cvd: number;
-  cvdSeries: CvdPoint[];
-  icebergUntil?: number;
-  absorptionScore?: number;
-  liqClusters: Map<number, { size: number; ts: number }>;
-  oiHistory: OiPoint[];
-  openInterest?: number;
+  // Iceberg detection state
+  tradeVolAtBestBid: number;
+  tradeVolAtBestAsk: number;
+  lastBestBid?: number;
+  lastBestAsk?: number;
+  lastBestBidSize?: number;
+  lastBestAskSize?: number;
+  icebergDetected: boolean;
+  absorptionScore: number;
+  cvdSeries: { ts: number; value: number }[];
+  cumulativeDelta: number;
   openInterestTrend?: "rising" | "falling" | "flat";
+  liqProximityPct?: number;
+  oiHistory: { ts: number; value: number }[];
+  liquidationLevels: { price: number; size: number }[];
 };
 
 const stateBySymbol = new Map<string, OrderFlowState>();
 const MAX_TRADES = 1500;
 const MAX_OFI = 50;
 const MAX_VPIN = 100;
-const MAX_CVD_POINTS = 300;
-const LIQ_CLUSTER_TTL_MS = 6 * 60 * 60_000;
-const LIQ_BUCKET_PCT = 0.005;
-const MAX_OI_POINTS = 50;
 
 function getState(symbol: string): OrderFlowState {
   let state = stateBySymbol.get(symbol);
@@ -61,10 +55,14 @@ function getState(symbol: string): OrderFlowState {
       bucketBuy: 0,
       bucketSell: 0,
       bucketSize: 0,
-      cvd: 0,
+      tradeVolAtBestBid: 0,
+      tradeVolAtBestAsk: 0,
+      icebergDetected: false,
+      absorptionScore: 0,
       cvdSeries: [],
-      liqClusters: new Map(),
+      cumulativeDelta: 0,
       oiHistory: [],
+      liquidationLevels: [],
     };
     stateBySymbol.set(symbol, state);
   }
@@ -104,6 +102,45 @@ export function updateOrderbook(
     if (size <= 0) state.asks.delete(price);
     else state.asks.set(price, size);
   }
+
+  // --- Iceberg Detection Logic (Chapter 6.3) ---
+  const currentBestBid = Math.max(...state.bids.keys());
+  const currentBestAsk = Math.min(...state.asks.keys());
+  const currentBestBidSize = state.bids.get(currentBestBid) ?? 0;
+  const currentBestAskSize = state.asks.get(currentBestAsk) ?? 0;
+
+  let iceberg = false;
+  let maxAbsorption = 0;
+
+  // Check Bid Side (Absorption of Sells)
+  if (Number.isFinite(currentBestBid) && currentBestBid === state.lastBestBid) {
+    const visible = state.lastBestBidSize ?? currentBestBidSize;
+    const ratio = visible > 0 ? state.tradeVolAtBestBid / visible : 0;
+    if (ratio > 1.0) iceberg = true; // More volume traded than was visible
+    maxAbsorption = Math.max(maxAbsorption, ratio);
+  } else {
+    state.tradeVolAtBestBid = 0; // Price moved, reset counter
+  }
+
+  // Check Ask Side (Absorption of Buys)
+  if (Number.isFinite(currentBestAsk) && currentBestAsk === state.lastBestAsk) {
+    const visible = state.lastBestAskSize ?? currentBestAskSize;
+    const ratio = visible > 0 ? state.tradeVolAtBestAsk / visible : 0;
+    if (ratio > 1.0) iceberg = true;
+    maxAbsorption = Math.max(maxAbsorption, ratio);
+  } else {
+    state.tradeVolAtBestAsk = 0; // Price moved, reset counter
+  }
+
+  state.icebergDetected = iceberg;
+  state.absorptionScore = maxAbsorption;
+
+  state.lastBestBid = currentBestBid;
+  state.lastBestAsk = currentBestAsk;
+  state.lastBestBidSize = currentBestBidSize;
+  state.lastBestAskSize = currentBestAskSize;
+  // ---------------------------------------------
+
   const bestBid = Math.max(...state.bids.keys());
   const bestAsk = Math.min(...state.asks.keys());
   if (Number.isFinite(bestBid)) {
@@ -120,7 +157,6 @@ export function updateOrderbook(
   const prevAsk = state.prevBestAskSize ?? 0;
   const bid = state.bestBidSize ?? 0;
   const ask = state.bestAskSize ?? 0;
-  state.lastBookDelta = Math.abs(bid - prevBid) + Math.abs(ask - prevAsk);
   const ofi = (bid - prevBid) - (ask - prevAsk);
   if (Number.isFinite(ofi)) {
     state.ofiHistory.push(ofi);
@@ -128,6 +164,7 @@ export function updateOrderbook(
       state.ofiHistory.shift();
     }
   }
+  recalcLiqProximity(state);
 }
 
 function resolveTradeSide(raw: any): "Buy" | "Sell" | null {
@@ -145,36 +182,26 @@ export function updateTrades(symbol: string, trades: any[]) {
     const size = Number(raw?.v ?? raw?.size ?? raw?.qty);
     const ts = Number(raw?.T ?? raw?.timestamp ?? raw?.time ?? Date.now());
     if (!side || !Number.isFinite(price) || !Number.isFinite(size)) continue;
+
+    // Accumulate volume for Iceberg detection
+    if (side === "Sell" && state.lastBestBid && Math.abs(price - state.lastBestBid) < 0.000001) {
+      state.tradeVolAtBestBid += size;
+    }
+    if (side === "Buy" && state.lastBestAsk && Math.abs(price - state.lastBestAsk) < 0.000001) {
+      state.tradeVolAtBestAsk += size;
+    }
+
+    // CVD Update
+    const deltaChange = side === "Buy" ? size : -size;
+    state.cumulativeDelta += deltaChange;
+    state.cvdSeries.push({ ts, value: state.cumulativeDelta });
+    if (state.cvdSeries.length > MAX_TRADES) {
+      state.cvdSeries.shift();
+    }
+
     state.trades.push({ ts, price, size, side });
     if (state.trades.length > MAX_TRADES) {
       state.trades.shift();
-    }
-    state.cvd += side === "Buy" ? size : -size;
-    state.cvdSeries.push({ ts, value: state.cvd });
-    if (state.cvdSeries.length > MAX_CVD_POINTS) {
-      state.cvdSeries.shift();
-    }
-    const bestAsk = state.bestAsk ?? Number.NaN;
-    const bestBid = state.bestBid ?? Number.NaN;
-    const bestAskSize = state.bestAskSize ?? 0;
-    const bestBidSize = state.bestBidSize ?? 0;
-    if (
-      side === "Buy" &&
-      Number.isFinite(bestAsk) &&
-      Math.abs(price - bestAsk) <= bestAsk * 0.0005 &&
-      size > bestAskSize &&
-      (state.lastBookDelta ?? 0) <= Math.max(bestAskSize, 1)
-    ) {
-      state.icebergUntil = ts + 60_000;
-    }
-    if (
-      side === "Sell" &&
-      Number.isFinite(bestBid) &&
-      Math.abs(price - bestBid) <= bestBid * 0.0005 &&
-      size > bestBidSize &&
-      (state.lastBookDelta ?? 0) <= Math.max(bestBidSize, 1)
-    ) {
-      state.icebergUntil = ts + 60_000;
     }
     const avgSize =
       state.trades.reduce((sum, t) => sum + t.size, 0) /
@@ -193,51 +220,7 @@ export function updateTrades(symbol: string, trades: any[]) {
       state.bucketSell = 0;
     }
   }
-  const recent = state.trades.slice(-50);
-  const recentVol = recent.reduce((s, t) => s + t.size, 0);
-  const bookDelta = state.lastBookDelta ?? 0;
-  state.absorptionScore = recentVol / Math.max(1, bookDelta);
-}
-
-export function updateLiquidations(symbol: string, events: any[]) {
-  const state = getState(symbol);
-  const now = Date.now();
-  for (const raw of events ?? []) {
-    const price = Number(raw?.p ?? raw?.price);
-    const size = Number(raw?.v ?? raw?.size ?? raw?.qty);
-    const ts = Number(raw?.T ?? raw?.timestamp ?? raw?.time ?? now);
-    if (!Number.isFinite(price) || !Number.isFinite(size)) continue;
-    const bucketSize = Math.max(price * LIQ_BUCKET_PCT, 0.01);
-    const bucket = Math.round(price / bucketSize) * bucketSize;
-    const entry = state.liqClusters.get(bucket) ?? { size: 0, ts };
-    entry.size += size;
-    entry.ts = ts;
-    state.liqClusters.set(bucket, entry);
-  }
-  for (const [price, entry] of state.liqClusters.entries()) {
-    if (now - entry.ts > LIQ_CLUSTER_TTL_MS) {
-      state.liqClusters.delete(price);
-    }
-  }
-}
-
-export function updateOpenInterest(symbol: string, oiValue: number) {
-  const state = getState(symbol);
-  if (!Number.isFinite(oiValue) || oiValue <= 0) return;
-  const ts = Date.now();
-  state.openInterest = oiValue;
-  state.oiHistory.push({ ts, value: oiValue });
-  if (state.oiHistory.length > MAX_OI_POINTS) {
-    state.oiHistory.shift();
-  }
-  const first = state.oiHistory[0]?.value ?? oiValue;
-  const last = state.oiHistory[state.oiHistory.length - 1]?.value ?? oiValue;
-  const delta = last - first;
-  if (Math.abs(delta) / Math.max(1, first) < 0.002) {
-    state.openInterestTrend = "flat";
-  } else {
-    state.openInterestTrend = delta > 0 ? "rising" : "falling";
-  }
+  recalcLiqProximity(state);
 }
 
 export function getOrderFlowSnapshot(symbol: string) {
@@ -249,19 +232,15 @@ export function getOrderFlowSnapshot(symbol: string) {
       vpin: 0,
       delta: 0,
       deltaPrev: 0,
-      cvd: 0,
-      cvdPrev: 0,
-      cvdSeries: [],
-      icebergDetected: false,
-      absorptionScore: 0,
-      liqClusters: [],
-      liqProximityPct: null,
-      openInterest: 0,
-      openInterestTrend: "flat",
       bestBid: undefined,
       bestAsk: undefined,
       lastTradeTs: 0,
       trades: [],
+      icebergDetected: false,
+      absorptionScore: 0,
+      cvdSeries: [],
+      openInterestTrend: undefined,
+      liqProximityPct: undefined,
     };
   }
   const ofiHistory = state.ofiHistory;
@@ -286,46 +265,69 @@ export function getOrderFlowSnapshot(symbol: string) {
   const lastTradeTs = recentTrades.length
     ? recentTrades[recentTrades.length - 1].ts
     : 0;
-  const cvdSeries = state.cvdSeries;
-  const cvd = state.cvd;
-  const cvdPrev =
-    cvdSeries.length > 1 ? cvdSeries[cvdSeries.length - 2].value : cvd;
-  const icebergDetected =
-    Number.isFinite(state.icebergUntil) && (state.icebergUntil as number) > Date.now();
-  const liqClusters = Array.from(state.liqClusters.entries())
-    .map(([price, entry]) => ({ price, size: entry.size, ts: entry.ts }))
-    .sort((a, b) => b.size - a.size)
-    .slice(0, 8);
-  const refPrice =
-    recentTrades.length > 0
-      ? recentTrades[recentTrades.length - 1].price
-      : Number.isFinite(state.bestBid) && Number.isFinite(state.bestAsk)
-        ? ((state.bestBid as number) + (state.bestAsk as number)) / 2
-        : Number.NaN;
-  const liqProximityPct =
-    Number.isFinite(refPrice) && liqClusters.length
-      ? Math.min(
-          ...liqClusters.map((c) => Math.abs(c.price - refPrice) / refPrice)
-        ) * 100
-      : null;
   return {
     ofi,
     ofiPrev,
     vpin,
     delta,
     deltaPrev,
-    cvd,
-    cvdPrev,
-    cvdSeries,
-    icebergDetected,
-    absorptionScore: state.absorptionScore ?? 0,
-    liqClusters,
-    liqProximityPct,
-    openInterest: state.openInterest ?? 0,
-    openInterestTrend: state.openInterestTrend ?? "flat",
     bestBid: state.bestBid,
     bestAsk: state.bestAsk,
     lastTradeTs,
     trades: recentTrades,
+    icebergDetected: state.icebergDetected,
+    absorptionScore: state.absorptionScore,
+    cvdSeries: state.cvdSeries,
+    openInterestTrend: state.openInterestTrend,
+    liqProximityPct: state.liqProximityPct,
   };
+}
+
+function recalcLiqProximity(state: OrderFlowState) {
+  if (!state.liquidationLevels.length) {
+    state.liqProximityPct = undefined;
+    return;
+  }
+  let price = 0;
+  if (state.trades.length > 0) {
+    price = state.trades[state.trades.length - 1].price;
+  } else if (state.bestBid && state.bestAsk) {
+    price = (state.bestBid + state.bestAsk) / 2;
+  } else {
+    return;
+  }
+
+  let minDist = Infinity;
+  for (const level of state.liquidationLevels) {
+    const dist = Math.abs(price - level.price);
+    if (dist < minDist) minDist = dist;
+  }
+  state.liqProximityPct = (minDist / price) * 100;
+}
+
+export function updateOpenInterest(symbol: string, openInterest: number, ts: number = Date.now()) {
+  const state = getState(symbol);
+  state.oiHistory.push({ ts, value: openInterest });
+  if (state.oiHistory.length > 60) state.oiHistory.shift();
+
+  if (state.oiHistory.length < 5) {
+    state.openInterestTrend = "flat";
+    return;
+  }
+
+  const windowSize = Math.min(state.oiHistory.length, 20);
+  const window = state.oiHistory.slice(-windowSize);
+  const startAvg = window.slice(0, 3).reduce((s, x) => s + x.value, 0) / 3;
+  const endAvg = window.slice(-3).reduce((s, x) => s + x.value, 0) / 3;
+  const changePct = (endAvg - startAvg) / startAvg;
+
+  if (changePct > 0.0005) state.openInterestTrend = "rising";
+  else if (changePct < -0.0005) state.openInterestTrend = "falling";
+  else state.openInterestTrend = "flat";
+}
+
+export function updateLiquidations(symbol: string, levels: { price: number; size: number }[]) {
+  const state = getState(symbol);
+  state.liquidationLevels = levels;
+  recalcLiqProximity(state);
 }
