@@ -333,7 +333,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       "Cheat Sheet ON: Decision tree override. Cíl: Max Win Rate při zachování frekvence (~100/den).",
       "Režimy: SCALP (priorita, 1m/5m) > INTRADAY (15m) > SWING (1h).",
       "Exekuce: 'Smart Limit' – start na BBO, agresivní přecenění po 30s. Fill or Kill do 5 min.",
-      "Entry Logic: Pouze setupy s konfluencí (Trend + Momentum + Volume).",
+      "Entry Logic: Konfluence setupy (Trend + Momentum + Volume).",
       "Exit: Rychlý fixní TP1 (skalp) pro zajištění WR, TP2 trailing.",
       "Risk Management: Dynamický SL dle volatility, okamžitý posun na BE po TP1.",
       "NO TRADE: Pokud je spread > 0.1% nebo nízká likvidita.",
@@ -535,7 +535,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     strategyCheatSheetEnabled: true,
     enableHardGates: true,
     enableSoftGates: true,
-    maxOpenPositions: 5,
+    maxOpenPositions: 7,
     maxOpenOrders: 20,
     selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "base",
@@ -547,11 +547,11 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     customInstructions: "",
     customStrategy: "",
     min24hVolume: 50,
-    minProfitFactor: 1.0,
-    minWinRate: 65,
+    minProfitFactor: 1.2,
+    minWinRate: 70,
     makerFeePct: 0.01,
     takerFeePct: 0.06,
-    slippageBufferPct: 0.01,
+    slippageBufferPct: 0.005,
   };
 
   const AI_MATIC_PRO_PRESET_UI: AISettings = {
@@ -652,6 +652,15 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   const applyPreset = (mode: AISettings["riskMode"]) => {
     stashProfileSettings(local.riskMode, local);
     setLocal(resolveProfileSettings(mode));
+  };
+
+  const resetToPreset = () => {
+    const preset = presets[local.riskMode];
+    const nextStorage = { ...profileSettingsRef.current };
+    delete nextStorage[local.riskMode];
+    profileSettingsRef.current = nextStorage;
+    persistProfileSettingsMap(nextStorage);
+    setLocal(preset);
   };
 
   const renderCheatBlocks = (blocks: CheatBlock[]) => (
@@ -806,6 +815,15 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 AI-Matic-Pro
               </button>
             </div>
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={resetToPreset}
+                className="text-xs text-slate-500 hover:text-slate-300 underline"
+              >
+                Reset current profile to defaults
+              </button>
+            </div>
           </div>
 
           <div className="grid gap-2">
@@ -951,6 +969,31 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
               </div>
             </div>
           ) : null}
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              Entry Strictness
+            </label>
+            <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
+              <select
+                value={local.entryStrictness ?? "base"}
+                onChange={(e) =>
+                  setLocal({
+                    ...local,
+                    entryStrictness: e.target.value as AISettings["entryStrictness"],
+                  })
+                }
+                className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
+              >
+                <option value="base">Base (Standard)</option>
+                <option value="strict">Strict (High Precision)</option>
+                <option value="ultra">Ultra (Sniper)</option>
+              </select>
+              <div className="text-xs text-secondary-foreground/70">
+                Controls filter sensitivity (Spread, Volume, Trend). Base = Balanced, Strict = Precision, Ultra = Sniper.
+              </div>
+            </div>
+          </div>
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">

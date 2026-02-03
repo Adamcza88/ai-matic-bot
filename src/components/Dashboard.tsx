@@ -124,15 +124,17 @@ export default function Dashboard({
       };
     }
     if (riskMode === "ai-matic-tree") {
+      const strictness = bot.settings?.entryStrictness ?? "base";
+      const maxPos = bot.settings?.maxOpenPositions ?? 7;
       if (cheatEnabled) {
         return {
           label: "AI-MATIC-TREE",
-          subtitle: "High-Precision Tree (~100 trades/day)",
+          subtitle: `High-Precision (~100/day) · MaxPos: ${maxPos}`,
           symbols: SUPPORTED_SYMBOLS,
           timeframes: "SCALP 1m/5m (Priority) · INTRADAY 15m · SWING 1h",
           session: "24/7",
           risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
-          entry: "High WR Focus: Trend + Momentum + Volume confluence",
+          entry: `Strictness: ${strictness.toUpperCase()} · Trend + Momentum + Volume`,
           execution: `Smart Limit (BBO chase) · Quick TP1 (WR guard) · ${cheatSheetNote}`,
         };
       }

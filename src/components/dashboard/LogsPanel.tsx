@@ -11,14 +11,14 @@ type LogsPanelProps = {
   isActive: boolean;
 };
 
-type LevelFilter = "all" | "info" | "warn" | "error";
+type LevelFilter = "all" | "info" | "warn" | "error" | "blocked";
 
-function levelForEntry(entry: LogEntry): "info" | "warn" | "error" {
+function levelForEntry(entry: LogEntry): LevelFilter {
   if (entry.action === "ERROR") return "error";
   if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT") {
-    return "warn";
+    return "blocked";
   }
-  if (entry.action === "REJECT") return "warn";
+  if (entry.action === "REJECT") return "blocked";
   return "info";
 }
 
@@ -100,6 +100,18 @@ export default function LogsPanel({
               Warn
             </Button>
             <Button
+              variant={levelFilter === "blocked" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setLevelFilter("blocked")}
+              className={
+                levelFilter === "blocked"
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }
+            >
+              Blocked
+            </Button>
+            <Button
               variant={levelFilter === "error" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setLevelFilter("error")}
@@ -150,6 +162,8 @@ export default function LogsPanel({
                     className={
                       level === "error"
                         ? "border-red-500/50 text-red-400"
+                        : level === "blocked"
+                          ? "border-orange-500/50 text-orange-400"
                         : level === "warn"
                           ? "border-amber-500/50 text-amber-400"
                           : "border-border/60 text-muted-foreground"
