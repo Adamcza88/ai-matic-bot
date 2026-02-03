@@ -146,32 +146,34 @@ interface BybitWsMessage {
   data?: BybitWsKlineRow[] | any;
 }
 
+export interface PriceFeedOptions {
+  useTestnet?: boolean;
+  timeframe?: string;
+  configOverrides?:
+    | Partial<BotConfig>
+    | ((symbol: string) => Partial<BotConfig>);
+  decisionFn?: (
+    symbol: string,
+    candles: Candle[],
+    config?: Partial<BotConfig>
+  ) => PriceFeedDecision;
+  maxCandles?: number;
+  backfill?: {
+    enabled?: boolean;
+    interval?: string;
+    lookbackMinutes?: number;
+    limit?: number;
+  };
+  orderflow?: {
+    enabled?: boolean;
+    depth?: number;
+  };
+}
+
 export function startPriceFeed(
   symbols: string[],
   onDecision: (symbol: string, decision: PriceFeedDecision) => void,
-  opts?: {
-    useTestnet?: boolean;
-    timeframe?: string;
-    configOverrides?:
-      | Partial<BotConfig>
-      | ((symbol: string) => Partial<BotConfig>);
-    decisionFn?: (
-      symbol: string,
-      candles: Candle[],
-      config?: Partial<BotConfig>
-    ) => PriceFeedDecision;
-    maxCandles?: number;
-    backfill?: {
-      enabled?: boolean;
-      interval?: string;
-      lookbackMinutes?: number;
-      limit?: number;
-    };
-    orderflow?: {
-      enabled?: boolean;
-      depth?: number;
-    };
-  }
+  opts?: PriceFeedOptions
 ): () => void {
   const ws = new WebSocket(opts?.useTestnet ? FEED_URL_TESTNET : FEED_URL_MAINNET);
   const timeframe = opts?.timeframe ?? "1";
