@@ -337,13 +337,29 @@ export function analyzeRegimePro(args: {
     manipActive = manipProb >= 0.6;
   }
 
+  // --- Relaxed Scoring Logic (Weighted Score) ---
+  let regimeScore = 0;
+
+  // Hurst (Max 40 pts)
+  if (Number.isFinite(hurst)) {
+    if (hurst < 0.35) regimeScore += 40;
+    else if (hurst < 0.48) regimeScore += 20; // Relaxed range
+  }
+
+  // HMM (Max 40 pts)
+  if (rangeProb >= 0.7) regimeScore += 40;
+  else if (rangeProb >= 0.55) regimeScore += 20; // Relaxed range
+
+  // Chop (Max 20 pts) - Proxy for stationarity
+  if (Number.isFinite(chop)) {
+    if (chop > 60) regimeScore += 20;
+    else if (chop > 50) regimeScore += 10; // Relaxed range
+  }
+
+  // Relaxed Gate: Score >= 50 (out of 100) AND VPIN check
   const regimeOk =
-    Number.isFinite(hurst) &&
-    hurst < 0.45 &&
-    Number.isFinite(chop) &&
-    chop > 60 &&
-    rangeProb >= 0.7 &&
-    vpin < 0.8;
+    regimeScore >= 50 &&
+    (Number.isFinite(vpin) ? vpin < 0.8 : true);
 
   return {
     hurst,
@@ -359,5 +375,6 @@ export function analyzeRegimePro(args: {
     trendProb,
     manipProb,
     manipActive,
+    regimeScore,
   };
 }

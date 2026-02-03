@@ -815,7 +815,8 @@ export class TradingBot {
     side: "long" | "short",
     entry: number,
     stopLoss: number,
-    kind: EntryKind = "OTHER"
+    kind: EntryKind = "OTHER",
+    sizeScale: number = 1.0
   ): void {
     const profileRisk =
       this.config.strategyProfile === "ai-matic"
@@ -831,7 +832,7 @@ export class TradingBot {
     );
     const slDistance = computeRisk(entry, stopLoss);
     // Calculate size using PURE function
-    const size = computeQty(this.config.accountBalance, riskPct, entry, stopLoss, 0.001);
+    const size = computeQty(this.config.accountBalance, riskPct * sizeScale, entry, stopLoss, 0.001);
 
     // FIX 6: Normalize size logic (Moved to computeQty)
 
@@ -887,13 +888,14 @@ export class TradingBot {
     side: "long" | "short",
     entry: number,
     stopLoss: number,
-    kind: EntryKind = "OTHER"
+    kind: EntryKind = "OTHER",
+    sizeScale: number = 1.0
   ): boolean {
     if (!this.canEnter()) {
       console.warn("[BotEngine] Entry Blocked: State is not SCAN or Position exists.");
       return false;
     }
-    this.enterPosition(side, entry, stopLoss, kind);
+    this.enterPosition(side, entry, stopLoss, kind, sizeScale);
     return true;
   }
 
@@ -1219,7 +1221,7 @@ export class TradingBot {
     if (this.state === State.Scan) {
       const signal = await this.scanForEntry();
       if (signal) {
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind);
+        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, 1.0);
       }
     } else if (this.state === State.Manage) {
       await this.managePosition();
@@ -1238,7 +1240,7 @@ export class TradingBot {
     if (this.state === State.Scan) {
       const signal = this.scanForEntryFromFrames(ht, lt);
       if (signal) {
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind);
+        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, 1.0);
       }
     } else if (this.state === State.Manage) {
       this.managePositionWithFrames(ht, lt);
@@ -1262,7 +1264,7 @@ export class TradingBot {
     if (this.state === State.Scan) {
       const signal = this.scanForEntryFromMultiFrames(ht, mid, lt, exec);
       if (signal) {
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind);
+        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, 1.0);
       }
     } else if (this.state === State.Manage) {
       this.managePositionWithFrames(ht, exec);
@@ -1795,6 +1797,7 @@ export function evaluateStrategyForSymbol(
     position &&
     position.opened !== prevOpened
   ) {
+    // Note: This block is for logging/UI feedback after a trade is opened, not for execution.
     signal = {
       id: `${symbol}-${Date.now()}`,
       symbol,
@@ -1805,7 +1808,7 @@ export function evaluateStrategyForSymbol(
         tp: position.initialTakeProfit,
       },
       kind: position.entryKind ?? "OTHER",
-      risk: 0.7,
+      risk: 1.0, // Default display risk
       message: `Entered ${position.side} with SL ${position.stopLoss.toFixed(2)} | TP ${position.initialTakeProfit.toFixed(2)}`,
       createdAt: new Date().toISOString(),
     };

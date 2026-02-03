@@ -1,5 +1,5 @@
 import type { Candle, EngineDecision, EngineSignal } from "./botEngine";
-import { findPivotsHigh, findPivotsLow, computeAtr } from "./ta";
+import { findPivotsHigh, findPivotsLow, computeAtr, computeRsi } from "./ta";
 import { computeMarketProfile } from "./marketProfile";
 import { getOrderFlowSnapshot } from "./orderflow";
 import { analyzeRegimePro } from "./regimePro";
@@ -207,7 +207,7 @@ export function evaluateAiMaticProStrategyForSymbol(
       size: t.size,
     })),
     bucketPct: 0.001,
-    valueAreaPct: 0.7,
+    valueAreaPct: 0.8, // Relaxed VA (Chapter 2.1)
   });
 
   const regime = analyzeRegimePro({
@@ -264,9 +264,9 @@ export function evaluateAiMaticProStrategyForSymbol(
     totalTradeVol > 0 ? volBelowSwing / totalTradeVol : 0;
 
   const bearishSfp =
-    last.high > swingHigh && last.close < swingHigh && volumeOutsideBear >= 0.3;
+    last.high > swingHigh && last.close < swingHigh && volumeOutsideBear >= 0.1; // Relaxed SFP (Chapter 2.2)
   const bullishSfp =
-    last.low < swingLow && last.close > swingLow && volumeOutsideBull >= 0.3;
+    last.low < swingLow && last.close > swingLow && volumeOutsideBull >= 0.1; // Relaxed SFP
 
   const cvdBear = detectCvdDivergence(candles, orderflow.cvdSeries ?? [], "Sell");
   const cvdBull = detectCvdDivergence(candles, orderflow.cvdSeries ?? [], "Buy");
@@ -404,6 +404,39 @@ export function evaluateAiMaticProStrategyForSymbol(
     } as EngineDecision;
   }
 
+  // --- Weighted Scoring System (SOS) ---
+  let sosScore = 0;
+
+  // 1. Regime (Max 30 pts) - Scaled from regimeScore (0-100)
+  sosScore += ((regime.regimeScore ?? 0) / 100) * 30;
+
+  // 2. Price vs VA (Max 20 pts)
+  if (profile) {
+    const distVal = Math.abs(price - profile.val) / (profile.val || 1);
+    const distVah = Math.abs(price - profile.vah) / (profile.vah || 1);
+    if (distVal < 0.001 || distVah < 0.001) sosScore += 20; // Tick perfect
+    else if (distVal < 0.005 || distVah < 0.005) sosScore += 10; // Within 0.5%
+  }
+
+  // 3. Momentum (Max 15 pts) - RSI
+  const rsiArr = computeRsi(closes, 14);
+  const rsi = rsiArr[rsiArr.length - 1] ?? 50;
+  if (rsi > 70 || rsi < 30) sosScore += 15;
+  else if (rsi > 60 || rsi < 40) sosScore += 7;
+
+  // 4. Liquidity/SFP (Max 15 pts)
+  if (bearishSfp || bullishSfp) {
+    if (volumeOutsideBear >= 0.3 || volumeOutsideBull >= 0.3) sosScore += 15; // Strong
+    else sosScore += 7; // Relaxed
+  }
+
+  // 5. Flow Signal (Max 20 pts)
+  if (flowSignal === "BUY" || flowSignal === "SELL") sosScore += 20;
+
+  // Dynamic Sizing based on Score
+  const sizeScale = sosScore >= 85 ? 1.0 : 0.6;
+  // -------------------------------------
+
   if (useRangeLogic) {
     const longZone = price <= profile.val;
     const shortZone = price >= profile.vah;
@@ -414,7 +447,8 @@ export function evaluateAiMaticProStrategyForSymbol(
     if (longZone && longTrigger) side = "Buy";
     if (shortZone && shortTrigger) side = "Sell";
 
-    if (!side) {
+    // Gate: Require minimum SOS score of 50 to enter
+    if (!side || sosScore < 50) {
       return {
         state: "SCAN",
         trend: "range",
@@ -457,7 +491,7 @@ export function evaluateAiMaticProStrategyForSymbol(
       },
       entryType: "LIMIT_MAKER_FIRST",
       kind: "MEAN_REVERSION",
-      risk: 0.6,
+      risk: sizeScale, // Dynamic sizing
       message: `PRO sideways ${side} | VA ${profile.val.toFixed(
         2
       )}-${profile.vah.toFixed(2)} | POC ${profile.poc.toFixed(2)} | OI ${orderflow.openInterestTrend ?? "-"}`,
@@ -497,7 +531,8 @@ export function evaluateAiMaticProStrategyForSymbol(
   }
 
   const side = nextData.pendingSide ?? (bearishSfp ? "Sell" : bullishSfp ? "Buy" : null);
-  if (!side) {
+  // Gate: Require minimum SOS score of 50 to enter
+  if (!side || sosScore < 50) {
     return {
       state: "SCAN",
       trend: "range",
@@ -540,7 +575,7 @@ export function evaluateAiMaticProStrategyForSymbol(
     },
     entryType: "LIMIT_MAKER_FIRST",
     kind: "MEAN_REVERSION",
-    risk: 0.7,
+    risk: sizeScale, // Dynamic sizing
     message: `PRO SFP ${side} | swing ${side === "Buy" ? swingLow : swingHigh} | ice ${iceberg ? "Y" : "N"} | OI ${orderflow.openInterestTrend ?? "-"}`,
     createdAt: new Date().toISOString(),
   };
