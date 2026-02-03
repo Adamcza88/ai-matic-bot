@@ -80,7 +80,10 @@ export function decideCombinedEntry(
   if (!deps.hasLowVol) blocks.push("IMPACT:LOWVOL_MISSING=>SCALP_DISABLED");
 
   // Dopady: VP modul chybí
-  if (!deps.hasVP) blocks.push("IMPACT:VP_MISSING=>NO_POC_VP_LVN");
+  if (!deps.hasVP) {
+    blocks.push("IMPACT:VP_MISSING=>NO_POC_VP_LVN");
+    blocks.push("IMPACT:VP_MISSING=>TP_STRUCTURE_ONLY");
+  }
   // Dopady: OB modul chybí
   if (!deps.hasOB) blocks.push("IMPACT:OB_MISSING=>NO_OB_ENTRIES");
   // Dopady: GAP modul chybí
@@ -106,6 +109,9 @@ export function decideCombinedEntry(
 
   // 2) INTRADAY, pokud je struktura čitelná
   if (s.structureReadable) {
+    if (!deps.hasOB && !s.returnToLevel) {
+      return noTrade([...blocks, BLOCK("INTRADAY_BLOCK:OB_MISSING_NEEDS_RETURN")]);
+    }
     if (deps.hasOB && s.touchOB) {
       return {
         ok: true,
@@ -117,7 +123,7 @@ export function decideCombinedEntry(
         slRule: "UNDER_OB_WICK",
         tpPlan: {
           tp1: deps.hasGAP ? "GAP_OR_STRUCTURE" : "STRUCTURE_NEAREST",
-          tp2: deps.hasVP ? "VP_OR_HTF_SR" : "VP_OR_HTF_SR",
+          tp2: deps.hasVP ? "VP_OR_HTF_SR" : "STRUCTURE_NEAREST",
         },
         trailing: "NONE",
         blocks,
@@ -138,14 +144,14 @@ export function decideCombinedEntry(
         slRule: "UNDER_SWING",
         tpPlan: {
           tp1: deps.hasGAP ? "GAP_OR_STRUCTURE" : "STRUCTURE_NEAREST",
-          tp2: deps.hasVP ? "VP_OR_HTF_SR" : "VP_OR_HTF_SR",
+          tp2: deps.hasVP ? "VP_OR_HTF_SR" : "STRUCTURE_NEAREST",
         },
         trailing: "NONE",
         blocks,
       };
     }
 
-    if (canUseTrap) {
+    if (canUseTrap && s.returnToLevel) {
       return {
         ok: true,
         mode: "INTRADAY",
@@ -156,7 +162,7 @@ export function decideCombinedEntry(
         slRule: "UNDER_SWING",
         tpPlan: {
           tp1: deps.hasGAP ? "GAP_OR_STRUCTURE" : "STRUCTURE_NEAREST",
-          tp2: deps.hasVP ? "VP_OR_HTF_SR" : "VP_OR_HTF_SR",
+          tp2: deps.hasVP ? "VP_OR_HTF_SR" : "STRUCTURE_NEAREST",
         },
         trailing: "NONE",
         blocks,

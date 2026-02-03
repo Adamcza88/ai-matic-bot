@@ -189,6 +189,7 @@ const CHEAT_LIMIT_WAIT_WINDOWS_MIN = {
 } as const;
 const CHEAT_LIMIT_RUNAWAY_BPS = 30;
 const CHEAT_LIMIT_MIN_RRR = 1;
+const TREE_SCALP_TRAIL_PCT = 0.006;
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -3533,12 +3534,14 @@ export function useTradingBot(
     async (now: number, nextOrders: TestnetOrder[]) => {
       const settings = settingsRef.current;
       if (!authToken) return;
+      const isTreeProfile = settings.riskMode === "ai-matic-tree";
       const cheatEnabled = settings.strategyCheatSheetEnabled;
-      const useCheatTree = cheatEnabled && settings.riskMode === "ai-matic-tree";
-      const useCoreOff = !cheatEnabled;
+      const useCheatTree = isTreeProfile;
+      const useCoreOff = !cheatEnabled && !isTreeProfile;
       if (!useCheatTree && !useCoreOff) return;
       if (!Array.isArray(nextOrders) || nextOrders.length === 0) return;
       const cooldown = autoCloseCooldownRef.current;
+      const cancelLabel = useCheatTree ? "TREE" : "CHEAT";
 
       const isTriggerEntryOrder = (order: TestnetOrder) => {
         const filter = String(order.orderFilter ?? "").toLowerCase();
@@ -3584,31 +3587,15 @@ export function useTradingBot(
           const createdAt = Number.isFinite(createdTs) ? createdTs : now;
           const ltfMinRaw = toNumber((decision as any)?.coreV2?.ltfTimeframeMin);
           let mode: CheatLimitMeta["mode"] | null = null;
-          if (useCheatTree) {
-            const depsRaw = (decision as any)?.cheatDeps ?? {};
-            const sigRaw = (decision as any)?.cheatSignals ?? {};
-            if (decision && depsRaw && sigRaw) {
-              const deps: TreeDeps = {
-                hasVP: Boolean(depsRaw.hasVP),
-                hasOB: Boolean(depsRaw.hasOB),
-                hasGAP: Boolean(depsRaw.hasGAP),
-                hasTrap: Boolean(depsRaw.hasTrap),
-                hasLowVol: Boolean(depsRaw.hasLowVol),
-              };
-              const signals: TreeSignals = {
-                inLowVolume: Boolean(sigRaw.inLowVolume),
-                htfReactionConfirmed: Boolean(sigRaw.htfReactionConfirmed),
-                structureReadable: Boolean(sigRaw.structureReadable),
-                sessionOk: sigRaw.sessionOk !== false,
-                bosUp: Boolean(sigRaw.bosUp),
-                bosDown: Boolean(sigRaw.bosDown),
-                returnToLevel: Boolean(sigRaw.returnToLevel),
-                rejectionInLVN: Boolean(sigRaw.rejectionInLVN),
-                touchOB: Boolean(sigRaw.touchOB),
-                rejectionInOB: Boolean(sigRaw.rejectionInOB),
-                trapReaction: Boolean(sigRaw.trapReaction),
-              };
-              const derived = decideCombinedEntry(deps, signals);
+          if (useCheatTree && decision) {
+            const depsRaw = (decision as any)?.cheatDeps;
+            const sigRaw = (decision as any)?.cheatSignals;
+            if (depsRaw && sigRaw) {
+              const treeInputs = buildTreeInputs(depsRaw, sigRaw);
+              const derived = decideCombinedEntry(
+                treeInputs.deps,
+                treeInputs.signals
+              );
               mode = derived.mode ?? null;
             }
           }
@@ -3622,6 +3609,51 @@ export function useTradingBot(
             timeframeMin: Number.isFinite(ltfMinRaw) ? ltfMinRaw : null,
           };
           cheatLimitMetaRef.current.set(metaKey, meta);
+        }
+
+        let treeInvalid = false;
+        let treeReason: string | null = null;
+        if (useCheatTree) {
+          if (!decision) {
+            treeInvalid = true;
+            treeReason = "TREE_DATA_MISSING";
+          } else {
+            const depsRaw = (decision as any)?.cheatDeps;
+            const sigRaw = (decision as any)?.cheatSignals;
+            if (!depsRaw || !sigRaw) {
+              treeInvalid = true;
+              treeReason = "TREE_DATA_MISSING";
+            } else {
+              const treeInputs = buildTreeInputs(depsRaw, sigRaw);
+              const derived = decideCombinedEntry(
+                treeInputs.deps,
+                treeInputs.signals
+              );
+              if (!derived.ok) {
+                treeInvalid = true;
+                treeReason = derived.blocks?.length
+                  ? derived.blocks.join(", ")
+                  : "NO_VALID_ENTRY";
+              } else if (meta?.mode && derived.mode && meta.mode !== derived.mode) {
+                treeInvalid = true;
+                treeReason = `TREE_MODE ${meta.mode}→${derived.mode}`;
+              } else if (derived.side) {
+                const derivedSide =
+                  derived.side === "LONG"
+                    ? "Buy"
+                    : derived.side === "SHORT"
+                      ? "Sell"
+                      : null;
+                if (derivedSide && derivedSide !== side) {
+                  treeInvalid = true;
+                  treeReason = `TREE_SIDE ${side}→${derivedSide}`;
+                }
+              } else if (!meta?.mode && derived.mode) {
+                meta = { ...meta, mode: derived.mode };
+                cheatLimitMetaRef.current.set(metaKey, meta);
+              }
+            }
+          }
         }
 
         const ltfMin =
@@ -3678,16 +3710,18 @@ export function useTradingBot(
         }
 
         const expired = ageMs >= window.maxMs;
-        if (!expired && !runaway && !rrrInvalid) continue;
+        if (!expired && !runaway && !rrrInvalid && !treeInvalid) continue;
         const last = cooldown.get(metaKey) ?? 0;
         if (now - last < 15_000) continue;
         cooldown.set(metaKey, now);
         cancelingOrdersRef.current.add(metaKey);
-        const reason = expired
-          ? `limit_wait ${window.label}`
-          : runaway
-            ? `price_away ${formatNumber(runawayBps, 1)}bps`
-            : `rrr ${Number.isFinite(rrr) ? rrr.toFixed(2) : "n/a"}`;
+        const reason = treeInvalid
+          ? `tree ${treeReason ?? "NO_TRADE"}`
+          : expired
+            ? `limit_wait ${window.label}`
+            : runaway
+              ? `price_away ${formatNumber(runawayBps, 1)}bps`
+              : `rrr ${Number.isFinite(rrr) ? rrr.toFixed(2) : "n/a"}`;
         try {
           await postJson("/cancel", {
             symbol: order.symbol,
@@ -3700,7 +3734,7 @@ export function useTradingBot(
               id: `cheat-limit-cancel:${metaKey}:${now}`,
               timestamp: new Date(now).toISOString(),
               action: "STATUS",
-              message: `${symbol} CHEAT LIMIT CANCEL (${reason})`,
+            message: `${symbol} ${cancelLabel} LIMIT CANCEL (${reason})`,
             },
           ]);
         } catch (err) {
@@ -3709,7 +3743,7 @@ export function useTradingBot(
               id: `cheat-limit-cancel:error:${metaKey}:${now}`,
               timestamp: new Date(now).toISOString(),
               action: "ERROR",
-              message: `${symbol} cheat limit cancel failed: ${asErrorMessage(err)}`,
+            message: `${symbol} ${cancelLabel.toLowerCase()} limit cancel failed: ${asErrorMessage(err)}`,
             },
           ]);
         } finally {
@@ -5498,15 +5532,56 @@ export function useTradingBot(
       if (signalSeenRef.current.has(signalId)) return;
       signalSeenRef.current.add(signalId);
 
-      const cheatEnabled = settingsRef.current.strategyCheatSheetEnabled;
       const isTreeProfile = settingsRef.current.riskMode === "ai-matic-tree";
       const treePayload = (decision as any)?.cheatSignals;
       const treeDepsRaw = (decision as any)?.cheatDeps;
       let treeInputs: { deps: TreeDeps; signals: TreeSignals } | null = null;
       let treeDecision: ReturnType<typeof decideCombinedEntry> | null = null;
-      if (isTreeProfile && treePayload && treeDepsRaw) {
+      let treeTrailOverride: number | null = null;
+      if (isTreeProfile) {
+        if (!treePayload || !treeDepsRaw) {
+          addLogEntries([
+            {
+              id: `tree-missing:${symbol}:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} TREE no-trade: missing signals/deps`,
+            },
+          ]);
+          return;
+        }
         treeInputs = buildTreeInputs(treeDepsRaw, treePayload);
         treeDecision = decideCombinedEntry(treeInputs.deps, treeInputs.signals);
+        if (!treeDecision.ok) {
+          const reason = treeDecision.blocks?.length
+            ? treeDecision.blocks.join(", ")
+            : "NO_VALID_ENTRY";
+          addLogEntries([
+            {
+              id: `tree-block:${symbol}:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} TREE no-trade: ${reason}`,
+            },
+          ]);
+          return;
+        }
+        const impacts =
+          treeDecision.blocks?.filter((block) => block.startsWith("IMPACT:")) ??
+          [];
+        if (impacts.length) {
+          addLogEntries([
+            {
+              id: `tree-impact:${symbol}:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} TREE impacts: ${impacts.join(", ")}`,
+            },
+          ]);
+        }
+        if (treeDecision.trailing === "ACTIVATE_AFTER_0_5_TO_0_7_PCT") {
+          treeTrailOverride = TREE_SCALP_TRAIL_PCT;
+        }
       }
       const treeAddonActive =
         isTreeProfile &&
@@ -5528,7 +5603,7 @@ export function useTradingBot(
         }
       }
 
-      if (treeAddonActive && treeDecision?.side) {
+      if (isTreeProfile && treeDecision?.side) {
         const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
         const signalSide =
           sideRaw === "buy" ? "LONG" : sideRaw === "sell" ? "SHORT" : null;
@@ -5557,34 +5632,8 @@ export function useTradingBot(
         }
       }
 
-      // === Cheat Sheet override for AI-MATIC-TREE ===
-      let cheatBlocks: string[] = [];
-      let cheatDecision: ReturnType<typeof decideCombinedEntry> | null = null;
-      let cheatTrailOverride: number | null = null;
-      if (cheatEnabled && isTreeProfile && treeInputs) {
-        cheatDecision = decideCombinedEntry(
-          treeInputs.deps,
-          treeInputs.signals
-        );
-        if (cheatDecision.blocks?.length) {
-          cheatBlocks.push(...cheatDecision.blocks);
-        }
-        if (!cheatDecision.ok) {
-          addLogEntries([
-            {
-              id: `cheat-block:${symbol}:${signalId}`,
-              timestamp: new Date(now).toISOString(),
-              action: "RISK_BLOCK",
-              message: `${symbol} CHEAT no-trade: ${cheatDecision.blocks.join(", ")}`,
-            },
-          ]);
-          return;
-        }
-      }
-
       const trendGateSetting = settingsRef.current.trendGateMode ?? "adaptive";
-      const treeAdaptiveGate =
-        cheatEnabled && isTreeProfile && trendGateSetting === "adaptive";
+      const treeAdaptiveGate = isTreeProfile && trendGateSetting === "adaptive";
       if (treeAdaptiveGate) {
         const trendAdx = toNumber((decision as any)?.trendAdx);
         const trendScore = toNumber((decision as any)?.trendScore);
@@ -5741,9 +5790,6 @@ export function useTradingBot(
         const remainingMs = Math.max(0, cooldownMs - (now - lastLossTs));
         const remainingMin = Math.ceil(remainingMs / 60_000);
         entryBlockReasons.push(`cooldown ${remainingMin}m`);
-      }
-      if (cheatBlocks.length) {
-        entryBlockReasons.push(...cheatBlocks);
       }
       if (!context.maxPositionsOk) entryBlockReasons.push("max positions");
       if (!context.ordersClearOk) entryBlockReasons.push("max orders");
@@ -5923,9 +5969,7 @@ export function useTradingBot(
         return;
       }
 
-      // Apply cheat decision overrides (entry type / trailing) if present
-      if (cheatDecision) {
-        // Force limit-maker entries for cheat sheet unless it explicitly asks otherwise
+      if (isTreeProfile) {
         entryType = "LIMIT_MAKER_FIRST";
       }
       const checklistGates = [...coreEval.gates];
@@ -6199,13 +6243,13 @@ export function useTradingBot(
       }
 
       let trailOffset = toNumber((decision as any)?.trailOffsetPct);
-      if (cheatTrailOverride != null) {
-        trailOffset = cheatTrailOverride;
+      if (treeTrailOverride != null) {
+        trailOffset = treeTrailOverride;
       }
       const allowScalpTrail = !isScalpProfile;
       if (allowScalpTrail && Number.isFinite(trailOffset) && trailOffset > 0) {
         trailOffsetRef.current.set(symbol, trailOffset);
-      } else if (cheatTrailOverride == null) {
+      } else if (treeTrailOverride == null) {
         trailOffsetRef.current.delete(symbol);
       }
 
@@ -6233,7 +6277,7 @@ export function useTradingBot(
           slPrice: Number.isFinite(resolvedSl) ? resolvedSl : undefined,
           tpPrice: Number.isFinite(resolvedTp) ? resolvedTp : undefined,
           createdAt: now,
-          mode: cheatDecision?.mode ?? null,
+          mode: treeDecision?.mode ?? null,
           timeframeMin: Number.isFinite(core?.ltfTimeframeMin)
             ? core!.ltfTimeframeMin
             : null,
