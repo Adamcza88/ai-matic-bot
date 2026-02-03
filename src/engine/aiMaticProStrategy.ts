@@ -176,6 +176,9 @@ export function evaluateAiMaticProStrategyForSymbol(
   candles: Candle[],
   config?: { entryTfMin?: number }
 ): EngineDecision {
+  // DIAGNOSTIKA: Logování vstupu dat
+  // console.log(`[PRO Strategy] ${symbol}: Candles=${candles.length}`);
+
   if (!candles.length) {
     return {
       state: "SCAN",
@@ -192,6 +195,10 @@ export function evaluateAiMaticProStrategyForSymbol(
   const price = last.close;
 
   const orderflow = getOrderFlowSnapshot(symbol);
+  
+  // DIAGNOSTIKA: Logování orderflow
+  // console.log(`[PRO Strategy] ${symbol} OFI=${orderflow.ofi} VPIN=${orderflow.vpin} Trades=${orderflow.trades.length}`);
+
   const profile = computeMarketProfile({
     candles,
     trades: orderflow.trades?.map((t: any) => ({

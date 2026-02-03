@@ -230,6 +230,8 @@ export function startPriceFeed(
       args.push(...symbols.map((s) => `orderbook.${depth}.${s}`));
     }
 
+    console.log(`[PriceFeed] Subscribing to: ${args.length} topics for ${symbols.length} symbols`);
+
     ws.send(
       JSON.stringify({
         op: "subscribe",
@@ -321,11 +323,11 @@ export function startPriceFeed(
   });
 
   ws.addEventListener("error", (ev) => {
-    console.error("Bybit WS error", ev);
+    console.error("[PriceFeed] Bybit WS error", ev);
   });
 
   ws.addEventListener("close", () => {
-    console.warn("Bybit WS closed");
+    console.warn("[PriceFeed] Bybit WS closed");
     clearInterval(pingTimer);
   });
 
