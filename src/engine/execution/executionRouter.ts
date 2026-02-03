@@ -39,7 +39,7 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
   "ai-matic-scalp": {
     tpR: 1.5,
     trailLockR: 1.3,
-    trailActivateR: 1.0,
+    trailActivateR: 0.6,
     stopLimitBufferBps: 6,
     marketDistanceBps: 10,
     limitChaseMaxBps: 25,
@@ -47,7 +47,7 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
   "ai-matic-x": {
     tpR: 1.5,
     trailLockR: 1.3,
-    trailActivateR: 1.0,
+    trailActivateR: 0.6,
     stopLimitBufferBps: 8,
     marketDistanceBps: 10,
     limitChaseMaxBps: 35,
@@ -55,7 +55,7 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
   "ai-matic": {
     tpR: 1.5,
     trailLockR: 1.3,
-    trailActivateR: 1.0,
+    trailActivateR: 0.6,
     stopLimitBufferBps: 12,
     marketDistanceBps: 10,
     limitChaseMaxBps: 70,
@@ -63,7 +63,7 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
   "ai-matic-tree": {
     tpR: 1.5,
     trailLockR: 1.3,
-    trailActivateR: 1.0,
+    trailActivateR: 0.6,
     stopLimitBufferBps: 12,
     marketDistanceBps: 10,
     limitChaseMaxBps: 70,
@@ -71,8 +71,8 @@ export const PROFILE: Record<StrategyProfile, ProfileConfig> = {
 };
 
 const MIN_PROTECTION_DISTANCE_PCT = 0.01;
-const TRAIL_ACTIVATION_R_MULTIPLIER = 10.0;
-const TRAILING_RETRACEMENT_PCT = 0.02;
+const TRAIL_ACTIVATION_R_MULTIPLIER = 1.0;
+const TRAILING_RETRACEMENT_PCT = 0.004;
 
 export interface TrailingPlan {
   activationPrice: number;

@@ -1468,6 +1468,40 @@ function normalizeTrendDir(value: string) {
   return upper;
 }
 
+function resolveH1M15TrendGate(
+  core: CoreV2Metrics | undefined,
+  signal: PriceFeedDecision["signal"] | null
+) {
+  if (!signal) {
+    return { ok: true, detail: "no signal" };
+  }
+  const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
+  const signalDir =
+    sideRaw === "buy" ? "BULL" : sideRaw === "sell" ? "BEAR" : "";
+  if (!signalDir) {
+    return { ok: false, detail: "signal side missing" };
+  }
+  if (!core) {
+    return { ok: false, detail: "trend data missing" };
+  }
+  const h1Dir =
+    core.htfBias === "BULL" || core.htfBias === "BEAR"
+      ? core.htfBias
+      : "NONE";
+  let m15Dir: "BULL" | "BEAR" | "NONE" = "NONE";
+  if (core.m15TrendLongOk) m15Dir = "BULL";
+  else if (core.m15TrendShortOk) m15Dir = "BEAR";
+  else if (core.ema15mTrend === "BULL" || core.ema15mTrend === "BEAR") {
+    m15Dir = core.ema15mTrend;
+  }
+  const againstH1 = (h1Dir === "BULL" || h1Dir === "BEAR") && h1Dir !== signalDir;
+  const againstM15 =
+    (m15Dir === "BULL" || m15Dir === "BEAR") && m15Dir !== signalDir;
+  const ok = !againstH1 && !againstM15;
+  const detail = `1h ${h1Dir} | 15m ${m15Dir}`;
+  return { ok, detail };
+}
+
 function asErrorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err ?? "unknown_error");
 }
@@ -1528,7 +1562,7 @@ function computeLossStreak(
 
 const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
 const MIN_PROTECTION_ATR_FACTOR = 0.05;
-const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
+const TRAIL_ACTIVATION_R_MULTIPLIER = 1.0;
 
 function resolveMinProtectionDistance(entry: number, atr?: number) {
   const pctDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
@@ -1585,21 +1619,21 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
   AISettings["riskMode"],
   { activateR: number; lockR: number; retracementRate?: number }
 > = {
-  "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
-  "ai-matic-x": { activateR: 1.0, lockR: 0.3, retracementRate: 0.004 },
-  "ai-matic-scalp": { activateR: 0.5, lockR: 0.3 },
-  "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
-  "ai-matic-pro": { activateR: 0.5, lockR: 0.3 },
+  "ai-matic": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
+  "ai-matic-x": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
+  "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
+  "ai-matic-tree": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
+  "ai-matic-pro": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
 };
 const TRAIL_PROFILE_BY_RISK_MODE_CHEAT: Record<
   AISettings["riskMode"],
   { activateR: number; lockR: number; retracementRate?: number }
 > = {
-  "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
-  "ai-matic-x": { activateR: 1.0, lockR: 0.3, retracementRate: 0.004 },
-  "ai-matic-scalp": { activateR: 0.5, lockR: 0.3 },
-  "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
-  "ai-matic-pro": { activateR: 0.5, lockR: 0.3 },
+  "ai-matic": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
+  "ai-matic-x": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
+  "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
+  "ai-matic-tree": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
+  "ai-matic-pro": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
 };
 const TRAIL_SYMBOL_MODE: Partial<Record<Symbol, "on" | "off">> = {
   SOLUSDT: "on",
@@ -3373,11 +3407,21 @@ export function useTradingBot(
     []
   );
 
+  const isBtcDecoupling = useCallback(() => {
+    const btcDecision = decisionRef.current["BTCUSDT"]?.decision;
+    if (!btcDecision) return false;
+    const trend = (btcDecision as any)?.trend;
+    const adx = toNumber((btcDecision as any)?.trendAdx);
+    // Condition: BTC Range AND ADX < 25 (Low Volatility / Sideways) -> Altseason/Decoupling
+    return String(trend).toLowerCase() === "range" && Number.isFinite(adx) && adx < 25;
+  }, []);
+
   const enforceBtcBiasAlignment = useCallback(
     async (now: number) => {
       if (!AUTO_CANCEL_ENTRY_ORDERS) return;
       if (!authToken) return;
-      const btcBias = resolveBtcBias();
+      if (isBtcDecoupling()) return; // Skip enforcement during decoupling
+      const btcBias = resolveBtcBias(); 
       if (!btcBias) return;
       const cooldown = autoCloseCooldownRef.current;
       const nextOrders = ordersRef.current;
@@ -3429,7 +3473,7 @@ export function useTradingBot(
         }
       }
     },
-    [addLogEntries, authToken, isEntryOrder, normalizeBias, postJson, resolveBtcBias]
+    [addLogEntries, authToken, isEntryOrder, normalizeBias, postJson, resolveBtcBias, isBtcDecoupling]
   );
 
   const enforceCheatLimitExpiry = useCallback(
@@ -3631,12 +3675,18 @@ export function useTradingBot(
     ) => {
       const details: string[] = [];
       let ok = true;
+      const decoupling = isBtcDecoupling();
       const { biases: activeBiases } = getOpenBiasState();
-      if (activeBiases.size > 1) {
+      
+      if (activeBiases.size > 1 && !decoupling) {
         ok = false;
         details.push("mixed open bias");
       }
       const symbolUpper = String(symbol).toUpperCase();
+
+      if (symbolUpper !== "BTCUSDT" && decoupling) {
+        return { ok: true, detail: "BTC Range (Decoupling)" };
+      }
 
       if (!signal) {
         details.push("no signal");
@@ -3675,7 +3725,7 @@ export function useTradingBot(
       }
       return { ok, detail: details.join(" | ") };
     },
-    [getOpenBiasState, resolveBtcBias]
+    [getOpenBiasState, resolveBtcBias, isBtcDecoupling]
   );
 
   const resolveQualityScore = useCallback(
@@ -3725,10 +3775,16 @@ export function useTradingBot(
         feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
       const signal = decision?.signal ?? null;
       const quality = resolveQualityScore(symbol as Symbol, decision, signal, feedAgeMs);
+      const now = Number.isFinite(lastScanTs) ? lastScanTs : Date.now();
 
       const gates: { name: string; ok: boolean; detail?: string }[] = [];
       const addGate = (name: string, ok: boolean, detail?: string) => {
         gates.push({ name, ok, detail });
+      };
+
+      const correlation = resolveCorrelationGate(symbol, now, signal);
+      if (symbol !== "BTCUSDT") {
+        addGate("BTC Correlation", correlation.ok, correlation.detail);
       };
 
       const isProProfile = context.settings.riskMode === "ai-matic-pro";
@@ -3744,7 +3800,6 @@ export function useTradingBot(
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
       );
       const hasPendingIntent = intentPendingRef.current.has(symbol);
-      const now = Number.isFinite(lastScanTs) ? lastScanTs : Date.now();
       const entryBlockReasons: string[] = [];
       const addBlockReason = (label: string) => {
         entryBlockReasons.push(label);
@@ -5544,6 +5599,20 @@ export function useTradingBot(
         return;
       }
 
+      const trendCore = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      const trendGate = resolveH1M15TrendGate(trendCore, signal);
+      if (!trendGate.ok) {
+        addLogEntries([
+          {
+            id: `signal:trend-gate:${signalId}`,
+            timestamp: new Date(now).toISOString(),
+            action: "RISK_BLOCK",
+            message: `${symbol} trend gate 1h/15m: ${trendGate.detail}`,
+          },
+        ]);
+        return;
+      }
+
       const context = getSymbolContext(symbol, decision);
       const isAiMaticX = context.settings.riskMode === "ai-matic-x";
       const isScalpProfile = context.settings.riskMode === "ai-matic-scalp";
@@ -6214,8 +6283,9 @@ export function useTradingBot(
         : isAiMaticX
           ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
           : evaluateStrategyForSymbol(symbol, candles, config);
+      const coreV2 = computeCoreV2Metrics(candles, riskMode);
       if (isPro) {
-        return baseDecision;
+        return { ...baseDecision, coreV2 };
       }
       const htfTimeframes = isAiMatic
         ? AI_MATIC_HTF_TIMEFRAMES_MIN
@@ -6237,7 +6307,6 @@ export function useTradingBot(
         timeframesMin: EMA_TREND_TIMEFRAMES_MIN,
       });
       const scalpContext = isScalp ? buildScalpContext(candles) : undefined;
-      const coreV2 = computeCoreV2Metrics(candles, riskMode);
       return { ...baseDecision, htfTrend, ltfTrend, emaTrend, scalpContext, coreV2 };
     };
     const maxCandles = isAiMaticX || isAiMatic || isPro ? 5000 : undefined;

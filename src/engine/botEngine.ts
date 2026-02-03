@@ -235,7 +235,7 @@ function applyProfileOverrides(cfg: BotConfig): BotConfig {
     riskPerTrade: scalpRisk,
     maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
     maxOpenPositions: 3,
-    trailingActivationR: 0.5,
+    trailingActivationR: 0.6,
     minStopPercent: Math.min(cfg.minStopPercent, 0.02),
     partialSteps: [{ r: 1, exitFraction: 0.5 }],
     maxExitChunks: 2,
@@ -278,7 +278,7 @@ export const defaultConfig: BotConfig = {
   maxRiskPerTradeCap: 0.07,
   maxOpenPositions: 3,
   maxExitChunks: 3,
-  trailingActivationR: 1.0,
+  trailingActivationR: 0.6,
   minStopPercent: 0.02,
   pyramidAddScale: 0.5,
   pyramidLevels: [
@@ -349,6 +349,17 @@ export class TradingBot {
   hasHtfReaction() { return this.htfReaction; }
   isStructureReadable() { return this.structureReadable; }
 
+  /**
+   * Check if the bot (usually BTC) is in a Decoupling/Altseason mode.
+   * Condition: Trend is Range AND ADX < 25 (Low Volatility / Sideways).
+   */
+  getDecouplingMode(): boolean {
+    const tf = this.config.baseTimeframe || "1h";
+    const df = this.history[tf];
+    if (!df || df.length < 20) return false;
+    const metrics = this.computeTrendMetrics(df);
+    return metrics.trend === Trend.Range && metrics.adx < 25;
+  }
 
 
   constructor(config: Partial<BotConfig> = {}, exchange?: Exchange) {
@@ -670,27 +681,12 @@ export class TradingBot {
    */
   private applyStrategyTrailing(rMultiple: number): void {
     if (!this.position) return;
-    const tpMap: Record<BotConfig["strategyProfile"], number> = {
-      "ai-matic": 2.0,  //2.2
-      "ai-matic-tree": 2.0, //2.2
-      "ai-matic-x": 1.8,  //1.2
-      "ai-matic-scalp": 1.8,  //1.2
-      "ai-matic-pro": 1.6,
-    };
-    const widthMap: Record<BotConfig["strategyProfile"], number> = {
-      "ai-matic": 1.8,  //1.2
-      "ai-matic-tree": 1.8, //1.2
-      "ai-matic-x": 1.5,  //0.6
-      "ai-matic-scalp": 1.5,  //0.4
-      "ai-matic-pro": 1.2,
-    };
-    const profile = this.config.strategyProfile;
-    const tpR = tpMap[profile] ?? 1.8;  //2.2
-    const widthR = widthMap[profile] ?? 1.2;  //0.4
-    // Trigger těsně pod TP: blízko cíle (např. scalp 1.5R -> trigger 1.45R)
-    const triggerR = tpR - 1.0;  //0.6
+    const retracementPct = 0.004; // 0.4% retracement band
+    const triggerR = 0.6; // Activate trailing at 0.6R
     if (rMultiple < triggerR || this.position.slDistance <= 0) return;
-    const widthAbs = widthR * this.position.slDistance;
+    const widthAbs = this.position.entryPrice * retracementPct;
+    if (!Number.isFinite(widthAbs) || widthAbs <= 0) return;
+    const widthR = widthAbs / this.position.slDistance;
     
     // Safety check: Don't set target beyond current R multiple (avoid immediate exit)
     if (widthR > rMultiple) return;
@@ -1457,13 +1453,17 @@ export class TradingBot {
       if (this.config.symbol !== "BTCUSDT") {
         const btcBot = botRegistry["BTCUSDT"];
         const btcPos = btcBot?.getPosition();
-        // Strict: Block if BTC is flat OR side differs
-        if (!btcPos || btcPos.side !== candidate.side) {
-          candidate.blocked = true;
-          candidate.blockedReason = !btcPos ? "BTC Flat" : `BTC ${btcPos.side}`;
-          this.lastBlockedSignal = candidate;
-          // Return candidate so we can log it, but marked blocked
-          return candidate;
+        const isDecoupling = btcBot ? btcBot.getDecouplingMode() : false;
+
+        if (!isDecoupling) {
+          // Strict: Block if BTC is flat OR side differs
+          if (!btcPos || btcPos.side !== candidate.side) {
+            candidate.blocked = true;
+            candidate.blockedReason = !btcPos ? "BTC Flat" : `BTC ${btcPos.side}`;
+            this.lastBlockedSignal = candidate;
+            // Return candidate so we can log it, but marked blocked
+            return candidate;
+          }
         }
       }
 
@@ -1781,17 +1781,20 @@ export function evaluateStrategyForSymbol(
     if (symbol !== "BTCUSDT") {
       const btcBot = botRegistry["BTCUSDT"];
       const btcPos = btcBot?.getPosition();
+      const isDecoupling = btcBot ? btcBot.getDecouplingMode() : false;
       
-      // Strict Correlation Check
-      if (decision.signal) {
-        const btcSide = btcPos ? (btcPos.side === "long" ? "buy" : "sell") : null;
-        if (!btcSide || decision.signal.intent.side !== btcSide) {
-          decision.blockedSignal = { 
-            ...decision.signal, 
-            blocked: true, 
-            message: `Blocked: BTC ${btcSide || "Flat"}` 
-          };
-          decision.signal = null;
+      if (!isDecoupling) {
+        // Strict Correlation Check
+        if (decision.signal) {
+          const btcSide = btcPos ? (btcPos.side === "long" ? "buy" : "sell") : null;
+          if (!btcSide || decision.signal.intent.side !== btcSide) {
+            decision.blockedSignal = { 
+              ...decision.signal, 
+              blocked: true, 
+              message: `Blocked: BTC ${btcSide || "Flat"}` 
+            };
+            decision.signal = null;
+          }
         }
       }
       
