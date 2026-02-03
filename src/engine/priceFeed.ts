@@ -6,7 +6,7 @@ import {
   evaluateStrategyForSymbol,
 } from "@/engine/botEngine";
 import type { BotConfig } from "@/engine/botEngine";
-import { updateOrderbook, updateTrades, updateLiquidations } from "@/engine/orderflow";
+import { updateOpenInterest } from "./orderflow";
 
 const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
 const FEED_URL_TESTNET = "wss://stream.bybit.com/v5/public/linear";
@@ -141,8 +141,7 @@ interface BybitWsMessage {
   op?: "pong" | "ping" | "subscribe";
   success?: boolean;
   topic?: string;
-  data?: any;
-  type?: string;
+  data?: BybitWsKlineRow[] | any;
 }
 
 export function startPriceFeed(
@@ -166,10 +165,6 @@ export function startPriceFeed(
       lookbackMinutes?: number;
       limit?: number;
     };
-    orderflow?: {
-      enabled?: boolean;
-      depth?: number;
-    };
   }
 ): () => void {
   const ws = new WebSocket(opts?.useTestnet ? FEED_URL_TESTNET : FEED_URL_MAINNET);
@@ -177,8 +172,6 @@ export function startPriceFeed(
   const maxCandles = opts?.maxCandles ?? 500;
   const decisionFn = opts?.decisionFn ?? evaluateStrategyForSymbol;
   const backfill = opts?.backfill;
-  const orderflowEnabled = Boolean(opts?.orderflow?.enabled);
-  const orderflowDepth = opts?.orderflow?.depth ?? 50;
 
   let pingTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -215,24 +208,17 @@ export function startPriceFeed(
   ws.addEventListener("open", () => {
     console.log("Bybit WS open → subscribing…");
 
+    const args = [
+      ...symbols.map((s) => `kline.${timeframe}.${s}`),
+      ...symbols.map((s) => `tickers.${s}`),
+    ];
+
     ws.send(
       JSON.stringify({
         op: "subscribe",
-        args: symbols.map((s) => `kline.${timeframe}.${s}`),
+        args,
       })
     );
-  if (orderflowEnabled) {
-      ws.send(
-        JSON.stringify({
-          op: "subscribe",
-          args: [
-            ...symbols.map((s) => `orderbook.${orderflowDepth}.${s}`),
-            ...symbols.map((s) => `publicTrade.${s}`),
-            ...symbols.map((s) => `liquidation.${s}`),
-          ],
-        })
-      );
-    }
 
     // ping nutný pro udržení spojení
     pingTimer = setInterval(() => {
@@ -254,31 +240,14 @@ export function startPriceFeed(
 
       if (!msg.topic || !msg.data) return;
 
-      if (orderflowEnabled) {
-        if (msg.topic.startsWith("orderbook.")) {
-          const [, , symbol] = msg.topic.split(".");
-          if (!symbol) return;
-          const data = msg.data ?? {};
-          const bids = Array.isArray(data.b) ? data.b : [];
-          const asks = Array.isArray(data.a) ? data.a : [];
-          const isSnapshot = String(msg.type ?? "").toLowerCase() === "snapshot";
-          updateOrderbook(symbol, bids, asks, isSnapshot);
-          return;
+      if (msg.topic.startsWith("tickers.")) {
+        const data = msg.data;
+        const symbol = data?.symbol;
+        const oi = data?.openInterest;
+        if (symbol && oi) {
+          updateOpenInterest(symbol, parseFloat(oi));
         }
-        if (msg.topic.startsWith("publicTrade.")) {
-          const [, symbol] = msg.topic.split(".");
-          if (!symbol) return;
-          const trades = Array.isArray(msg.data) ? msg.data : [];
-          updateTrades(symbol, trades);
-          return;
-        }
-        if (msg.topic.startsWith("liquidation.")) {
-          const [, symbol] = msg.topic.split(".");
-          if (!symbol) return;
-          const events = Array.isArray(msg.data) ? msg.data : [];
-          updateLiquidations(symbol, events);
-          return;
-        }
+        return;
       }
 
       const [, , symbol] = msg.topic.split(".");
