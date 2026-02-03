@@ -20,6 +20,7 @@ import type { PriceFeedDecision } from "../engine/priceFeed";
 import type { BotConfig, Candle } from "../engine/botEngine";
 import { TradingMode } from "../types";
 import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy";
+import { updateOpenInterest } from "../engine/orderflow";
 import {
   SUPPORTED_SYMBOLS,
   filterSupportedSymbols,
@@ -3874,6 +3875,12 @@ export function useTradingBot(
         qualityScore: quality.score,
         qualityThreshold: quality.threshold,
         qualityPass: quality.pass,
+        proState: (decision as any)?.proState ?? null,
+        manipActive: (decision as any)?.proRegime?.manipActive ?? null,
+        liqProximityPct:
+          (decision as any)?.proSignals?.liqProximityPct ??
+          (decision as any)?.orderflow?.liqProximityPct ??
+          null,
         lastScanTs,
         feedAgeMs,
         feedAgeOk,
@@ -5259,6 +5266,49 @@ export function useTradingBot(
         if (hasPosition && scalpActive) {
           void handleScalpInTrade(symbol, decision, now);
         }
+        if (hasPosition && isProProfile) {
+          const orderflow = (decision as any)?.orderflow as
+            | { ofi?: number; cvd?: number; cvdPrev?: number }
+            | undefined;
+          const pos = positionsRef.current.find((p) => p.symbol === symbol);
+          if (pos && orderflow) {
+            const side = String(pos.side ?? "");
+            const ofi = toNumber(orderflow.ofi);
+            const cvd = toNumber(orderflow.cvd);
+            const cvdPrev = toNumber(orderflow.cvdPrev);
+            const cvdChange =
+              Number.isFinite(cvd) && Number.isFinite(cvdPrev)
+                ? cvd - cvdPrev
+                : Number.NaN;
+            const ofiFlip =
+              side === "Buy"
+                ? Number.isFinite(ofi) && ofi < 0
+                : Number.isFinite(ofi) && ofi > 0;
+            const cvdFlip =
+              side === "Buy"
+                ? Number.isFinite(cvdChange) && cvdChange < 0
+                : Number.isFinite(cvdChange) && cvdChange > 0;
+            if (ofiFlip || cvdFlip) {
+              const flipKey = `pro-flip:${symbol}`;
+              const last = autoCloseCooldownRef.current.get(flipKey) ?? 0;
+              if (now - last >= 15_000) {
+                autoCloseCooldownRef.current.set(flipKey, now);
+                void submitReduceOnlyOrder(
+                  pos,
+                  Math.abs(toNumber(pos.size ?? pos.qty))
+                ).catch(() => null);
+                addLogEntries([
+                  {
+                    id: `pro-flip:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "RISK_BLOCK",
+                    message: `${symbol} PRO flow flip -> EXIT (${ofiFlip ? "OFI" : "CVD"})`,
+                  },
+                ]);
+              }
+            }
+          }
+        }
         return;
       }
 
@@ -6188,6 +6238,57 @@ export function useTradingBot(
       stop();
     };
   }, [addLogEntries, authToken, engineConfig, feedEpoch, feedSymbols, useTestnet]);
+
+  useEffect(() => {
+    if (!authToken) return;
+    let active = true;
+    const baseUrl = useTestnet
+      ? "https://api-testnet.bybit.com"
+      : "https://api.bybit.com";
+    const intervalMs = 30_000;
+
+    const pollOpenInterest = async () => {
+      if (!active) return;
+      if (settingsRef.current.riskMode !== "ai-matic-pro") return;
+      const symbols = activeSymbols.length ? activeSymbols : [];
+      if (!symbols.length) return;
+      await Promise.all(
+        symbols.map(async (symbol) => {
+          try {
+            const url = `${baseUrl}/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=5min&limit=1`;
+            const res = await fetch(url);
+            const json = await res.json().catch(() => ({}));
+            const list =
+              json?.result?.list ??
+              json?.result?.data ??
+              json?.result ??
+              json?.list ??
+              [];
+            const row = Array.isArray(list) ? list[0] : list;
+            const raw =
+              row?.openInterest ??
+              row?.open_interest ??
+              row?.value ??
+              row?.openInterestValue ??
+              row?.sumOpenInterest;
+            const oi = toNumber(raw);
+            if (Number.isFinite(oi) && oi > 0) {
+              updateOpenInterest(String(symbol), oi);
+            }
+          } catch {
+            // ignore OI errors
+          }
+        })
+      );
+    };
+
+    const id = setInterval(pollOpenInterest, intervalMs);
+    void pollOpenInterest();
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [activeSymbols, authToken, useTestnet]);
 
   useEffect(() => {
     if (!authToken) return;

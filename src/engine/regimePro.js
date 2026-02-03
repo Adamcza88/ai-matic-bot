@@ -264,6 +264,10 @@ export function analyzeRegimePro(args) {
   let hmmProb = 0;
   let hmmState = 0;
   let shock = false;
+  let rangeProb = 0;
+  let trendProb = 0;
+  let manipProb = 0;
+  let manipActive = false;
   if (model && obs.length >= 5) {
     const last = obs[obs.length - 1];
     const N = model.pi.length;
@@ -277,20 +281,45 @@ export function analyzeRegimePro(args) {
     }
     const norm = logSumExp(logProb);
     const probs = logProb.map((v) => Math.exp(v - norm));
-    const order = normalizeStateByVol(model.means);
-    const lowVolIdx = order[0];
-    const highVolIdx = order[order.length - 1];
-    hmmProb = probs[lowVolIdx];
+    const variances = model.vars.map((v) => v[0] ?? 0);
+    const meanAbs = model.means.map((m) => Math.abs(m[0] ?? 0));
+    const lowVolIdx = variances
+      .map((v, i) => ({ v, i }))
+      .sort((a, b) => a.v - b.v)[0]?.i ?? 0;
+    const highVolIdx = variances
+      .map((v, i) => ({ v, i }))
+      .sort((a, b) => b.v - a.v)[0]?.i ?? 0;
+    const trendIdx = meanAbs
+      .map((v, i) => ({ v, i }))
+      .sort((a, b) => b.v - a.v)[0]?.i ?? 0;
+    rangeProb = probs[lowVolIdx] ?? 0;
+    manipProb = probs[highVolIdx] ?? 0;
+    trendProb = probs[trendIdx] ?? 0;
+    hmmProb = rangeProb;
     hmmState = lowVolIdx;
-    shock = probs[highVolIdx] >= 0.7;
+    shock = manipProb >= 0.7;
+    manipActive = manipProb >= 0.6;
   }
   const regimeOk =
     Number.isFinite(hurst) &&
     hurst < 0.45 &&
     Number.isFinite(chop) &&
     chop > 60 &&
-    hmmProb >= 0.7 &&
+    rangeProb >= 0.8 &&
     vpin < 0.8;
-  return { hurst, chop, hmmProb, hmmState, regimeOk, shock, vpin, ofi, delta };
+  return {
+    hurst,
+    chop,
+    hmmProb,
+    hmmState,
+    regimeOk,
+    shock,
+    vpin,
+    ofi,
+    delta,
+    rangeProb,
+    trendProb,
+    manipProb,
+    manipActive,
+  };
 }
-

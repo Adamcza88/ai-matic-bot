@@ -1,7 +1,7 @@
 // src/engine/priceFeed.ts
 // Public realtime feed z Bybitu přes WebSocket s automatickým pingem
 import { evaluateStrategyForSymbol, } from "@/engine/botEngine";
-import { updateOrderbook, updateTrades } from "@/engine/orderflow";
+import { updateOrderbook, updateTrades, updateLiquidations } from "@/engine/orderflow";
 const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
 const FEED_URL_TESTNET = "wss://stream.bybit.com/v5/public/linear";
 const REST_URL_MAINNET = "https://api.bybit.com";
@@ -155,6 +155,7 @@ export function startPriceFeed(symbols, onDecision, opts) {
                 args: [
                     ...symbols.map((s) => `orderbook.${orderflowDepth}.${s}`),
                     ...symbols.map((s) => `publicTrade.${s}`),
+                    ...symbols.map((s) => `liquidation.${s}`),
                 ],
             }));
         }
@@ -193,6 +194,14 @@ export function startPriceFeed(symbols, onDecision, opts) {
                         return;
                     const trades = Array.isArray(msg.data) ? msg.data : [];
                     updateTrades(symbol, trades);
+                    return;
+                }
+                if (msg.topic.startsWith("liquidation.")) {
+                    const [, symbol] = msg.topic.split(".");
+                    if (!symbol)
+                        return;
+                    const events = Array.isArray(msg.data) ? msg.data : [];
+                    updateLiquidations(symbol, events);
                     return;
                 }
             }

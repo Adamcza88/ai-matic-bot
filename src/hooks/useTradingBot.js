@@ -9,6 +9,7 @@ import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrateg
 import { decideCombinedEntry, } from "../engine/combinedEntryStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta";
+import { updateOpenInterest } from "../engine/orderflow";
 import { TradingMode } from "../types";
 import { SUPPORTED_SYMBOLS, filterSupportedSymbols, } from "../constants/symbols";
 import { loadPnlHistory, mergePnlRecords, resetPnlHistoryMap, } from "../lib/pnlHistory";
@@ -2529,6 +2530,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             qualityScore: quality.score,
             qualityThreshold: quality.threshold,
             qualityPass: quality.pass,
+            proState: decision?.proState ?? null,
+            manipActive: decision?.proRegime?.manipActive ?? null,
+            liqProximityPct: decision?.proSignals?.liqProximityPct ??
+                decision?.orderflow?.liqProximityPct ??
+                null,
             lastScanTs,
             feedAgeMs,
             feedAgeOk,
@@ -3282,6 +3288,44 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             }
         }
         else if (hasPosition || hasEntryOrder) {
+            if (hasPosition && scalpActive) {
+                handleScalpInTrade(symbol, decision, now);
+            }
+            if (hasPosition && isProProfile) {
+                const orderflow = decision?.orderflow;
+                const pos = positionsRef.current.find((p) => p.symbol === symbol);
+                if (pos && orderflow) {
+                    const side = String(pos.side ?? "");
+                    const ofi = toNumber(orderflow.ofi);
+                    const cvd = toNumber(orderflow.cvd);
+                    const cvdPrev = toNumber(orderflow.cvdPrev);
+                    const cvdChange = Number.isFinite(cvd) && Number.isFinite(cvdPrev)
+                        ? cvd - cvdPrev
+                        : Number.NaN;
+                    const ofiFlip = side === "Buy"
+                        ? Number.isFinite(ofi) && ofi < 0
+                        : Number.isFinite(ofi) && ofi > 0;
+                    const cvdFlip = side === "Buy"
+                        ? Number.isFinite(cvdChange) && cvdChange < 0
+                        : Number.isFinite(cvdChange) && cvdChange > 0;
+                    if (ofiFlip || cvdFlip) {
+                        const flipKey = `pro-flip:${symbol}`;
+                        const last = autoCloseCooldownRef.current.get(flipKey) ?? 0;
+                        if (now - last >= 15000) {
+                            autoCloseCooldownRef.current.set(flipKey, now);
+                            submitReduceOnlyOrder(pos, Math.abs(toNumber(pos.size ?? pos.qty))).catch(() => null);
+                            addLogEntries([
+                                {
+                                    id: `pro-flip:${symbol}:${now}`,
+                                    timestamp: new Date(now).toISOString(),
+                                    action: "RISK_BLOCK",
+                                    message: `${symbol} PRO flow flip -> EXIT (${ofiFlip ? "OFI" : "CVD"})`,
+                                },
+                            ]);
+                        }
+                    }
+                }
+            }
             return;
         }
         const nextState = String(decision?.state ?? "").toUpperCase();
@@ -3824,6 +3868,55 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             stop();
         };
     }, [addLogEntries, authToken, engineConfig, feedEpoch, feedSymbols, useTestnet]);
+    useEffect(() => {
+        if (!authToken)
+            return;
+        let active = true;
+        const baseUrl = useTestnet
+            ? "https://api-testnet.bybit.com"
+            : "https://api.bybit.com";
+        const intervalMs = 30000;
+        const pollOpenInterest = async () => {
+            if (!active)
+                return;
+            if (settingsRef.current.riskMode !== "ai-matic-pro")
+                return;
+            const symbols = activeSymbols.length ? activeSymbols : [];
+            if (!symbols.length)
+                return;
+            await Promise.all(symbols.map(async (symbol) => {
+                try {
+                    const url = `${baseUrl}/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=5min&limit=1`;
+                    const res = await fetch(url);
+                    const json = await res.json().catch(() => ({}));
+                    const list = json?.result?.list ??
+                        json?.result?.data ??
+                        json?.result ??
+                        json?.list ??
+                        [];
+                    const row = Array.isArray(list) ? list[0] : list;
+                    const raw = row?.openInterest ??
+                        row?.open_interest ??
+                        row?.value ??
+                        row?.openInterestValue ??
+                        row?.sumOpenInterest;
+                    const oi = toNumber(raw);
+                    if (Number.isFinite(oi) && oi > 0) {
+                        updateOpenInterest(String(symbol), oi);
+                    }
+                }
+                catch (_a) {
+                    // ignore OI errors
+                }
+            }));
+        };
+        const id = setInterval(pollOpenInterest, intervalMs);
+        pollOpenInterest();
+        return () => {
+            active = false;
+            clearInterval(id);
+        };
+    }, [activeSymbols, authToken, useTestnet]);
     useEffect(() => {
         if (!authToken)
             return;

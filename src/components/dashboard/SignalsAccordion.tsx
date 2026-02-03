@@ -158,6 +158,9 @@ export default function SignalsAccordion({
           const entryBlockReasons = Array.isArray(diag?.entryBlockReasons)
             ? diag.entryBlockReasons
             : [];
+          const proState = diag?.proState;
+          const manipActive = diag?.manipActive;
+          const liqProximity = diag?.liqProximityPct;
           const manageLabel =
             entryBlockReasons.length > 0
               ? entryBlockReasons.join(" • ")
@@ -286,6 +289,40 @@ export default function SignalsAccordion({
                       </div>
                     ) : null}
                   </div>
+                  {(proState || manipActive != null || liqProximity != null) && (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {proState ? (
+                        <div className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full bg-sky-400" />
+                          <span className="text-foreground">
+                            PRO state: {proState}
+                          </span>
+                        </div>
+                      ) : null}
+                      {manipActive != null ? (
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`h-2 w-2 rounded-full ${
+                              manipActive ? "bg-amber-400" : "bg-emerald-400"
+                            }`}
+                          />
+                          <span className="text-foreground">
+                            Manipulation {manipActive ? "ON" : "OFF"}
+                          </span>
+                        </div>
+                      ) : null}
+                      {liqProximity != null ? (
+                        <div className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full bg-violet-400" />
+                          <span className="text-foreground">
+                            Liq proximity {Number.isFinite(liqProximity)
+                              ? `${liqProximity.toFixed(2)}%`
+                              : "—"}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                     <div className="grid gap-2 sm:grid-cols-2">
                       {gates.map((gate: any) => (
                         <button
