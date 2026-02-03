@@ -1,5 +1,6 @@
 import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet";
 import { computeEma, computeRsi } from "./ta";
+import { evaluateAiMaticProStrategyForSymbol } from "./aiMaticProStrategy";
 
 export enum Trend {
   Bull = "bull",
@@ -1716,6 +1717,13 @@ export function evaluateStrategyForSymbol(
 ): EngineDecision {
   const bot = ensureBot(symbol, config);
   const botConfig = bot.getConfig();
+
+  // INTEGRACE AI-MATIC-PRO
+  if (botConfig.strategyProfile === "ai-matic-pro") {
+    const entryTfMin = timeframeToMinutes(botConfig.aiMaticEntryTimeframe ?? "5m");
+    return evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin });
+  }
+
   const useMultiTf = botConfig.aiMaticMultiTf;
   const tfBaseMin = timeframeToMinutes(
     botConfig.aiMaticHtfTimeframe ?? botConfig.baseTimeframe

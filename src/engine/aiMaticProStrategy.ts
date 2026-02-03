@@ -1,6 +1,5 @@
 import type { Candle, EngineDecision, EngineSignal } from "./botEngine";
-import { computeATR } from "./botEngine";
-import { findPivotsHigh, findPivotsLow } from "./ta";
+import { findPivotsHigh, findPivotsLow, computeAtr } from "./ta";
 import { computeMarketProfile } from "./marketProfile";
 import { getOrderFlowSnapshot } from "./orderflow";
 import { analyzeRegimePro } from "./regimePro";
@@ -351,7 +350,7 @@ export function evaluateAiMaticProStrategyForSymbol(
   const regimeOk = regime.regimeOk;
   const useRangeLogic = regimeOk && !manipActive;
 
-  const atrArr = computeATR(highs, lows, closes, 14);
+  const atrArr = computeAtr(candles, 14);
   const atr = atrArr.length ? atrArr[atrArr.length - 1] : Number.NaN;
   if (!profile) {
     return {
