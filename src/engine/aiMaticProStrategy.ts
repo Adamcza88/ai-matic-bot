@@ -234,7 +234,6 @@ export function evaluateAiMaticProStrategyForSymbol(
   const rfSignal = flowSignal;
 
   const entryTfMin = config?.entryTfMin ?? 5;
-  const timeStopMinutes = Math.max(entryTfMin * 10, 60);
   const timeframeMs = resolveTimeframeMs(candles);
 
   const lastSwingHigh = findLastPivot(candles, "high", 30);
@@ -435,6 +434,11 @@ export function evaluateAiMaticProStrategyForSymbol(
 
   // Dynamic Sizing based on Score
   const sizeScale = sosScore >= 85 ? 1.0 : 0.6;
+
+  // Dynamic Time Stop based on Score
+  const timeStopMinutes = sosScore >= 85 
+    ? Math.max(entryTfMin * 10, 60) 
+    : Math.max(entryTfMin * 6, 30); // More aggressive for lower quality
   // -------------------------------------
 
   if (useRangeLogic) {
@@ -472,7 +476,6 @@ export function evaluateAiMaticProStrategyForSymbol(
           : price + (Number.isFinite(atr) ? 2 * atr : price * 0.002);
 
     const midRange = (profile.vah + profile.val) / 2;
-    const t1 = Number.isFinite(profile.vwap) ? profile.vwap : midRange;
     const t2 =
       Number.isFinite(profile.poc) && profile.poc > 0
         ? profile.poc
@@ -494,12 +497,12 @@ export function evaluateAiMaticProStrategyForSymbol(
       risk: sizeScale, // Dynamic sizing
       message: `PRO sideways ${side} | VA ${profile.val.toFixed(
         2
-      )}-${profile.vah.toFixed(2)} | POC ${profile.poc.toFixed(2)} | OI ${orderflow.openInterestTrend ?? "-"}`,
+      )}-${profile.vah.toFixed(2)} | POC ${profile.poc.toFixed(2)} | OI ${orderflow.openInterestTrend ?? "-"} | SOS ${Math.round(sosScore)}`,
       createdAt: new Date().toISOString(),
     };
 
     (signal as any).proTargets = {
-      t1,
+      t1: Number.isFinite(profile.vwap) ? profile.vwap : midRange,
       t2,
       timeStopMinutes,
       entryTfMin,
@@ -556,7 +559,6 @@ export function evaluateAiMaticProStrategyForSymbol(
       ? Math.min(swingLow, entry - (Number.isFinite(atr) ? 2 * atr : entry * 0.003))
       : Math.max(swingHigh, entry + (Number.isFinite(atr) ? 2 * atr : entry * 0.003));
   const midRange = (profile.vah + profile.val) / 2;
-  const t1 = Number.isFinite(profile.vwap) ? profile.vwap : midRange;
   const t2 =
     Number.isFinite(profile.poc) && profile.poc > 0
       ? profile.poc
@@ -576,12 +578,12 @@ export function evaluateAiMaticProStrategyForSymbol(
     entryType: "LIMIT_MAKER_FIRST",
     kind: "MEAN_REVERSION",
     risk: sizeScale, // Dynamic sizing
-    message: `PRO SFP ${side} | swing ${side === "Buy" ? swingLow : swingHigh} | ice ${iceberg ? "Y" : "N"} | OI ${orderflow.openInterestTrend ?? "-"}`,
+    message: `PRO SFP ${side} | swing ${side === "Buy" ? swingLow : swingHigh} | ice ${iceberg ? "Y" : "N"} | OI ${orderflow.openInterestTrend ?? "-"} | SOS ${Math.round(sosScore)}`,
     createdAt: new Date().toISOString(),
   };
 
   (signal as any).proTargets = {
-    t1,
+    t1: Number.isFinite(profile.vwap) ? profile.vwap : midRange,
     t2,
     timeStopMinutes,
     entryTfMin,

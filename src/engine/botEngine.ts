@@ -138,6 +138,7 @@ export interface Position {
   partialIndex: number;
   closed?: number;
   exitCount: number;
+  sosScore?: number;
 }
 
 /**
@@ -218,6 +219,7 @@ type EntrySignal = {
   entry: number;
   stopLoss: number;
   kind: EntryKind;
+  sosScore?: number;
 };
 
 function applyProfileOverrides(cfg: BotConfig): BotConfig {
@@ -458,6 +460,45 @@ export class TradingBot {
   updateConfig(config: Partial<BotConfig>): void {
     this.config = applyProfileOverrides({ ...this.config, ...config });
     this.equityPeak = Math.max(this.equityPeak, this.config.accountBalance);
+  }
+
+  /**
+   * Compute Strength of Signal (SOS) Score (0-100).
+   * Used for dynamic sizing and exit rules.
+   */
+  private computeSosScore(
+    trend: Trend,
+    adx: number,
+    liquiditySweep: boolean,
+    volExpansion: boolean,
+    rsi: number,
+    emaAligned: boolean
+  ): number {
+    let score = 0;
+    // Regime (Max 40)
+    if (trend !== Trend.Range) score += 20;
+    if (adx > 25) score += 10;
+    if (adx > 35) score += 10;
+
+    // Confluence (Max 30)
+    if (liquiditySweep) score += 15;
+    if (volExpansion) score += 15;
+
+    // Momentum/Structure (Max 30)
+    if (emaAligned) score += 15;
+    
+    // RSI check
+    if (trend === Trend.Bull && rsi < 70) score += 15;
+    else if (trend === Trend.Bear && rsi > 30) score += 15;
+    else if (trend === Trend.Range) score += 5;
+
+    // AI-MATIC-SCALP Specific Adjustments
+    if (this.config.strategyProfile === "ai-matic-scalp") {
+      if (volExpansion) score += 10;
+      if (adx > 20 && adx <= 25) score += 5;
+    }
+
+    return Math.min(score, 100);
   }
 
   /**
@@ -816,7 +857,8 @@ export class TradingBot {
     entry: number,
     stopLoss: number,
     kind: EntryKind = "OTHER",
-    sizeScale: number = 1.0
+    sizeScale: number = 1.0,
+    sosScore: number = 0
   ): void {
     const profileRisk =
       this.config.strategyProfile === "ai-matic"
@@ -866,6 +908,7 @@ export class TradingBot {
       pyramidLevel: 0,
       partialIndex: 0,
       exitCount: 0,
+      sosScore,
     };
     this.state = State.Manage;
   }
@@ -889,13 +932,14 @@ export class TradingBot {
     entry: number,
     stopLoss: number,
     kind: EntryKind = "OTHER",
-    sizeScale: number = 1.0
+    sizeScale: number = 1.0,
+    sosScore: number = 0
   ): boolean {
     if (!this.canEnter()) {
       console.warn("[BotEngine] Entry Blocked: State is not SCAN or Position exists.");
       return false;
     }
-    this.enterPosition(side, entry, stopLoss, kind, sizeScale);
+    this.enterPosition(side, entry, stopLoss, kind, sizeScale, sosScore);
     return true;
   }
 
@@ -1221,7 +1265,9 @@ export class TradingBot {
     if (this.state === State.Scan) {
       const signal = await this.scanForEntry();
       if (signal) {
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, 1.0);
+        const score = signal.sosScore ?? 50;
+        const sizeScale = score >= 80 ? 1.0 : 0.6;
+        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, sizeScale, score);
       }
     } else if (this.state === State.Manage) {
       await this.managePosition();
@@ -1240,7 +1286,9 @@ export class TradingBot {
     if (this.state === State.Scan) {
       const signal = this.scanForEntryFromFrames(ht, lt);
       if (signal) {
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, 1.0);
+        const score = signal.sosScore ?? 50;
+        const sizeScale = score >= 80 ? 1.0 : 0.6;
+        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, sizeScale, score);
       }
     } else if (this.state === State.Manage) {
       this.managePositionWithFrames(ht, lt);
@@ -1264,7 +1312,9 @@ export class TradingBot {
     if (this.state === State.Scan) {
       const signal = this.scanForEntryFromMultiFrames(ht, mid, lt, exec);
       if (signal) {
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, 1.0);
+        const score = signal.sosScore ?? 50;
+        const sizeScale = score >= 80 ? 1.0 : 0.6;
+        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, sizeScale, score);
       }
     } else if (this.state === State.Manage) {
       this.managePositionWithFrames(ht, exec);
@@ -1323,6 +1373,7 @@ export class TradingBot {
       entry,
       stopLoss: stop,
       kind: candidate.kind,
+      sosScore: candidate.sosScore,
     };
   }
 
@@ -1380,10 +1431,28 @@ export class TradingBot {
         if (emaTrendBias === "short" && candle.close >= emaAt) return null;
       }
     }
+
+    // Pre-calculate ADX for SOS
+    const adxArray = computeADX(lt.map(c=>c.high), lt.map(c=>c.low), lt.map(c=>c.close), this.config.adxPeriod);
+    const adxNow = adxArray[adxArray.length - 1] || 0;
+    const rsiArr = computeRsi(lt.map(c=>c.close), this.config.pullbackRsiPeriod ?? 14);
+    const rsiNow = rsiArr[rsiArr.length - 1] || 50;
+
     const applyEmaTrendGate = (candidate: EntrySignal | null) => {
       if (!candidate) return null;
       if (candidate.side !== emaTrendBias) return null;
       if (emaTouched && candidate.kind !== "PULLBACK") return null;
+      
+      // Compute SOS Score
+      const score = this.computeSosScore(
+        trend,
+        adxNow,
+        conf.liquiditySweep,
+        conf.volExpansion,
+        rsiNow,
+        candidate.side === emaTrendBias
+      );
+      candidate.sosScore = score;
       return candidate;
     };
 
@@ -1503,9 +1572,6 @@ export class TradingBot {
     const c1 = closes[closes.length - 2];
     const emaNow = ema20[ema20.length - 1];
     const emaPrev = ema20[ema20.length - 2];
-    const rsiPeriod = this.config.pullbackRsiPeriod ?? 14;
-    const rsiArr = computeRsi(closes, rsiPeriod);
-    const rsiNow = rsiArr[rsiArr.length - 1];
     const rsiMin = this.config.pullbackRsiMin ?? 0;
     const rsiMax = this.config.pullbackRsiMax ?? 100;
     const rsiOkLong = !Number.isFinite(rsiNow) || rsiNow >= rsiMin;
@@ -1594,8 +1660,12 @@ export class TradingBot {
     const dist = currentPrice - pos.entryPrice;
     const pnlR = (pos.side === "long" ? dist : -dist) / (Math.abs(pos.entryPrice - pos.stopLoss) || 1);
 
-    // Hardcoded 2 hours for now as "Time Stop"
-    if (durationMs > 2 * 3600 * 1000 && pnlR < 0.5) {
+    // Aggressive Time Stop for Low SOS
+    const isLowQuality = (pos.sosScore ?? 50) < 60;
+    const timeLimit = isLowQuality ? 45 * 60 * 1000 : 2 * 3600 * 1000; // 45m vs 2h
+
+    // If held longer than limit and profit < 0.5R => Exit
+    if (durationMs > timeLimit && pnlR < 0.5) {
       // Stagnant trade
       this.exitPosition(currentPrice);
     }
@@ -1809,7 +1879,7 @@ export function evaluateStrategyForSymbol(
       },
       kind: position.entryKind ?? "OTHER",
       risk: 1.0, // Default display risk
-      message: `Entered ${position.side} with SL ${position.stopLoss.toFixed(2)} | TP ${position.initialTakeProfit.toFixed(2)}`,
+      message: `Entered ${position.side} | SL ${position.stopLoss.toFixed(2)} | TP ${position.initialTakeProfit.toFixed(2)} | SOS ${position.sosScore ?? "-"}`,
       createdAt: new Date().toISOString(),
     };
   }
