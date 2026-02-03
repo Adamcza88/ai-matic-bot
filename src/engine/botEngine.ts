@@ -1438,24 +1438,6 @@ export class TradingBot {
     const rsiArr = computeRsi(lt.map(c=>c.close), this.config.pullbackRsiPeriod ?? 14);
     const rsiNow = rsiArr[rsiArr.length - 1] || 50;
 
-    const applyEmaTrendGate = (candidate: EntrySignal | null) => {
-      if (!candidate) return null;
-      if (candidate.side !== emaTrendBias) return null;
-      if (emaTouched && candidate.kind !== "PULLBACK") return null;
-      
-      // Compute SOS Score
-      const score = this.computeSosScore(
-        trend,
-        adxNow,
-        conf.liquiditySweep,
-        conf.volExpansion,
-        rsiNow,
-        candidate.side === emaTrendBias
-      );
-      candidate.sosScore = score;
-      return candidate;
-    };
-
     let trend = this.determineTrend(ht);
     if (lt.length < 3) return null;
     const closes = lt.map((c) => c.close);
@@ -1490,6 +1472,24 @@ export class TradingBot {
           ? "ultra"
           : "base");
     const isTest = strictness === "test";
+
+    const applyEmaTrendGate = (candidate: EntrySignal | null) => {
+      if (!candidate) return null;
+      if (candidate.side !== emaTrendBias) return null;
+      if (emaTouched && candidate.kind !== "PULLBACK") return null;
+      
+      // Compute SOS Score
+      const score = this.computeSosScore(
+        trend,
+        adxNow,
+        conf.liquiditySweep,
+        conf.volExpansion,
+        rsiNow,
+        candidate.side === emaTrendBias
+      );
+      candidate.sosScore = score;
+      return candidate;
+    };
 
     // REGIME GATE: Trend vs Range logic
     // Range Mode: Low ADX from determineTrend
