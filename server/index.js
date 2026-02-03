@@ -90,7 +90,7 @@ app.post("/api/:env/order", async (req, res) => {
     LINKUSDT: 50,
     MELANIAUSDT: 20,
     XPLUSDT: 50,
-    HYPEUSDT: 75,
+    HYPEUSDT: 50,
     FARTCOINUSDT: 75,
   };
   const roiSymbols = new Set(Object.keys(leverageMap));

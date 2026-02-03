@@ -24,7 +24,7 @@ const LEVERAGE_BY_SYMBOL: Record<Symbol, number> = {
   LINKUSDT: 50,
   MELANIAUSDT: 20,
   XPLUSDT: 50,
-  HYPEUSDT: 75,
+  HYPEUSDT: 50,
   FARTCOINUSDT: 75,
 };
 const ALLOW_BOT_CANCELS = false;
