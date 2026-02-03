@@ -7,6 +7,7 @@ import {
 } from "@/engine/botEngine";
 import type { BotConfig } from "@/engine/botEngine";
 import { updateOpenInterest } from "./orderflow";
+import { startLiquidationFeed } from "./liquidationFeed";
 
 const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
 const FEED_URL_TESTNET = "wss://stream.bybit.com/v5/public/linear";
@@ -173,6 +174,9 @@ export function startPriceFeed(
   const decisionFn = opts?.decisionFn ?? evaluateStrategyForSymbol;
   const backfill = opts?.backfill;
 
+  // Start Liquidation Feed alongside Price Feed
+  const stopLiquidationFeed = startLiquidationFeed(symbols, opts?.useTestnet);
+
   let pingTimer: ReturnType<typeof setInterval> | null = null;
 
   if (backfill?.enabled) {
@@ -296,6 +300,7 @@ export function startPriceFeed(
 
   return () => {
     try {
+      stopLiquidationFeed();
       clearInterval(pingTimer);
       ws.close();
     } catch {

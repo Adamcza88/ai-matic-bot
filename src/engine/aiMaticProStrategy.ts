@@ -422,7 +422,7 @@ export function evaluateAiMaticProStrategyForSymbol(
       risk: 0.6,
       message: `PRO sideways ${side} | VA ${profile.val.toFixed(
         2
-      )}-${profile.vah.toFixed(2)} | POC ${profile.poc.toFixed(2)}`,
+      )}-${profile.vah.toFixed(2)} | POC ${profile.poc.toFixed(2)} | OI ${orderflow.openInterestTrend ?? "-"}`,
       createdAt: new Date().toISOString(),
     };
 
@@ -503,7 +503,7 @@ export function evaluateAiMaticProStrategyForSymbol(
     entryType: "LIMIT_MAKER_FIRST",
     kind: "MEAN_REVERSION",
     risk: 0.7,
-    message: `PRO SFP ${side} | swing ${side === "Buy" ? swingLow : swingHigh} | ice ${iceberg ? "Y" : "N"}`,
+    message: `PRO SFP ${side} | swing ${side === "Buy" ? swingLow : swingHigh} | ice ${iceberg ? "Y" : "N"} | OI ${orderflow.openInterestTrend ?? "-"}`,
     createdAt: new Date().toISOString(),
   };
 
