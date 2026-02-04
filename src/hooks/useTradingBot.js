@@ -124,6 +124,7 @@ const AI_MATIC_SL_ATR_BUFFER = 0.3;
 const AI_MATIC_TRAIL_ATR_MULT = 1.5;
 const AI_MATIC_TRAIL_PCT = 0.004;
 const AI_MATIC_MIN_RR = 1.2;
+const AI_MATIC_TRAIL_PROTECT_R = 0.5;
 const AI_MATIC_LIQ_SWEEP_LOOKBACK = 15;
 const AI_MATIC_LIQ_SWEEP_ATR_MULT = 0.5;
 const AI_MATIC_LIQ_SWEEP_VOL_MULT = 1.0;
@@ -2041,6 +2042,52 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 const trailingActive = toNumber(pos?.trailingActivePrice ?? pos?.activePrice ?? pos?.activationPrice);
                 const trailingStop = toNumber(pos?.trailingStop ?? pos?.trailingStopDistance ?? pos?.trailingStopPrice ?? pos?.trailPrice);
                 const hasTrail = Number.isFinite(trailingActive) || Number.isFinite(trailingStop);
+                const rMultiple = Number.isFinite(price) && Number.isFinite(sl)
+                    ? computeRMultiple(entry, sl, price, side)
+                    : Number.NaN;
+                if (!hasTrail && Number.isFinite(rMultiple) && rMultiple >= AI_MATIC_TRAIL_PROTECT_R) {
+                    const lastAttempt = aiMaticTrailCooldownRef.current.get(symbol) ?? 0;
+                    if (now - lastAttempt >= 30000) {
+                        aiMaticTrailCooldownRef.current.set(symbol, now);
+                        const atr = toNumber(decisionRef.current[symbol]?.decision?.coreV2?.atr14);
+                        const minDistance = resolveMinProtectionDistance(entry);
+                        const risk = Math.abs(entry - sl);
+                        const activationDistance = Math.max(Number.isFinite(risk) ? risk * AI_MATIC_TRAIL_PROTECT_R : 0, minDistance);
+                        const distance = Math.max(Number.isFinite(atr) ? atr * AI_MATIC_TRAIL_ATR_MULT : 0, entry * AI_MATIC_TRAIL_PCT, minDistance);
+                        const dir = side === "Buy" ? 1 : -1;
+                        const activePrice = entry + dir * activationDistance;
+                        if (Number.isFinite(distance) && distance > 0 && Number.isFinite(activePrice) && activePrice > 0) {
+                            try {
+                                await postJson("/protection", {
+                                    symbol,
+                                    trailingStop: distance,
+                                    trailingActivePrice: activePrice,
+                                    positionIdx: Number.isFinite(pos.positionIdx)
+                                        ? pos.positionIdx
+                                        : undefined,
+                                });
+                                addLogEntries([
+                                    {
+                                        id: `ai-matic-trail:${symbol}:${now}`,
+                                        timestamp: new Date(now).toISOString(),
+                                        action: "STATUS",
+                                        message: `${symbol} AI-MATIC trailing protection active`,
+                                    },
+                                ]);
+                            }
+                            catch (err) {
+                                addLogEntries([
+                                    {
+                                        id: `ai-matic-trail:error:${symbol}:${now}`,
+                                        timestamp: new Date(now).toISOString(),
+                                        action: "ERROR",
+                                        message: `${symbol} AI-MATIC trailing protection failed: ${asErrorMessage(err)}`,
+                                    },
+                                ]);
+                            }
+                        }
+                    }
+                }
                 if (tpMeta &&
                     Number.isFinite(entry) &&
                     Number.isFinite(tpMeta.entry) &&
