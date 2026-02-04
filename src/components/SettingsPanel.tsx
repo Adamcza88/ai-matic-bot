@@ -129,15 +129,17 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   const coreProfiles: Record<AISettings["riskMode"], CoreProfile> = {
     "ai-matic": {
       title: "AI-MATIC Core",
-      summary: "HTF 1h/15m · LTF 5m/1m · POI priority",
+      summary: "HTF 1h/15m · LTF 5m · EMA 8/21/50",
       description:
-        "Core engine: multi‑TF POI (OB/FVG/Breaker/Liquidity) + EMA50 trend gate.",
+        "Core engine: multi‑TF POI + EMA 8/21/50 no‑cross + checklist gating.",
       notes: [
         ORDER_VALUE_NOTE,
-        "Trend gate: EMA50 + shoda HTF/LTF (1h/15m/5m).",
+        "Trend gate: EMA 8/21/50 alignment bez křížení.",
         "POI priorita: Breaker > OB > FVG > Liquidity.",
-        "Entry: pullback/mean‑reversion jen po potvrzení struktury.",
-        "Exekuce: 1m timing, SL swing/ATR, partial 1R.",
+        "Vstup: min 3 entry faktory + min 4 body checklistu.",
+        "SL: vždy za likviditu (swing/OB) + ATR buffer.",
+        "TP: POC/VAH/VAL, FVG/GAP, liquidity pools nebo HTF S/R.",
+        "Trailing: aktivace po dosažení TP1.",
       ],
     },
     "ai-matic-x": {

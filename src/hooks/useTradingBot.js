@@ -9,6 +9,8 @@ import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrateg
 import { decideCombinedEntry, } from "../engine/combinedEntryStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta";
+import { CandlestickAnalyzer } from "../engine/universal-candlestick-analyzer";
+import { computeMarketProfile } from "../engine/marketProfile";
 import { updateOpenInterest } from "../engine/orderflow";
 import { TradingMode } from "../types";
 import { SUPPORTED_SYMBOLS, filterSupportedSymbols, } from "../constants/symbols";
@@ -114,6 +116,18 @@ const CHEAT_LIMIT_WAIT_WINDOWS_MIN = {
 };
 const CHEAT_LIMIT_RUNAWAY_BPS = 30;
 const CHEAT_LIMIT_MIN_RRR = 1;
+const AI_MATIC_ENTRY_FACTOR_MIN = 3;
+const AI_MATIC_CHECKLIST_MIN = 4;
+const AI_MATIC_EMA_CROSS_LOOKBACK = 6;
+const AI_MATIC_POI_DISTANCE_PCT = 0.0015;
+const AI_MATIC_SL_ATR_BUFFER = 0.3;
+const AI_MATIC_TRAIL_ATR_MULT = 1.5;
+const AI_MATIC_TRAIL_PCT = 0.004;
+const AI_MATIC_MIN_RR = 1.2;
+const AI_MATIC_LIQ_SWEEP_LOOKBACK = 15;
+const AI_MATIC_LIQ_SWEEP_ATR_MULT = 0.5;
+const AI_MATIC_LIQ_SWEEP_VOL_MULT = 1.0;
+const AI_MATIC_BREAK_RETEST_LOOKBACK = 6;
 const DEFAULT_SETTINGS = {
     riskMode: "ai-matic",
     trendGateMode: "adaptive",
@@ -321,6 +335,549 @@ function evaluateEmaMultiTrend(candles, opts) {
     }
     return { consensus, alignedCount, byTimeframe, tags };
 }
+
+const toAnalyzerCandles = (candles) => candles.map((c, idx) => ({
+    time: Number.isFinite(c.openTime) ? c.openTime : idx * 60_000,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+}));
+
+const resolveAiMaticHtfDirection = (decision, core) => {
+    const consensus = String(decision?.htfTrend?.consensus ?? "").toLowerCase();
+    if (consensus === "bull" || consensus === "bear")
+        return consensus;
+    const bias = core?.htfBias ?? "NONE";
+    if (bias === "BULL")
+        return "bull";
+    if (bias === "BEAR")
+        return "bear";
+    const trendRaw = String(decision?.trend ?? "").toLowerCase();
+    if (trendRaw === "bull" || trendRaw === "bear")
+        return trendRaw;
+    return "none";
+};
+
+const resolveRecentCross = (fast, slow, lookback) => {
+    const size = Math.min(fast.length, slow.length);
+    if (size < 3)
+        return false;
+    const span = Math.min(size - 1, Math.max(2, lookback));
+    let prev = Math.sign(fast[size - span - 1] - slow[size - span - 1]);
+    for (let i = size - span; i < size; i++) {
+        const next = Math.sign(fast[i] - slow[i]);
+        if (next !== 0 && prev !== 0 && next !== prev)
+            return true;
+        if (next !== 0)
+            prev = next;
+    }
+    return false;
+};
+
+const resolveAiMaticEmaFlags = (candles) => {
+    const closes = candles.map((c) => c.close);
+    const ema8Arr = computeEma(closes, 8);
+    const ema21Arr = computeEma(closes, 21);
+    const ema50Arr = computeEma(closes, 50);
+    const ema8 = ema8Arr[ema8Arr.length - 1] ?? Number.NaN;
+    const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
+    const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
+    const close = closes[closes.length - 1] ?? Number.NaN;
+    const bullOk = Number.isFinite(close) &&
+        close > ema8 &&
+        ema8 > ema21 &&
+        ema21 > ema50;
+    const bearOk = Number.isFinite(close) &&
+        close < ema8 &&
+        ema8 < ema21 &&
+        ema21 < ema50;
+    const crossRecent =
+        resolveRecentCross(ema8Arr, ema21Arr, AI_MATIC_EMA_CROSS_LOOKBACK) ||
+            resolveRecentCross(ema21Arr, ema50Arr, AI_MATIC_EMA_CROSS_LOOKBACK);
+    return { bullOk, bearOk, crossRecent, ema8, ema21, ema50, close };
+};
+
+const resolveAiMaticPivots = (candles, lookback = 2) => {
+    if (!candles.length)
+        return { lastHigh: undefined, lastLow: undefined };
+    const highs = findPivotsHigh(candles, lookback, lookback);
+    const lows = findPivotsLow(candles, lookback, lookback);
+    const lastHigh = highs[highs.length - 1]?.price;
+    const lastLow = lows[lows.length - 1]?.price;
+    return { lastHigh, lastLow };
+};
+
+const resolveAiMaticPatterns = (candles) => {
+    if (candles.length < 2) {
+        return {
+            pinbarBull: false,
+            pinbarBear: false,
+            engulfBull: false,
+            engulfBear: false,
+            insideBar: false,
+            trapBull: false,
+            trapBear: false,
+        };
+    }
+    const prev = candles[candles.length - 2];
+    const curr = candles[candles.length - 1];
+    const range = Math.max(curr.high - curr.low, 1e-8);
+    const body = Math.abs(curr.close - curr.open);
+    const upperWick = curr.high - Math.max(curr.close, curr.open);
+    const lowerWick = Math.min(curr.close, curr.open) - curr.low;
+    const pinbarBull = body <= 0.3 * range && lowerWick >= 0.6 * range;
+    const pinbarBear = body <= 0.3 * range && upperWick >= 0.6 * range;
+    const prevBodyHigh = Math.max(prev.open, prev.close);
+    const prevBodyLow = Math.min(prev.open, prev.close);
+    const currBodyHigh = Math.max(curr.open, curr.close);
+    const currBodyLow = Math.min(curr.open, curr.close);
+    const engulfBull = curr.close > curr.open &&
+        prev.close < prev.open &&
+        currBodyHigh >= prevBodyHigh &&
+        currBodyLow <= prevBodyLow;
+    const engulfBear = curr.close < curr.open &&
+        prev.close > prev.open &&
+        currBodyHigh >= prevBodyHigh &&
+        currBodyLow <= prevBodyLow;
+    const insideBar = curr.high <= prev.high && curr.low >= prev.low;
+    const trapBull = curr.low < prev.low && curr.close > prev.low;
+    const trapBear = curr.high > prev.high && curr.close < prev.high;
+    return {
+        pinbarBull,
+        pinbarBear,
+        engulfBull,
+        engulfBear,
+        insideBar,
+        trapBull,
+        trapBear,
+    };
+};
+
+const resolveAiMaticBreakRetest = (candles, level, dir) => {
+    if (!Number.isFinite(level) || candles.length < 3)
+        return false;
+    const recent = candles.slice(-AI_MATIC_BREAK_RETEST_LOOKBACK - 1, -1);
+    const broke = recent.some((c) => dir === "bull" ? c.close > level : c.close < level);
+    if (!broke)
+        return false;
+    const last = candles[candles.length - 1];
+    const retest = last.low <= level && last.high >= level;
+    const closeOk = dir === "bull" ? last.close >= level : last.close <= level;
+    return retest && closeOk;
+};
+
+const resolvePoiReaction = (pois, price, candle, dir) => {
+    if (!Number.isFinite(price) || !candle || !pois.length)
+        return false;
+    const closeOk = dir === "bull" ? candle.close >= candle.open : candle.close <= candle.open;
+    if (!closeOk)
+        return false;
+    return pois.some((poi) => {
+        const poiDir = String(poi.direction ?? "").toLowerCase();
+        const dirOk = dir === "bull"
+            ? poiDir === "bullish" || poiDir === "bull"
+            : poiDir === "bearish" || poiDir === "bear";
+        if (!dirOk)
+            return false;
+        return price >= poi.low && price <= poi.high;
+    });
+};
+
+const resolveLvnRejection = (profile, candle) => {
+    if (!profile || !candle || !Array.isArray(profile.lvn)) {
+        return { bull: false, bear: false };
+    }
+    const price = candle.close;
+    const tolerance = price * AI_MATIC_POI_DISTANCE_PCT;
+    const touched = profile.lvn.some((lvn) => Math.abs(price - lvn) <= tolerance);
+    if (!touched)
+        return { bull: false, bear: false };
+    return {
+        bull: candle.close >= candle.open,
+        bear: candle.close <= candle.open,
+    };
+};
+
+const resolveVolumeRising = (candles, lookback = 8) => {
+    if (candles.length < lookback * 2)
+        return false;
+    const recent = candles.slice(-lookback);
+    const prev = candles.slice(-lookback * 2, -lookback);
+    const avg = (slice) => slice.reduce((s, c) => s + (c.volume ?? 0), 0) / Math.max(1, slice.length);
+    const recentAvg = avg(recent);
+    const prevAvg = avg(prev);
+    return Number.isFinite(recentAvg) && Number.isFinite(prevAvg) && recentAvg > prevAvg * 1.1;
+};
+
+const resolveLiquiditySweep = (candles) => {
+    if (candles.length < AI_MATIC_LIQ_SWEEP_LOOKBACK + 2) {
+        return { sweepHigh: false, sweepLow: false };
+    }
+    const highs = candles.map((c) => c.high);
+    const lows = candles.map((c) => c.low);
+    const closes = candles.map((c) => c.close);
+    const vols = candles.map((c) => c.volume ?? 0);
+    const atrArr = computeATR(highs, lows, closes, 14);
+    const atr = atrArr[atrArr.length - 1] || 0;
+    const lb = AI_MATIC_LIQ_SWEEP_LOOKBACK;
+    const swingHigh = Math.max(...highs.slice(-lb - 1, -1));
+    const swingLow = Math.min(...lows.slice(-lb - 1, -1));
+    const last = candles[candles.length - 1];
+    const volSmaWindow = Math.min(vols.length, 50);
+    const volSma = vols.slice(-volSmaWindow).reduce((a, b) => a + b, 0) /
+        Math.max(1, volSmaWindow);
+    const volOk = (last.volume ?? 0) > AI_MATIC_LIQ_SWEEP_VOL_MULT * volSma;
+    const sweptHigh = last.high > swingHigh + AI_MATIC_LIQ_SWEEP_ATR_MULT * atr &&
+        last.close < swingHigh;
+    const sweptLow = last.low < swingLow - AI_MATIC_LIQ_SWEEP_ATR_MULT * atr &&
+        last.close > swingLow;
+    return {
+        sweepHigh: Boolean(volOk && sweptHigh),
+        sweepLow: Boolean(volOk && sweptLow),
+    };
+};
+
+const resolveAiMaticPhase = (args) => {
+    const trend = String(args.trend ?? "").toLowerCase();
+    const lowAdx = Number.isFinite(args.adx) && args.adx < 20;
+    const rangeLike = trend === "range" || lowAdx;
+    const poc = args.profile?.poc ?? Number.NaN;
+    const vah = args.profile?.vah ?? Number.NaN;
+    const val = args.profile?.val ?? Number.NaN;
+    if (rangeLike &&
+        args.sweepLow &&
+        args.volumeRising &&
+        Number.isFinite(poc) &&
+        args.price > poc) {
+        return "ACCUMULATION";
+    }
+    if (rangeLike &&
+        args.sweepHigh &&
+        args.volumeRising &&
+        Number.isFinite(poc) &&
+        args.price < poc) {
+        return "DISTRIBUTION";
+    }
+    if (args.volumeSpike &&
+        ((args.sweepLow && trend === "bear") || (args.sweepHigh && trend === "bull"))) {
+        return "MANIPULATION";
+    }
+    if (rangeLike &&
+        args.sweepHigh &&
+        args.volumeRising &&
+        Number.isFinite(vah) &&
+        args.price < vah) {
+        return "DISTRIBUTION";
+    }
+    if (rangeLike &&
+        args.sweepLow &&
+        args.volumeRising &&
+        Number.isFinite(val) &&
+        args.price > val) {
+        return "ACCUMULATION";
+    }
+    return "TREND";
+};
+
+const buildAiMaticContext = (candles, decision, core) => {
+    const htf = resampleCandles(candles, 60);
+    const mtf = resampleCandles(candles, 15);
+    const ltf = resampleCandles(candles, 5);
+    if (!htf.length || !mtf.length || !ltf.length)
+        return null;
+    const htfPois = new CandlestickAnalyzer(toAnalyzerCandles(htf)).getPointsOfInterest();
+    const mtfPois = new CandlestickAnalyzer(toAnalyzerCandles(mtf)).getPointsOfInterest();
+    const profile = computeMarketProfile({ candles: mtf });
+    const ltfLast = ltf[ltf.length - 1];
+    const htfPivots = resolveAiMaticPivots(htf);
+    const mtfPivots = resolveAiMaticPivots(mtf);
+    const ltfPivots = resolveAiMaticPivots(ltf);
+    const emaFlags = resolveAiMaticEmaFlags(ltf);
+    const patterns = resolveAiMaticPatterns(ltf);
+    const htfSweep = resolveLiquiditySweep(htf);
+    const mtfSweep = resolveLiquiditySweep(mtf);
+    const htfDir = resolveAiMaticHtfDirection(decision, core);
+    const bosUp = Number.isFinite(ltfPivots.lastHigh) &&
+        Number.isFinite(ltfLast?.close) &&
+        ltfLast.close > ltfPivots.lastHigh;
+    const bosDown = Number.isFinite(ltfPivots.lastLow) &&
+        Number.isFinite(ltfLast?.close) &&
+        ltfLast.close < ltfPivots.lastLow;
+    const breakRetestUp = resolveAiMaticBreakRetest(ltf, ltfPivots.lastHigh, "bull");
+    const breakRetestDown = resolveAiMaticBreakRetest(ltf, ltfPivots.lastLow, "bear");
+    const ltfVolumeReaction = Boolean(core?.volumeSpike) ||
+        (Number.isFinite(core?.volumeCurrent) &&
+            Number.isFinite(core?.volumeP60) &&
+            core.volumeCurrent >= core.volumeP60);
+    const htfAdx = toNumber(decision?.trendAdx);
+    const htfVolumeRising = resolveVolumeRising(htf);
+    const price = Number.isFinite(ltfLast?.close) ? ltfLast.close : Number.NaN;
+    const pocNear = profile &&
+        Number.isFinite(price) &&
+        Number.isFinite(profile.poc) &&
+        Math.abs(price - profile.poc) <= price * AI_MATIC_POI_DISTANCE_PCT;
+    const lvnRejection = resolveLvnRejection(profile, ltfLast);
+    const poiReactionBull = resolvePoiReaction(htfPois, price, ltfLast, "bull");
+    const poiReactionBear = resolvePoiReaction(htfPois, price, ltfLast, "bear");
+    const mtfPoiReactionBull = resolvePoiReaction(mtfPois, price, ltfLast, "bull");
+    const mtfPoiReactionBear = resolvePoiReaction(mtfPois, price, ltfLast, "bear");
+    const phase = resolveAiMaticPhase({
+        trend: String(decision?.trend ?? ""),
+        adx: htfAdx,
+        sweepHigh: htfSweep.sweepHigh,
+        sweepLow: htfSweep.sweepLow,
+        volumeRising: htfVolumeRising,
+        profile,
+        price,
+        volumeSpike: Boolean(core?.volumeSpike),
+    });
+    return {
+        htf: {
+            direction: htfDir,
+            adx: htfAdx,
+            phase,
+            sweepHigh: htfSweep.sweepHigh,
+            sweepLow: htfSweep.sweepLow,
+            volumeRising: htfVolumeRising,
+            pivotHigh: htfPivots.lastHigh,
+            pivotLow: htfPivots.lastLow,
+            pois: htfPois,
+            poiReactionBull,
+            poiReactionBear,
+        },
+        mtf: {
+            sweepHigh: mtfSweep.sweepHigh,
+            sweepLow: mtfSweep.sweepLow,
+            profile,
+            pocNear: Boolean(pocNear),
+            lvnRejectionBull: lvnRejection.bull,
+            lvnRejectionBear: lvnRejection.bear,
+            pivotHigh: mtfPivots.lastHigh,
+            pivotLow: mtfPivots.lastLow,
+            pois: mtfPois,
+            poiReactionBull: mtfPoiReactionBull,
+            poiReactionBear: mtfPoiReactionBear,
+        },
+        ltf: {
+            patterns,
+            bosUp,
+            bosDown,
+            chochUp: bosUp && htfDir === "bear",
+            chochDown: bosDown && htfDir === "bull",
+            breakRetestUp,
+            breakRetestDown,
+            fakeoutHigh: Boolean(core?.ltfFakeBreakHigh),
+            fakeoutLow: Boolean(core?.ltfFakeBreakLow),
+            ema: emaFlags,
+            volumeReaction: ltfVolumeReaction,
+        },
+    };
+};
+
+const minFinite = (...values) => {
+    const filtered = values.filter((v) => Number.isFinite(v));
+    if (!filtered.length)
+        return Number.NaN;
+    return Math.min(...filtered);
+};
+
+const maxFinite = (...values) => {
+    const filtered = values.filter((v) => Number.isFinite(v));
+    if (!filtered.length)
+        return Number.NaN;
+    return Math.max(...filtered);
+};
+
+const resolveNearestPoiBoundary = (pois, side, entry) => {
+    if (!Number.isFinite(entry) || !pois.length)
+        return Number.NaN;
+    if (side === "Buy") {
+        const candidates = pois
+            .map((poi) => poi.low)
+            .filter((v) => Number.isFinite(v) && v < entry);
+        return candidates.length ? Math.max(...candidates) : Number.NaN;
+    }
+    const candidates = pois
+        .map((poi) => poi.high)
+        .filter((v) => Number.isFinite(v) && v > entry);
+    return candidates.length ? Math.min(...candidates) : Number.NaN;
+};
+
+const resolveAiMaticStopLoss = (args) => {
+    const { side, entry, currentSl, atr, aiMatic, core } = args;
+    if (!Number.isFinite(entry) || entry <= 0)
+        return Number.NaN;
+    const pivotLow = minFinite(aiMatic?.htf.pivotLow, aiMatic?.mtf.pivotLow, core?.lastPivotLow, core?.pivotLow);
+    const pivotHigh = maxFinite(aiMatic?.htf.pivotHigh, aiMatic?.mtf.pivotHigh, core?.lastPivotHigh, core?.pivotHigh);
+    const pois = [...(aiMatic?.htf.pois ?? []), ...(aiMatic?.mtf.pois ?? [])];
+    const poiBoundary = resolveNearestPoiBoundary(pois, side, entry);
+    const buffer = Number.isFinite(atr) ? atr * AI_MATIC_SL_ATR_BUFFER : 0;
+    let candidate = Number.NaN;
+    if (side === "Buy") {
+        const base = minFinite(pivotLow, poiBoundary);
+        if (Number.isFinite(base)) {
+            candidate = base - buffer;
+        }
+    }
+    else {
+        const base = maxFinite(pivotHigh, poiBoundary);
+        if (Number.isFinite(base)) {
+            candidate = base + buffer;
+        }
+    }
+    if (!Number.isFinite(candidate) || candidate <= 0)
+        return Number.NaN;
+    if (!Number.isFinite(currentSl))
+        return candidate;
+    if (side === "Buy") {
+        return candidate < currentSl ? candidate : Number.NaN;
+    }
+    return candidate > currentSl ? candidate : Number.NaN;
+};
+
+const resolveAiMaticTargets = (args) => {
+    const { side, entry, sl, aiMatic } = args;
+    if (!Number.isFinite(entry) || !Number.isFinite(sl))
+        return Number.NaN;
+    const risk = Math.abs(entry - sl);
+    if (!Number.isFinite(risk) || risk <= 0)
+        return Number.NaN;
+    const targets = new Set();
+    const add = (value) => {
+        if (!Number.isFinite(value))
+            return;
+        targets.add(value);
+    };
+    const profile = aiMatic?.mtf.profile ?? null;
+    if (profile) {
+        add(profile.poc);
+        if (side === "Buy") {
+            add(profile.vah);
+            profile.hvn?.forEach(add);
+        }
+        else {
+            add(profile.val);
+            profile.lvn?.forEach(add);
+        }
+    }
+    const pois = [...(aiMatic?.htf.pois ?? []), ...(aiMatic?.mtf.pois ?? [])];
+    for (const poi of pois) {
+        if (side === "Buy")
+            add(poi.high);
+        else
+            add(poi.low);
+    }
+    if (side === "Buy")
+        add(aiMatic?.htf.pivotHigh ?? aiMatic?.mtf.pivotHigh);
+    else
+        add(aiMatic?.htf.pivotLow ?? aiMatic?.mtf.pivotLow);
+    const list = Array.from(targets)
+        .filter((v) => side === "Buy" ? v > entry : v < entry)
+        .sort((a, b) => Math.abs(a - entry) - Math.abs(b - entry));
+    const minTarget = side === "Buy" ? entry + risk * AI_MATIC_MIN_RR : entry - risk * AI_MATIC_MIN_RR;
+    for (const candidate of list) {
+        if (side === "Buy" ? candidate >= minTarget : candidate <= minTarget) {
+            return candidate;
+        }
+    }
+    return Number.NaN;
+};
+
+const evaluateAiMaticGatesCore = (args) => {
+    const aiMatic = args.decision?.aiMatic ?? null;
+    const signal = args.signal ?? null;
+    const empty = {
+        hardGates: [],
+        entryFactors: [],
+        checklist: [],
+        hardPass: false,
+        entryFactorsPass: false,
+        checklistPass: false,
+        pass: false,
+    };
+    if (!aiMatic || !signal)
+        return empty;
+    const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
+    const dir = sideRaw === "buy" ? "bull" : sideRaw === "sell" ? "bear" : null;
+    if (!dir)
+        return empty;
+    const htfAligned = aiMatic.htf.direction === dir;
+    const emaStackOk = dir === "bull" ? aiMatic.ltf.ema.bullOk : aiMatic.ltf.ema.bearOk;
+    const emaCrossOk = !aiMatic.ltf.ema.crossRecent;
+    const patternOk = dir === "bull"
+        ? aiMatic.ltf.patterns.pinbarBull ||
+            aiMatic.ltf.patterns.engulfBull ||
+            aiMatic.ltf.patterns.trapBull ||
+            aiMatic.ltf.patterns.insideBar
+        : aiMatic.ltf.patterns.pinbarBear ||
+            aiMatic.ltf.patterns.engulfBear ||
+            aiMatic.ltf.patterns.trapBear ||
+            aiMatic.ltf.patterns.insideBar;
+    const bosOk = dir === "bull"
+        ? aiMatic.ltf.bosUp || aiMatic.ltf.breakRetestUp
+        : aiMatic.ltf.bosDown || aiMatic.ltf.breakRetestDown;
+    const sweepOk = dir === "bull"
+        ? aiMatic.htf.sweepLow || aiMatic.mtf.sweepLow || aiMatic.ltf.fakeoutLow
+        : aiMatic.htf.sweepHigh || aiMatic.mtf.sweepHigh || aiMatic.ltf.fakeoutHigh;
+    const poiOk = dir === "bull"
+        ? aiMatic.htf.poiReactionBull ||
+            aiMatic.mtf.poiReactionBull ||
+            aiMatic.mtf.pocNear ||
+            aiMatic.mtf.lvnRejectionBull
+        : aiMatic.htf.poiReactionBear ||
+            aiMatic.mtf.poiReactionBear ||
+            aiMatic.mtf.pocNear ||
+            aiMatic.mtf.lvnRejectionBear;
+    const volumeOk = aiMatic.ltf.volumeReaction;
+    const emaConsensus = String(args.decision?.emaTrend?.consensus ?? "").toLowerCase();
+    const emaTrendOk = emaConsensus === dir;
+    const hardGates = [
+        { name: "HTF alignment", ok: htfAligned },
+        { name: "EMA 8/21/50 stack", ok: emaStackOk },
+        { name: "EMA cross recent", ok: emaCrossOk },
+    ];
+    const entryFactors = [
+        { name: "Pattern", ok: patternOk },
+        { name: "BOS/Retest", ok: bosOk },
+        { name: "Sweep/Fakeout", ok: sweepOk },
+        { name: "POI/POC reaction", ok: poiOk },
+        { name: "Volume reaction", ok: volumeOk },
+    ];
+    const checklist = [
+        { name: "EMA trend", ok: emaTrendOk },
+        { name: "HTF alignment", ok: htfAligned },
+        { name: "Pattern", ok: patternOk },
+        { name: "Volume", ok: volumeOk },
+        { name: "BTC correlation", ok: args.correlationOk },
+        { name: "OB/POC reaction", ok: poiOk },
+        { name: "Liquidity sweep", ok: sweepOk },
+        { name: "BTC dominance proxy", ok: args.dominanceOk },
+    ];
+    const hardPass = hardGates.every((g) => g.ok);
+    const entryFactorsPass = entryFactors.filter((g) => g.ok).length >= AI_MATIC_ENTRY_FACTOR_MIN;
+    const checklistPass = checklist.filter((g) => g.ok).length >= AI_MATIC_CHECKLIST_MIN;
+    return {
+        hardGates,
+        entryFactors,
+        checklist,
+        hardPass,
+        entryFactorsPass,
+        checklistPass,
+        pass: hardPass && entryFactorsPass && checklistPass,
+    };
+};
+
+export const __aiMaticTest = {
+    resolveAiMaticPatterns,
+    resolveAiMaticEmaFlags,
+    resolveAiMaticBreakRetest,
+    resolveAiMaticStopLoss,
+    resolveAiMaticTargets,
+    evaluateAiMaticGatesCore,
+    buildAiMaticContext,
+};
 function buildScalpTrend(candles, timeframeMin) {
     const sampled = resampleCandles(candles, timeframeMin);
     const minBars = Math.max(SCALP_EMA_PERIOD + 2, SCALP_SWING_LOOKBACK * 2 + 3);
@@ -885,6 +1442,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const intentPendingRef = useRef(new Set());
     const trailingSyncRef = useRef(new Map());
     const trailOffsetRef = useRef(new Map());
+    const aiMaticTp1Ref = useRef(new Map());
+    const aiMaticTrailCooldownRef = useRef(new Map());
+    const aiMaticStructureLogRef = useRef(new Map());
     const settingsRef = useRef(settings);
     const walletRef = useRef(walletSnapshot);
     const handleDecisionRef = useRef(null);
@@ -1244,10 +1804,15 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const computeTrailingPlan = useCallback((entry, sl, side, symbol) => {
         const settings = settingsRef.current;
         const isScalpProfile = settings.riskMode === "ai-matic-scalp";
+        const isAiMaticProfile = settings.riskMode === "ai-matic";
         const symbolMode = TRAIL_SYMBOL_MODE[symbol];
         const forceTrail = settings.riskMode === "ai-matic" ||
             settings.riskMode === "ai-matic-x" ||
             settings.riskMode === "ai-matic-tree";
+        if (isScalpProfile)
+            return null;
+        if (isAiMaticProfile)
+            return null;
         if (symbolMode === "off")
             return null;
         if (!forceTrail && !settings.lockProfitsWithTrail && symbolMode !== "on") {
@@ -1302,6 +1867,15 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             const hasOrder = ordersRef.current.some((order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol);
             if (!hasPosition && !hasOrder && !hasPending) {
                 trailOffsetRef.current.delete(symbol);
+            }
+        }
+        for (const symbol of aiMaticTp1Ref.current.keys()) {
+            const hasPosition = seenSymbols.has(symbol);
+            const hasPending = intentPendingRef.current.has(symbol);
+            const hasOrder = ordersRef.current.some((order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol);
+            if (!hasPosition && !hasOrder && !hasPending) {
+                aiMaticTp1Ref.current.delete(symbol);
+                aiMaticTrailCooldownRef.current.delete(symbol);
             }
         }
         for (const symbol of proTargetsRef.current.keys()) {
@@ -1457,6 +2031,60 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                                     message: `${symbol} PRO T1 partial failed: ${asErrorMessage(err)}`,
                                 },
                             ]);
+                        }
+                    }
+                }
+            }
+            if (!isScalpProfile && !isProProfile && settings.riskMode === "ai-matic") {
+                const tpMeta = aiMaticTp1Ref.current.get(symbol);
+                const price = toNumber(pos.markPrice);
+                const trailingActive = toNumber(pos?.trailingActivePrice ?? pos?.activePrice ?? pos?.activationPrice);
+                const trailingStop = toNumber(pos?.trailingStop ?? pos?.trailingStopDistance ?? pos?.trailingStopPrice ?? pos?.trailPrice);
+                const hasTrail = Number.isFinite(trailingActive) || Number.isFinite(trailingStop);
+                if (tpMeta &&
+                    Number.isFinite(entry) &&
+                    Number.isFinite(tpMeta.entry) &&
+                    Math.abs(tpMeta.entry - entry) / Math.max(entry, 1e-8) <= 0.01) {
+                    const tpHit = Number.isFinite(price) &&
+                        Number.isFinite(tpMeta.tp1) &&
+                        (tpMeta.side === "Buy" ? price >= tpMeta.tp1 : price <= tpMeta.tp1);
+                    if (tpHit && !hasTrail) {
+                        const lastAttempt = aiMaticTrailCooldownRef.current.get(symbol) ?? 0;
+                        if (now - lastAttempt >= 30000) {
+                            aiMaticTrailCooldownRef.current.set(symbol, now);
+                            const atr = toNumber(decisionRef.current[symbol]?.decision?.coreV2?.atr14);
+                            const distance = Math.max(Number.isFinite(atr) ? atr * AI_MATIC_TRAIL_ATR_MULT : 0, entry * AI_MATIC_TRAIL_PCT);
+                            if (Number.isFinite(distance) && distance > 0) {
+                                try {
+                                    await postJson("/protection", {
+                                        symbol,
+                                        trailingStop: distance,
+                                        trailingActivePrice: tpMeta.tp1,
+                                        positionIdx: Number.isFinite(pos.positionIdx)
+                                            ? pos.positionIdx
+                                            : undefined,
+                                    });
+                                    addLogEntries([
+                                        {
+                                            id: `ai-matic-tp1:${symbol}:${now}`,
+                                            timestamp: new Date(now).toISOString(),
+                                            action: "STATUS",
+                                            message: `${symbol} TP1 hit -> trailing activated`,
+                                        },
+                                    ]);
+                                    aiMaticTp1Ref.current.delete(symbol);
+                                }
+                                catch (err) {
+                                    addLogEntries([
+                                        {
+                                            id: `ai-matic-tp1:error:${symbol}:${now}`,
+                                            timestamp: new Date(now).toISOString(),
+                                            action: "ERROR",
+                                            message: `${symbol} TP1 trailing failed: ${asErrorMessage(err)}`,
+                                        },
+                                    ]);
+                                }
+                            }
                         }
                     }
                 }
@@ -1848,15 +2476,27 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         }
         return { ok, detail };
     }, []);
+    const isBtcDecoupling = useCallback(() => {
+        const btcDecision = decisionRef.current["BTCUSDT"]?.decision;
+        if (!btcDecision)
+            return false;
+        const trend = btcDecision?.trend;
+        const adx = toNumber(btcDecision?.trendAdx);
+        return String(trend).toLowerCase() === "range" && Number.isFinite(adx) && adx < 25;
+    }, []);
     const resolveCorrelationGate = useCallback((symbol, now = Date.now(), signal) => {
         const details = [];
         let ok = true;
+        const decoupling = isBtcDecoupling();
         const { biases: activeBiases } = getOpenBiasState();
-        if (activeBiases.size > 1) {
+        if (activeBiases.size > 1 && !decoupling) {
             ok = false;
             details.push("mixed open bias");
         }
         const symbolUpper = String(symbol).toUpperCase();
+        if (symbolUpper !== "BTCUSDT" && decoupling) {
+            return { ok: true, detail: "BTC Range (Decoupling)" };
+        }
         if (!signal) {
             details.push("no signal");
             return { ok, detail: details.join(" | ") };
@@ -1889,7 +2529,22 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             details.push(`btc ${btcBias} aligned`);
         }
         return { ok, detail: details.join(" | ") };
-    }, [getOpenBiasState, resolveBtcBias]);
+    }, [getOpenBiasState, resolveBtcBias, isBtcDecoupling]);
+    const evaluateAiMaticGates = useCallback((symbol, decision, signal) => {
+        const correlation = resolveCorrelationGate(symbol, Date.now(), signal);
+        const dominanceOk = isBtcDecoupling() || correlation.ok;
+        const result = evaluateAiMaticGatesCore({
+            decision,
+            signal,
+            correlationOk: correlation.ok,
+            dominanceOk,
+        });
+        return {
+            ...result,
+            correlationDetail: correlation.detail,
+            dominanceOk,
+        };
+    }, [resolveCorrelationGate, isBtcDecoupling]);
     const evaluateCoreV2 = useCallback((symbol, decision, signal, feedAgeMs) => {
         const settings = settingsRef.current;
         const core = decision?.coreV2;
@@ -3243,6 +3898,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const isSelected = activeSymbols.includes(symbol);
         const scalpActive = settingsRef.current.riskMode === "ai-matic-scalp";
         const isProProfile = settingsRef.current.riskMode === "ai-matic-pro";
+        const isAiMaticProfile = settingsRef.current.riskMode === "ai-matic";
         feedLastTickRef.current = now;
         symbolTickRef.current.set(symbol, now);
         decisionRef.current[symbol] = { decision, ts: now };
@@ -3354,6 +4010,30 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     }
                 }
             }
+            if (hasPosition && settingsRef.current.riskMode === "ai-matic") {
+                const aiMatic = decision?.aiMatic ?? null;
+                const pos = positionsRef.current.find((p) => p.symbol === symbol);
+                const side = pos?.side === "Sell" ? "Sell" : "Buy";
+                const htfDir = aiMatic?.htf?.direction ?? "none";
+                const htfFlip = side === "Buy" ? htfDir === "bear" : htfDir === "bull";
+                const chochAgainst = side === "Buy" ? aiMatic?.ltf?.chochDown : aiMatic?.ltf?.chochUp;
+                if (htfFlip || chochAgainst) {
+                    const reason = htfFlip ? "HTF flip" : "CHoCH";
+                    const key = `ai-matic-struct:${symbol}:${reason}`;
+                    const last = aiMaticStructureLogRef.current.get(key) ?? 0;
+                    if (now - last >= 15000) {
+                        aiMaticStructureLogRef.current.set(key, now);
+                        addLogEntries([
+                            {
+                                id: `ai-matic-structure:${symbol}:${now}`,
+                                timestamp: new Date(now).toISOString(),
+                                action: "STATUS",
+                                message: `${symbol} STRUCTURE CHANGE -> MANUAL EXIT (${reason})`,
+                            },
+                        ]);
+                    }
+                }
+            }
             return;
         }
         const nextState = String(decision?.state ?? "").toUpperCase();
@@ -3388,6 +4068,35 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (signalSeenRef.current.has(signalId))
             return;
         signalSeenRef.current.add(signalId);
+        if (isAiMaticProfile) {
+            const aiMaticEval = evaluateAiMaticGates(symbol, decision, signal);
+            if (!aiMaticEval.pass) {
+                const hardFails = aiMaticEval.hardGates.filter((g) => !g.ok).map((g) => g.name);
+                const entryFails = aiMaticEval.entryFactors.filter((g) => !g.ok).map((g) => g.name);
+                const checklistFails = aiMaticEval.checklist.filter((g) => !g.ok).map((g) => g.name);
+                const entryCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
+                const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
+                const reasons = [];
+                if (!aiMaticEval.hardPass && hardFails.length) {
+                    reasons.push(`hard: ${hardFails.join(", ")}`);
+                }
+                if (!aiMaticEval.entryFactorsPass && entryFails.length) {
+                    reasons.push(`entry: ${entryFails.join(", ")}`);
+                }
+                if (!aiMaticEval.checklistPass && checklistFails.length) {
+                    reasons.push(`checklist: ${checklistFails.join(", ")}`);
+                }
+                addLogEntries([
+                    {
+                        id: `ai-matic-gate:${signalId}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "RISK_BLOCK",
+                        message: `${symbol} AI-MATIC gate entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} | checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN} -> NO TRADE${reasons.length ? ` (${reasons.join(" | ")})` : ""}`,
+                    },
+                ]);
+                return;
+            }
+        }
         const intent = signal.intent;
         const entry = toNumber(intent?.entry);
         const sl = toNumber(intent?.sl);
@@ -3556,7 +4265,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             ]);
             return;
         }
-        if (softEnabled && coreEval.scorePass === false) {
+        if (softEnabled && coreEval.scorePass === false && !isAiMaticProfile) {
             addLogEntries([
                 {
                     id: `signal:score:${signalId}`,
@@ -3597,7 +4306,13 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 passedCount: coreEval.score,
                 pass: coreEval.scorePass !== false,
             }
-            : evaluateChecklistPass(checklistGates);
+            : isAiMaticProfile
+                ? {
+                    eligibleCount: AI_MATIC_CHECKLIST_MIN,
+                    passedCount: AI_MATIC_CHECKLIST_MIN,
+                    pass: true,
+                }
+                : evaluateChecklistPass(checklistGates);
         if (!checklistExec.pass) {
             addLogEntries([
                 {
@@ -3645,6 +4360,29 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     : entry - 1.5 * risk;
             }
         }
+        if (isAiMaticProfile) {
+            const aiMatic = decision?.aiMatic ?? null;
+            const nextSl = resolveAiMaticStopLoss({
+                side,
+                entry,
+                currentSl: resolvedSl,
+                atr: core?.atr14,
+                aiMatic,
+                core,
+            });
+            if (Number.isFinite(nextSl) && nextSl > 0) {
+                resolvedSl = nextSl;
+            }
+            const nextTp = resolveAiMaticTargets({
+                side,
+                entry,
+                sl: resolvedSl,
+                aiMatic,
+            });
+            if (Number.isFinite(nextTp) && nextTp > 0) {
+                resolvedTp = nextTp;
+            }
+        }
         const normalized = normalizeProtectionLevels(entry, side, resolvedSl, resolvedTp, core?.atr14);
         resolvedSl = normalized.sl;
         resolvedTp = normalized.tp;
@@ -3664,6 +4402,14 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 },
             ]);
             return;
+        }
+        if (isAiMaticProfile && Number.isFinite(resolvedTp) && resolvedTp > 0) {
+            aiMaticTp1Ref.current.set(symbol, {
+                entry,
+                tp1: resolvedTp,
+                side,
+                setAt: now,
+            });
         }
         if (isProProfile &&
             proTargets &&
@@ -3798,6 +4544,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         closedPnlRecords,
         computeFixedSizing,
         computeNotionalForSignal,
+        evaluateAiMaticGates,
         evaluateChecklistPass,
         evaluateCoreV2,
         evaluateProGates,
@@ -3816,6 +4563,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return;
         signalSeenRef.current.clear();
         intentPendingRef.current.clear();
+        aiMaticTp1Ref.current.clear();
+        aiMaticTrailCooldownRef.current.clear();
+        aiMaticStructureLogRef.current.clear();
         cheatLimitMetaRef.current.clear();
         partialExitRef.current.clear();
         proTargetsRef.current.clear();
@@ -3825,6 +4575,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const riskMode = settingsRef.current.riskMode;
         const isAiMaticX = riskMode === "ai-matic-x";
         const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
+        const isAiMaticCore = riskMode === "ai-matic";
         const isScalp = riskMode === "ai-matic-scalp";
         const isPro = riskMode === "ai-matic-pro";
         const decisionFn = (symbol, candles, config) => {
@@ -3833,8 +4584,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 : isAiMaticX
                     ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
                     : evaluateStrategyForSymbol(symbol, candles, config);
+            const coreV2 = computeCoreV2Metrics(candles, riskMode);
             if (isPro) {
-                return baseDecision;
+                return { ...baseDecision, coreV2 };
             }
             const htfTimeframes = isAiMatic
                 ? AI_MATIC_HTF_TIMEFRAMES_MIN
@@ -3856,8 +4608,18 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 timeframesMin: EMA_TREND_TIMEFRAMES_MIN,
             });
             const scalpContext = isScalp ? buildScalpContext(candles) : undefined;
-            const coreV2 = computeCoreV2Metrics(candles, riskMode);
-            return { ...baseDecision, htfTrend, ltfTrend, emaTrend, scalpContext, coreV2 };
+            const aiMaticContext = isAiMaticCore
+                ? buildAiMaticContext(candles, baseDecision, coreV2)
+                : null;
+            return {
+                ...baseDecision,
+                htfTrend,
+                ltfTrend,
+                emaTrend,
+                scalpContext,
+                coreV2,
+                ...(aiMaticContext ? { aiMatic: aiMaticContext } : {}),
+            };
         };
         const maxCandles = isAiMaticX || isAiMatic || isPro ? 5000 : undefined;
         const backfill = isAiMaticX
