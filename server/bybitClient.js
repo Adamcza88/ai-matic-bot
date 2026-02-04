@@ -101,6 +101,43 @@ async function clampProtectionLevels({
   return { tp: nextTp, sl: nextSl };
 }
 
+function stepDecimals(stepSize) {
+  if (!Number.isFinite(stepSize) || stepSize <= 0) return 0;
+  const raw = stepSize.toString().toLowerCase();
+  if (raw.includes("e-")) {
+    const [base, exp] = raw.split("e-");
+    const expNum = Number(exp);
+    const baseDecimals = (base.split(".")[1] || "").length;
+    return Number.isFinite(expNum) ? expNum + baseDecimals : baseDecimals;
+  }
+  const parts = raw.split(".");
+  return parts[1] ? parts[1].length : 0;
+}
+
+function roundDownToStep(value, stepSize) {
+  if (!Number.isFinite(value) || !Number.isFinite(stepSize) || stepSize <= 0) {
+    return value;
+  }
+  const decimals = stepDecimals(stepSize);
+  const factor = 10 ** decimals;
+  const stepInt = Math.round(stepSize * factor);
+  if (!Number.isFinite(stepInt) || stepInt <= 0) return value;
+  const valueInt = Math.floor((value * factor) / stepInt) * stepInt;
+  return valueInt / factor;
+}
+
+function roundUpToStep(value, stepSize) {
+  if (!Number.isFinite(value) || !Number.isFinite(stepSize) || stepSize <= 0) {
+    return value;
+  }
+  const decimals = stepDecimals(stepSize);
+  const factor = 10 ** decimals;
+  const stepInt = Math.round(stepSize * factor);
+  if (!Number.isFinite(stepInt) || stepInt <= 0) return value;
+  const valueInt = Math.ceil((value * factor) / stepInt) * stepInt;
+  return valueInt / factor;
+}
+
 async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true) {
   let q = Number(qtyInput);
 
@@ -126,14 +163,12 @@ async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true)
   }
 
   // 2. Step Size rounding
-  // Precision derived from stepSize (e.g. 0.001 -> 1000)
-  const precision = Math.round(1 / limits.stepSize);
-  q = Math.floor(q * precision) / precision;
+  q = roundDownToStep(q, limits.stepSize);
 
   // 2b. Max Qty cap
   if (Number.isFinite(limits.maxQty) && limits.maxQty > 0 && q > limits.maxQty) {
     q = limits.maxQty;
-    q = Math.floor(q * precision) / precision;
+    q = roundDownToStep(q, limits.stepSize);
   }
 
   // 3. Min Notional check
@@ -141,7 +176,7 @@ async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true)
     const notional = q * price;
     if (notional < limits.minNotional) {
       const reqQty = limits.minNotional / price;
-      const bumpedQty = Math.ceil(reqQty * precision) / precision;
+      const bumpedQty = roundUpToStep(reqQty, limits.stepSize);
       q = Math.max(q, bumpedQty);
     }
   }
@@ -150,7 +185,7 @@ async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true)
   if (q > 100000) q = 100000;
 
   // Formatting
-  const decimals = (limits.stepSize.toString().split(".")[1] || "").length;
+  const decimals = stepDecimals(limits.stepSize);
   return q.toFixed(decimals);
 }
 
