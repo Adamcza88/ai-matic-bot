@@ -1335,11 +1335,13 @@ const resolveAiMaticTargets = (args: {
   return Number.NaN;
 };
 
+type EnabledEntryType = Exclude<EntryType, "MARKET_DISABLED">;
+
 const resolveAiMaticEntryType = (args: {
   aiMatic: AiMaticContext;
   side: "Buy" | "Sell";
   entry: number;
-}): { entryType: EntryType; triggerPrice?: number; allowMarket: boolean } => {
+}): { entryType: EnabledEntryType; triggerPrice?: number; allowMarket: boolean } => {
   const { aiMatic, side, entry } = args;
   const dir = side === "Buy" ? "bull" : "bear";
   const patterns = aiMatic.ltf.patterns;
