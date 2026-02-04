@@ -85,13 +85,13 @@ app.post("/api/:env/order", async (req, res) => {
     SOLUSDT: 100,
     ADAUSDT: 75,
     XRPUSDT: 75,
-    XMRUSDT: 25,
+    SUIUSDT: 50,
     DOGEUSDT: 75,
     LINKUSDT: 50,
-    MELANIAUSDT: 20,
-    XPLUSDT: 50,
+    ZILUSDT: 25,
+    AVAXUSDT: 50,
     HYPEUSDT: 50,
-    FARTCOINUSDT: 75,
+    OP: 50,
   };
   const roiSymbols = new Set(Object.keys(leverageMap));
   const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
