@@ -120,195 +120,65 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   const coreProfiles: Record<AISettings["riskMode"], CoreProfile> = {
     "ai-matic": {
       title: "AI-MATIC Core",
-      summary: "HTF 1h/15m · LTF 5m · EMA 20/50/200",
+      summary: "HTF 1h/15m · LTF 5m · OB/POI + EMA 20/50/200",
       description:
-        "Core engine: multi‑TF OB/POI + EMA 20/50/200 bez křížení + pattern/volume gating.",
+        "Core multi‑TF trend/POI engine s potvrzením objemem a strukturou.",
       notes: [
         ORDER_VALUE_NOTE,
-        "Timeframe: 1h kontext (OB/EMA20/50/200, S/R, volume) · 15m trend/EMA potvrzení · 5m entry.",
-        "Vstup 2 stupně: Entry 1 (60 %) reakce z OB/sweep návrat · Entry 2 (40 %) retest OB/GAP/Fibo.",
-        "Typ vstupu: limit preferovaný, conditional při breaku, market jen při silné reakci + objem.",
-        "SL: vždy pod strukturu nebo OB knot + ATR buffer (ne těsně).",
-        "TP1: první likviditní/objemová úroveň (~0.9–1.2 %), TP2: vyšší TF struktura/extended cíl (+2–3 %).",
-        "Trailing: aktivace při +1.0 %, retracement max 0.5–0.8 %.",
-        "Indikátory: EMA 20/50/200, RSI 14, MACD, Bollinger Bands, Volume.",
+        "Timeframe: 1h kontext (OB/EMA/SR/volume) · 15m potvrzení trendu · 5m vstup.",
+        "Vstup 2 stupně: 60 % první reakce z OB/sweep · 40 % retest OB/GAP/Fibo.",
+        "Typ vstupu: LIMIT preferovaný, CONDITIONAL při breaku, MARKET jen při silné reakci + objem.",
+        "SL: pod strukturu nebo OB knot + ATR buffer.",
+        "TP1: ~0.9–1.2 %, TP2: 2–3 % nebo HTF struktura.",
+        "Trailing: aktivace +1.0 %, retracement 0.5–0.8 %.",
+        "Filtry: EMA 20/50/200, RSI 14, MACD, Volume.",
       ],
     },
     "ai-matic-x": {
       title: "AI-MATIC-X (Swing OB 15m/1h)",
-      summary: "15m vstup · 1h kontext · OB/Volume Profile + BTC filtr",
+      summary: "Swing 15m/1h · OB + Volume Profile · BTC filtr",
       description:
-        "SWING OBCHODNÍ SYSTÉM: \"PŘÍKLAD\" SOL/USDT – 15m / 1h STYLE",
+        "Swing systém pro OB reakce s kontrolou BTC biasu a likvidity.",
       notes: [
-        "🔹 1. TIMEFRAME A SCREENS",
-        "15m = hlavní timeframe pro vstup + potvrzení",
-        "1h = kontextový TF pro trend, OB a Volume Profile",
-        "⸻",
-        "🔹 2. ENTRY LOGIKA (vždy 2 stupně)",
-        "• Entry 1 (60 %): První reakce z OB nebo sweep návrat (15m)",
-        "• Entry 2 (40 %): Retest OB, deeper pullback (např. GAP fill, Fibo 61.8)",
-        "• Typ vstupu:",
-        "• Limit – preferovaný",
-        "• Conditional – při breaku přes high/low",
-        "• Market – jen při silné reakci (potvrzená svíčka + objem)",
-        "⸻",
-        "🔹 3. SL / TP / TRAILING",
-        "• SL: vždy pod strukturu nebo OB knot, ne těsně",
-        "• TP1: první likviditní nebo objemová úroveň, zpravidla +0.9–1.2 % (uzavřít 70 %)",
-        "• TP2: vyšší timeframe struktura nebo extended cíl (+2–3 %)",
-        "• Trailing SL: aktivace 1.0R, retracement 0.4%.",
-        "⸻",
-        "🔹 4. BTC KORELACE (DYNAMICKÁ)",
-        "1. Vysoká korelace (Risk-Off / Bull Start): Alts kopírují BTC. Nutný soulad směrů.",
-        "2. Decoupling (Altseason): BTC Range/Sideways + nízká dominance. Alts mohou růst nezávisle.",
-        "3. Inverzní (Liquidity Drain): BTC Parabolic pump -> Alts dump. Opatrnost na Longy.",
-        "• Tabulka stavů:",
-        "• BTC Prudký růst -> Alts Stagnace/Pokles (Liquidity Drain)",
-        "• BTC Pomalý růst -> Alts Růst (Ideál)",
-        "• BTC Sideways -> Altseason (Decoupling)",
-        "• BTC Prudký pád -> Alts Crash (Risk-Off)",
-        "⸻",
-        "🔹 5. OB + PATTERNY",
-        "Entry patterny:",
-        "• Sweep + návrat",
-        "• OB reakce s rejection knotem",
-        "• Inside bar breakout s objemem",
-        "• GAP fill a reverzní pinbar",
-        "• Fibo pullback (38.2 / 50 / 61.8) s RSI konfluencí",
-        "Validace OB:",
-        "1. OB svíčka = likvidita + impuls",
-        "2. Další svíčka zavře nad open OB (long) / pod open OB (short)",
-        "3. Retracement = návrat do OB zóny (limit entry)",
-        "⸻",
-        "🔹 6. INDIKÁTORY",
-        "Indikátor - Timeframe - Význam",
-        "EMA 20/50/200 - 15m / 1h - Struktura, trailing stop",
-        "RSI 14 - 15m - Divergence, přetížení",
-        "MACD - 15m - Momentum, otočka trendu",
-        "Bollinger Bands - 15m - Squeeze / reakce na krajní úroveň",
-        "Volume - 15m / 1h - Objemová konfirmace, absorpce",
-        "🔹 7. SIGNAL FORMÁT – ŠABLONA",
-        "Scalping plán v signálovém formátu:",
-        "Coin: [např. SOL/USDT]",
-        "Směr: [Long / Short]",
-        "Timeframe: [1h (15m potvrzení, 3m Entry)]",
-        "Entry 1: [cena] (xx %)",
-        "Entry 2: [cena] (xx %)",
-        "SL: [cena] (-x.x %)",
-        "TP1: [cena] (+x.x %, uzavřít xx %) TP2: [cena] (+x.x %, uzavřít zbytek)",
-        "Trailing stop: Aktivace při [cena], retracement [x.x %]",
-        "Signál: [např. OB reakce + MACD otočka + rejection knot (3m potvrzení)] Důvod: [např. likvidita pod low + BB reakce + volume absorpce]",
-        "BTC: [stručné potvrzení korelace s BTC - směr, EMA reakce apod.]",
-        "Pattern:",
-        "Platnost signálu:",
-        "🔹 8. PRAVIDLA",
-        "• Každý signál musí být podložen BTC korelací",
-        "• Entry pouze při patternovém a objemovém potvrzení",
-        "• Max. 2 vstupy (60 % / 40 %)",
-        "• Signál exspiruje po 2 svíčkách bez reakce nebo při porušení struktury",
-        "• Nepřidávej třetí vstup bez výjimečné konfluence (např. silná POC reakce + OB)",
-        "⸻",
-        "🔹 9. OB VALIDÁTOR (upravený pro 15m / 1h – SOL only)",
-        "Krok - Otázka - Význam",
-        "1 - Byla vybrána likvidita (sweep)? - ✅ / ❌ / ⚠️",
-        "2 - Cena reagovala na 1h support / OB? - ✅ / ❌ / ⚠️",
-        "3 - Zavřela další svíčka nad/pod OB open? - ✅ / ❌ / ⚠️",
-        "4 - Je přítomen GAP? - ✅ / ❌ / ⚠️",
-        "5 - Retracement zpět do OB zóny? - ✅ / ❌ / ⚠️",
-        "6 - Vznikl pattern na 15m (pinbar, engulf)? - ✅ / ❌ / ⚠️",
-        "7 - RSI <35 / >70 a MACD otočka? - ✅ / ❌ / ⚠️",
-        "📊 DOPLNĚNÍ: PRÁCE S INDIKÁTORY A MARKET DATY",
-        "⸻",
-        "🔹 🔍 KONTROLA OBSAHU – CHECKLIST",
-        "Sekce - Obsah - Status",
-        "Struktura a PA - EMA20/50/100, Price Zone, Volume - ✅/❌",
-        "Momentum - RSI (14), MACD (12,26,9) - ✅/❌",
-        "Objem & Delta - CVD, OI, OI Delta, Futures/Spot Volume - ✅/❌",
-        "Funding & Sentiment - Funding, Taker Delta, L/S ratio - ✅/❌",
-        "Likvidita & OrderBook - Liquidations, OB delta, LQ cluster - ✅/❌",
-        "🟢 1. STRUKTURA & CANDLE ANALÝZA",
-        "• EMA20/50/100 (15m / 1h): sleduj směr a retracementy",
-        "• Volume spikes + candle shape: potvrzují reakci z OB",
-        "• Svíčkové patterny:",
-        "• Pinbar (absorpce)",
-        "• Engulfing (dominance)",
-        "• Rejection wick = zvýšené riziko reverzu",
-        "⸻",
-        "🔵 2. MOMENTUM INDIKÁTORY",
-        "Indikátor - Význam",
-        "RSI (14) - <35 = oversold + obratový trigger (long), >70 = short trigger",
-        "Divergence RSI / MACD - vstup po potvrzení OB reakce (ideálně na 15m)",
-        "MACD histogram - cross / otočka značí změnu trendového momenta",
-        "🛠 Konfluence = RSI divergence + MACD otočka + OB reakce → ideální vstup",
-        "⸻",
-        "🔶 3. OBJEM & DELTA",
-        "Indikátor - Účel",
-        "CVD (Cumulative Volume Delta) - Potvrzení směru – divergence značí slabost",
-        "Open Interest (OI) - Růst OI = nový kapitál (potvrzení pohybu)",
-        "OI Delta - Nárůst při růstu ceny = potvrzený breakout",
-        "Futures vs Spot Volume Ratio -",
-        "• Spot > Futures = zdravý pohyb",
-        "• Futures dominance = často trap nebo fake move",
-        "🛠 Sleduj OI + CVD + spot/futures ratio při vstupu → nutná konfluence pro přesnost",
-        "⸻",
-        "🟡 4. FUNDING A SENTIMENT",
-        "Indikátor - Význam",
-        "Funding Rates (actual + predicted) -",
-        "• extrémně pozitivní = short bias",
-        "• extrémně negativní = long bias",
-        "Taker Buy/Sell Delta - Agresivní vstupy, divergence = otočka",
-        "Top Traders L/S Ratio - Přesycení = příležitost pro obrácený směr",
-        "Aggregated L/S Ratio + Net Delta - Sentiment tržní většiny – hledáme opačnou reakci",
-        "🛠 Funding ≠ Price pohyb = extrémní bias → hledat sweepy a reversy",
-        "⸻",
-        "🔴 5. LIKVIDITA & ORDERBOOK",
-        "Indikátor - Význam",
-        "Orderbook Liquidity Delta -",
-        "• Asymetrie = předvídá směr → absorpce na buy side = short setup",
-        "Aggregated Liquidations - Cluster = TP1 nebo obratová zóna",
-        "Symbolic Liquidations (SOL) - Reakční odraz po LQ spike",
-        "Aktuální OrderBook (heatmap) - Vizualizace likvidity, LQ clusterů = použít na přesné entry/exit",
-        "⸻",
-        "📌 PŘÍKLAD KONFLUENCE NA ENTRY",
-        "• OB reakce (15m)",
-        "• EMA20 support",
-        "• RSI divergence + MACD histogram otočka",
-        "• CVD divergence",
-        "• OI roste + Spot volume dominuje",
-        "• Funding negativní → možný short squeeze",
-        "• Likvidita pod předchozím low → vybraná",
-        "➡️ Long Entry 1 – limit při návratu do OB",
+        ORDER_VALUE_NOTE,
+        "Timeframe: 1h kontext (trend/OB/VP) · 15m vstup.",
+        "Vstup 2 stupně: 60 % reakce z OB/sweep · 40 % retest OB/GAP/Fibo.",
+        "Typ vstupu: LIMIT preferovaný, CONDITIONAL při breaku, MARKET jen při silné reakci + objem.",
+        "SL: pod strukturu nebo OB knot + ATR buffer.",
+        "TP1: ~0.9–1.2 % (část zavřít), TP2: 2–3 % nebo HTF level.",
+        "Trailing: aktivace 1.0R, retracement 0.4 %.",
+        "BTC bias: směrový soulad; při decouplingu zvýšená opatrnost.",
       ],
     },
     "ai-matic-scalp": {
       title: "AI-MATIC-SCALP Core",
       summary: "15m trend · 1m entry · EMA cross + RSI div + volume spike",
-      description: "Adaptive Trend Following (v1.3) pro rychlé scalp vstupy.",
+      description: "Rychlé scalp vstupy s trend filtrem a přísným řízením rizika.",
       notes: [
-        "Primary Timeframe: 15m for trend, 1m for entry.",
-        "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.",
-        "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
+        ORDER_VALUE_NOTE,
+        "15m určuje trend, 1m načasuje vstup.",
+        "Entry: EMA cross (<= 6 svíček) + RSI divergence + volume spike.",
+        "Exit: ATR trailing (2.5x) nebo fixní TP 1.5R.",
       ],
     },
     "ai-matic-tree": {
       title: "AI-MATIC-TREE Core",
       summary: "HTF 1h/15m · LTF 5m/1m · EMA bias + trend entries",
-      description:
-        "Core engine: multi-TF bias gate + trend entries (momentum/pullback/breakout).",
+      description: "Multi‑TF trendový engine s R‑based řízením.",
       notes: [
         ORDER_VALUE_NOTE,
         "Bias gate: EMA50 + shoda HTF(1h)/mid(15m) se směrem obchodu.",
-        "Entry typy: MOMENTUM / PULLBACK / BREAKOUT (MEAN_REVERSION jen v range režimu).",
+        "Entry typy: MOMENTUM / PULLBACK / BREAKOUT.",
         "SL: swing-based (nebo ATR fallback) + minimální bezpečná vzdálenost.",
         "TP: R-based (u tree 2.2R) + partial 1.0R (50%).",
         "Time stop: po ~2h, pokud trade není aspoň +0.5R -> exit.",
+        "Entry strictness řídí filtry spread/volume/trend.",
       ],
     },
     "ai-matic-pro": {
       title: "AI-MATIC-PRO (Sideways)",
       summary: "Sideways only · VA/POC · OFI/VPIN/HMM",
-      description:
-        "Mean-reversion engine pro laterální trhy.",
+      description: "Mean‑reversion engine pouze pro range režim.",
       notes: [
         ORDER_VALUE_NOTE,
         "Aktivace: Hurst < 0.45, CHOP > 60, HMM state0 p>=0.7, VPIN < 0.8.",
@@ -369,12 +239,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   const statusItems = [
     { label: "Hard gates", value: local.enableHardGates ? "On" : "Off" },
     { label: "Soft gates", value: local.enableSoftGates ? "On" : "Off" },
-    {
-      label: "Auto-refresh",
-      value: local.autoRefreshEnabled
-        ? `${local.autoRefreshMinutes}m`
-        : "Off",
-    },
     {
       label: "Trend gate",
       value:
@@ -771,59 +635,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
               >
                 Reset current profile to defaults
               </button>
-            </div>
-          </div>
-
-          <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Auto-refresh
-            </label>
-            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-              <div>
-                <div className="font-medium">
-                  {local.autoRefreshEnabled ? "On" : "Off"}
-                </div>
-                <div className="text-xs text-secondary-foreground/70 mt-1">
-                  Obnoví aplikaci každých {local.autoRefreshMinutes} min.
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={MIN_AUTO_REFRESH_MINUTES}
-                  step={1}
-                  value={local.autoRefreshMinutes}
-                  onChange={(event) => {
-                    const next = event.currentTarget.valueAsNumber;
-                    setLocal({
-                      ...local,
-                      autoRefreshMinutes: Number.isFinite(next)
-                        ? Math.max(
-                            MIN_AUTO_REFRESH_MINUTES,
-                            Math.round(next)
-                          )
-                        : DEFAULT_AUTO_REFRESH_MINUTES,
-                    });
-                  }}
-                  className="w-16 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-right text-slate-200"
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setLocal({
-                      ...local,
-                      autoRefreshEnabled: !local.autoRefreshEnabled,
-                    })
-                  }
-                  className={`rounded-md border px-3 py-1 text-sm ${
-                    local.autoRefreshEnabled
-                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                      : "border-slate-700 bg-slate-900/40 text-slate-200"
-                  }`}
-                >
-                  {local.autoRefreshEnabled ? "On" : "Off"}
-                </button>
-              </div>
             </div>
           </div>
 

@@ -83,26 +83,25 @@ export default function Dashboard({
     if (riskMode === "ai-matic-scalp") {
       return {
         label: "AI-MATIC-SCALP",
-        subtitle: "Adaptive Trend Following (v1.3)",
+        subtitle: "Scalp Core · 15m trend / 1m entry",
         symbols: SUPPORTED_SYMBOLS,
         timeframes: "15m trend · 1m entry",
         session: "24/7",
         risk: "Risk 0.25% equity/trade · notional cap ~1% equity",
-        entry: "EMA Cross + RSI Divergence + Volume Spike",
-        execution: "Trailing Stop (ATR 2.5x) nebo Fixed TP (1.5 RRR)",
+        entry: "EMA cross + RSI divergence + volume spike",
+        execution: "ATR trailing 2.5x nebo fixní TP 1.5R",
       };
     }
     if (riskMode === "ai-matic-x") {
       return {
         label: "AI-MATIC-X",
-        subtitle: "Swing OB 15m/1h · OB + Volume Profile + BTC filtr",
+        subtitle: "Swing OB 15m/1h · Volume Profile · BTC filtr",
         symbols: SUPPORTED_SYMBOLS,
         timeframes: "15m vstup · 1h kontext",
         session: "24/7",
         risk: "2 vstupy (60 % / 40 %) · TP1 0.9–1.2 % · TP2 2–3 %",
-        entry:
-          "Entry 1: reakce z OB/sweep návrat · Entry 2: retest OB (GAP/Fibo)",
-        execution: "SL pod strukturu/OB knot · trailing dle profilu (R-based / retracement)",
+        entry: "Entry 1: reakce z OB/sweep · Entry 2: retest OB/GAP/Fibo",
+        execution: "SL pod strukturu/OB + ATR buffer · trailing 1.0R",
       };
     }
     if (riskMode === "ai-matic-tree") {
@@ -115,8 +114,8 @@ export default function Dashboard({
         timeframes: "HTF 1h/15m · LTF 5m/1m",
         session: "24/7",
         risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
-        entry: `Strictness: ${strictness.toUpperCase()} · Momentum / Pullback / Breakout`,
-        execution: "TP ~2.2R + partial 1R · time stop ~2h",
+        entry: `Strictness: ${strictness.toUpperCase()} · Momentum/Pullback/Breakout`,
+        execution: "TP 2.2R + partial 1R · time stop ~2h",
       };
     }
     if (riskMode === "ai-matic-pro") {
@@ -127,8 +126,8 @@ export default function Dashboard({
         timeframes: "1h režim · 15m/mid · 5m entry · 1m exec",
         session: "24/7",
         risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
-        entry: "VA edge + OFI/Delta absorpce (LIMIT_MAKER_FIRST)",
-        execution: "T1 ~VWAP/mid (60%) · T2 POC/VAH/VAL · time stop 10 svíček/60m",
+        entry: "VA edge + OFI/Delta absorpce",
+        execution: "T1 VWAP/mid (60%) · T2 POC/VAH/VAL · time stop 10 svíček/60m",
       };
     }
     return {
@@ -136,10 +135,10 @@ export default function Dashboard({
       subtitle: "AI-MATIC Core (HTF 1h/15m · LTF 5m)",
       symbols: SUPPORTED_SYMBOLS,
       timeframes: "HTF 1h · 15m · LTF 5m",
-      session: "POI: Breaker > OB > FVG > Liquidity",
+      session: "POI priorita: Breaker > OB > FVG > Liquidity",
       risk: "Risk 0.40% equity/trade · notional cap ~1% equity",
       entry: "Entry 1/2 (60/40): OB reakce/sweep návrat + retest OB/GAP",
-      execution: "SL pod strukturu/OB + TP1 ~0.9–1.2% + trailing +1.0%",
+      execution: "SL pod strukturu/OB + ATR buffer · TP1 0.9–1.2% · trailing +1.0%",
     };
   }, [bot.settings?.entryStrictness, bot.settings?.maxOpenPositions, riskMode]);
 
