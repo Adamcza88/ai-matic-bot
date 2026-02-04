@@ -1,4 +1,0 @@
-import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-export default function Logo(props) {
-    return (_jsxs("svg", { viewBox: "0 0 46 40", fill: "none", xmlns: "http://www.w3.org/2000/svg", ...props, children: [_jsx("path", { d: "M0 33L4.60606 25H12.2448C17.2569 25 21.4947 28.7103 22.1571 33.6784L23 40H13L11.5585 36.6365C10.613 34.4304 8.44379 33 6.04362 33H0Z", fill: "currentColor" }), _jsx("path", { d: "M46 33L41.3939 25H33.7552C28.7431 25 24.5053 28.7103 23.8429 33.6784L23 40H33L34.4415 36.6365C35.387 34.4304 37.5562 33 39.9564 33H46Z", fill: "currentColor" }), _jsx("path", { d: "M4.60606 25L18.9999 0H23L22.6032 9.52405C22.2608 17.7406 15.7455 24.3596 7.53537 24.8316L4.60606 25Z", fill: "currentColor" }), _jsx("path", { d: "M41.3939 25L27.0001 0H23L23.3968 9.52405C23.7392 17.7406 30.2545 24.3596 38.4646 24.8316L41.3939 25Z", fill: "currentColor" })] }));
-}

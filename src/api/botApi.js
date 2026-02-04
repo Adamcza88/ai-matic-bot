@@ -1,4 +1,4 @@
-import { getApiBase } from "../engine/networkConfig";
+import { getApiBase } from "../engine/networkConfig.js";
 function requireAuth(opts) {
     if (!opts.authToken) {
         throw new Error("missing_auth_token");

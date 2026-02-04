@@ -1,6 +1,6 @@
 // src/engine/ltFPullback.ts
 // LTF pullback + swing detekce pro V2 (David Paul – 3 pravidla)
-import { computeEma, computeRsi, findLastPivotHigh, findLastPivotLow } from "./ta";
+import { computeEma, computeRsi, findLastPivotHigh, findLastPivotLow } from "./ta.js";
 function countBarsAgainst(candles, dir) {
     let count = 0;
     for (let i = candles.length - 1; i >= 0; i--) {

@@ -1,20 +1,20 @@
 // hooks/useTradingBot.ts
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { sendIntent } from "../api/botApi";
-import { getApiBase } from "../engine/networkConfig";
-import { startPriceFeed } from "../engine/priceFeed";
-import { evaluateStrategyForSymbol, resampleCandles, computeATR } from "../engine/botEngine";
-import { evaluateAiMaticXStrategyForSymbol, } from "../engine/aiMaticXStrategy";
-import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy";
-import { decideCombinedEntry, } from "../engine/combinedEntryStrategy";
-import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
-import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta";
-import { CandlestickAnalyzer } from "../engine/universal-candlestick-analyzer";
-import { computeMarketProfile } from "../engine/marketProfile";
-import { updateOpenInterest } from "../engine/orderflow";
-import { TradingMode } from "../types";
-import { SUPPORTED_SYMBOLS, filterSupportedSymbols, } from "../constants/symbols";
-import { loadPnlHistory, mergePnlRecords, resetPnlHistoryMap, } from "../lib/pnlHistory";
+import { sendIntent } from "../api/botApi.js";
+import { getApiBase } from "../engine/networkConfig.js";
+import { startPriceFeed } from "../engine/priceFeed.js";
+import { evaluateStrategyForSymbol, resampleCandles, computeATR } from "../engine/botEngine.js";
+import { evaluateAiMaticXStrategyForSymbol, } from "../engine/aiMaticXStrategy.js";
+import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy.js";
+import { decideCombinedEntry, } from "../engine/combinedEntryStrategy.js";
+import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter.js";
+import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta.js";
+import { CandlestickAnalyzer } from "../engine/universal-candlestick-analyzer.js";
+import { computeMarketProfile } from "../engine/marketProfile.js";
+import { updateOpenInterest } from "../engine/orderflow.js";
+import { TradingMode } from "../types.js";
+import { SUPPORTED_SYMBOLS, filterSupportedSymbols, } from "../constants/symbols.js";
+import { loadPnlHistory, mergePnlRecords, resetPnlHistoryMap, } from "../lib/pnlHistory.js";
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
@@ -702,10 +702,11 @@ const resolveAiMaticPhase = (args) => {
     return "TREND";
 };
 
-const buildAiMaticContext = (candles, decision, core) => {
-    const htf = resampleCandles(candles, 60);
-    const mtf = resampleCandles(candles, 15);
-    const ltf = resampleCandles(candles, 5);
+const buildAiMaticContext = (candles, decision, core, opts) => {
+    const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
+    const htf = resample(60);
+    const mtf = resample(15);
+    const ltf = resample(5);
     if (!htf.length || !mtf.length || !ltf.length)
         return null;
     const htfPois = new CandlestickAnalyzer(toAnalyzerCandles(htf)).getPointsOfInterest();
@@ -1201,9 +1202,21 @@ function percentile(values, p) {
 }
 const resolveEntryTfMin = (riskMode) => riskMode === "ai-matic-scalp" ? 1 : 5;
 const resolveBboAgeLimit = (symbol) => CORE_V2_BBO_AGE_BY_SYMBOL[symbol] ?? CORE_V2_BBO_AGE_DEFAULT_MS;
-const computeCoreV2Metrics = (candles, riskMode) => {
+const createResampleCache = (candles) => {
+    const cache = new Map();
+    return (timeframeMin) => {
+        const cached = cache.get(timeframeMin);
+        if (cached)
+            return cached;
+        const next = resampleCandles(candles, timeframeMin);
+        cache.set(timeframeMin, next);
+        return next;
+    };
+};
+const computeCoreV2Metrics = (candles, riskMode, opts) => {
     const ltfTimeframeMin = resolveEntryTfMin(riskMode);
-    const ltf = resampleCandles(candles, ltfTimeframeMin);
+    const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
+    const ltf = resample(ltfTimeframeMin);
     const ltfClose = ltf.length ? ltf[ltf.length - 1].close : Number.NaN;
     const ltfCloses = ltf.map((c) => c.close);
     const ltfHighs = ltf.map((c) => c.high);
@@ -1252,7 +1265,7 @@ const computeCoreV2Metrics = (candles, riskMode) => {
     const volumeP60 = percentile(recentVols, 60);
     const volumeP65 = percentile(recentVols, 65);
     const volumeP70 = percentile(recentVols, 70);
-    const htf = resampleCandles(candles, 60);
+    const htf = resample(60);
     const htfCloses = htf.map((c) => c.close);
     const htfHighs = htf.map((c) => c.high);
     const htfLows = htf.map((c) => c.low);
@@ -1276,7 +1289,7 @@ const computeCoreV2Metrics = (candles, riskMode) => {
     const htfAtrPct = Number.isFinite(htfAtr14) && Number.isFinite(htfClose) && htfClose > 0
         ? htfAtr14 / htfClose
         : Number.NaN;
-    const m15 = resampleCandles(candles, 15);
+    const m15 = resample(15);
     const m15Closes = m15.map((c) => c.close);
     const ema15m12Arr = computeEma(m15Closes, 12);
     const ema15m26Arr = computeEma(m15Closes, 26);
@@ -4831,7 +4844,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 : isAiMaticX
                     ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
                     : evaluateStrategyForSymbol(symbol, candles, config);
-            const coreV2 = computeCoreV2Metrics(candles, riskMode);
+            const resample = createResampleCache(candles);
+            const coreV2 = computeCoreV2Metrics(candles, riskMode, { resample });
             if (isPro) {
                 return { ...baseDecision, coreV2 };
             }
@@ -4845,10 +4859,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     : null;
             const htfTrend = evaluateHTFMultiTrend(candles, {
                 timeframesMin: htfTimeframes,
+                resample,
             });
             const ltfTrend = ltfTimeframes
                 ? evaluateHTFMultiTrend(candles, {
                     timeframesMin: ltfTimeframes,
+                    resample,
                 })
                 : null;
             const emaTrend = evaluateEmaMultiTrend(candles, {
@@ -4856,7 +4872,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             });
             const scalpContext = isScalp ? buildScalpContext(candles) : undefined;
             const aiMaticContext = isAiMaticCore
-                ? buildAiMaticContext(candles, baseDecision, coreV2)
+                ? buildAiMaticContext(candles, baseDecision, coreV2, { resample })
                 : null;
             return {
                 ...baseDecision,

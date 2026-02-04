@@ -1,5 +1,5 @@
-import { State, Trend, resampleCandles } from "./botEngine";
-import { computeRsi } from "./ta";
+import { State, Trend, resampleCandles } from "./botEngine.js";
+import { computeRsi } from "./ta.js";
 
 const OVERLAP_BODY_PCT = 0.002;
 const SIMILAR_HILO_PCT = 0.003;

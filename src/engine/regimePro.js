@@ -1,4 +1,4 @@
-import { computeATR } from "./botEngine";
+import { computeATR } from "./botEngine.js";
 
 const hmmBySymbol = new Map();
 

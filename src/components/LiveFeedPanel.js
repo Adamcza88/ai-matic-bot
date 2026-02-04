@@ -1,5 +1,0 @@
-import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-const LiveFeedPanel = ({ logs }) => {
-    return (_jsxs("div", { className: "rounded-xl border bg-card text-card-foreground shadow-xs h-full", children: [_jsx("div", { className: "flex flex-col space-y-1.5 p-6", children: _jsx("h3", { className: "font-semibold leading-none tracking-tight", children: "Live Feed" }) }), _jsx("div", { className: "p-6 pt-0", children: _jsx("div", { className: "h-64 overflow-y-auto pr-2 space-y-2 text-sm", children: logs.length === 0 ? (_jsx("div", { className: "text-sm text-muted-foreground italic", children: "No activity yet." })) : (logs.map((log) => (_jsxs("div", { className: "p-2 rounded border bg-muted/30 text-xs", children: [_jsxs("div", { className: "flex justify-between mb-1", children: [_jsx("span", { className: "font-semibold text-primary", children: log.action }), _jsx("span", { className: "text-muted-foreground", children: log.timestamp.split("T")[1].split(".")[0] })] }), _jsx("div", { className: "text-foreground/90", children: log.message })] }, log.id)))) }) })] }));
-};
-export default LiveFeedPanel;

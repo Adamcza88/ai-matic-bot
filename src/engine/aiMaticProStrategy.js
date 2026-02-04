@@ -1,8 +1,8 @@
-import { computeATR } from "./botEngine";
-import { findPivotsHigh, findPivotsLow } from "./ta";
-import { computeMarketProfile } from "./marketProfile";
-import { getOrderFlowSnapshot } from "./orderflow";
-import { analyzeRegimePro } from "./regimePro";
+import { computeATR } from "./botEngine.js";
+import { findPivotsHigh, findPivotsLow } from "./ta.js";
+import { computeMarketProfile } from "./marketProfile.js";
+import { getOrderFlowSnapshot } from "./orderflow.js";
+import { analyzeRegimePro } from "./regimePro.js";
 
 const proStateBySymbol = new Map();
 

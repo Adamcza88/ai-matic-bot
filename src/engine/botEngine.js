@@ -1,5 +1,5 @@
-import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet";
-import { computeEma, computeRsi } from "./ta";
+import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet.js";
+import { computeEma, computeRsi } from "./ta.js";
 export var Trend;
 (function (Trend) {
     Trend["Bull"] = "bull";

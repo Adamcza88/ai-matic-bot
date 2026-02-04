@@ -1,4 +1,4 @@
-import { computeEma, findPivotsHigh, findPivotsLow } from "./ta";
+import { computeEma, findPivotsHigh, findPivotsLow } from "./ta.js";
 export function evaluateHTFTrend(candles, lookbackOrOpts = 2) {
     const tags = [];
     const opts = typeof lookbackOrOpts === "number" ? undefined : lookbackOrOpts;
@@ -108,9 +108,10 @@ function resampleCandles(candles, timeframeMin) {
 export function evaluateHTFMultiTrend(candles, opts) {
     const timeframes = opts?.timeframesMin ?? [60, 240, 1440];
     const emaByTf = opts?.emaByTimeframe ?? { 60: 200, 240: 120, 1440: 60 };
+    const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
     const byTimeframe = [];
     for (const tf of timeframes) {
-        const sampled = resampleCandles(candles, tf);
+        const sampled = resample(tf);
         const baseEma = emaByTf[tf] ?? 200;
         const emaPeriod = Math.min(baseEma, Math.max(10, sampled.length));
         const minBars = Math.max((opts?.lookback ?? 2) * 2 + 2, Math.min(emaPeriod, sampled.length));

@@ -1,7 +1,7 @@
 // src/engine/priceFeed.ts
 // Public realtime feed z Bybitu přes WebSocket s automatickým pingem
-import { evaluateStrategyForSymbol, } from "@/engine/botEngine";
-import { updateOrderbook, updateTrades, updateLiquidations } from "@/engine/orderflow";
+import { evaluateStrategyForSymbol, } from "./botEngine.js";
+import { updateOrderbook, updateTrades, updateLiquidations } from "./orderflow.js";
 const FEED_URL_MAINNET = "wss://stream.bybit.com/v5/public/linear";
 const FEED_URL_TESTNET = "wss://stream.bybit.com/v5/public/linear";
 const REST_URL_MAINNET = "https://api.bybit.com";

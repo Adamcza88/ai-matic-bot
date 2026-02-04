@@ -1021,11 +1021,13 @@ const resolveAiMaticPhase = (args: {
 const buildAiMaticContext = (
   candles: Candle[],
   decision: PriceFeedDecision | null | undefined,
-  core?: CoreV2Metrics
+  core?: CoreV2Metrics,
+  opts?: { resample?: ResampleFn }
 ): AiMaticContext | null => {
-  const htf = resampleCandles(candles, 60);
-  const mtf = resampleCandles(candles, 15);
-  const ltf = resampleCandles(candles, 5);
+  const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
+  const htf = resample(60);
+  const mtf = resample(15);
+  const ltf = resample(5);
   if (!htf.length || !mtf.length || !ltf.length) return null;
   const htfPois = new CandlestickAnalyzer(toAnalyzerCandles(htf)).getPointsOfInterest() as AiMaticPoi[];
   const mtfPois = new CandlestickAnalyzer(toAnalyzerCandles(mtf)).getPointsOfInterest() as AiMaticPoi[];
@@ -1750,12 +1752,27 @@ const resolveEntryTfMin = (riskMode: AISettings["riskMode"]) =>
 const resolveBboAgeLimit = (symbol: Symbol) =>
   CORE_V2_BBO_AGE_BY_SYMBOL[symbol] ?? CORE_V2_BBO_AGE_DEFAULT_MS;
 
+type ResampleFn = (timeframeMin: number) => Candle[];
+
+const createResampleCache = (candles: Candle[]): ResampleFn => {
+  const cache = new Map<number, Candle[]>();
+  return (timeframeMin: number) => {
+    const cached = cache.get(timeframeMin);
+    if (cached) return cached;
+    const next = resampleCandles(candles, timeframeMin);
+    cache.set(timeframeMin, next);
+    return next;
+  };
+};
+
 const computeCoreV2Metrics = (
   candles: Candle[],
-  riskMode: AISettings["riskMode"]
+  riskMode: AISettings["riskMode"],
+  opts?: { resample?: ResampleFn }
 ): CoreV2Metrics => {
   const ltfTimeframeMin = resolveEntryTfMin(riskMode);
-  const ltf = resampleCandles(candles, ltfTimeframeMin);
+  const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
+  const ltf = resample(ltfTimeframeMin);
   const ltfLast = ltf.length ? ltf[ltf.length - 1] : undefined;
   const ltfPrev = ltf.length > 1 ? ltf[ltf.length - 2] : undefined;
   const ltfClose = ltfLast ? ltfLast.close : Number.NaN;
@@ -1974,7 +1991,7 @@ const computeCoreV2Metrics = (
     recentVols[recentVols.length - 1] < recentVols[recentVols.length - 2] &&
     recentVols[recentVols.length - 2] < recentVols[recentVols.length - 3];
 
-  const htf = resampleCandles(candles, 60);
+  const htf = resample(60);
   const htfCloses = htf.map((c) => c.close);
   const htfHighs = htf.map((c) => c.high);
   const htfLows = htf.map((c) => c.low);
@@ -2006,7 +2023,7 @@ const computeCoreV2Metrics = (
   const htfPivotHigh = htfPivotsHigh[htfPivotsHigh.length - 1]?.price;
   const htfPivotLow = htfPivotsLow[htfPivotsLow.length - 1]?.price;
 
-  const m15 = resampleCandles(candles, 15);
+  const m15 = resample(15);
   const m15Last = m15.length ? m15[m15.length - 1] : undefined;
   const m15Closes = m15.map((c) => c.close);
   const m15Highs = m15.map((c) => c.high);
@@ -7732,7 +7749,8 @@ export function useTradingBot(
         : isAiMaticX
           ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
           : evaluateStrategyForSymbol(symbol, candles, config);
-      const coreV2 = computeCoreV2Metrics(candles, riskMode);
+      const resample = createResampleCache(candles);
+      const coreV2 = computeCoreV2Metrics(candles, riskMode, { resample });
       if (isPro) {
         return { ...baseDecision, coreV2 };
       }
@@ -7746,10 +7764,12 @@ export function useTradingBot(
           : null;
       const htfTrend = evaluateHTFMultiTrend(candles, {
         timeframesMin: htfTimeframes,
+        resample,
       });
       const ltfTrend = ltfTimeframes
         ? evaluateHTFMultiTrend(candles, {
             timeframesMin: ltfTimeframes,
+            resample,
           })
         : null;
       const emaTrend = evaluateEmaMultiTrend(candles, {
@@ -7757,7 +7777,7 @@ export function useTradingBot(
       });
       const scalpContext = isScalp ? buildScalpContext(candles) : undefined;
       const aiMaticContext = isAiMaticCore
-        ? buildAiMaticContext(candles, baseDecision, coreV2)
+        ? buildAiMaticContext(candles, baseDecision, coreV2, { resample })
         : null;
       return {
         ...baseDecision,

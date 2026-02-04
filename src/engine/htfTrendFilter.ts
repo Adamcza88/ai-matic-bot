@@ -154,13 +154,15 @@ export function evaluateHTFMultiTrend(
     timeframesMin?: number[];
     lookback?: number;
     emaByTimeframe?: Record<number, number>;
+    resample?: (timeframeMin: number) => Candle[];
   }
 ): HTFMultiTrendResult {
   const timeframes = opts?.timeframesMin ?? [60, 240, 1440];
   const emaByTf = opts?.emaByTimeframe ?? { 60: 200, 240: 120, 1440: 60 };
+  const resample = opts?.resample ?? ((tf: number) => resampleCandles(candles, tf));
   const byTimeframe: TimeframeTrend[] = [];
   for (const tf of timeframes) {
-    const sampled = resampleCandles(candles, tf);
+    const sampled = resample(tf);
     const baseEma = emaByTf[tf] ?? 200;
     const emaPeriod = Math.min(baseEma, Math.max(10, sampled.length));
     const minBars = Math.max((opts?.lookback ?? 2) * 2 + 2, Math.min(emaPeriod, sampled.length));
