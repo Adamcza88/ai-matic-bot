@@ -492,6 +492,18 @@ type AiMaticEmaFlags = {
   close: number;
 };
 
+type StructureState = {
+  structureTrend: "BULL" | "BEAR" | "RANGE";
+  lastHighType: "HH" | "LH" | "NONE";
+  lastLowType: "HL" | "LL" | "NONE";
+  bosUp: boolean;
+  bosDown: boolean;
+  chochUp: boolean;
+  chochDown: boolean;
+  lastHigh?: number;
+  lastLow?: number;
+};
+
 type AiMaticContext = {
   htf: {
     direction: "bull" | "bear" | "none";
@@ -626,7 +638,10 @@ const resolveAiMaticPivots = (candles: Candle[], lookback = 2) => {
   return { lastHigh, lastLow };
 };
 
-const resolveStructureState = (candles: Candle[], lookback = 2) => {
+const resolveStructureState = (
+  candles: Candle[],
+  lookback = 2
+): StructureState => {
   const highs = findPivotsHigh(candles, lookback, lookback);
   const lows = findPivotsLow(candles, lookback, lookback);
   const lastHigh = highs[highs.length - 1]?.price;
