@@ -4,13 +4,13 @@ export type Symbol =
   | "SOLUSDT"
   | "ADAUSDT"
   | "XRPUSDT"
-  | "XMRUSDT"
+  | "SUIUSDT"
   | "DOGEUSDT"
   | "LINKUSDT"
-  | "MELANIAUSDT"
-  | "XPLUSDT"
+  | "ZILUSDT"
+  | "AVAXUSDT"
   | "HYPEUSDT"
-  | "FARTCOINUSDT";
+  | "OP";
 export type Side = "Buy" | "Sell";
 export type EntryType =
   | "LIMIT_MAKER_FIRST"
