@@ -19,6 +19,12 @@ type DashboardProps = {
   setMode: (m: TradingMode) => void;
   useTestnet: boolean;
   setUseTestnet: (v: boolean) => void;
+  envAvailability?: {
+    canUseDemo: boolean;
+    canUseMainnet: boolean;
+    demoReason?: string;
+    mainnetReason?: string;
+  };
   bot: TradingBotApi;
 };
 
@@ -27,6 +33,7 @@ export default function Dashboard({
   setMode,
   useTestnet,
   setUseTestnet,
+  envAvailability,
   bot,
 }: DashboardProps) {
   const {
@@ -332,16 +339,17 @@ export default function Dashboard({
 
   return (
     <div className="space-y-6">
-      <StatusBar
-        title={profileMeta.label}
-        subtitle={profileMeta.subtitle}
-        mode={mode}
-        setMode={setMode}
-        useTestnet={useTestnet}
-        setUseTestnet={setUseTestnet}
-        systemState={systemState}
-        engineStatus={engineStatus}
-      />
+        <StatusBar
+          title={profileMeta.label}
+          subtitle={profileMeta.subtitle}
+          mode={mode}
+          setMode={setMode}
+          useTestnet={useTestnet}
+          setUseTestnet={setUseTestnet}
+          systemState={systemState}
+          engineStatus={engineStatus}
+          envAvailability={envAvailability}
+        />
 
       <KpiRow
         totalCapital={totalCapital}

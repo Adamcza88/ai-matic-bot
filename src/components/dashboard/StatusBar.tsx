@@ -11,6 +11,12 @@ type StatusBarProps = {
   setUseTestnet: (v: boolean) => void;
   systemState: SystemState;
   engineStatus: "Running" | "Paused";
+  envAvailability?: {
+    canUseDemo: boolean;
+    canUseMainnet: boolean;
+    demoReason?: string;
+    mainnetReason?: string;
+  };
 };
 
 const MODE_LABELS: Record<TradingMode, string> = {
@@ -32,6 +38,7 @@ export default function StatusBar({
   setUseTestnet,
   systemState,
   engineStatus,
+  envAvailability,
 }: StatusBarProps) {
   const bybitStatus = systemState.bybitStatus ?? "Disconnected";
   const latencyLabel = Number.isFinite(systemState.latency)
@@ -63,7 +70,14 @@ export default function StatusBar({
                 <Button
                   variant={useTestnet ? "secondary" : "ghost"}
                   size="sm"
+                  data-testid="env-demo-button"
                   onClick={() => setUseTestnet(true)}
+                  disabled={envAvailability ? !envAvailability.canUseDemo : false}
+                  title={
+                    envAvailability && !envAvailability.canUseDemo
+                      ? envAvailability.demoReason ?? "Demo environment unavailable"
+                      : "Use demo environment"
+                  }
                   className={
                     useTestnet
                       ? "bg-muted text-foreground"
@@ -75,7 +89,14 @@ export default function StatusBar({
                 <Button
                   variant={!useTestnet ? "secondary" : "ghost"}
                   size="sm"
+                  data-testid="env-mainnet-button"
                   onClick={() => setUseTestnet(false)}
+                  disabled={envAvailability ? !envAvailability.canUseMainnet : false}
+                  title={
+                    envAvailability && !envAvailability.canUseMainnet
+                      ? envAvailability.mainnetReason ?? "Mainnet environment unavailable"
+                      : "Use mainnet environment"
+                  }
                   className={
                     !useTestnet
                       ? "bg-emerald-600 text-white hover:bg-emerald-700"
@@ -94,6 +115,9 @@ export default function StatusBar({
                     key={m}
                     variant={mode === m ? "secondary" : "ghost"}
                     size="sm"
+                    data-testid={
+                      m === TradingMode.OFF ? "mode-manual-button" : "mode-auto-button"
+                    }
                     onClick={() => setMode(m)}
                     className={
                       mode === m

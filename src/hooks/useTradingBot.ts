@@ -7449,6 +7449,21 @@ export function useTradingBot(
       );
       resolvedSl = normalized.sl;
       resolvedTp = normalized.tp;
+      if (
+        isAiMaticProfile &&
+        Number.isFinite(resolvedSl) &&
+        Number.isFinite(resolvedTp)
+      ) {
+        const minGap = Number.isFinite(normalized.minDistance)
+          ? normalized.minDistance
+          : resolveMinProtectionDistance(entry, core?.atr14);
+        if (side === "Buy" && resolvedSl >= resolvedTp) {
+          resolvedTp = resolvedSl + minGap;
+        }
+        if (side === "Sell" && resolvedSl <= resolvedTp) {
+          resolvedTp = resolvedSl - minGap;
+        }
+      }
       if (isProProfile && proTargets && Number.isFinite(proTargets.t2)) {
         resolvedTp = proTargets.t2;
       }

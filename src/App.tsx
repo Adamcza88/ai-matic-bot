@@ -130,6 +130,29 @@ export default function App() {
     }
   }, [auth.status, auth.user, refreshKeyStatus]);
 
+  const missingMainnet = useMemo(
+    () =>
+      missingServices.some((s) =>
+        s.toLowerCase().includes("mainnet")
+      ),
+    [missingServices]
+  );
+  const missingDemo = useMemo(
+    () => missingServices.some((s) => s.toLowerCase().includes("demo")),
+    [missingServices]
+  );
+  const envAvailability = useMemo(
+    () => ({
+      canUseMainnet: !missingMainnet,
+      canUseDemo: !missingDemo,
+      mainnetReason: missingMainnet
+        ? "Missing mainnet API keys"
+        : undefined,
+      demoReason: missingDemo ? "Missing demo API keys" : undefined,
+    }),
+    [missingDemo, missingMainnet]
+  );
+
   // Pokud chybí mainnetové klíče, automaticky přepnout na demo, aby se API volání nesypala.
   useEffect(() => {
     const missingMainnet = missingServices.some((s) =>
@@ -277,6 +300,7 @@ export default function App() {
         setMode={setMode}
         useTestnet={useTestnet}
         setUseTestnet={setUseTestnet}
+        envAvailability={envAvailability}
         bot={bot}
       />
     </div>
