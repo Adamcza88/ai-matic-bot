@@ -5126,19 +5126,18 @@ export function useTradingBot(
           aiMaticEval.hardGates.forEach((gate) =>
             addGate(`Hard: ${gate.name}`, gate.ok, gate.detail)
           );
-          aiMaticEval.entryFactors.forEach((gate) =>
-            addGate(`Entry: ${gate.name}`, gate.ok, gate.detail)
+          const entryOkCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
+          addGate(
+            "Entry: Any of 5",
+            entryOkCount >= AI_MATIC_ENTRY_FACTOR_MIN,
+            `${entryOkCount}/5`
           );
-          aiMaticEval.checklist.forEach((gate) => {
-            let detail = gate.detail;
-            if (gate.name === "BTC correlation") {
-              detail = aiMaticEval.correlationDetail ?? detail;
-            }
-            if (gate.name === "BTC dominance proxy") {
-              detail = aiMaticEval.dominanceOk ? "ok" : "weak";
-            }
-            addGate(`Checklist: ${gate.name}`, gate.ok, detail);
-          });
+          const checklistOkCount = aiMaticEval.checklist.filter((g) => g.ok).length;
+          addGate(
+            "Checklist: 3 of 7",
+            checklistOkCount >= AI_MATIC_CHECKLIST_MIN,
+            `${checklistOkCount}/7`
+          );
         }
       } else {
         coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
