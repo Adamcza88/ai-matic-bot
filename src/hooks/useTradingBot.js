@@ -116,8 +116,8 @@ const CHEAT_LIMIT_WAIT_WINDOWS_MIN = {
 };
 const CHEAT_LIMIT_RUNAWAY_BPS = 30;
 const CHEAT_LIMIT_MIN_RRR = 1;
-const AI_MATIC_ENTRY_FACTOR_MIN = 3;
-const AI_MATIC_CHECKLIST_MIN = 4;
+const AI_MATIC_ENTRY_FACTOR_MIN = 1;
+const AI_MATIC_CHECKLIST_MIN = 3;
 const AI_MATIC_EMA_CROSS_LOOKBACK = 6;
 const AI_MATIC_POI_DISTANCE_PCT = 0.0015;
 const AI_MATIC_SL_ATR_BUFFER = 0.3;
@@ -1050,13 +1050,13 @@ const evaluateAiMaticGatesCore = (args) => {
         { name: "RSI/MACD", ok: momentumOk },
     ];
     const checklist = [
+        { name: "HTF EMA trend", ok: htfAligned },
+        { name: "MTF EMA confirm", ok: mtfAligned },
+        { name: "EMA 20/50/200 stack", ok: emaStackOk },
+        { name: "EMA no-cross", ok: emaCrossOk },
+        { name: "Pattern confirm", ok: patternOk },
+        { name: "Volume confirm", ok: volumeOk },
         { name: "Likvidita (sweep)", ok: sweepOk },
-        { name: "Reakce na 1h support/OB", ok: htfPoiReaction },
-        { name: "Close nad/pod OB open", ok: obCloseOk },
-        { name: "Přítomen GAP", ok: gapPresent },
-        { name: "Retracement zpět do OB zóny", ok: obRetestOk },
-        { name: "Pattern 15m", ok: mtfPatternOk },
-        { name: "RSI/MACD", ok: momentumOk },
     ];
     const hardPass = hardGates.every((g) => g.ok);
     const entryFactorsPass = entryFactors.filter((g) => g.ok).length >= AI_MATIC_ENTRY_FACTOR_MIN;
