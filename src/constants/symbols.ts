@@ -6,13 +6,13 @@ export const SUPPORTED_SYMBOLS: Symbol[] = [
   "SOLUSDT",
   "ADAUSDT",
   "XRPUSDT",
-  "XMRUSDT",
+  "SUIUSDT",
   "DOGEUSDT",
   "LINKUSDT",
-  "MELANIAUSDT",
-  "XPLUSDT",
+  "ZILUSDT",
+  "AVAXUSDT",
   "HYPEUSDT",
-  "FARTCOINUSDT",
+  "OP",
 ];
 
 export function filterSupportedSymbols(value: unknown): Symbol[] {
