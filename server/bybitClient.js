@@ -110,6 +110,15 @@ async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true)
 
   // Fetch real constraints from cache/API
   const limits = await getInstrumentInfo(symbol, useTestnet);
+  let price = Number(priceInput);
+  if (!Number.isFinite(price) || price <= 0) {
+    try {
+      price = await fetchLastPrice(symbol, useTestnet);
+    } catch (err) {
+      console.warn("[Bybit] ticker unavailable:", err?.message || err);
+      price = 0;
+    }
+  }
 
   // 1. Min Qty check
   if (q < limits.minQty) {
@@ -128,10 +137,10 @@ async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true)
   }
 
   // 3. Min Notional check
-  if (priceInput > 0) {
-    const notional = q * priceInput;
+  if (price > 0) {
+    const notional = q * price;
     if (notional < limits.minNotional) {
-      const reqQty = limits.minNotional / priceInput;
+      const reqQty = limits.minNotional / price;
       const bumpedQty = Math.ceil(reqQty * precision) / precision;
       q = Math.max(q, bumpedQty);
     }
@@ -158,7 +167,7 @@ const LEVERAGE_BY_SYMBOL = {
   ZILUSDT: 25,
   AVAXUSDT: 50,
   HYPEUSDT: 75,
-  OP: 50,
+  OPUSDT: 50,
 };
 const leverageSyncCooldownMs = 60_000;
 
@@ -166,6 +175,21 @@ export async function getServerTime(useTestnet = true) {
   const url = `${resolveBase(useTestnet)}/v5/market/time`;
   const res = await axios.get(url);
   return res.data;
+}
+
+async function fetchLastPrice(symbol, useTestnet = true) {
+  const url = `${resolveBase(useTestnet)}/v5/market/tickers?category=linear&symbol=${symbol}`;
+  const res = await axios.get(url);
+  if (res.data?.retCode !== 0) {
+    throw new Error(res.data?.retMsg || "ticker_unavailable");
+  }
+  const item = res.data?.result?.list?.[0];
+  const last =
+    Number(item?.lastPrice) ||
+    Number(item?.markPrice) ||
+    Number(item?.indexPrice) ||
+    0;
+  return Number.isFinite(last) ? last : 0;
 }
 
 function buildSignedGet(pathWithQuery, creds, useTestnet) {
@@ -368,7 +392,11 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   // Attempt to estimate price for Min Notional check (timestamp decl removed)
 
   // Attempt to estimate price for Min Notional check
-  const estimatedPrice = order.price ? Number(order.price) : 0;
+  const estimatedPrice = order.price
+    ? Number(order.price)
+    : order.triggerPrice
+      ? Number(order.triggerPrice)
+      : 0;
   const safeQty = await normalizeQty(order.symbol, order.qty, estimatedPrice, useTestnet);
 
   const leverageKey = `${useTestnet ? "demo" : "mainnet"}:${order.symbol}`;
@@ -411,7 +439,12 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
     side: order.side, // "Buy" | "Sell"
     orderType: order.orderType || "Market",
     qty: safeQty,
-    price: order.price ? String(order.price) : undefined, // undefined will be cleaned
+    price:
+      order.orderType === "Market"
+        ? undefined
+        : order.price
+          ? String(order.price)
+          : undefined, // undefined will be cleaned
     triggerPrice: order.triggerPrice ? String(order.triggerPrice) : undefined,
     orderFilter: order.triggerPrice ? "StopOrder" : undefined,
     timeInForce: order.timeInForce || (order.orderType === "Limit" ? "GTC" : "IOC"),

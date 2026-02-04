@@ -62,7 +62,7 @@ const ORDER_VALUE_BY_SYMBOL: Record<Symbol, number> = {
   ZILUSDT: 2500,
   AVAXUSDT: 5000,
   HYPEUSDT: 7500,
-  OP: 5000,
+  OPUSDT: 5000,
 };
 const MAJOR_SYMBOLS = new Set<Symbol>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
@@ -5102,7 +5102,6 @@ export function useTradingBot(
             message: `${symbol} blokováno (open pos/order): ${entryBlockReasons.join(", ")}`,
           },
         ]);
-        return;
       }
       const manageReason =
         entryBlockReasons.length > 0 ? entryBlockReasons.join(" • ") : null;

@@ -10,7 +10,7 @@ export const SUPPORTED_SYMBOLS = [
     "ZILUSDT",
     "AVAXUSDT",
     "HYPEUSDT",
-    "OP",
+    "OPUSDT",
 ];
 export function filterSupportedSymbols(value) {
     if (!Array.isArray(value))
@@ -18,5 +18,6 @@ export function filterSupportedSymbols(value) {
     const allowed = new Set(SUPPORTED_SYMBOLS);
     return value
         .map((item) => String(item).toUpperCase())
+        .map((item) => (item === "OP" ? "OPUSDT" : item))
         .filter((item) => allowed.has(item));
 }

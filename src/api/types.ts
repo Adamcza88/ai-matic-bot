@@ -10,7 +10,7 @@ export type Symbol =
   | "ZILUSDT"
   | "AVAXUSDT"
   | "HYPEUSDT"
-  | "OP";
+  | "OPUSDT";
 export type Side = "Buy" | "Sell";
 export type EntryType =
   | "LIMIT_MAKER_FIRST"

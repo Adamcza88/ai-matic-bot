@@ -29,15 +29,15 @@ export async function sendIntent(intent, opts) {
             ? "PostOnly"
             : "GTC";
     const orderType = isMarket ? "Market" : "Limit";
-    const payload = {
-        symbol: intent.symbol,
-        side: intent.side,
-        qty,
-        orderType,
-        price: isMarket ? undefined : intent.entryPrice,
-        triggerPrice,
-        trailingStop: intent.trailingStop,
-        trailingActivePrice: intent.trailingActivePrice,
+  const payload = {
+    symbol: intent.symbol,
+    side: intent.side,
+    qty,
+    orderType,
+    price: intent.entryPrice,
+    triggerPrice,
+    trailingStop: intent.trailingStop,
+    trailingActivePrice: intent.trailingActivePrice,
         timeInForce,
         orderLinkId: intent.intentId,
         sl: intent.slPrice,

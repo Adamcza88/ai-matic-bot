@@ -46,7 +46,7 @@ export async function sendIntent(intent: TradeIntent, opts: AuthOpts) {
     side: intent.side,
     qty,
     orderType,
-    price: isMarket ? undefined : intent.entryPrice,
+    price: intent.entryPrice,
     triggerPrice,
     trailingStop: intent.trailingStop,
     trailingActivePrice: intent.trailingActivePrice,
