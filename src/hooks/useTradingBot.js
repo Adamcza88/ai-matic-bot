@@ -3301,6 +3301,18 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const feedAgeMs = lastTick > 0 ? Math.max(0, Date.now() - lastTick) : null;
         const feedAgeOk = feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
         const signal = decision?.signal ?? null;
+        const isAiMaticProfile = context.settings.riskMode === "ai-matic";
+        const aiMaticContext = decision?.aiMatic ?? null;
+        const inferredSide = aiMaticContext?.htf?.structureTrend === "BULL"
+            ? "buy"
+            : aiMaticContext?.htf?.structureTrend === "BEAR"
+                ? "sell"
+                : null;
+        const signalForEval = signal ??
+            (inferredSide ? { intent: { side: inferredSide } } : null);
+        const aiMaticEval = isAiMaticProfile && signalForEval
+            ? evaluateAiMaticGates(symbol, decision, signalForEval)
+            : null;
         const quality = resolveQualityScore(symbol, decision, signal, feedAgeMs);
         const gates = [];
         const addGate = (name, ok, detail) => {
@@ -3323,7 +3335,25 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 : hasPendingIntent
                     ? "pending intent"
                     : null;
-        coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
+        if (isAiMaticProfile) {
+            if (aiMaticEval) {
+                aiMaticEval.hardGates.forEach((gate) => addGate(`Hard: ${gate.name}`, gate.ok, gate.detail));
+                aiMaticEval.entryFactors.forEach((gate) => addGate(`Entry: ${gate.name}`, gate.ok, gate.detail));
+                aiMaticEval.checklist.forEach((gate) => {
+                    let detail = gate.detail;
+                    if (gate.name === "BTC correlation") {
+                        detail = aiMaticEval.correlationDetail ?? detail;
+                    }
+                    if (gate.name === "BTC dominance proxy") {
+                        detail = aiMaticEval.dominanceOk ? "ok" : "weak";
+                    }
+                    addGate(`Checklist: ${gate.name}`, gate.ok, detail);
+                });
+            }
+        }
+        else {
+            coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
+        }
         if (isScalpProfile) {
             addGate(SCALP_PRIMARY_GATE, scalpPrimary.primaryOk, `15m ${scalpPrimary.ema15mTrend} | LTF ${core?.ltfTimeframeMin ?? "—"}m`);
             addGate(SCALP_ENTRY_GATE, scalpPrimary.entryOk, `EMA cross ${core?.emaCrossDir === "NONE"
@@ -3335,19 +3365,49 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 ? `ATR ${formatNumber(core.atr14, 4)} | TP 1.5R`
                 : "ATR missing");
         }
-        const hardEnabled = false;
-        const softEnabled = context.settings.enableSoftGates !== false;
+        const hardEnabled = isAiMaticProfile ? true : false;
+        const softEnabled = isAiMaticProfile
+            ? false
+            : context.settings.enableSoftGates !== false;
         const hardReasons = [];
-        const hardBlocked = false;
+        const hardBlocked = isAiMaticProfile && aiMaticEval ? !aiMaticEval.hardPass : false;
         const execEnabled = isGateEnabled("Exec allowed");
         const softBlocked = softEnabled && quality.pass === false;
-        const checklist = evaluateChecklistPass(gates);
+        const checklist = isAiMaticProfile && aiMaticEval
+            ? {
+                eligibleCount: aiMaticEval.checklist.length,
+                passedCount: aiMaticEval.checklist.filter((g) => g.ok).length,
+                pass: aiMaticEval.checklistPass,
+            }
+            : evaluateChecklistPass(gates);
         const signalActive = Boolean(signal) || checklist.pass;
-        const executionAllowed = signalActive
-            ? execEnabled
-                ? checklist.pass && !softBlocked
-                : false
-            : null;
+        let executionAllowed = null;
+        let executionReason;
+        if (!execEnabled) {
+            executionAllowed = false;
+            executionReason = "Exec OFF";
+        }
+        else if (!signalActive) {
+            executionAllowed = null;
+            executionReason = "čeká na signál";
+        }
+        else if (isAiMaticProfile && aiMaticEval && !aiMaticEval.pass) {
+            const entryCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
+            const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
+            executionAllowed = false;
+            executionReason = `AI-MATIC gates ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN}`;
+        }
+        else if (!checklist.pass) {
+            executionAllowed = false;
+            executionReason = `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`;
+        }
+        else if (softBlocked) {
+            executionAllowed = false;
+            executionReason = `Score ${quality.score ?? "—"} / ${quality.threshold ?? "—"}`;
+        }
+        else {
+            executionAllowed = true;
+        }
         return {
             symbolState,
             manageReason,
@@ -3360,17 +3420,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             hardBlocked,
             hardBlock: hardBlocked ? hardReasons.join(" · ") : undefined,
             executionAllowed,
-            executionReason: signalActive
-                ? execEnabled
-                    ? !checklist.pass
-                        ? `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`
-                        : softBlocked
-                            ? `Score ${quality.score ?? "—"} / ${quality.threshold ?? "—"}`
-                            : undefined
-                    : "Exec allowed (OFF)"
-                : execEnabled
-                    ? "Waiting for signal"
-                    : "Exec allowed (OFF)",
+            executionReason,
             gates,
             qualityScore: quality.score,
             qualityThreshold: quality.threshold,

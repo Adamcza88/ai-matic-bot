@@ -391,8 +391,27 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     "Maker entry",
     "SL structural",
   ];
+  const aiMaticGateNames = [
+    "Hard: Structure trend",
+    "Hard: EMA stack",
+    "Hard: EMA cross",
+    "Hard: No CHoCH",
+    "Entry: Pattern",
+    "Entry: BOS/Retest",
+    "Entry: Sweep/Fakeout",
+    "Entry: POI/POC reaction",
+    "Entry: Volume reaction",
+    "Checklist: EMA trend",
+    "Checklist: Structure trend",
+    "Checklist: Pattern",
+    "Checklist: Volume",
+    "Checklist: BTC correlation",
+    "Checklist: OB/POC reaction",
+    "Checklist: Liquidity sweep",
+    "Checklist: BTC dominance proxy",
+  ];
   const checklistGatesByProfile: Record<AISettings["riskMode"], string[]> = {
-    "ai-matic": coreV2GateNames,
+    "ai-matic": aiMaticGateNames,
     "ai-matic-x": coreV2GateNames,
     "ai-matic-tree": coreV2GateNames,
     "ai-matic-scalp": [

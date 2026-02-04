@@ -136,9 +136,9 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
     const exchangeTrades = tradesLoaded ? testnetTrades : [];
     const refreshOrders = refreshTestnetOrders;
     const CHECKLIST_DEFAULTS_BY_PROFILE = useMemo(() => {
-        const base = {
-            "HTF bias": true,
-            "EMA order": true,
+    const base = {
+        "HTF bias": true,
+        "EMA order": true,
             "EMA sep1": true,
             "EMA sep2": true,
             "ATR% window": true,
@@ -149,14 +149,34 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
             "BBO fresh": true,
             "BBO age": true,
             "Trend strength": true,
-            "Maker entry": true,
-            "SL structural": true,
-            "Exec allowed": true,
-        };
-        return {
-            "ai-matic": base,
-            "ai-matic-x": base,
-            "ai-matic-tree": base,
+        "Maker entry": true,
+        "SL structural": true,
+        "Exec allowed": true,
+    };
+    const aiMatic = {
+        "Hard: Structure trend": true,
+        "Hard: EMA stack": true,
+        "Hard: EMA cross": true,
+        "Hard: No CHoCH": true,
+        "Entry: Pattern": true,
+        "Entry: BOS/Retest": true,
+        "Entry: Sweep/Fakeout": true,
+        "Entry: POI/POC reaction": true,
+        "Entry: Volume reaction": true,
+        "Checklist: EMA trend": true,
+        "Checklist: Structure trend": true,
+        "Checklist: Pattern": true,
+        "Checklist: Volume": true,
+        "Checklist: BTC correlation": true,
+        "Checklist: OB/POC reaction": true,
+        "Checklist: Liquidity sweep": true,
+        "Checklist: BTC dominance proxy": true,
+        "Exec allowed": true,
+    };
+    return {
+        "ai-matic": aiMatic,
+        "ai-matic-x": base,
+        "ai-matic-tree": base,
             "ai-matic-pro": {
                 "Hurst < 0.45": true,
                 "CHOP > 60": true,

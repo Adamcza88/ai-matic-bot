@@ -4946,6 +4946,25 @@ export function useTradingBot(
       const feedAgeOk =
         feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
       const signal = decision?.signal ?? null;
+      const isAiMaticProfile = context.settings.riskMode === "ai-matic";
+      const aiMaticContext = (decision as any)?.aiMatic as
+        | AiMaticContext
+        | null;
+      const inferredSide =
+        aiMaticContext?.htf.structureTrend === "BULL"
+          ? "buy"
+          : aiMaticContext?.htf.structureTrend === "BEAR"
+            ? "sell"
+            : null;
+      const signalForEval =
+        signal ??
+        (inferredSide
+          ? ({ intent: { side: inferredSide } } as PriceFeedDecision["signal"])
+          : null);
+      const aiMaticEval =
+        isAiMaticProfile && signalForEval
+          ? evaluateAiMaticGates(symbol, decision, signalForEval)
+          : null;
       const quality = resolveQualityScore(symbol as Symbol, decision, signal, feedAgeMs);
       const now = Number.isFinite(lastScanTs) ? lastScanTs : Date.now();
 
@@ -4955,7 +4974,7 @@ export function useTradingBot(
       };
 
       const correlation = resolveCorrelationGate(symbol, now, signal);
-      if (symbol !== "BTCUSDT") {
+      if (symbol !== "BTCUSDT" && !isAiMaticProfile) {
         addGate("BTC Correlation", correlation.ok, correlation.detail);
       };
 
@@ -5027,7 +5046,28 @@ export function useTradingBot(
       const manageReason =
         entryBlockReasons.length > 0 ? entryBlockReasons.join(" • ") : null;
 
-      coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
+      if (isAiMaticProfile) {
+        if (aiMaticEval) {
+          aiMaticEval.hardGates.forEach((gate) =>
+            addGate(`Hard: ${gate.name}`, gate.ok, gate.detail)
+          );
+          aiMaticEval.entryFactors.forEach((gate) =>
+            addGate(`Entry: ${gate.name}`, gate.ok, gate.detail)
+          );
+          aiMaticEval.checklist.forEach((gate) => {
+            let detail = gate.detail;
+            if (gate.name === "BTC correlation") {
+              detail = aiMaticEval.correlationDetail ?? detail;
+            }
+            if (gate.name === "BTC dominance proxy") {
+              detail = aiMaticEval.dominanceOk ? "ok" : "weak";
+            }
+            addGate(`Checklist: ${gate.name}`, gate.ok, detail);
+          });
+        }
+      } else {
+        coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
+      }
       if (isScalpProfile) {
         addGate(
           SCALP_PRIMARY_GATE,
@@ -5093,13 +5133,22 @@ export function useTradingBot(
         }
       }
 
-      const hardEnabled = false;
-      const softEnabled = context.settings.enableSoftGates !== false;
+      const hardEnabled = isAiMaticProfile ? true : false;
+      const softEnabled = isAiMaticProfile
+        ? false
+        : context.settings.enableSoftGates !== false;
       const hardReasons: string[] = [];
-      const hardBlocked = false;
+      const hardBlocked =
+        isAiMaticProfile && aiMaticEval ? !aiMaticEval.hardPass : false;
       const execEnabled = isGateEnabled("Exec allowed");
       const softBlocked = softEnabled && quality.pass === false;
-      const checklist = evaluateChecklistPass(gates);
+      const checklist = isAiMaticProfile && aiMaticEval
+        ? {
+            eligibleCount: aiMaticEval.checklist.length,
+            passedCount: aiMaticEval.checklist.filter((g) => g.ok).length,
+            pass: aiMaticEval.checklistPass,
+          }
+        : evaluateChecklistPass(gates);
       const signalActive = Boolean(signal) || checklist.pass;
       let executionAllowed: boolean | null = null;
       let executionReason: string | undefined;
@@ -5112,6 +5161,11 @@ export function useTradingBot(
       } else if (!signalActive) {
         executionAllowed = null;
         executionReason = "čeká na signál";
+      } else if (isAiMaticProfile && aiMaticEval && !aiMaticEval.pass) {
+        const entryCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
+        const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
+        executionAllowed = false;
+        executionReason = `AI-MATIC gates ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN}`;
       } else if (!checklist.pass) {
         executionAllowed = false;
         executionReason = `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`;

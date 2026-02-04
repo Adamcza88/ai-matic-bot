@@ -200,8 +200,28 @@ export default function Dashboard({
       "SL structural": true,
       "Exec allowed": true,
     };
+    const aiMatic = {
+      "Hard: Structure trend": true,
+      "Hard: EMA stack": true,
+      "Hard: EMA cross": true,
+      "Hard: No CHoCH": true,
+      "Entry: Pattern": true,
+      "Entry: BOS/Retest": true,
+      "Entry: Sweep/Fakeout": true,
+      "Entry: POI/POC reaction": true,
+      "Entry: Volume reaction": true,
+      "Checklist: EMA trend": true,
+      "Checklist: Structure trend": true,
+      "Checklist: Pattern": true,
+      "Checklist: Volume": true,
+      "Checklist: BTC correlation": true,
+      "Checklist: OB/POC reaction": true,
+      "Checklist: Liquidity sweep": true,
+      "Checklist: BTC dominance proxy": true,
+      "Exec allowed": true,
+    };
     return {
-      "ai-matic": base,
+      "ai-matic": aiMatic,
       "ai-matic-x": base,
       "ai-matic-tree": base,
       "ai-matic-pro": {
