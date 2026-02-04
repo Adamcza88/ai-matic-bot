@@ -6,6 +6,7 @@ const {
   resolveAiMaticPatterns,
   resolveAiMaticEmaFlags,
   resolveAiMaticBreakRetest,
+  resolveLiquiditySweep,
   resolveStructureState,
   resolveAiMaticStopLoss,
   resolveAiMaticTargets,
@@ -51,8 +52,33 @@ test("AI-MATIC EMA flags: stack + cross recent", () => {
 test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
   const decision = {
     aiMatic: {
-      htf: { direction: "bull", structureTrend: "BULL", chochDown: false, chochUp: false, sweepLow: true, sweepHigh: false, poiReactionBull: true, poiReactionBear: false },
-      mtf: { sweepLow: true, sweepHigh: false, pocNear: true, lvnRejectionBull: true, lvnRejectionBear: false, poiReactionBull: true, poiReactionBear: false },
+      htf: {
+        direction: "bull",
+        structureTrend: "BULL",
+        chochDown: false,
+        chochUp: false,
+        sweepLow: true,
+        sweepHigh: false,
+        sweepLowWick: Number.NaN,
+        sweepHighWick: Number.NaN,
+        swingHigh: Number.NaN,
+        swingLow: Number.NaN,
+        poiReactionBull: true,
+        poiReactionBear: false,
+      },
+      mtf: {
+        sweepLow: true,
+        sweepHigh: false,
+        sweepLowWick: Number.NaN,
+        sweepHighWick: Number.NaN,
+        swingHigh: Number.NaN,
+        swingLow: Number.NaN,
+        pocNear: true,
+        lvnRejectionBull: true,
+        lvnRejectionBear: false,
+        poiReactionBull: true,
+        poiReactionBear: false,
+      },
       ltf: {
         patterns: { pinbarBull: true, pinbarBear: false, engulfBull: false, engulfBear: false, insideBar: false, trapBull: false, trapBear: false },
         bosUp: true,
@@ -61,6 +87,12 @@ test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
         breakRetestDown: false,
         fakeoutLow: false,
         fakeoutHigh: false,
+        sweepLow: false,
+        sweepHigh: false,
+        sweepLowWick: Number.NaN,
+        sweepHighWick: Number.NaN,
+        swingHigh: Number.NaN,
+        swingLow: Number.NaN,
         ema: { bullOk: true, bearOk: false, crossRecent: false },
         volumeReaction: true,
         chochDown: false,
@@ -81,13 +113,16 @@ test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
 
 test("AI-MATIC SL/TP selection", () => {
   const aiMatic = {
-    htf: { pivotLow: 95, pivotHigh: 112, pois: [], structureTrend: "BULL" },
+    htf: { pivotLow: 95, pivotHigh: 112, pois: [], structureTrend: "BULL", sweepLowWick: Number.NaN, sweepHighWick: Number.NaN },
     mtf: {
       pivotLow: 96,
       pivotHigh: 110,
       profile: { poc: 105, vah: 110, val: 98, hvn: [110], lvn: [103] },
       pois: [],
+      sweepLowWick: Number.NaN,
+      sweepHighWick: Number.NaN,
     },
+    ltf: { sweepLowWick: Number.NaN, sweepHighWick: Number.NaN },
   };
   const sl = resolveAiMaticStopLoss({
     side: "Buy",
@@ -106,6 +141,38 @@ test("AI-MATIC SL/TP selection", () => {
     aiMatic,
   });
   assert.equal(tp, 110);
+});
+
+test("AI-MATIC liquidity sweep detection", () => {
+  const base = Array.from({ length: 16 }, (_, i) =>
+    candle(100, 101, 99, 100.5)
+  );
+  const sweepHigh = [...base, { ...candle(100, 105, 99.5, 100.4), volume: 1000 }];
+  const highState = resolveLiquiditySweep(sweepHigh);
+  assert.equal(highState.sweepHigh, true);
+  assert.equal(highState.sweepHighWick, 105);
+
+  const sweepLow = [...base, { ...candle(100, 100.5, 95, 100.6), volume: 1000 }];
+  const lowState = resolveLiquiditySweep(sweepLow);
+  assert.equal(lowState.sweepLow, true);
+  assert.equal(lowState.sweepLowWick, 95);
+});
+
+test("AI-MATIC SL uses sweep wick when present", () => {
+  const aiMatic = {
+    htf: { pivotLow: 97, pivotHigh: 112, pois: [], sweepLowWick: 95, sweepHighWick: Number.NaN },
+    mtf: { pivotLow: 98, pivotHigh: 110, pois: [], sweepLowWick: Number.NaN, sweepHighWick: Number.NaN },
+    ltf: { sweepLowWick: Number.NaN, sweepHighWick: Number.NaN },
+  };
+  const sl = resolveAiMaticStopLoss({
+    side: "Buy",
+    entry: 100,
+    currentSl: 98.5,
+    atr: 1,
+    aiMatic,
+    core: {},
+  });
+  assert.ok(sl < 97);
 });
 
 test("AI-MATIC structure: HH/HL -> BOS/CHOCH", () => {

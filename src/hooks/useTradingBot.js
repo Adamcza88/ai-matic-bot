@@ -570,7 +570,14 @@ const resolveVolumeRising = (candles, lookback = 8) => {
 
 const resolveLiquiditySweep = (candles) => {
     if (candles.length < AI_MATIC_LIQ_SWEEP_LOOKBACK + 2) {
-        return { sweepHigh: false, sweepLow: false };
+        return {
+            sweepHigh: false,
+            sweepLow: false,
+            sweepHighWick: Number.NaN,
+            sweepLowWick: Number.NaN,
+            swingHigh: Number.NaN,
+            swingLow: Number.NaN,
+        };
     }
     const highs = candles.map((c) => c.high);
     const lows = candles.map((c) => c.low);
@@ -590,9 +597,15 @@ const resolveLiquiditySweep = (candles) => {
         last.close < swingHigh;
     const sweptLow = last.low < swingLow - AI_MATIC_LIQ_SWEEP_ATR_MULT * atr &&
         last.close > swingLow;
+    const sweepHigh = Boolean(volOk && sweptHigh);
+    const sweepLow = Boolean(volOk && sweptLow);
     return {
-        sweepHigh: Boolean(volOk && sweptHigh),
-        sweepLow: Boolean(volOk && sweptLow),
+        sweepHigh,
+        sweepLow,
+        sweepHighWick: sweepHigh ? last.high : Number.NaN,
+        sweepLowWick: sweepLow ? last.low : Number.NaN,
+        swingHigh: Number.isFinite(swingHigh) ? swingHigh : Number.NaN,
+        swingLow: Number.isFinite(swingLow) ? swingLow : Number.NaN,
     };
 };
 
@@ -655,6 +668,7 @@ const buildAiMaticContext = (candles, decision, core) => {
     const patterns = resolveAiMaticPatterns(ltf);
     const htfSweep = resolveLiquiditySweep(htf);
     const mtfSweep = resolveLiquiditySweep(mtf);
+    const ltfSweep = resolveLiquiditySweep(ltf);
     const htfDir = resolveAiMaticHtfDirection(decision, core);
     const bosUp = ltfStructure.bosUp;
     const bosDown = ltfStructure.bosDown;
@@ -690,13 +704,17 @@ const buildAiMaticContext = (candles, decision, core) => {
         htf: {
             direction: htfDir,
             adx: htfAdx,
-            phase,
-            sweepHigh: htfSweep.sweepHigh,
-            sweepLow: htfSweep.sweepLow,
-            volumeRising: htfVolumeRising,
-            structureTrend: htfStructure.structureTrend,
-            lastHighType: htfStructure.lastHighType,
-            lastLowType: htfStructure.lastLowType,
+        phase,
+        sweepHigh: htfSweep.sweepHigh,
+        sweepLow: htfSweep.sweepLow,
+        sweepHighWick: htfSweep.sweepHighWick,
+        sweepLowWick: htfSweep.sweepLowWick,
+        swingHigh: htfSweep.swingHigh,
+        swingLow: htfSweep.swingLow,
+        volumeRising: htfVolumeRising,
+        structureTrend: htfStructure.structureTrend,
+        lastHighType: htfStructure.lastHighType,
+        lastLowType: htfStructure.lastLowType,
             bosUp: htfStructure.bosUp,
             bosDown: htfStructure.bosDown,
             chochUp: htfStructure.chochUp,
@@ -707,13 +725,17 @@ const buildAiMaticContext = (candles, decision, core) => {
             poiReactionBull,
             poiReactionBear,
         },
-        mtf: {
-            sweepHigh: mtfSweep.sweepHigh,
-            sweepLow: mtfSweep.sweepLow,
-            profile,
-            pocNear: Boolean(pocNear),
-            lvnRejectionBull: lvnRejection.bull,
-            lvnRejectionBear: lvnRejection.bear,
+    mtf: {
+        sweepHigh: mtfSweep.sweepHigh,
+        sweepLow: mtfSweep.sweepLow,
+        sweepHighWick: mtfSweep.sweepHighWick,
+        sweepLowWick: mtfSweep.sweepLowWick,
+        swingHigh: mtfSweep.swingHigh,
+        swingLow: mtfSweep.swingLow,
+        profile,
+        pocNear: Boolean(pocNear),
+        lvnRejectionBull: lvnRejection.bull,
+        lvnRejectionBear: lvnRejection.bear,
             structureTrend: mtfStructure.structureTrend,
             lastHighType: mtfStructure.lastHighType,
             lastLowType: mtfStructure.lastLowType,
@@ -733,15 +755,21 @@ const buildAiMaticContext = (candles, decision, core) => {
             bosDown,
             chochUp: ltfStructure.chochUp,
             chochDown: ltfStructure.chochDown,
-            breakRetestUp,
-            breakRetestDown,
-            fakeoutHigh: Boolean(core?.ltfFakeBreakHigh),
-            fakeoutLow: Boolean(core?.ltfFakeBreakLow),
-            ema: emaFlags,
-            volumeReaction: ltfVolumeReaction,
-            structureTrend: ltfStructure.structureTrend,
-            lastHighType: ltfStructure.lastHighType,
-            lastLowType: ltfStructure.lastLowType,
+        breakRetestUp,
+        breakRetestDown,
+        fakeoutHigh: Boolean(core?.ltfFakeBreakHigh),
+        fakeoutLow: Boolean(core?.ltfFakeBreakLow),
+        sweepHigh: ltfSweep.sweepHigh,
+        sweepLow: ltfSweep.sweepLow,
+        sweepHighWick: ltfSweep.sweepHighWick,
+        sweepLowWick: ltfSweep.sweepLowWick,
+        swingHigh: ltfSweep.swingHigh,
+        swingLow: ltfSweep.swingLow,
+        ema: emaFlags,
+        volumeReaction: ltfVolumeReaction,
+        structureTrend: ltfStructure.structureTrend,
+        lastHighType: ltfStructure.lastHighType,
+        lastLowType: ltfStructure.lastLowType,
         },
     };
 };
@@ -783,16 +811,19 @@ const resolveAiMaticStopLoss = (args) => {
     const pivotHigh = maxFinite(aiMatic?.htf.pivotHigh, aiMatic?.mtf.pivotHigh, core?.lastPivotHigh, core?.pivotHigh);
     const pois = [...(aiMatic?.htf.pois ?? []), ...(aiMatic?.mtf.pois ?? [])];
     const poiBoundary = resolveNearestPoiBoundary(pois, side, entry);
+    const sweepBase = side === "Buy"
+        ? minFinite(aiMatic?.ltf.sweepLowWick, aiMatic?.mtf.sweepLowWick, aiMatic?.htf.sweepLowWick)
+        : maxFinite(aiMatic?.ltf.sweepHighWick, aiMatic?.mtf.sweepHighWick, aiMatic?.htf.sweepHighWick);
     const buffer = Number.isFinite(atr) ? atr * AI_MATIC_SL_ATR_BUFFER : 0;
     let candidate = Number.NaN;
     if (side === "Buy") {
-        const base = minFinite(pivotLow, poiBoundary);
+        const base = minFinite(pivotLow, poiBoundary, sweepBase);
         if (Number.isFinite(base)) {
             candidate = base - buffer;
         }
     }
     else {
-        const base = maxFinite(pivotHigh, poiBoundary);
+        const base = maxFinite(pivotHigh, poiBoundary, sweepBase);
         if (Number.isFinite(base)) {
             candidate = base + buffer;
         }
@@ -892,8 +923,14 @@ const evaluateAiMaticGatesCore = (args) => {
         ? aiMatic.ltf.bosUp || aiMatic.ltf.breakRetestUp
         : aiMatic.ltf.bosDown || aiMatic.ltf.breakRetestDown;
     const sweepOk = dir === "bull"
-        ? aiMatic.htf.sweepLow || aiMatic.mtf.sweepLow || aiMatic.ltf.fakeoutLow
-        : aiMatic.htf.sweepHigh || aiMatic.mtf.sweepHigh || aiMatic.ltf.fakeoutHigh;
+        ? aiMatic.htf.sweepLow ||
+            aiMatic.mtf.sweepLow ||
+            aiMatic.ltf.sweepLow ||
+            aiMatic.ltf.fakeoutLow
+        : aiMatic.htf.sweepHigh ||
+            aiMatic.mtf.sweepHigh ||
+            aiMatic.ltf.sweepHigh ||
+            aiMatic.ltf.fakeoutHigh;
     const poiOk = dir === "bull"
         ? aiMatic.htf.poiReactionBull ||
             aiMatic.mtf.poiReactionBull ||
@@ -950,6 +987,7 @@ export const __aiMaticTest = {
     resolveAiMaticPatterns,
     resolveAiMaticEmaFlags,
     resolveAiMaticBreakRetest,
+    resolveLiquiditySweep,
     resolveStructureState,
     resolveAiMaticStopLoss,
     resolveAiMaticTargets,

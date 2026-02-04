@@ -492,6 +492,15 @@ type AiMaticEmaFlags = {
   close: number;
 };
 
+type LiquiditySweepState = {
+  sweepHigh: boolean;
+  sweepLow: boolean;
+  sweepHighWick: number;
+  sweepLowWick: number;
+  swingHigh: number;
+  swingLow: number;
+};
+
 type StructureState = {
   structureTrend: "BULL" | "BEAR" | "RANGE";
   lastHighType: "HH" | "LH" | "NONE";
@@ -518,6 +527,10 @@ type AiMaticContext = {
     chochDown: boolean;
     sweepHigh: boolean;
     sweepLow: boolean;
+    sweepHighWick: number;
+    sweepLowWick: number;
+    swingHigh: number;
+    swingLow: number;
     volumeRising: boolean;
     pivotHigh?: number;
     pivotLow?: number;
@@ -541,6 +554,10 @@ type AiMaticContext = {
     chochDown: boolean;
     pivotHigh?: number;
     pivotLow?: number;
+    sweepHighWick: number;
+    sweepLowWick: number;
+    swingHigh: number;
+    swingLow: number;
     pois: AiMaticPoi[];
     poiReactionBull: boolean;
     poiReactionBear: boolean;
@@ -555,6 +572,12 @@ type AiMaticContext = {
     breakRetestDown: boolean;
     fakeoutHigh: boolean;
     fakeoutLow: boolean;
+    sweepHigh: boolean;
+    sweepLow: boolean;
+    sweepHighWick: number;
+    sweepLowWick: number;
+    swingHigh: number;
+    swingLow: number;
     ema: AiMaticEmaFlags;
     volumeReaction: boolean;
     structureTrend: "BULL" | "BEAR" | "RANGE";
@@ -821,9 +844,16 @@ const resolveVolumeRising = (candles: Candle[], lookback = 8) => {
   return Number.isFinite(recentAvg) && Number.isFinite(prevAvg) && recentAvg > prevAvg * 1.1;
 };
 
-const resolveLiquiditySweep = (candles: Candle[]) => {
+const resolveLiquiditySweep = (candles: Candle[]): LiquiditySweepState => {
   if (candles.length < AI_MATIC_LIQ_SWEEP_LOOKBACK + 2) {
-    return { sweepHigh: false, sweepLow: false };
+    return {
+      sweepHigh: false,
+      sweepLow: false,
+      sweepHighWick: Number.NaN,
+      sweepLowWick: Number.NaN,
+      swingHigh: Number.NaN,
+      swingLow: Number.NaN,
+    };
   }
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
@@ -846,9 +876,15 @@ const resolveLiquiditySweep = (candles: Candle[]) => {
   const sweptLow =
     last.low < swingLow - AI_MATIC_LIQ_SWEEP_ATR_MULT * atr &&
     last.close > swingLow;
+  const sweepHigh = Boolean(volOk && sweptHigh);
+  const sweepLow = Boolean(volOk && sweptLow);
   return {
-    sweepHigh: Boolean(volOk && sweptHigh),
-    sweepLow: Boolean(volOk && sweptLow),
+    sweepHigh,
+    sweepLow,
+    sweepHighWick: sweepHigh ? last.high : Number.NaN,
+    sweepLowWick: sweepLow ? last.low : Number.NaN,
+    swingHigh: Number.isFinite(swingHigh) ? swingHigh : Number.NaN,
+    swingLow: Number.isFinite(swingLow) ? swingLow : Number.NaN,
   };
 };
 
@@ -933,6 +969,7 @@ const buildAiMaticContext = (
   const patterns = resolveAiMaticPatterns(ltf);
   const htfSweep = resolveLiquiditySweep(htf);
   const mtfSweep = resolveLiquiditySweep(mtf);
+  const ltfSweep = resolveLiquiditySweep(ltf);
   const htfDir = resolveAiMaticHtfDirection(decision, core);
   const bosUp = ltfStructure.bosUp;
   const bosDown = ltfStructure.bosDown;
@@ -982,6 +1019,10 @@ const buildAiMaticContext = (
       phase,
       sweepHigh: htfSweep.sweepHigh,
       sweepLow: htfSweep.sweepLow,
+      sweepHighWick: htfSweep.sweepHighWick,
+      sweepLowWick: htfSweep.sweepLowWick,
+      swingHigh: htfSweep.swingHigh,
+      swingLow: htfSweep.swingLow,
       volumeRising: htfVolumeRising,
       structureTrend: htfStructure.structureTrend,
       lastHighType: htfStructure.lastHighType,
@@ -999,6 +1040,10 @@ const buildAiMaticContext = (
     mtf: {
       sweepHigh: mtfSweep.sweepHigh,
       sweepLow: mtfSweep.sweepLow,
+      sweepHighWick: mtfSweep.sweepHighWick,
+      sweepLowWick: mtfSweep.sweepLowWick,
+      swingHigh: mtfSweep.swingHigh,
+      swingLow: mtfSweep.swingLow,
       profile,
       pocNear: Boolean(pocNear),
       lvnRejectionBull: lvnRejection.bull,
@@ -1026,6 +1071,12 @@ const buildAiMaticContext = (
       breakRetestDown,
       fakeoutHigh: Boolean(core?.ltfFakeBreakHigh),
       fakeoutLow: Boolean(core?.ltfFakeBreakLow),
+      sweepHigh: ltfSweep.sweepHigh,
+      sweepLow: ltfSweep.sweepLow,
+      sweepHighWick: ltfSweep.sweepHighWick,
+      sweepLowWick: ltfSweep.sweepLowWick,
+      swingHigh: ltfSweep.swingHigh,
+      swingLow: ltfSweep.swingLow,
       ema: emaFlags,
       volumeReaction: ltfVolumeReaction,
       structureTrend: ltfStructure.structureTrend,
@@ -1092,15 +1143,27 @@ const resolveAiMaticStopLoss = (args: {
     ...(aiMatic?.mtf.pois ?? []),
   ];
   const poiBoundary = resolveNearestPoiBoundary(pois, side, entry);
+  const sweepBase =
+    side === "Buy"
+      ? minFinite(
+          aiMatic?.ltf.sweepLowWick,
+          aiMatic?.mtf.sweepLowWick,
+          aiMatic?.htf.sweepLowWick
+        )
+      : maxFinite(
+          aiMatic?.ltf.sweepHighWick,
+          aiMatic?.mtf.sweepHighWick,
+          aiMatic?.htf.sweepHighWick
+        );
   const buffer = Number.isFinite(atr) ? atr * AI_MATIC_SL_ATR_BUFFER : 0;
   let candidate = Number.NaN;
   if (side === "Buy") {
-    const base = minFinite(pivotLow, poiBoundary);
+    const base = minFinite(pivotLow, poiBoundary, sweepBase);
     if (Number.isFinite(base)) {
       candidate = base - buffer;
     }
   } else {
-    const base = maxFinite(pivotHigh, poiBoundary);
+    const base = maxFinite(pivotHigh, poiBoundary, sweepBase);
     if (Number.isFinite(base)) {
       candidate = base + buffer;
     }
@@ -1221,8 +1284,14 @@ const evaluateAiMaticGatesCore = (args: {
       : aiMatic.ltf.bosDown || aiMatic.ltf.breakRetestDown;
   const sweepOk =
     dir === "bull"
-      ? aiMatic.htf.sweepLow || aiMatic.mtf.sweepLow || aiMatic.ltf.fakeoutLow
-      : aiMatic.htf.sweepHigh || aiMatic.mtf.sweepHigh || aiMatic.ltf.fakeoutHigh;
+      ? aiMatic.htf.sweepLow ||
+        aiMatic.mtf.sweepLow ||
+        aiMatic.ltf.sweepLow ||
+        aiMatic.ltf.fakeoutLow
+      : aiMatic.htf.sweepHigh ||
+        aiMatic.mtf.sweepHigh ||
+        aiMatic.ltf.sweepHigh ||
+        aiMatic.ltf.fakeoutHigh;
   const poiOk =
     dir === "bull"
       ? aiMatic.htf.poiReactionBull ||
@@ -1285,6 +1354,7 @@ export const __aiMaticTest = {
   resolveAiMaticPatterns,
   resolveAiMaticEmaFlags,
   resolveAiMaticBreakRetest,
+  resolveLiquiditySweep,
   resolveStructureState,
   resolveAiMaticStopLoss,
   resolveAiMaticTargets,
