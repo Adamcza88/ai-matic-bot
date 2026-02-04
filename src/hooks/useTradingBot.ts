@@ -2676,7 +2676,7 @@ function computeLossStreak(
 
 const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
 const MIN_PROTECTION_ATR_FACTOR = 0.05;
-const TRAIL_ACTIVATION_R_MULTIPLIER = 1.0;
+const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
 
 function resolveMinProtectionDistance(entry: number, atr?: number) {
   const pctDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
