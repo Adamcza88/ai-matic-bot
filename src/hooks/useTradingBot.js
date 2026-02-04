@@ -2036,14 +2036,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const computeTrailingPlan = useCallback((entry, sl, side, symbol) => {
         const settings = settingsRef.current;
         const isScalpProfile = settings.riskMode === "ai-matic-scalp";
-        const isAiMaticProfile = settings.riskMode === "ai-matic";
         const symbolMode = TRAIL_SYMBOL_MODE[symbol];
         const forceTrail = settings.riskMode === "ai-matic" ||
             settings.riskMode === "ai-matic-x" ||
             settings.riskMode === "ai-matic-tree";
         if (isScalpProfile)
-            return null;
-        if (isAiMaticProfile)
             return null;
         if (symbolMode === "off")
             return null;
@@ -2263,55 +2260,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                                     message: `${symbol} PRO T1 partial failed: ${asErrorMessage(err)}`,
                                 },
                             ]);
-                        }
-                    }
-                }
-            }
-            if (!isScalpProfile && !isProProfile && settings.riskMode === "ai-matic") {
-                const trailingActive = toNumber(pos?.trailingActivePrice ?? pos?.activePrice ?? pos?.activationPrice);
-                const trailingStop = toNumber(pos?.trailingStop ?? pos?.trailingStopDistance ?? pos?.trailingStopPrice ?? pos?.trailPrice);
-                const hasTrail = Number.isFinite(trailingActive) || Number.isFinite(trailingStop);
-                const activationPrice = Number.isFinite(entry) && entry > 0
-                    ? side === "Buy"
-                        ? entry * (1 + AI_MATIC_TRAIL_ACTIVATE_PCT)
-                        : entry * (1 - AI_MATIC_TRAIL_ACTIVATE_PCT)
-                    : Number.NaN;
-                if (!hasTrail && Number.isFinite(activationPrice) && activationPrice > 0) {
-                    const lastAttempt = aiMaticTrailCooldownRef.current.get(symbol) ?? 0;
-                    if (now - lastAttempt >= 30000) {
-                        aiMaticTrailCooldownRef.current.set(symbol, now);
-                        const atr = toNumber(decisionRef.current[symbol]?.decision?.coreV2?.atr14);
-                        const minDistance = resolveMinProtectionDistance(entry);
-                        const distance = Math.max(Number.isFinite(atr) ? atr * AI_MATIC_TRAIL_ATR_MULT : 0, entry * AI_MATIC_TRAIL_RETRACE_PCT, minDistance);
-                        if (Number.isFinite(distance) && distance > 0) {
-                            try {
-                                await postJson("/protection", {
-                                    symbol,
-                                    trailingStop: distance,
-                                    trailingActivePrice: activationPrice,
-                                    positionIdx: Number.isFinite(pos.positionIdx)
-                                        ? pos.positionIdx
-                                        : undefined,
-                                });
-                                addLogEntries([
-                                    {
-                                        id: `ai-matic-trail:${symbol}:${now}`,
-                                        timestamp: new Date(now).toISOString(),
-                                        action: "STATUS",
-                                        message: `${symbol} AI-MATIC trailing active`,
-                                    },
-                                ]);
-                            }
-                            catch (err) {
-                                addLogEntries([
-                                    {
-                                        id: `ai-matic-trail:error:${symbol}:${now}`,
-                                        timestamp: new Date(now).toISOString(),
-                                        action: "ERROR",
-                                        message: `${symbol} AI-MATIC trailing failed: ${asErrorMessage(err)}`,
-                                    },
-                                ]);
-                            }
                         }
                     }
                 }

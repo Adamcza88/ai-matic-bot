@@ -3424,11 +3424,7 @@ export function useTradingBot(
     (entry: number, sl: number, side: "Buy" | "Sell", symbol: Symbol) => {
       const settings = settingsRef.current;
       const isScalpProfile = settings.riskMode === "ai-matic-scalp";
-      const isAiMaticProfile = settings.riskMode === "ai-matic";
       if (isScalpProfile) {
-        return null;
-      }
-      if (isAiMaticProfile) {
         return null;
       }
       const symbolMode = TRAIL_SYMBOL_MODE[symbol];
@@ -3698,73 +3694,6 @@ export function useTradingBot(
                     message: `${symbol} PRO T1 partial failed: ${asErrorMessage(err)}`,
                   },
                 ]);
-              }
-            }
-          }
-        }
-        if (!isScalpProfile && !isProProfile && settings.riskMode === "ai-matic") {
-          const trailingActive = toNumber(
-            (pos as any)?.trailingActivePrice ??
-              (pos as any)?.activePrice ??
-              (pos as any)?.activationPrice
-          );
-          const trailingStop = toNumber(
-            (pos as any)?.trailingStop ??
-              (pos as any)?.trailingStopDistance ??
-              (pos as any)?.trailingStopPrice ??
-              (pos as any)?.trailPrice
-          );
-          const hasTrail =
-            Number.isFinite(trailingActive) || Number.isFinite(trailingStop);
-          const activationPrice =
-            Number.isFinite(entry) && entry > 0
-              ? side === "Buy"
-                ? entry * (1 + AI_MATIC_TRAIL_ACTIVATE_PCT)
-                : entry * (1 - AI_MATIC_TRAIL_ACTIVATE_PCT)
-              : Number.NaN;
-          const canArmTrail =
-            !hasTrail && Number.isFinite(activationPrice) && activationPrice > 0;
-          if (canArmTrail) {
-            const lastAttempt = aiMaticTrailCooldownRef.current.get(symbol) ?? 0;
-            if (now - lastAttempt >= 30_000) {
-              aiMaticTrailCooldownRef.current.set(symbol, now);
-              const atr = toNumber(
-                (decisionRef.current[symbol]?.decision as any)?.coreV2?.atr14
-              );
-              const minDistance = resolveMinProtectionDistance(entry);
-              const distance = Math.max(
-                Number.isFinite(atr) ? atr * AI_MATIC_TRAIL_ATR_MULT : 0,
-                entry * AI_MATIC_TRAIL_RETRACE_PCT,
-                minDistance
-              );
-              if (Number.isFinite(distance) && distance > 0) {
-                try {
-                  await postJson("/protection", {
-                    symbol,
-                    trailingStop: distance,
-                    trailingActivePrice: activationPrice,
-                    positionIdx: Number.isFinite(pos.positionIdx)
-                      ? pos.positionIdx
-                      : undefined,
-                  });
-                  addLogEntries([
-                    {
-                      id: `ai-matic-trail:${symbol}:${now}`,
-                      timestamp: new Date(now).toISOString(),
-                      action: "STATUS",
-                      message: `${symbol} AI-MATIC trailing active`,
-                    },
-                  ]);
-                } catch (err) {
-                  addLogEntries([
-                    {
-                      id: `ai-matic-trail:error:${symbol}:${now}`,
-                      timestamp: new Date(now).toISOString(),
-                      action: "ERROR",
-                      message: `${symbol} AI-MATIC trailing failed: ${asErrorMessage(err)}`,
-                    },
-                  ]);
-                }
               }
             }
           }
