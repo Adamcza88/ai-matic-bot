@@ -1335,6 +1335,50 @@ const resolveAiMaticTargets = (args: {
   return Number.NaN;
 };
 
+const resolveAiMaticEntryType = (args: {
+  aiMatic: AiMaticContext;
+  side: "Buy" | "Sell";
+  entry: number;
+}): { entryType: EntryType; triggerPrice?: number; allowMarket: boolean } => {
+  const { aiMatic, side, entry } = args;
+  const dir = side === "Buy" ? "bull" : "bear";
+  const patterns = aiMatic.ltf.patterns;
+  const strongPattern =
+    dir === "bull"
+      ? patterns.pinbarBull || patterns.engulfBull || patterns.trapBull
+      : patterns.pinbarBear || patterns.engulfBear || patterns.trapBear;
+  const momentumOk =
+    dir === "bull" ? aiMatic.ltf.momentumLongOk : aiMatic.ltf.momentumShortOk;
+  const strongReaction = strongPattern && aiMatic.ltf.volumeReaction && momentumOk;
+  if (strongReaction) {
+    return { entryType: "MARKET", allowMarket: true };
+  }
+  const breakoutOk =
+    dir === "bull"
+      ? aiMatic.ltf.bosUp || aiMatic.ltf.breakRetestUp
+      : aiMatic.ltf.bosDown || aiMatic.ltf.breakRetestDown;
+  if (breakoutOk) {
+    const triggerBase =
+      dir === "bull"
+        ? maxFinite(
+            entry,
+            aiMatic.ltf.swingHigh,
+            aiMatic.mtf.pivotHigh,
+            aiMatic.htf.pivotHigh
+          )
+        : minFinite(
+            entry,
+            aiMatic.ltf.swingLow,
+            aiMatic.mtf.pivotLow,
+            aiMatic.htf.pivotLow
+          );
+    const triggerPrice =
+      Number.isFinite(triggerBase) && triggerBase > 0 ? triggerBase : undefined;
+    return { entryType: "CONDITIONAL", triggerPrice, allowMarket: false };
+  }
+  return { entryType: "LIMIT", allowMarket: false };
+};
+
 type AiMaticGate = { name: string; ok: boolean; detail?: string };
 type AiMaticGateEval = {
   hardGates: AiMaticGate[];
@@ -3657,7 +3701,6 @@ export function useTradingBot(
           }
         }
         if (!isScalpProfile && !isProProfile && settings.riskMode === "ai-matic") {
-          const price = toNumber(pos.markPrice);
           const trailingActive = toNumber(
             (pos as any)?.trailingActivePrice ??
               (pos as any)?.activePrice ??
@@ -3677,11 +3720,9 @@ export function useTradingBot(
                 ? entry * (1 + AI_MATIC_TRAIL_ACTIVATE_PCT)
                 : entry * (1 - AI_MATIC_TRAIL_ACTIVATE_PCT)
               : Number.NaN;
-          const activateNow =
-            Number.isFinite(price) &&
-            Number.isFinite(activationPrice) &&
-            (side === "Buy" ? price >= activationPrice : price <= activationPrice);
-          if (!hasTrail && activateNow) {
+          const canArmTrail =
+            !hasTrail && Number.isFinite(activationPrice) && activationPrice > 0;
+          if (canArmTrail) {
             const lastAttempt = aiMaticTrailCooldownRef.current.get(symbol) ?? 0;
             if (now - lastAttempt >= 30_000) {
               aiMaticTrailCooldownRef.current.set(symbol, now);
@@ -3694,12 +3735,7 @@ export function useTradingBot(
                 entry * AI_MATIC_TRAIL_RETRACE_PCT,
                 minDistance
               );
-              if (
-                Number.isFinite(distance) &&
-                distance > 0 &&
-                Number.isFinite(activationPrice) &&
-                activationPrice > 0
-              ) {
+              if (Number.isFinite(distance) && distance > 0) {
                 try {
                   await postJson("/protection", {
                     symbol,
@@ -6779,8 +6815,9 @@ export function useTradingBot(
       if (signalSeenRef.current.has(signalId)) return;
       signalSeenRef.current.add(signalId);
 
+      let aiMaticEval: ReturnType<typeof evaluateAiMaticGates> | null = null;
       if (isAiMaticProfile) {
-        const aiMaticEval = evaluateAiMaticGates(symbol, decision, signal);
+        aiMaticEval = evaluateAiMaticGates(symbol, decision, signal);
         if (!aiMaticEval.pass) {
           const hardFails = aiMaticEval.hardGates
             .filter((g) => !g.ok)
@@ -7256,6 +7293,23 @@ export function useTradingBot(
       if (isTreeProfile) {
         entryType = "LIMIT_MAKER_FIRST";
       }
+      let aiMaticMarketAllowed = false;
+      let aiMaticTriggerOverride: number | undefined;
+      if (isAiMaticProfile && aiMaticEval?.pass) {
+        const aiMatic = (decision as any)?.aiMatic as AiMaticContext | null;
+        if (aiMatic) {
+          const resolved = resolveAiMaticEntryType({
+            aiMatic,
+            side,
+            entry,
+          });
+          entryType = resolved.entryType;
+          aiMaticMarketAllowed = resolved.allowMarket;
+          if (Number.isFinite(resolved.triggerPrice)) {
+            aiMaticTriggerOverride = resolved.triggerPrice;
+          }
+        }
+      }
       const checklistGates = [...coreEval.gates];
       if (isScalpProfile) {
         checklistGates.push({
@@ -7324,16 +7378,20 @@ export function useTradingBot(
       }
 
       if (entryType === "MARKET") {
-        const allowMarket = isAiMaticX && riskOn && xContext?.strongTrendExpanse;
+        const allowMarket =
+          (isAiMaticX && riskOn && xContext?.strongTrendExpanse) ||
+          (isAiMaticProfile && aiMaticMarketAllowed);
         if (!allowMarket) {
           entryType = "LIMIT";
         }
       }
       const triggerPrice =
         entryType === "CONDITIONAL"
-          ? Number.isFinite(signal.triggerPrice)
-            ? signal.triggerPrice
-            : entry
+          ? Number.isFinite(aiMaticTriggerOverride)
+            ? aiMaticTriggerOverride
+            : Number.isFinite(signal.triggerPrice)
+              ? signal.triggerPrice
+              : entry
           : undefined;
 
       const proTargets = isProProfile ? (signal as any)?.proTargets : null;
