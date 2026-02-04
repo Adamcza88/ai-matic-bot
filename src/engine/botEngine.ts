@@ -1,4 +1,3 @@
-import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet";
 import { computeEma, computeRsi, computeATR, computeADX } from "./ta";
 import { evaluateAiMaticProStrategyForSymbol } from "./aiMaticProStrategy";
 
@@ -158,8 +157,6 @@ export interface BotConfig {
     | "ai-matic-tree"
     | "ai-matic-pro";
   entryStrictness: "base" | "relaxed" | "ultra" | "test";
-  useStrategyCheatSheet?: boolean;
-  cheatSheetSetupId?: string;
   accountBalance: number;
   atrPeriod: number;
   adxPeriod: number;
@@ -259,7 +256,6 @@ export const defaultConfig: BotConfig = {
   riskPerTrade: 0.04,
   strategyProfile: "ai-matic",
   entryStrictness: "base",
-  useStrategyCheatSheet: true,
   accountBalance: 2500,
   atrPeriod: 14,
   adxPeriod: 14,
@@ -328,27 +324,6 @@ export class TradingBot {
   // Ephemeral state for UI feedback
   private lastBlockedSignal: EntrySignal | null = null;
   private lastCorrelationExit: boolean = false;
-  // Derived flags for cheat sheet
-  private bosDirection: "up" | "down" | null = null;
-  private returnedToLevel = false;
-  private rejectedLvn = false;
-  private touchedOb = true;  //false
-  private rejectedOb = true; //false
-  private trapReaction = true; //false
-  private lowVolFlag = false;
-  private htfReaction = true;  //false
-  private structureReadable = true;
-
-  getBosDirection() { return this.bosDirection; }
-  didReturnToLevel() { return this.returnedToLevel; }
-  didRejectLvn() { return this.rejectedLvn; }
-  didTouchOb() { return this.touchedOb; }
-  didRejectOb() { return this.rejectedOb; }
-  didTrapReaction() { return this.trapReaction; }
-  getLowVolFlag() { return this.lowVolFlag; }
-  hasHtfReaction() { return this.htfReaction; }
-  isStructureReadable() { return this.structureReadable; }
-
   /**
    * Check if the bot (usually BTC) is in a Decoupling/Altseason mode.
    * Condition: Trend is Range AND ADX < 25 (Low Volatility / Sideways).
@@ -1719,7 +1694,6 @@ export type EngineSignal = {
   id: string;
   symbol: string;
   intent: { side: "buy" | "sell"; entry: number; sl: number; tp: number };
-  setupId?: string;
   entryType?: "LIMIT_MAKER_FIRST" | "LIMIT" | "CONDITIONAL" | "MARKET";
   triggerPrice?: number;
   kind?: EntryKind;
@@ -1742,8 +1716,6 @@ export type EngineDecision = {
   halted?: boolean;
   xContext?: any;
   trailOffsetPct?: number;
-  cheatDeps?: any;
-  cheatSignals?: any;
   // Allow future metadata fields without breaking strict excess property checks.
   [key: string]: any;
 };
@@ -1870,37 +1842,8 @@ export function evaluateStrategyForSymbol(
 
 
   const trendMetrics = bot.getTrendMetrics(ht);
-  // (placeholder) cheat flags – real modules should populate these in future
 
   const trend = trendMetrics.trend;
-
-  // Build cheat sheet dependency/signal payloads for AI-MATIC-TREE.
-  // These are conservative defaults so the cheat-sheet pipeline works
-  // end-to-end even without dedicated market-structure modules wired in yet.
-  const cheatDeps = {
-    hasVP: true,      // allow PoC/VP usage
-    hasOB: true,      // allow OB logic
-    hasGAP: true,     // allow GAP TP logic
-    hasTrap: true,    // allow trap logic
-    hasLowVol: true,  // low-vol module available
-  };
-
-  const cheatSignals = {
-    sessionOk: true,
-    htfReactionConfirmed:
-      Number.isFinite(trendMetrics.adx) &&
-      trendMetrics.adx >= botConfig.adxThreshold &&
-      trend !== Trend.Range,
-    structureReadable: true,
-    inLowVolume: false,
-    bosUp: trend === Trend.Bull,
-    bosDown: trend === Trend.Bear,
-    returnToLevel: false,
-    rejectionInLVN: false,
-    touchOB: true,  //false
-    rejectionInOB: true,  //false
-    trapReaction: true,  //false
-  };
 
   let signal: EngineSignal | null = null;
   const position = bot.getPosition();
@@ -1950,25 +1893,7 @@ export function evaluateStrategyForSymbol(
       correlationExit: bot.getLastCorrelationExit(),
       position,
       halted: bot.isHalted(),
-      cheatDeps,
-      cheatSignals,
     };
-  }
-
-  if (signal && botConfig.useStrategyCheatSheet) {
-    const setupId =
-      botConfig.cheatSheetSetupId ?? getDefaultCheatSheetSetupId();
-    const setup = setupId ? getCheatSheetSetup(setupId) : null;
-    if (setup) {
-      signal.setupId = setup.id;
-      signal.entryType = setup.entryType;
-      if (setup.entryType === "CONDITIONAL") {
-        const dir = signal.intent.side === "buy" ? 1 : -1;
-        const offsetBps = setup.triggerOffsetBps ?? 0;
-        signal.triggerPrice =
-          signal.intent.entry * (1 + (dir * offsetBps) / 10000);
-      }
-    }
   }
 
   return {
@@ -1981,7 +1906,5 @@ export function evaluateStrategyForSymbol(
     correlationExit: bot.getLastCorrelationExit(),
     position,
     halted: bot.isHalted(),
-    cheatDeps,
-    cheatSignals,
   };
 }

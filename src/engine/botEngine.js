@@ -1,4 +1,3 @@
-import { getCheatSheetSetup, getDefaultCheatSheetSetupId } from "./strategyCheatSheet.js";
 import { computeEma, computeRsi } from "./ta.js";
 export var Trend;
 (function (Trend) {
@@ -101,7 +100,6 @@ export const defaultConfig = {
     riskPerTrade: 0.04,
     strategyProfile: "ai-matic",
     entryStrictness: "ultra",
-    useStrategyCheatSheet: false,
     accountBalance: 200000,
     atrPeriod: 14,
     adxPeriod: 14,
@@ -1492,20 +1490,6 @@ export function evaluateStrategyForSymbol(symbol, candles, config = {}) {
             message: `Entered ${position.side} with SL ${position.stopLoss.toFixed(2)} | TP ${position.initialTakeProfit.toFixed(2)}`,
             createdAt: new Date().toISOString(),
         };
-    }
-    if (signal && botConfig.useStrategyCheatSheet) {
-        const setupId = botConfig.cheatSheetSetupId ?? getDefaultCheatSheetSetupId();
-        const setup = setupId ? getCheatSheetSetup(setupId) : null;
-        if (setup) {
-            signal.setupId = setup.id;
-            signal.entryType = setup.entryType;
-            if (setup.entryType === "CONDITIONAL") {
-                const dir = signal.intent.side === "buy" ? 1 : -1;
-                const offsetBps = setup.triggerOffsetBps ?? 0;
-                signal.triggerPrice =
-                    signal.intent.entry * (1 + (dir * offsetBps) / 10000);
-            }
-        }
     }
     return {
         state: bot.getState(),

@@ -12,7 +12,6 @@ import OrdersPanel from "./dashboard/OrdersPanel";
 import SignalsAccordion from "./dashboard/SignalsAccordion";
 import LogsPanel from "./dashboard/LogsPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
-import { getCheatSheetSetup } from "../engine/strategyCheatSheet";
 
 type DashboardProps = {
   mode: TradingMode;
@@ -80,30 +79,6 @@ export default function Dashboard({
   }, [scanDiagnostics]);
 
   const riskMode = bot.settings?.riskMode ?? "ai-matic";
-  const cheatSheetSetupId =
-    riskMode === "ai-matic-pro"
-      ? null
-      : {
-          "ai-matic": "ai-matic-core",
-          "ai-matic-x": "ai-matic-x-smart-money-combo",
-          "ai-matic-scalp": "ai-matic-scalp-scalpera",
-          "ai-matic-tree": "ai-matic-decision-tree",
-        }[riskMode] ?? "ai-matic-core";
-  const cheatSheetSetup = cheatSheetSetupId
-    ? getCheatSheetSetup(cheatSheetSetupId)
-    : null;
-  const cheatSheetStatus =
-    riskMode === "ai-matic-pro"
-      ? "N/A"
-      : bot.settings?.strategyCheatSheetEnabled
-        ? "On"
-        : "Off";
-  const cheatSheetLabel =
-    riskMode === "ai-matic-pro"
-      ? "N/A"
-      : cheatSheetSetup?.name ?? "Cheat sheet";
-  const cheatSheetNote = `Cheat sheet: ${cheatSheetLabel} (${cheatSheetStatus})`;
-  const cheatEnabled = bot.settings?.strategyCheatSheetEnabled === true;
   const profileMeta = useMemo(() => {
     if (riskMode === "ai-matic-scalp") {
       return {
@@ -114,7 +89,7 @@ export default function Dashboard({
         session: "24/7",
         risk: "Risk 0.25% equity/trade · notional cap ~1% equity",
         entry: "EMA Cross + RSI Divergence + Volume Spike",
-        execution: `Trailing Stop (ATR 2.5x) nebo Fixed TP (1.5 RRR) · ${cheatSheetNote}`,
+        execution: "Trailing Stop (ATR 2.5x) nebo Fixed TP (1.5 RRR)",
       };
     }
     if (riskMode === "ai-matic-x") {
@@ -127,33 +102,21 @@ export default function Dashboard({
         risk: "2 vstupy (60 % / 40 %) · TP1 0.9–1.2 % · TP2 2–3 %",
         entry:
           "Entry 1: reakce z OB/sweep návrat · Entry 2: retest OB (GAP/Fibo)",
-        execution: `SL pod strukturu/OB knot · trailing dle profilu (R-based / retracement) · ${cheatSheetNote}`,
+        execution: "SL pod strukturu/OB knot · trailing dle profilu (R-based / retracement)",
       };
     }
     if (riskMode === "ai-matic-tree") {
       const strictness = bot.settings?.entryStrictness ?? "base";
       const maxPos = bot.settings?.maxOpenPositions ?? 7;
-      if (cheatEnabled) {
-        return {
-          label: "AI-MATIC-TREE",
-          subtitle: `High-Precision (~100/day) · MaxPos: ${maxPos}`,
-          symbols: SUPPORTED_SYMBOLS,
-          timeframes: "SCALP 1m/5m (Priority) · INTRADAY 15m · SWING 1h",
-          session: "24/7",
-          risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
-          entry: `Strictness: ${strictness.toUpperCase()} · Trend + Momentum + Volume`,
-          execution: `Smart Limit (BBO chase) · Quick TP1 (WR guard) · ${cheatSheetNote}`,
-        };
-      }
       return {
         label: "AI-MATIC-TREE",
-        subtitle: "Multi-TF Trend Engine (Cheat Sheet OFF)",
+        subtitle: `Multi-TF Trend Engine · MaxPos: ${maxPos}`,
         symbols: SUPPORTED_SYMBOLS,
         timeframes: "HTF 1h/15m · LTF 5m/1m",
         session: "24/7",
         risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
-        entry: "Momentum / Pullback / Breakout (Mean reversion jen v range režimu)",
-        execution: `TP ~2.2R + partial 1R · time stop ~2h · ${cheatSheetNote}`,
+        entry: `Strictness: ${strictness.toUpperCase()} · Momentum / Pullback / Breakout`,
+        execution: "TP ~2.2R + partial 1R · time stop ~2h",
       };
     }
     if (riskMode === "ai-matic-pro") {
@@ -176,9 +139,9 @@ export default function Dashboard({
       session: "POI: Breaker > OB > FVG > Liquidity",
       risk: "Risk 0.40% equity/trade · notional cap ~1% equity",
       entry: "Entry 1/2 (60/40): OB reakce/sweep návrat + retest OB/GAP",
-      execution: `SL pod strukturu/OB + TP1 ~0.9–1.2% + trailing +1.0% · ${cheatSheetNote}`,
+      execution: "SL pod strukturu/OB + TP1 ~0.9–1.2% + trailing +1.0%",
     };
-  }, [cheatEnabled, cheatSheetNote, riskMode]);
+  }, [bot.settings?.entryStrictness, bot.settings?.maxOpenPositions, riskMode]);
 
   const selectedSymbols =
     bot.settings?.selectedSymbols?.length ? bot.settings.selectedSymbols : null;

@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Symbol } from "../api/types";
 import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../constants/symbols";
 import { AISettings } from "../types";
-import { getCheatSheetSetup } from "../engine/strategyCheatSheet";
 
 interface Props {
   theme: string;
@@ -12,7 +11,7 @@ interface Props {
   onClose: () => void;
 }
 
-type CheatBlock = { title?: string; lines: string[] };
+type NoteBlock = { title?: string; lines: string[] };
 type CoreProfile = {
   title: string;
   summary: string;
@@ -29,13 +28,6 @@ const MIN_AUTO_REFRESH_MINUTES = 1;
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const ORDER_VALUE_NOTE =
   "Core v2 sizing: risk % equity (ai-matic 0.40%, x 0.30%, scalp 0.25%, tree 0.30%), notional cap ~1% equity, min 100 USDT.";
-const CHEAT_SHEET_SETUP_BY_RISK_MODE: Record<AISettings["riskMode"], string> = {
-  "ai-matic": "ai-matic-core",
-  "ai-matic-x": "ai-matic-x-smart-money-combo",
-  "ai-matic-scalp": "ai-matic-scalp-scalpera",
-  "ai-matic-tree": "ai-matic-decision-tree",
-  "ai-matic-pro": "",
-};
 
 type ProfileSettingsMap = Partial<Record<AISettings["riskMode"], AISettings>>;
 
@@ -70,7 +62,6 @@ function isHeadingLine(line: string) {
     line.startsWith("KROK ") ||
     line.startsWith("ROZHODOVACÍ STROM") ||
     line.startsWith("RODINA ") ||
-    line.startsWith("CHEAT-SHEET") ||
     line.startsWith("CHECKLIST") ||
     line.startsWith("RYCHLÁ PAMĚŤOVKA") ||
     line.startsWith("VIZUÁLNÍ ZKRATKA") ||
@@ -82,9 +73,9 @@ function isHeadingLine(line: string) {
   );
 }
 
-function buildCheatBlocks(notes: string[]): CheatBlock[] {
-  const blocks: CheatBlock[] = [];
-  let current: CheatBlock = { lines: [] };
+function buildNoteBlocks(notes: string[]): NoteBlock[] {
+  const blocks: NoteBlock[] = [];
+  let current: NoteBlock = { lines: [] };
   for (const line of notes) {
     if (isHeadingLine(line)) {
       if (current.title || current.lines.length) blocks.push(current);
@@ -118,7 +109,7 @@ function compactLine(line: string, maxLen = 140): string {
 
 const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose }) => {
   const [local, setLocal] = useState(settings);
-  const [compactCheatSheet, setCompactCheatSheet] = useState(true);
+  const [compactNotes, setCompactNotes] = useState(true);
   const profileSettingsRef = useRef<ProfileSettingsMap>(
     loadProfileSettingsMap()
   );
@@ -303,10 +294,9 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       title: "AI-MATIC-TREE Core",
       summary: "HTF 1h/15m · LTF 5m/1m · EMA bias + trend entries",
       description:
-        "Core engine (Cheat Sheet OFF): multi-TF bias gate + trend entries (momentum/pullback/breakout).",
+        "Core engine: multi-TF bias gate + trend entries (momentum/pullback/breakout).",
       notes: [
         ORDER_VALUE_NOTE,
-        "Cheat Sheet OFF: decision tree (SWING/INTRADAY/SCALP) se nepoužívá.",
         "Bias gate: EMA50 + shoda HTF(1h)/mid(15m) se směrem obchodu.",
         "Entry typy: MOMENTUM / PULLBACK / BREAKOUT (MEAN_REVERSION jen v range režimu).",
         "SL: swing-based (nebo ATR fallback) + minimální bezpečná vzdálenost.",
@@ -318,7 +308,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       title: "AI-MATIC-PRO (Sideways)",
       summary: "Sideways only · VA/POC · OFI/VPIN/HMM",
       description:
-        "Mean-reversion engine pro laterální trhy (bez Cheat Sheet).",
+        "Mean-reversion engine pro laterální trhy.",
       notes: [
         ORDER_VALUE_NOTE,
         "Aktivace: Hurst < 0.45, CHOP > 60, HMM state0 p>=0.7, VPIN < 0.8.",
@@ -329,53 +319,12 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       ],
     },
   };
-  const treeMetaCheatOn: CoreProfile = {
-    title: "AI-MATIC-TREE (High-Precision)",
-    summary: "Decision tree · High WR · ~100 trades/day",
-    description:
-      "Core engine (Cheat Sheet ON): AI-MATIC-TREE decision tree gate (CombinedEntryStrategy) optimized for High Win Rate & Frequency.",
-    notes: [
-      ORDER_VALUE_NOTE,
-      "Cheat Sheet ON: Decision tree override. Cíl: Max Win Rate při zachování frekvence (~100/den).",
-      "Režimy: SCALP (priorita, 1m/5m) > INTRADAY (15m) > SWING (1h).",
-      "Exekuce: 'Smart Limit' – start na BBO, agresivní přecenění po 30s. Fill or Kill do 5 min.",
-      "Entry Logic: Konfluence setupy (Trend + Momentum + Volume).",
-      "Exit: Rychlý fixní TP1 (skalp) pro zajištění WR, TP2 trailing.",
-      "Risk Management: Dynamický SL dle volatility, okamžitý posun na BE po TP1.",
-      "NO TRADE: Pokud je spread > 0.1% nebo nízká likvidita.",
-    ],
-  };
-  const coreMeta =
-    local.riskMode === "ai-matic-tree"
-      ? local.strategyCheatSheetEnabled
-        ? treeMetaCheatOn
-        : coreProfiles["ai-matic-tree"]
-      : coreProfiles[local.riskMode];
-  const cheatSheetSetupId = CHEAT_SHEET_SETUP_BY_RISK_MODE[local.riskMode];
-  const cheatSheetSetup = cheatSheetSetupId
-    ? getCheatSheetSetup(cheatSheetSetupId)
-    : null;
-  const cheatSheetLabel =
-    local.riskMode === "ai-matic-pro"
-      ? "N/A"
-      : cheatSheetSetup?.name ?? "Cheat sheet";
-  const cheatSheetNotes =
-    cheatSheetSetup?.rules ?? ["Cheat sheet se nepodařilo načíst."];
-  const cheatSheetStatus =
-    local.riskMode === "ai-matic-pro"
-      ? "N/A"
-      : local.strategyCheatSheetEnabled
-        ? "On"
-        : "Off";
-  const coreBlocks = useMemo(
-    () => buildCheatBlocks(coreMeta.notes),
+  const coreMeta = coreProfiles[local.riskMode];
+  const noteBlocks = useMemo(
+    () => buildNoteBlocks(coreMeta.notes),
     [coreMeta.notes]
   );
-  const cheatBlocks = useMemo(
-    () => buildCheatBlocks(cheatSheetNotes),
-    [cheatSheetNotes]
-  );
-  const summaryText = `${coreMeta.title} · ${coreMeta.summary} · Cheat sheet: ${cheatSheetLabel} (${cheatSheetStatus})`;
+  const summaryText = `${coreMeta.title} · ${coreMeta.summary}`;
   const coreV2GateNames = [
     "HTF bias",
     "EMA order",
@@ -417,14 +366,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   };
   const activeGateNames =
     checklistGatesByProfile[local.riskMode] ?? checklistGatesByProfile["ai-matic"];
-  const cheatDisabled = local.riskMode === "ai-matic-pro";
   const statusItems = [
-    {
-      label: "Cheat Sheet",
-      value: cheatSheetSetup
-        ? `${cheatSheetStatus} · ${cheatSheetLabel}`
-        : cheatSheetStatus,
-    },
     { label: "Hard gates", value: local.enableHardGates ? "On" : "Off" },
     { label: "Soft gates", value: local.enableSoftGates ? "On" : "Off" },
     {
@@ -453,7 +395,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    strategyCheatSheetEnabled: false,
     enableHardGates: true,
     enableSoftGates: true,
     maxOpenPositions: 3,
@@ -483,7 +424,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    strategyCheatSheetEnabled: false,
     enableHardGates: true,
     enableSoftGates: true,
     maxOpenPositions: 1,
@@ -513,7 +453,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: false,
-    strategyCheatSheetEnabled: false,
     enableHardGates: true,
     enableSoftGates: true,
     maxOpenPositions: 3,
@@ -543,7 +482,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useTrendFollowing: true,
     smcScalpMode: true,
     useLiquiditySweeps: true,
-    strategyCheatSheetEnabled: true,
     enableHardGates: true,
     enableSoftGates: true,
     maxOpenPositions: 7,
@@ -573,7 +511,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     useTrendFollowing: true,
     smcScalpMode: false,
     useLiquiditySweeps: false,
-    strategyCheatSheetEnabled: false,
     enableHardGates: true,
     enableSoftGates: true,
     maxOpenPositions: 1,
@@ -674,17 +611,17 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     setLocal(preset);
   };
 
-  const renderCheatBlocks = (blocks: CheatBlock[]) => (
+  const renderNoteBlocks = (blocks: NoteBlock[]) => (
     <div className="space-y-3 text-slate-400">
       {blocks.map((block, blockIndex) => {
-        const rawLines = compactCheatSheet
+        const rawLines = compactNotes
           ? block.lines.filter((line) => !extractImageUrl(line))
           : block.lines;
-        const visibleLines = compactCheatSheet
+        const visibleLines = compactNotes
           ? rawLines.slice(0, 3)
           : rawLines;
         const hiddenCount = rawLines.length - visibleLines.length;
-        const showDivider = !compactCheatSheet && blockIndex > 0;
+        const showDivider = !compactNotes && blockIndex > 0;
         return (
           <div
             key={`${block.title ?? "block"}-${blockIndex}`}
@@ -724,12 +661,12 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                   }
                   return (
                     <li key={`${blockIndex}-${lineIndex}`}>
-                      {compactCheatSheet ? compactLine(line) : line}
+                      {compactNotes ? compactLine(line) : line}
                     </li>
                   );
                 })}
               </ul>
-              {compactCheatSheet && hiddenCount > 0 ? (
+              {compactNotes && hiddenCount > 0 ? (
                 <div className="mt-1 text-[11px] text-slate-500">
                   +{hiddenCount} dalších
                 </div>
@@ -1007,50 +944,6 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           </div>
 
           <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Strategy Cheat Sheet
-            </label>
-            <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-              <div>
-                <div className="font-medium">
-                  {cheatDisabled
-                    ? "N/A (AI-MATIC-PRO)"
-                    : local.strategyCheatSheetEnabled
-                      ? "On"
-                      : "Off"}
-                </div>
-                <div className="text-xs text-secondary-foreground/70 mt-1">
-                  {cheatDisabled
-                    ? "Cheat Sheet není pro AI-MATIC-PRO dostupný."
-                    : "Prioritize saved entry setups (Limit/Conditional)."}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (cheatDisabled) return;
-                  setLocal({
-                    ...local,
-                    strategyCheatSheetEnabled: !local.strategyCheatSheetEnabled,
-                  });
-                }}
-                disabled={cheatDisabled}
-                className={`rounded-md border px-3 py-1 text-sm ${
-                  local.strategyCheatSheetEnabled && !cheatDisabled
-                    ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                    : "border-slate-700 bg-slate-900/40 text-slate-200"
-                }`}
-              >
-                {cheatDisabled
-                  ? "N/A"
-                  : local.strategyCheatSheetEnabled
-                    ? "On"
-                    : "Off"}
-              </button>
-            </div>
-          </div>
-
-          <div className="grid gap-2">
             <label className="text-sm font-medium leading-none">
               Max Positions
             </label>
@@ -1166,14 +1059,14 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             </div>
             <div className="flex items-center justify-between text-xs text-slate-500">
               <div>
-                View: {compactCheatSheet ? "Compact" : "Full"}
+                View: {compactNotes ? "Compact" : "Full"}
               </div>
               <button
                 type="button"
-                onClick={() => setCompactCheatSheet(!compactCheatSheet)}
+                onClick={() => setCompactNotes(!compactNotes)}
                 className="text-sky-400 hover:text-sky-300 underline underline-offset-2"
               >
-                {compactCheatSheet ? "Show all" : "Compact view"}
+                {compactNotes ? "Show all" : "Compact view"}
               </button>
             </div>
           </div>
@@ -1181,10 +1074,10 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           <div className="mt-4 border-t border-slate-800 pt-4">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-sm font-medium text-slate-200">
-                {cheatDisabled ? "Strategy Notes" : "Cheat Sheet & Notes"}
+                Strategy Notes
               </h3>
             </div>
-            {renderCheatBlocks(cheatDisabled ? coreBlocks : cheatBlocks)}
+            {renderNoteBlocks(noteBlocks)}
           </div>
         </div>
 

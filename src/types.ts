@@ -21,7 +21,6 @@ export interface AISettings {
   useTrendFollowing: boolean;
   smcScalpMode: boolean;
   useLiquiditySweeps: boolean;
-  strategyCheatSheetEnabled: boolean;
   enableHardGates: boolean;
   enableSoftGates: boolean;
   entryStrictness: "base" | "relaxed" | "ultra" | "test";

@@ -1,5 +1,5 @@
 // CombinedEntryStrategy.ts
-// Deterministická kombinovaná ENTRY strategie dle cheat sheetu AI-MATIC-TREE.
+// Deterministická kombinovaná ENTRY strategie pro AI-MATIC-TREE.
 // Implementuje dopady při chybějících modulech a vrací rozhodnutí + bloky.
 
 export type Mode = "SCALP" | "INTRADAY" | "SWING";
