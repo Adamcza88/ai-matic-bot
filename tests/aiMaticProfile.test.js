@@ -6,6 +6,7 @@ const {
   resolveAiMaticPatterns,
   resolveAiMaticEmaFlags,
   resolveAiMaticBreakRetest,
+  resolveStructureState,
   resolveAiMaticStopLoss,
   resolveAiMaticTargets,
   evaluateAiMaticGatesCore,
@@ -50,7 +51,7 @@ test("AI-MATIC EMA flags: stack + cross recent", () => {
 test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
   const decision = {
     aiMatic: {
-      htf: { direction: "bull", sweepLow: true, sweepHigh: false, poiReactionBull: true, poiReactionBear: false },
+      htf: { direction: "bull", structureTrend: "BULL", chochDown: false, chochUp: false, sweepLow: true, sweepHigh: false, poiReactionBull: true, poiReactionBear: false },
       mtf: { sweepLow: true, sweepHigh: false, pocNear: true, lvnRejectionBull: true, lvnRejectionBear: false, poiReactionBull: true, poiReactionBear: false },
       ltf: {
         patterns: { pinbarBull: true, pinbarBear: false, engulfBull: false, engulfBear: false, insideBar: false, trapBull: false, trapBear: false },
@@ -62,6 +63,8 @@ test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
         fakeoutHigh: false,
         ema: { bullOk: true, bearOk: false, crossRecent: false },
         volumeReaction: true,
+        chochDown: false,
+        chochUp: false,
       },
     },
     emaTrend: { consensus: "bull" },
@@ -78,7 +81,7 @@ test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
 
 test("AI-MATIC SL/TP selection", () => {
   const aiMatic = {
-    htf: { pivotLow: 95, pivotHigh: 112, pois: [] },
+    htf: { pivotLow: 95, pivotHigh: 112, pois: [], structureTrend: "BULL" },
     mtf: {
       pivotLow: 96,
       pivotHigh: 110,
@@ -103,4 +106,26 @@ test("AI-MATIC SL/TP selection", () => {
     aiMatic,
   });
   assert.equal(tp, 110);
+});
+
+test("AI-MATIC structure: HH/HL -> BOS/CHOCH", () => {
+  const candles = [
+    candle(100, 100, 95, 98),
+    candle(98, 110, 97, 109),
+    candle(109, 103, 92, 95),
+    candle(95, 115, 99, 112),
+    candle(112, 104, 94, 96),
+    candle(96, 120, 101, 118),
+    candle(118, 110, 96, 100),
+    candle(100, 125, 105, 123),
+  ];
+  const state = resolveStructureState(candles, 1);
+  assert.equal(state.structureTrend, "BULL");
+  assert.equal(state.bosUp, true);
+  const reversal = [
+    ...candles,
+    candle(123, 110, 85, 90),
+  ];
+  const state2 = resolveStructureState(reversal, 1);
+  assert.equal(state2.chochDown, true);
 });

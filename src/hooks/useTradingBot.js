@@ -410,6 +410,62 @@ const resolveAiMaticPivots = (candles, lookback = 2) => {
     return { lastHigh, lastLow };
 };
 
+const resolveStructureState = (candles, lookback = 2) => {
+    const highs = findPivotsHigh(candles, lookback, lookback);
+    const lows = findPivotsLow(candles, lookback, lookback);
+    const lastHigh = highs[highs.length - 1]?.price;
+    const prevHigh = highs[highs.length - 2]?.price;
+    const lastLow = lows[lows.length - 1]?.price;
+    const prevLow = lows[lows.length - 2]?.price;
+    const lastHighType = Number.isFinite(lastHigh) && Number.isFinite(prevHigh)
+        ? lastHigh > prevHigh
+            ? "HH"
+            : lastHigh < prevHigh
+                ? "LH"
+                : "NONE"
+        : "NONE";
+    const lastLowType = Number.isFinite(lastLow) && Number.isFinite(prevLow)
+        ? lastLow > prevLow
+            ? "HL"
+            : lastLow < prevLow
+                ? "LL"
+                : "NONE"
+        : "NONE";
+    const structureTrend = lastHighType === "HH" && lastLowType === "HL"
+        ? "BULL"
+        : lastHighType === "LH" && lastLowType === "LL"
+            ? "BEAR"
+            : "RANGE";
+    const lastClose = candles[candles.length - 1]?.close ?? Number.NaN;
+    const bosUp = structureTrend === "BULL" &&
+        Number.isFinite(lastHigh) &&
+        Number.isFinite(lastClose) &&
+        lastClose > lastHigh;
+    const bosDown = structureTrend === "BEAR" &&
+        Number.isFinite(lastLow) &&
+        Number.isFinite(lastClose) &&
+        lastClose < lastLow;
+    const chochDown = structureTrend === "BULL" &&
+        Number.isFinite(lastLow) &&
+        Number.isFinite(lastClose) &&
+        lastClose < lastLow;
+    const chochUp = structureTrend === "BEAR" &&
+        Number.isFinite(lastHigh) &&
+        Number.isFinite(lastClose) &&
+        lastClose > lastHigh;
+    return {
+        structureTrend,
+        lastHighType,
+        lastLowType,
+        bosUp,
+        bosDown,
+        chochUp,
+        chochDown,
+        lastHigh,
+        lastLow,
+    };
+};
+
 const resolveAiMaticPatterns = (candles) => {
     if (candles.length < 2) {
         return {
@@ -592,22 +648,18 @@ const buildAiMaticContext = (candles, decision, core) => {
     const mtfPois = new CandlestickAnalyzer(toAnalyzerCandles(mtf)).getPointsOfInterest();
     const profile = computeMarketProfile({ candles: mtf });
     const ltfLast = ltf[ltf.length - 1];
-    const htfPivots = resolveAiMaticPivots(htf);
-    const mtfPivots = resolveAiMaticPivots(mtf);
-    const ltfPivots = resolveAiMaticPivots(ltf);
+    const htfStructure = resolveStructureState(htf);
+    const mtfStructure = resolveStructureState(mtf);
+    const ltfStructure = resolveStructureState(ltf);
     const emaFlags = resolveAiMaticEmaFlags(ltf);
     const patterns = resolveAiMaticPatterns(ltf);
     const htfSweep = resolveLiquiditySweep(htf);
     const mtfSweep = resolveLiquiditySweep(mtf);
     const htfDir = resolveAiMaticHtfDirection(decision, core);
-    const bosUp = Number.isFinite(ltfPivots.lastHigh) &&
-        Number.isFinite(ltfLast?.close) &&
-        ltfLast.close > ltfPivots.lastHigh;
-    const bosDown = Number.isFinite(ltfPivots.lastLow) &&
-        Number.isFinite(ltfLast?.close) &&
-        ltfLast.close < ltfPivots.lastLow;
-    const breakRetestUp = resolveAiMaticBreakRetest(ltf, ltfPivots.lastHigh, "bull");
-    const breakRetestDown = resolveAiMaticBreakRetest(ltf, ltfPivots.lastLow, "bear");
+    const bosUp = ltfStructure.bosUp;
+    const bosDown = ltfStructure.bosDown;
+    const breakRetestUp = resolveAiMaticBreakRetest(ltf, ltfStructure.lastHigh, "bull");
+    const breakRetestDown = resolveAiMaticBreakRetest(ltf, ltfStructure.lastLow, "bear");
     const ltfVolumeReaction = Boolean(core?.volumeSpike) ||
         (Number.isFinite(core?.volumeCurrent) &&
             Number.isFinite(core?.volumeP60) &&
@@ -642,8 +694,15 @@ const buildAiMaticContext = (candles, decision, core) => {
             sweepHigh: htfSweep.sweepHigh,
             sweepLow: htfSweep.sweepLow,
             volumeRising: htfVolumeRising,
-            pivotHigh: htfPivots.lastHigh,
-            pivotLow: htfPivots.lastLow,
+            structureTrend: htfStructure.structureTrend,
+            lastHighType: htfStructure.lastHighType,
+            lastLowType: htfStructure.lastLowType,
+            bosUp: htfStructure.bosUp,
+            bosDown: htfStructure.bosDown,
+            chochUp: htfStructure.chochUp,
+            chochDown: htfStructure.chochDown,
+            pivotHigh: htfStructure.lastHigh,
+            pivotLow: htfStructure.lastLow,
             pois: htfPois,
             poiReactionBull,
             poiReactionBear,
@@ -655,8 +714,15 @@ const buildAiMaticContext = (candles, decision, core) => {
             pocNear: Boolean(pocNear),
             lvnRejectionBull: lvnRejection.bull,
             lvnRejectionBear: lvnRejection.bear,
-            pivotHigh: mtfPivots.lastHigh,
-            pivotLow: mtfPivots.lastLow,
+            structureTrend: mtfStructure.structureTrend,
+            lastHighType: mtfStructure.lastHighType,
+            lastLowType: mtfStructure.lastLowType,
+            bosUp: mtfStructure.bosUp,
+            bosDown: mtfStructure.bosDown,
+            chochUp: mtfStructure.chochUp,
+            chochDown: mtfStructure.chochDown,
+            pivotHigh: mtfStructure.lastHigh,
+            pivotLow: mtfStructure.lastLow,
             pois: mtfPois,
             poiReactionBull: mtfPoiReactionBull,
             poiReactionBear: mtfPoiReactionBear,
@@ -665,14 +731,17 @@ const buildAiMaticContext = (candles, decision, core) => {
             patterns,
             bosUp,
             bosDown,
-            chochUp: bosUp && htfDir === "bear",
-            chochDown: bosDown && htfDir === "bull",
+            chochUp: ltfStructure.chochUp,
+            chochDown: ltfStructure.chochDown,
             breakRetestUp,
             breakRetestDown,
             fakeoutHigh: Boolean(core?.ltfFakeBreakHigh),
             fakeoutLow: Boolean(core?.ltfFakeBreakLow),
             ema: emaFlags,
             volumeReaction: ltfVolumeReaction,
+            structureTrend: ltfStructure.structureTrend,
+            lastHighType: ltfStructure.lastHighType,
+            lastLowType: ltfStructure.lastLowType,
         },
     };
 };
@@ -804,7 +873,10 @@ const evaluateAiMaticGatesCore = (args) => {
     const dir = sideRaw === "buy" ? "bull" : sideRaw === "sell" ? "bear" : null;
     if (!dir)
         return empty;
-    const htfAligned = aiMatic.htf.direction === dir;
+    const structureAligned = dir === "bull"
+        ? aiMatic.htf.structureTrend === "BULL"
+        : aiMatic.htf.structureTrend === "BEAR";
+    const htfAligned = structureAligned;
     const emaStackOk = dir === "bull" ? aiMatic.ltf.ema.bullOk : aiMatic.ltf.ema.bearOk;
     const emaCrossOk = !aiMatic.ltf.ema.crossRecent;
     const patternOk = dir === "bull"
@@ -834,10 +906,14 @@ const evaluateAiMaticGatesCore = (args) => {
     const volumeOk = aiMatic.ltf.volumeReaction;
     const emaConsensus = String(args.decision?.emaTrend?.consensus ?? "").toLowerCase();
     const emaTrendOk = emaConsensus === dir;
+    const chochAgainst = dir === "bull"
+        ? aiMatic.htf.chochDown || aiMatic.ltf.chochDown
+        : aiMatic.htf.chochUp || aiMatic.ltf.chochUp;
     const hardGates = [
-        { name: "HTF alignment", ok: htfAligned },
+        { name: "Structure trend", ok: htfAligned },
         { name: "EMA 8/21/50 stack", ok: emaStackOk },
         { name: "EMA cross recent", ok: emaCrossOk },
+        { name: "CHoCH", ok: !chochAgainst },
     ];
     const entryFactors = [
         { name: "Pattern", ok: patternOk },
@@ -848,7 +924,7 @@ const evaluateAiMaticGatesCore = (args) => {
     ];
     const checklist = [
         { name: "EMA trend", ok: emaTrendOk },
-        { name: "HTF alignment", ok: htfAligned },
+        { name: "Structure trend", ok: htfAligned },
         { name: "Pattern", ok: patternOk },
         { name: "Volume", ok: volumeOk },
         { name: "BTC correlation", ok: args.correlationOk },
@@ -874,6 +950,7 @@ export const __aiMaticTest = {
     resolveAiMaticPatterns,
     resolveAiMaticEmaFlags,
     resolveAiMaticBreakRetest,
+    resolveStructureState,
     resolveAiMaticStopLoss,
     resolveAiMaticTargets,
     evaluateAiMaticGatesCore,
@@ -4061,8 +4138,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 const aiMatic = decision?.aiMatic ?? null;
                 const pos = positionsRef.current.find((p) => p.symbol === symbol);
                 const side = pos?.side === "Sell" ? "Sell" : "Buy";
-                const htfDir = aiMatic?.htf?.direction ?? "none";
-                const htfFlip = side === "Buy" ? htfDir === "bear" : htfDir === "bull";
+                const structureTrend = aiMatic?.htf?.structureTrend ?? "RANGE";
+                const htfFlip = side === "Buy" ? structureTrend === "BEAR" : structureTrend === "BULL";
                 const chochAgainst = side === "Buy" ? aiMatic?.ltf?.chochDown : aiMatic?.ltf?.chochUp;
                 if (htfFlip || chochAgainst) {
                     const reason = htfFlip ? "HTF flip" : "CHoCH";
