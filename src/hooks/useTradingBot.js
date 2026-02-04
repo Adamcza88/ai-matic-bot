@@ -1087,15 +1087,6 @@ export const __aiMaticTest = {
     evaluateAiMaticGatesCore,
     buildAiMaticContext,
 };
-export const __scalpTest = {
-    resolveScalpSwing,
-    resolveScalpFibLevels,
-    resolveFibHitLevel,
-    buildScalpFibData,
-    resolveScalpConfirmation,
-    resolveScalpFibStop,
-    resolveScalpFibTarget,
-};
 function buildScalpTrend(candles, timeframeMin) {
     const sampled = resampleCandles(candles, timeframeMin);
     const minBars = Math.max(SCALP_EMA_PERIOD + 2, SCALP_SWING_LOOKBACK * 2 + 3);
@@ -1376,6 +1367,15 @@ const resolveScalpFibTarget = (entry, side, fib, core) => {
     if (side === "Sell" && target >= entry)
         return Number.NaN;
     return target;
+};
+export const __scalpTest = {
+    resolveScalpSwing,
+    resolveScalpFibLevels,
+    resolveFibHitLevel,
+    buildScalpFibData,
+    resolveScalpConfirmation,
+    resolveScalpFibStop,
+    resolveScalpFibTarget,
 };
 const computeCoreV2Metrics = (candles, riskMode, opts) => {
     const ltfTimeframeMin = resolveEntryTfMin(riskMode);

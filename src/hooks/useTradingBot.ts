@@ -1488,15 +1488,6 @@ export const __aiMaticTest = {
   buildAiMaticContext,
 };
 
-export const __scalpTest = {
-  resolveScalpSwing,
-  resolveScalpFibLevels,
-  resolveFibHitLevel,
-  buildScalpFibData,
-  resolveScalpConfirmation,
-  resolveScalpFibStop,
-  resolveScalpFibTarget,
-};
 
 type ScalpTrendDirection = "BULL" | "BEAR" | "NONE";
 type ScalpStructure = "HH_HL" | "LL_LH" | "MIXED" | "NONE";
@@ -2777,6 +2768,16 @@ const resolveScalpFibTarget = (
   if (side === "Buy" && target <= entry) return Number.NaN;
   if (side === "Sell" && target >= entry) return Number.NaN;
   return target;
+};
+
+export const __scalpTest = {
+  resolveScalpSwing,
+  resolveScalpFibLevels,
+  resolveFibHitLevel,
+  buildScalpFibData,
+  resolveScalpConfirmation,
+  resolveScalpFibStop,
+  resolveScalpFibTarget,
 };
 
 function toEpoch(value: unknown) {
