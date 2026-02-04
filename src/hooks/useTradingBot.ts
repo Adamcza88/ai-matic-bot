@@ -112,9 +112,9 @@ const CORE_V2_BBO_AGE_DEFAULT_MS = 1000;
 const SCALP_PRIMARY_GATE =
   "Primary Timeframe: 15m for trend, 1m for entry.";
 const SCALP_ENTRY_GATE =
-  "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.";
+  "Entry Logic: Fibo retracement + 1 confirmation (OB/GAP/VP/EMA TL).";
 const SCALP_EXIT_GATE =
-  "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).";
+  "Exit Logic: Fibo extension TP (dynamic) or ATR trailing (2.5x).";
 const SCALP_DRIFT_GATE = "HTF Drift Guard (15m)";
 const SCALP_FAKE_MOMENTUM_GATE = "Fake Momentum Filter (1m)";
 const SCALP_PROTECTED_ENTRY_GATE = "Protected Entry Mode";
@@ -144,6 +144,10 @@ const SCALP_EMA_CROSS_LOOKBACK = 6;
 const SCALP_DIV_LOOKBACK = 20;
 const SCALP_PIVOT_MIN_GAP = 5;
 const SCALP_PIVOT_MAX_GAP = 20;
+const SCALP_FIB_LEVELS = [0.382, 0.5, 0.618] as const;
+const SCALP_FIB_EXT = [0.618, 1.0, 1.618] as const;
+const SCALP_FIB_TOL_ATR = 0.2;
+const SCALP_FIB_TOL_PCT = 0.0005;
 const SCALP_VOL_LEN = 20;
 const SCALP_VOL_SPIKE_MULT = 1.8;
 const SCALP_VOL_Z_MIN = 2.0;
@@ -1484,6 +1488,16 @@ export const __aiMaticTest = {
   buildAiMaticContext,
 };
 
+export const __scalpTest = {
+  resolveScalpSwing,
+  resolveScalpFibLevels,
+  resolveFibHitLevel,
+  buildScalpFibData,
+  resolveScalpConfirmation,
+  resolveScalpFibStop,
+  resolveScalpFibTarget,
+};
+
 type ScalpTrendDirection = "BULL" | "BEAR" | "NONE";
 type ScalpStructure = "HH_HL" | "LL_LH" | "MIXED" | "NONE";
 
@@ -1505,6 +1519,30 @@ type ScalpContext = {
   m15?: ScalpTrend;
   ema15mCrossCount: number;
   ema15mChoppy: boolean;
+};
+
+type ScalpFibLevel = "38.2" | "50" | "61.8";
+type ScalpFibExtLevel = "61.8" | "100" | "161.8";
+type ScalpFibData = {
+  direction: "BULL" | "BEAR";
+  swingHigh: number;
+  swingLow: number;
+  range: number;
+  retrace: Record<ScalpFibLevel, number>;
+  ext: Record<ScalpFibExtLevel, number>;
+  m5InZone: boolean;
+  ltfInZone: boolean;
+  hitLevel?: ScalpFibLevel;
+  m5Level?: ScalpFibLevel;
+  ltfLevel?: ScalpFibLevel;
+};
+
+type ScalpConfirm = {
+  obTouch: boolean;
+  gapTouch: boolean;
+  vpConfirm: boolean;
+  tlPullback: boolean;
+  any: boolean;
 };
 
 function buildScalpTrend(candles: Candle[], timeframeMin: number): ScalpTrend | undefined {
@@ -1684,6 +1722,8 @@ type CoreV2Metrics = {
   rsiBullDiv: boolean;
   rsiBearDiv: boolean;
   ltfCrossRsiAgainst: boolean;
+  scalpFib?: ScalpFibData;
+  scalpConfirm?: ScalpConfirm;
 };
 
 const percentile = (values: number[], p: number) => {
@@ -1712,6 +1752,160 @@ const createResampleCache = (candles: Candle[]): ResampleFn => {
     const next = resampleCandles(candles, timeframeMin);
     cache.set(timeframeMin, next);
     return next;
+  };
+};
+
+const resolveScalpSwing = (
+  pivotsHigh: { idx: number; price: number }[],
+  pivotsLow: { idx: number; price: number }[],
+  direction: "BULL" | "BEAR"
+) => {
+  if (!pivotsHigh.length || !pivotsLow.length) return null;
+  if (direction === "BULL") {
+    const lastHigh = pivotsHigh[pivotsHigh.length - 1];
+    const lastLow = [...pivotsLow].reverse().find((p) => p.idx < lastHigh.idx);
+    if (!lastHigh || !lastLow) return null;
+    const range = lastHigh.price - lastLow.price;
+    if (!Number.isFinite(range) || range <= 0) return null;
+    return { high: lastHigh.price, low: lastLow.price, range };
+  }
+  const lastLow = pivotsLow[pivotsLow.length - 1];
+  const lastHigh = [...pivotsHigh].reverse().find((p) => p.idx < lastLow.idx);
+  if (!lastHigh || !lastLow) return null;
+  const range = lastHigh.price - lastLow.price;
+  if (!Number.isFinite(range) || range <= 0) return null;
+  return { high: lastHigh.price, low: lastLow.price, range };
+};
+
+const resolveScalpFibLevels = (
+  swing: { high: number; low: number; range: number },
+  direction: "BULL" | "BEAR"
+) => {
+  const retrace: Record<ScalpFibLevel, number> = {
+    "38.2": Number.NaN,
+    "50": Number.NaN,
+    "61.8": Number.NaN,
+  };
+  const ext: Record<ScalpFibExtLevel, number> = {
+    "61.8": Number.NaN,
+    "100": Number.NaN,
+    "161.8": Number.NaN,
+  };
+  if (direction === "BULL") {
+    retrace["38.2"] = swing.high - swing.range * SCALP_FIB_LEVELS[0];
+    retrace["50"] = swing.high - swing.range * SCALP_FIB_LEVELS[1];
+    retrace["61.8"] = swing.high - swing.range * SCALP_FIB_LEVELS[2];
+    ext["61.8"] = swing.high + swing.range * SCALP_FIB_EXT[0];
+    ext["100"] = swing.high + swing.range * SCALP_FIB_EXT[1];
+    ext["161.8"] = swing.high + swing.range * SCALP_FIB_EXT[2];
+  } else {
+    retrace["38.2"] = swing.low + swing.range * SCALP_FIB_LEVELS[0];
+    retrace["50"] = swing.low + swing.range * SCALP_FIB_LEVELS[1];
+    retrace["61.8"] = swing.low + swing.range * SCALP_FIB_LEVELS[2];
+    ext["61.8"] = swing.low - swing.range * SCALP_FIB_EXT[0];
+    ext["100"] = swing.low - swing.range * SCALP_FIB_EXT[1];
+    ext["161.8"] = swing.low - swing.range * SCALP_FIB_EXT[2];
+  }
+  return { retrace, ext };
+};
+
+const resolveFibHitLevel = (
+  price: number,
+  retrace: Record<ScalpFibLevel, number>,
+  tolerance: number
+): ScalpFibLevel | undefined => {
+  if (!Number.isFinite(price) || !Number.isFinite(tolerance) || tolerance <= 0) {
+    return undefined;
+  }
+  const levels: [ScalpFibLevel, number][] = [
+    ["38.2", retrace["38.2"]],
+    ["50", retrace["50"]],
+    ["61.8", retrace["61.8"]],
+  ];
+  let best: ScalpFibLevel | undefined;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const [level, value] of levels) {
+    if (!Number.isFinite(value)) continue;
+    const dist = Math.abs(price - value);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = level;
+    }
+  }
+  if (best && bestDist <= tolerance) return best;
+  return undefined;
+};
+
+const buildScalpFibData = (args: {
+  m15Highs: { idx: number; price: number }[];
+  m15Lows: { idx: number; price: number }[];
+  direction: "BULL" | "BEAR";
+  m5Close: number;
+  ltfClose: number;
+  atr: number;
+}): ScalpFibData | null => {
+  const swing = resolveScalpSwing(args.m15Highs, args.m15Lows, args.direction);
+  if (!swing) return null;
+  const levels = resolveScalpFibLevels(swing, args.direction);
+  const price = Number.isFinite(args.ltfClose) ? args.ltfClose : args.m5Close;
+  const tolAtr =
+    Number.isFinite(args.atr) && args.atr > 0 ? args.atr * SCALP_FIB_TOL_ATR : 0;
+  const tolPct =
+    Number.isFinite(price) && price > 0 ? price * SCALP_FIB_TOL_PCT : 0;
+  const tolerance = Math.max(tolAtr, tolPct);
+  const m5Level = resolveFibHitLevel(args.m5Close, levels.retrace, tolerance);
+  const ltfLevel = resolveFibHitLevel(args.ltfClose, levels.retrace, tolerance);
+  const m5InZone = Boolean(m5Level);
+  const ltfInZone = Boolean(ltfLevel);
+  const hitLevel = ltfLevel ?? m5Level;
+  return {
+    direction: args.direction,
+    swingHigh: swing.high,
+    swingLow: swing.low,
+    range: swing.range,
+    retrace: levels.retrace,
+    ext: levels.ext,
+    m5InZone,
+    ltfInZone,
+    hitLevel,
+    m5Level,
+    ltfLevel,
+  };
+};
+
+const resolveScalpConfirmation = (args: {
+  pois: AiMaticPoi[];
+  price: number;
+  direction: "BULL" | "BEAR";
+  vpConfirm: boolean;
+  tlPullback: boolean;
+}): ScalpConfirm => {
+  const priceOk = Number.isFinite(args.price);
+  const dirOk = (poi: AiMaticPoi) => {
+    const poiDir = String(poi.direction ?? "").toLowerCase();
+    return args.direction === "BULL"
+      ? poiDir === "bullish" || poiDir === "bull"
+      : poiDir === "bearish" || poiDir === "bear";
+  };
+  const inZone = (poi: AiMaticPoi) =>
+    priceOk && Number.isFinite(poi.low) && Number.isFinite(poi.high)
+      ? args.price >= poi.low && args.price <= poi.high
+      : false;
+  const obTouch = args.pois.some(
+    (poi) => String(poi.type).toLowerCase() === "ob" && dirOk(poi) && inZone(poi)
+  );
+  const gapTouch = args.pois.some((poi) => {
+    const type = String(poi.type ?? "").toLowerCase();
+    return (type === "fvg" || type.includes("gap")) && dirOk(poi) && inZone(poi);
+  });
+  const vpConfirm = Boolean(args.vpConfirm);
+  const tlPullback = Boolean(args.tlPullback);
+  return {
+    obTouch,
+    gapTouch,
+    vpConfirm,
+    tlPullback,
+    any: obTouch || gapTouch || vpConfirm || tlPullback,
   };
 };
 
@@ -1978,6 +2172,8 @@ const computeCoreV2Metrics = (
   const m15Closes = m15.map((c) => c.close);
   const m15Highs = m15.map((c) => c.high);
   const m15Lows = m15.map((c) => c.low);
+  const m15PivotsHigh = findPivotsHigh(m15, 2, 2);
+  const m15PivotsLow = findPivotsLow(m15, 2, 2);
   const ema15m12Arr = computeEma(m15Closes, 12);
   const ema15m26Arr = computeEma(m15Closes, 26);
   const ema15m12 = ema15m12Arr[ema15m12Arr.length - 1] ?? Number.NaN;
@@ -2235,6 +2431,56 @@ const computeCoreV2Metrics = (
   const prevPivotHigh = prevHighPivot?.price;
   const prevPivotLow = prevLowPivot?.price;
 
+  let scalpFib: ScalpFibData | undefined;
+  let scalpConfirm: ScalpConfirm | undefined;
+  if (riskMode === "ai-matic-scalp") {
+    const direction =
+      m15TrendLongOk ? "BULL" : m15TrendShortOk ? "BEAR" : "NONE";
+    if (direction !== "NONE") {
+      const m5 = resample(5);
+      const m5Last = m5.length ? m5[m5.length - 1] : undefined;
+      const m5Close = m5Last ? m5Last.close : Number.NaN;
+      scalpFib =
+        buildScalpFibData({
+          m15Highs: m15PivotsHigh,
+          m15Lows: m15PivotsLow,
+          direction,
+          m5Close,
+          ltfClose,
+          atr: atr14,
+        }) ?? undefined;
+      const m15Pois = m15.length
+        ? (new CandlestickAnalyzer(
+            toAnalyzerCandles(m15)
+          ).getPointsOfInterest() as AiMaticPoi[])
+        : [];
+      const m5Pois = m5.length
+        ? (new CandlestickAnalyzer(
+            toAnalyzerCandles(m5)
+          ).getPointsOfInterest() as AiMaticPoi[])
+        : [];
+      const profile = m15.length ? computeMarketProfile({ candles: m15 }) : null;
+      const price = ltfClose;
+      const pocNear =
+        profile &&
+        Number.isFinite(price) &&
+        Number.isFinite(profile.poc) &&
+        Math.abs(price - profile.poc) <= price * AI_MATIC_POI_DISTANCE_PCT;
+      const lvnRejection = resolveLvnRejection(profile, ltfLast);
+      const lvnOk =
+        direction === "BULL" ? lvnRejection.bull : lvnRejection.bear;
+      const vpConfirm = Boolean(pocNear || lvnOk);
+      const tlPullback = direction === "BULL" ? pullbackLong : pullbackShort;
+      scalpConfirm = resolveScalpConfirmation({
+        pois: [...m15Pois, ...m5Pois],
+        price,
+        direction,
+        vpConfirm,
+        tlPullback,
+      });
+    }
+  }
+
   return {
     ltfTimeframeMin,
     ltfClose,
@@ -2329,6 +2575,8 @@ const computeCoreV2Metrics = (
     rsiBullDiv,
     rsiBearDiv,
     ltfCrossRsiAgainst,
+    scalpFib,
+    scalpConfirm,
   };
 };
 
@@ -2337,22 +2585,9 @@ const computeScalpPrimaryChecklist = (core: CoreV2Metrics | undefined) => {
   const trendLongOk = Boolean(core?.m15TrendLongOk);
   const trendShortOk = Boolean(core?.m15TrendShortOk);
   const primaryOk = ltfOk && (trendLongOk || trendShortOk);
-  const crossBullOk =
-    core?.emaCrossDir === "BULL" &&
-    Number.isFinite(core?.emaCrossBarsAgo) &&
-    (core?.emaCrossBarsAgo as number) <= SCALP_EMA_CROSS_LOOKBACK;
-  const crossBearOk =
-    core?.emaCrossDir === "BEAR" &&
-    Number.isFinite(core?.emaCrossBarsAgo) &&
-    (core?.emaCrossBarsAgo as number) <= SCALP_EMA_CROSS_LOOKBACK;
-  const divBullOk = Boolean(core?.rsiBullDiv);
-  const divBearOk = Boolean(core?.rsiBearDiv);
-  const volumeOk = Boolean(core?.volumeSpike);
-  const entryOk = trendLongOk
-    ? Boolean(crossBullOk && divBullOk && volumeOk)
-    : trendShortOk
-      ? Boolean(crossBearOk && divBearOk && volumeOk)
-      : false;
+  const fibOk = Boolean(core?.scalpFib?.m5InZone && core?.scalpFib?.ltfInZone);
+  const confirmOk = Boolean(core?.scalpConfirm?.any);
+  const entryOk = primaryOk && fibOk && confirmOk;
   const exitOk = Number.isFinite(core?.atr14);
   return {
     primaryOk,
@@ -2361,11 +2596,8 @@ const computeScalpPrimaryChecklist = (core: CoreV2Metrics | undefined) => {
     ltfOk,
     trendLongOk,
     trendShortOk,
-    crossBullOk,
-    crossBearOk,
-    divBullOk,
-    divBearOk,
-    volumeOk,
+    fibOk,
+    confirmOk,
     emaCrossBarsAgo: core?.emaCrossBarsAgo,
   };
 };
@@ -2488,6 +2720,63 @@ const resolveProtectedScalpStop = (
     return side === "Buy" ? entry - atr * 2 : entry + atr * 2;
   }
   return fallbackSl;
+};
+
+const resolveScalpFibStop = (
+  entry: number,
+  side: "Buy" | "Sell",
+  fib: ScalpFibData | undefined,
+  atr: number,
+  structure?: number
+) => {
+  if (!fib || !Number.isFinite(entry) || entry <= 0) return Number.NaN;
+  const hit = fib.hitLevel;
+  if (!hit) return Number.NaN;
+  const buffer =
+    Number.isFinite(atr) && atr > 0 ? atr * SCALP_SL_ATR_BUFFER : 0;
+  let stop = Number.NaN;
+  if (hit === "38.2") {
+    stop = fib.retrace["50"];
+  } else if (hit === "50") {
+    stop = fib.retrace["61.8"];
+  } else if (hit === "61.8") {
+    stop = side === "Buy" ? fib.swingLow : fib.swingHigh;
+  }
+  if (!Number.isFinite(stop) || stop <= 0) {
+    stop = Number.isFinite(structure) ? structure : Number.NaN;
+  }
+  if (!Number.isFinite(stop) || stop <= 0) return Number.NaN;
+  const buffered = side === "Buy" ? stop - buffer : stop + buffer;
+  if (!Number.isFinite(buffered) || buffered <= 0) return Number.NaN;
+  if (side === "Buy" && buffered >= entry) return Number.NaN;
+  if (side === "Sell" && buffered <= entry) return Number.NaN;
+  return buffered;
+};
+
+const resolveScalpFibTarget = (
+  entry: number,
+  side: "Buy" | "Sell",
+  fib: ScalpFibData | undefined,
+  core: CoreV2Metrics | undefined
+) => {
+  if (!fib || !Number.isFinite(entry) || entry <= 0) return Number.NaN;
+  const trendOk = Boolean(core?.m15TrendLongOk || core?.m15TrendShortOk);
+  const trendWeak =
+    Boolean(core?.m15MacdWeak2) ||
+    Boolean(core?.m15MacdWeak3) ||
+    Boolean(core?.m15EmaCompression) ||
+    Boolean(core?.m15WickIndecisionSoft) ||
+    Boolean(core?.m15ImpulseWeak);
+  const extLevel: ScalpFibExtLevel = trendWeak
+    ? "61.8"
+    : trendOk
+      ? "161.8"
+      : "100";
+  const target = fib.ext[extLevel];
+  if (!Number.isFinite(target) || target <= 0) return Number.NaN;
+  if (side === "Buy" && target <= entry) return Number.NaN;
+  if (side === "Sell" && target >= entry) return Number.NaN;
+  return target;
 };
 
 function toEpoch(value: unknown) {
@@ -4820,25 +5109,27 @@ export function useTradingBot(
         addGate(
           SCALP_ENTRY_GATE,
           scalpPrimary.entryOk,
-          `EMA cross ${
-            scalpPrimary.crossBullOk
-              ? "BULL"
-              : scalpPrimary.crossBearOk
-                ? "BEAR"
-                : "no cross"
-          }${Number.isFinite(scalpPrimary.emaCrossBarsAgo) ? " <=6b" : ""} | Div ${
-            scalpPrimary.divBullOk
-              ? "BULL"
-              : scalpPrimary.divBearOk
-                ? "BEAR"
-                : "no"
-          } | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`
+          `${
+            core?.scalpFib
+              ? `FIB ${core.scalpFib.hitLevel ?? "—"} | 5m ${
+                  core.scalpFib.m5InZone ? "OK" : "no"
+                } | 1m ${core.scalpFib.ltfInZone ? "OK" : "no"}`
+              : "FIB —"
+          } | ${
+            core?.scalpConfirm
+              ? `OB ${core.scalpConfirm.obTouch ? "OK" : "no"} · GAP ${
+                  core.scalpConfirm.gapTouch ? "OK" : "no"
+                } · VP ${core.scalpConfirm.vpConfirm ? "OK" : "no"} · TL ${
+                  core.scalpConfirm.tlPullback ? "OK" : "no"
+                }`
+              : "Confirm —"
+          }`
         );
         addGate(
           SCALP_EXIT_GATE,
           scalpPrimary.exitOk,
           Number.isFinite(core?.atr14)
-            ? `ATR ${formatNumber(core!.atr14, 4)} | TP 1.5R`
+            ? `ATR ${formatNumber(core!.atr14, 4)} | TP fib ext`
             : "ATR missing"
         );
         if (scalpGuards) {
@@ -6813,25 +7104,27 @@ export function useTradingBot(
         checklistGates.push({
           name: SCALP_ENTRY_GATE,
           ok: scalpPrimary.entryOk,
-          detail: `EMA cross ${
-            scalpPrimary.crossBullOk
-              ? "BULL"
-              : scalpPrimary.crossBearOk
-                ? "BEAR"
-                : "no cross"
-          }${Number.isFinite(scalpPrimary.emaCrossBarsAgo) ? " <=6b" : ""} | Div ${
-            scalpPrimary.divBullOk
-              ? "BULL"
-              : scalpPrimary.divBearOk
-                ? "BEAR"
-                : "no"
-          } | Vol ${scalpPrimary.volumeOk ? "OK" : "no"}`,
+          detail: `${
+            core?.scalpFib
+              ? `FIB ${core.scalpFib.hitLevel ?? "—"} | 5m ${
+                  core.scalpFib.m5InZone ? "OK" : "no"
+                } | 1m ${core.scalpFib.ltfInZone ? "OK" : "no"}`
+              : "FIB —"
+          } | ${
+            core?.scalpConfirm
+              ? `OB ${core.scalpConfirm.obTouch ? "OK" : "no"} · GAP ${
+                  core.scalpConfirm.gapTouch ? "OK" : "no"
+                } · VP ${core.scalpConfirm.vpConfirm ? "OK" : "no"} · TL ${
+                  core.scalpConfirm.tlPullback ? "OK" : "no"
+                }`
+              : "Confirm —"
+          }`,
         });
         checklistGates.push({
           name: SCALP_EXIT_GATE,
           ok: scalpPrimary.exitOk,
           detail: Number.isFinite(core?.atr14)
-            ? `ATR ${formatNumber(core!.atr14, 4)} | TP 1.5R`
+            ? `ATR ${formatNumber(core!.atr14, 4)} | TP fib ext`
             : "ATR missing",
         });
       }
@@ -6907,15 +7200,42 @@ export function useTradingBot(
           side === "Buy"
             ? baseStop - atr * SCALP_SL_ATR_BUFFER
             : baseStop + atr * SCALP_SL_ATR_BUFFER;
-        if (
-          !Number.isFinite(resolvedSl) ||
-          resolvedSl <= 0 ||
-          (side === "Buy" && bufferedStop < resolvedSl) ||
-          (side === "Sell" && bufferedStop > resolvedSl)
-        ) {
-          resolvedSl = bufferedStop;
+        const fibOk = Boolean(
+          core?.scalpFib?.m5InZone && core?.scalpFib?.ltfInZone
+        );
+        let usedFibSl = false;
+        if (fibOk) {
+          const fibStop = resolveScalpFibStop(
+            entry,
+            side,
+            core?.scalpFib,
+            atr,
+            structure
+          );
+          if (Number.isFinite(fibStop) && fibStop > 0) {
+            resolvedSl = fibStop;
+            usedFibSl = true;
+          }
+          const fibTp = resolveScalpFibTarget(entry, side, core?.scalpFib, core);
+          if (Number.isFinite(fibTp) && fibTp > 0) {
+            resolvedTp = fibTp;
+          }
         }
-        if (Number.isFinite(resolvedSl) && resolvedSl > 0) {
+        if (!usedFibSl) {
+          if (
+            !Number.isFinite(resolvedSl) ||
+            resolvedSl <= 0 ||
+            (side === "Buy" && bufferedStop < resolvedSl) ||
+            (side === "Sell" && bufferedStop > resolvedSl)
+          ) {
+            resolvedSl = bufferedStop;
+          }
+        }
+        if (
+          (!Number.isFinite(resolvedTp) || resolvedTp <= 0) &&
+          Number.isFinite(resolvedSl) &&
+          resolvedSl > 0
+        ) {
           const risk = Math.abs(entry - resolvedSl);
           if (Number.isFinite(risk) && risk > 0) {
             resolvedTp =

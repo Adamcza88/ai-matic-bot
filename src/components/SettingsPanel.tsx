@@ -152,13 +152,13 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
     },
     "ai-matic-scalp": {
       title: "AI-MATIC-SCALP Core",
-      summary: "15m trend · 1m entry · EMA cross + RSI div + volume spike",
+      summary: "15m trend · 1m entry · Fibo retrace + confirmation",
       description: "Rychlé scalp vstupy s trend filtrem a přísným řízením rizika.",
       notes: [
         ORDER_VALUE_NOTE,
-        "15m určuje trend, 1m načasuje vstup.",
-        "Entry: EMA cross (<= 6 svíček) + RSI divergence + volume spike.",
-        "Exit: ATR trailing (2.5x) nebo fixní TP 1.5R.",
+        "15m swing definuje Fibo, 5m/1m musí být v retrace zóně.",
+        "Entry: Fibo retracement + potvrzení OB/GAP/VP nebo EMA TL.",
+        "TP: Fibo extension (dynamic), SL: další Fibo nebo swing + ATR buffer.",
       ],
     },
     "ai-matic-tree": {

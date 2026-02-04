@@ -88,8 +88,8 @@ export default function Dashboard({
         timeframes: "15m trend · 1m entry",
         session: "24/7",
         risk: "Risk 0.25% equity/trade · notional cap ~1% equity",
-        entry: "EMA cross + RSI divergence + volume spike",
-        execution: "ATR trailing 2.5x nebo fixní TP 1.5R",
+        entry: "Fibo retrace + 1 potvrzení (OB/GAP/VP/EMA TL)",
+        execution: "TP Fibo extension (dynamic) · ATR trailing 2.5x",
       };
     }
     if (riskMode === "ai-matic-x") {
