@@ -116,6 +116,7 @@ const CHEAT_LIMIT_WAIT_WINDOWS_MIN = {
 };
 const CHEAT_LIMIT_RUNAWAY_BPS = 30;
 const CHEAT_LIMIT_MIN_RRR = 1;
+const AI_MATIC_HARD_MIN = 3;
 const AI_MATIC_ENTRY_FACTOR_MIN = 1;
 const AI_MATIC_CHECKLIST_MIN = 3;
 const AI_MATIC_EMA_CROSS_LOOKBACK = 6;
@@ -1058,7 +1059,8 @@ const evaluateAiMaticGatesCore = (args) => {
         { name: "Volume confirm", ok: volumeOk },
         { name: "Likvidita (sweep)", ok: sweepOk },
     ];
-    const hardPass = hardGates.every((g) => g.ok);
+    const hardOkCount = hardGates.filter((g) => g.ok).length;
+    const hardPass = hardOkCount >= AI_MATIC_HARD_MIN;
     const entryFactorsPass = entryFactors.filter((g) => g.ok).length >= AI_MATIC_ENTRY_FACTOR_MIN;
     const checklistPass = checklist.filter((g) => g.ok).length >= AI_MATIC_CHECKLIST_MIN;
     return {
@@ -3386,7 +3388,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     : null;
         if (isAiMaticProfile) {
             if (aiMaticEval) {
-                aiMaticEval.hardGates.forEach((gate) => addGate(`Hard: ${gate.name}`, gate.ok, gate.detail));
+                const hardOkCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
+                const hardTotal = aiMaticEval.hardGates.length;
+                addGate("Hard: 3 of 6", hardOkCount >= AI_MATIC_HARD_MIN, `${hardOkCount}/${hardTotal}`);
                 const entryOkCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
                 addGate("Entry: Any of 5", entryOkCount >= AI_MATIC_ENTRY_FACTOR_MIN, `${entryOkCount}/5`);
                 const checklistOkCount = aiMaticEval.checklist.filter((g) => g.ok).length;
@@ -3434,10 +3438,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             executionReason = "čeká na signál";
         }
         else if (isAiMaticProfile && aiMaticEval && !aiMaticEval.pass) {
+            const hardCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
             const entryCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
             const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
             executionAllowed = false;
-            executionReason = `AI-MATIC gates ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN}`;
+            executionReason = `AI-MATIC gates hard ${hardCount}/${AI_MATIC_HARD_MIN} · entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN}`;
         }
         else if (!checklist.pass) {
             executionAllowed = false;
@@ -4328,9 +4333,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 const hardFails = aiMaticEval.hardGates.filter((g) => !g.ok).map((g) => g.name);
                 const entryFails = aiMaticEval.entryFactors.filter((g) => !g.ok).map((g) => g.name);
                 const checklistFails = aiMaticEval.checklist.filter((g) => !g.ok).map((g) => g.name);
-                const entryCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
-                const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
-                const reasons = [];
+                    const hardCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
+                    const entryCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
+                    const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
+                    const reasons = [];
                 if (!aiMaticEval.hardPass && hardFails.length) {
                     reasons.push(`hard: ${hardFails.join(", ")}`);
                 }
@@ -4345,7 +4351,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                         id: `ai-matic-gate:${signalId}`,
                         timestamp: new Date(now).toISOString(),
                         action: "RISK_BLOCK",
-                        message: `${symbol} AI-MATIC gate entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} | checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN} -> NO TRADE${reasons.length ? ` (${reasons.join(" | ")})` : ""}`,
+                        message: `${symbol} AI-MATIC gate hard ${hardCount}/${AI_MATIC_HARD_MIN} | entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} | checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN} -> NO TRADE${reasons.length ? ` (${reasons.join(" | ")})` : ""}`,
                     },
                 ]);
                 return;

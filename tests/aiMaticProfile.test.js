@@ -129,6 +129,10 @@ test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
   assert.equal(ok.pass, true);
 
   const badDecision = JSON.parse(JSON.stringify(decision));
+  badDecision.aiMatic.htf.ema.bullOk = false;
+  badDecision.aiMatic.mtf.ema.bullOk = false;
+  badDecision.aiMatic.ltf.patterns.pinbarBull = false;
+  badDecision.aiMatic.ltf.volumeReaction = false;
   badDecision.aiMatic.ltf.ema.crossRecent = true;
   const bad = evaluateAiMaticGatesCore({ decision: badDecision, signal, correlationOk: true, dominanceOk: true });
   assert.equal(bad.pass, false);

@@ -350,12 +350,7 @@ const SettingsPanel = ({ settings, onUpdateSettings, onClose }) => {
         "SL structural",
     ];
     const aiMaticGateNames = [
-        "Hard: HTF EMA trend",
-        "Hard: MTF EMA confirm",
-        "Hard: EMA 20/50/200 stack",
-        "Hard: EMA no-cross",
-        "Hard: Pattern confirm",
-        "Hard: Volume confirm",
+        "Hard: 3 of 6",
         "Entry: Any of 5",
         "Checklist: 3 of 7",
     ];

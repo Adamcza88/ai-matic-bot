@@ -154,12 +154,7 @@ export default function Dashboard({ mode, setMode, useTestnet, setUseTestnet, bo
         "Exec allowed": true,
     };
     const aiMatic = {
-        "Hard: HTF EMA trend": true,
-        "Hard: MTF EMA confirm": true,
-        "Hard: EMA 20/50/200 stack": true,
-        "Hard: EMA no-cross": true,
-        "Hard: Pattern confirm": true,
-        "Hard: Volume confirm": true,
+        "Hard: 3 of 6": true,
         "Entry: Any of 5": true,
         "Checklist: 3 of 7": true,
         "Exec allowed": true,
