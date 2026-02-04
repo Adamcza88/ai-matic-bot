@@ -198,9 +198,13 @@ const AI_MATIC_EMA_CROSS_LOOKBACK = 6;
 const AI_MATIC_POI_DISTANCE_PCT = 0.0015;
 const AI_MATIC_SL_ATR_BUFFER = 0.3;
 const AI_MATIC_TRAIL_ATR_MULT = 1.5;
-const AI_MATIC_TRAIL_PCT = 0.004;
 const AI_MATIC_MIN_RR = 1.2;
-const AI_MATIC_TRAIL_PROTECT_R = 0.5;
+const AI_MATIC_TRAIL_ACTIVATE_PCT = 0.01;
+const AI_MATIC_TRAIL_RETRACE_PCT = 0.006;
+const AI_MATIC_TP1_PCT_MIN = 0.009;
+const AI_MATIC_TP1_PCT_MAX = 0.012;
+const AI_MATIC_RSI_OVERSOLD = 35;
+const AI_MATIC_RSI_OVERBOUGHT = 70;
 const AI_MATIC_LIQ_SWEEP_LOOKBACK = 15;
 const AI_MATIC_LIQ_SWEEP_ATR_MULT = 0.5;
 const AI_MATIC_LIQ_SWEEP_VOL_MULT = 1.0;
@@ -486,9 +490,9 @@ type AiMaticEmaFlags = {
   bullOk: boolean;
   bearOk: boolean;
   crossRecent: boolean;
-  ema8: number;
-  ema21: number;
+  ema20: number;
   ema50: number;
+  ema200: number;
   close: number;
 };
 
@@ -518,6 +522,7 @@ type AiMaticContext = {
     direction: "bull" | "bear" | "none";
     adx: number;
     phase: "ACCUMULATION" | "DISTRIBUTION" | "MANIPULATION" | "TREND";
+    ema: AiMaticEmaFlags;
     structureTrend: "BULL" | "BEAR" | "RANGE";
     lastHighType: "HH" | "LH" | "NONE";
     lastLowType: "HL" | "LL" | "NONE";
@@ -545,6 +550,10 @@ type AiMaticContext = {
     pocNear: boolean;
     lvnRejectionBull: boolean;
     lvnRejectionBear: boolean;
+    ema: AiMaticEmaFlags;
+    patterns: AiMaticPatterns;
+    gapPresent: boolean;
+    obRetest: boolean;
     structureTrend: "BULL" | "BEAR" | "RANGE";
     lastHighType: "HH" | "LH" | "NONE";
     lastLowType: "HL" | "LL" | "NONE";
@@ -572,6 +581,15 @@ type AiMaticContext = {
     breakRetestDown: boolean;
     fakeoutHigh: boolean;
     fakeoutLow: boolean;
+    rsi: number;
+    rsiExtremeLong: boolean;
+    rsiExtremeShort: boolean;
+    macdHist: number;
+    macdSignal: number;
+    macdCrossUp: boolean;
+    macdCrossDown: boolean;
+    momentumLongOk: boolean;
+    momentumShortOk: boolean;
     sweepHigh: boolean;
     sweepLow: boolean;
     sweepHighWick: number;
@@ -629,27 +647,27 @@ const resolveRecentCross = (
 
 const resolveAiMaticEmaFlags = (candles: Candle[]): AiMaticEmaFlags => {
   const closes = candles.map((c) => c.close);
-  const ema8Arr = computeEma(closes, 8);
-  const ema21Arr = computeEma(closes, 21);
+  const ema20Arr = computeEma(closes, 20);
   const ema50Arr = computeEma(closes, 50);
-  const ema8 = ema8Arr[ema8Arr.length - 1] ?? Number.NaN;
-  const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
+  const ema200Arr = computeEma(closes, 200);
+  const ema20 = ema20Arr[ema20Arr.length - 1] ?? Number.NaN;
   const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
+  const ema200 = ema200Arr[ema200Arr.length - 1] ?? Number.NaN;
   const close = closes[closes.length - 1] ?? Number.NaN;
   const bullOk =
     Number.isFinite(close) &&
-    close > ema8 &&
-    ema8 > ema21 &&
-    ema21 > ema50;
+    close > ema20 &&
+    ema20 > ema50 &&
+    ema50 > ema200;
   const bearOk =
     Number.isFinite(close) &&
-    close < ema8 &&
-    ema8 < ema21 &&
-    ema21 < ema50;
+    close < ema20 &&
+    ema20 < ema50 &&
+    ema50 < ema200;
   const crossRecent =
-    resolveRecentCross(ema8Arr, ema21Arr, AI_MATIC_EMA_CROSS_LOOKBACK) ||
-    resolveRecentCross(ema21Arr, ema50Arr, AI_MATIC_EMA_CROSS_LOOKBACK);
-  return { bullOk, bearOk, crossRecent, ema8, ema21, ema50, close };
+    resolveRecentCross(ema20Arr, ema50Arr, AI_MATIC_EMA_CROSS_LOOKBACK) ||
+    resolveRecentCross(ema50Arr, ema200Arr, AI_MATIC_EMA_CROSS_LOOKBACK);
+  return { bullOk, bearOk, crossRecent, ema20, ema50, ema200, close };
 };
 
 const resolveAiMaticPivots = (candles: Candle[], lookback = 2) => {
@@ -833,6 +851,56 @@ const resolveLvnRejection = (
   };
 };
 
+const resolveGapPresent = (pois: AiMaticPoi[]) => {
+  return pois.some((poi) => {
+    const type = String(poi.type ?? "").toLowerCase();
+    return type.includes("fvg") || type.includes("gap");
+  });
+};
+
+const resolvePoiTouch = (pois: AiMaticPoi[], price: number) => {
+  if (!Number.isFinite(price) || !pois.length) return false;
+  return pois.some(
+    (poi) =>
+      Number.isFinite(poi.low) &&
+      Number.isFinite(poi.high) &&
+      price >= poi.low &&
+      price <= poi.high
+  );
+};
+
+const resolveMacdState = (closes: number[]) => {
+  if (closes.length < 3) {
+    return {
+      macdHist: Number.NaN,
+      macdSignal: Number.NaN,
+      macdCrossUp: false,
+      macdCrossDown: false,
+      macdAlignedUp: false,
+      macdAlignedDown: false,
+    };
+  }
+  const ema12 = computeEma(closes, 12);
+  const ema26 = computeEma(closes, 26);
+  const size = Math.min(ema12.length, ema26.length);
+  const macd = ema12.slice(0, size).map((v, i) => v - (ema26[i] ?? 0));
+  const signal = computeEma(macd, 9);
+  const hist = macd.map((v, i) => v - (signal[i] ?? 0));
+  const macdHist = hist[hist.length - 1] ?? Number.NaN;
+  const macdHistPrev = hist[hist.length - 2] ?? Number.NaN;
+  const macdSignal = signal[signal.length - 1] ?? Number.NaN;
+  const macdCrossUp = macdHist > 0 && macdHistPrev <= 0;
+  const macdCrossDown = macdHist < 0 && macdHistPrev >= 0;
+  return {
+    macdHist,
+    macdSignal,
+    macdCrossUp,
+    macdCrossDown,
+    macdAlignedUp: macdHist > 0,
+    macdAlignedDown: macdHist < 0,
+  };
+};
+
 const resolveVolumeRising = (candles: Candle[], lookback = 8) => {
   if (candles.length < lookback * 2) return false;
   const recent = candles.slice(-lookback);
@@ -965,8 +1033,11 @@ const buildAiMaticContext = (
   const htfStructure = resolveStructureState(htf);
   const mtfStructure = resolveStructureState(mtf);
   const ltfStructure = resolveStructureState(ltf);
+  const htfEma = resolveAiMaticEmaFlags(htf);
+  const mtfEma = resolveAiMaticEmaFlags(mtf);
   const emaFlags = resolveAiMaticEmaFlags(ltf);
   const patterns = resolveAiMaticPatterns(ltf);
+  const mtfPatterns = resolveAiMaticPatterns(mtf);
   const htfSweep = resolveLiquiditySweep(htf);
   const mtfSweep = resolveLiquiditySweep(mtf);
   const ltfSweep = resolveLiquiditySweep(ltf);
@@ -991,6 +1062,20 @@ const buildAiMaticContext = (
   const htfAdx = toNumber((decision as any)?.trendAdx);
   const htfVolumeRising = resolveVolumeRising(htf);
   const price = Number.isFinite(ltfLast?.close) ? ltfLast.close : Number.NaN;
+  const ltfCloses = ltf.map((c) => c.close);
+  const ltfRsiArr = computeRsi(ltfCloses, 14);
+  const ltfRsi = ltfRsiArr[ltfRsiArr.length - 1] ?? Number.NaN;
+  const rsiExtremeLong =
+    Number.isFinite(ltfRsi) && ltfRsi <= AI_MATIC_RSI_OVERSOLD;
+  const rsiExtremeShort =
+    Number.isFinite(ltfRsi) && ltfRsi >= AI_MATIC_RSI_OVERBOUGHT;
+  const macdState = resolveMacdState(ltfCloses);
+  const momentumLongOk =
+    rsiExtremeLong && (macdState.macdCrossUp || macdState.macdAlignedUp);
+  const momentumShortOk =
+    rsiExtremeShort && (macdState.macdCrossDown || macdState.macdAlignedDown);
+  const gapPresent = resolveGapPresent([...htfPois, ...mtfPois]);
+  const obRetest = resolvePoiTouch([...htfPois, ...mtfPois], price);
   const pocNear =
     profile &&
     Number.isFinite(price) &&
@@ -1017,6 +1102,7 @@ const buildAiMaticContext = (
       direction: htfDir,
       adx: htfAdx,
       phase,
+      ema: htfEma,
       sweepHigh: htfSweep.sweepHigh,
       sweepLow: htfSweep.sweepLow,
       sweepHighWick: htfSweep.sweepHighWick,
@@ -1048,6 +1134,10 @@ const buildAiMaticContext = (
       pocNear: Boolean(pocNear),
       lvnRejectionBull: lvnRejection.bull,
       lvnRejectionBear: lvnRejection.bear,
+      ema: mtfEma,
+      patterns: mtfPatterns,
+      gapPresent,
+      obRetest,
       structureTrend: mtfStructure.structureTrend,
       lastHighType: mtfStructure.lastHighType,
       lastLowType: mtfStructure.lastLowType,
@@ -1071,6 +1161,15 @@ const buildAiMaticContext = (
       breakRetestDown,
       fakeoutHigh: Boolean(core?.ltfFakeBreakHigh),
       fakeoutLow: Boolean(core?.ltfFakeBreakLow),
+      rsi: ltfRsi,
+      rsiExtremeLong,
+      rsiExtremeShort,
+      macdHist: macdState.macdHist,
+      macdSignal: macdState.macdSignal,
+      macdCrossUp: macdState.macdCrossUp,
+      macdCrossDown: macdState.macdCrossDown,
+      momentumLongOk,
+      momentumShortOk,
       sweepHigh: ltfSweep.sweepHigh,
       sweepLow: ltfSweep.sweepLow,
       sweepHighWick: ltfSweep.sweepHighWick,
@@ -1218,6 +1317,13 @@ const resolveAiMaticTargets = (args: {
       side === "Buy" ? v > entry : v < entry
     )
     .sort((a, b) => Math.abs(a - entry) - Math.abs(b - entry));
+  const band = list.filter((candidate) => {
+    const pctMove = Math.abs(candidate - entry) / Math.max(entry, 1e-8);
+    return (
+      pctMove >= AI_MATIC_TP1_PCT_MIN && pctMove <= AI_MATIC_TP1_PCT_MAX
+    );
+  });
+  if (band.length) return band[0];
   const minTarget =
     side === "Buy" ? entry + risk * AI_MATIC_MIN_RR : entry - risk * AI_MATIC_MIN_RR;
   for (const candidate of list) {
@@ -1264,10 +1370,27 @@ const evaluateAiMaticGatesCore = (args: {
     dir === "bull"
       ? aiMatic.htf.structureTrend === "BULL"
       : aiMatic.htf.structureTrend === "BEAR";
-  const htfAligned = structureAligned;
+  const htfEmaOk =
+    dir === "bull" ? aiMatic.htf.ema?.bullOk : aiMatic.htf.ema?.bearOk;
+  const htfEmaValid = [
+    aiMatic.htf.ema?.ema20,
+    aiMatic.htf.ema?.ema50,
+    aiMatic.htf.ema?.ema200,
+  ].every(Number.isFinite);
+  const htfAligned = htfEmaValid ? Boolean(htfEmaOk) : structureAligned;
+  const mtfEmaOk =
+    dir === "bull" ? aiMatic.mtf.ema?.bullOk : aiMatic.mtf.ema?.bearOk;
+  const mtfEmaValid = [
+    aiMatic.mtf.ema?.ema20,
+    aiMatic.mtf.ema?.ema50,
+    aiMatic.mtf.ema?.ema200,
+  ].every(Number.isFinite);
+  const mtfAligned = mtfEmaValid ? Boolean(mtfEmaOk) : true;
   const emaStackOk =
-    dir === "bull" ? aiMatic.ltf.ema.bullOk : aiMatic.ltf.ema.bearOk;
-  const emaCrossOk = !aiMatic.ltf.ema.crossRecent;
+    dir === "bull"
+      ? Boolean(aiMatic.ltf.ema?.bullOk)
+      : Boolean(aiMatic.ltf.ema?.bearOk);
+  const emaCrossOk = !(aiMatic.ltf.ema?.crossRecent ?? false);
   const patternOk =
     dir === "bull"
       ? aiMatic.ltf.patterns.pinbarBull ||
@@ -1278,10 +1401,16 @@ const evaluateAiMaticGatesCore = (args: {
         aiMatic.ltf.patterns.engulfBear ||
         aiMatic.ltf.patterns.trapBear ||
         aiMatic.ltf.patterns.insideBar;
-  const bosOk =
+  const mtfPatternOk =
     dir === "bull"
-      ? aiMatic.ltf.bosUp || aiMatic.ltf.breakRetestUp
-      : aiMatic.ltf.bosDown || aiMatic.ltf.breakRetestDown;
+      ? aiMatic.mtf.patterns.pinbarBull ||
+        aiMatic.mtf.patterns.engulfBull ||
+        aiMatic.mtf.patterns.trapBull ||
+        aiMatic.mtf.patterns.insideBar
+      : aiMatic.mtf.patterns.pinbarBear ||
+        aiMatic.mtf.patterns.engulfBear ||
+        aiMatic.mtf.patterns.trapBear ||
+        aiMatic.mtf.patterns.insideBar;
   const sweepOk =
     dir === "bull"
       ? aiMatic.htf.sweepLow ||
@@ -1292,47 +1421,40 @@ const evaluateAiMaticGatesCore = (args: {
         aiMatic.mtf.sweepHigh ||
         aiMatic.ltf.sweepHigh ||
         aiMatic.ltf.fakeoutHigh;
-  const poiOk =
-    dir === "bull"
-      ? aiMatic.htf.poiReactionBull ||
-        aiMatic.mtf.poiReactionBull ||
-        aiMatic.mtf.pocNear ||
-        aiMatic.mtf.lvnRejectionBull
-      : aiMatic.htf.poiReactionBear ||
-        aiMatic.mtf.poiReactionBear ||
-        aiMatic.mtf.pocNear ||
-        aiMatic.mtf.lvnRejectionBear;
+  const htfPoiReaction =
+    dir === "bull" ? aiMatic.htf.poiReactionBull : aiMatic.htf.poiReactionBear;
+  const mtfPoiReaction =
+    dir === "bull" ? aiMatic.mtf.poiReactionBull : aiMatic.mtf.poiReactionBear;
+  const obReactionOk = htfPoiReaction || mtfPoiReaction;
+  const obCloseOk = mtfPoiReaction;
+  const gapPresent = aiMatic.mtf.gapPresent;
+  const obRetestOk = aiMatic.mtf.obRetest;
+  const momentumOk =
+    dir === "bull" ? aiMatic.ltf.momentumLongOk : aiMatic.ltf.momentumShortOk;
   const volumeOk = aiMatic.ltf.volumeReaction;
-
-  const emaConsensus = String((args.decision as any)?.emaTrend?.consensus ?? "").toLowerCase();
-  const emaTrendOk = emaConsensus === dir;
-
-  const chochAgainst =
-    dir === "bull"
-      ? aiMatic.htf.chochDown || aiMatic.ltf.chochDown
-      : aiMatic.htf.chochUp || aiMatic.ltf.chochUp;
   const hardGates: AiMaticGate[] = [
-    { name: "Structure trend", ok: htfAligned },
-    { name: "EMA 8/21/50 stack", ok: emaStackOk },
-    { name: "EMA cross recent", ok: emaCrossOk },
-    { name: "CHoCH", ok: !chochAgainst },
+    { name: "HTF EMA trend", ok: htfAligned },
+    { name: "MTF EMA confirm", ok: mtfAligned },
+    { name: "EMA 20/50/200 stack", ok: emaStackOk },
+    { name: "EMA no-cross", ok: emaCrossOk },
+    { name: "Pattern confirm", ok: patternOk },
+    { name: "Volume confirm", ok: volumeOk },
   ];
   const entryFactors: AiMaticGate[] = [
-    { name: "Pattern", ok: patternOk },
-    { name: "BOS/Retest", ok: bosOk },
-    { name: "Sweep/Fakeout", ok: sweepOk },
-    { name: "POI/POC reaction", ok: poiOk },
-    { name: "Volume reaction", ok: volumeOk },
+    { name: "Sweep return", ok: sweepOk },
+    { name: "OB reaction", ok: obReactionOk },
+    { name: "OB retrace", ok: obRetestOk },
+    { name: "GAP present", ok: gapPresent },
+    { name: "RSI/MACD", ok: momentumOk },
   ];
   const checklist: AiMaticGate[] = [
-    { name: "EMA trend", ok: emaTrendOk },
-    { name: "Structure trend", ok: htfAligned },
-    { name: "Pattern", ok: patternOk },
-    { name: "Volume", ok: volumeOk },
-    { name: "BTC correlation", ok: args.correlationOk },
-    { name: "OB/POC reaction", ok: poiOk },
-    { name: "Liquidity sweep", ok: sweepOk },
-    { name: "BTC dominance proxy", ok: args.dominanceOk },
+    { name: "Likvidita (sweep)", ok: sweepOk },
+    { name: "Reakce na 1h support/OB", ok: htfPoiReaction },
+    { name: "Close nad/pod OB open", ok: obCloseOk },
+    { name: "Přítomen GAP", ok: gapPresent },
+    { name: "Retracement zpět do OB zóny", ok: obRetestOk },
+    { name: "Pattern 15m", ok: mtfPatternOk },
+    { name: "RSI/MACD", ok: momentumOk },
   ];
   const hardPass = hardGates.every((g) => g.ok);
   const entryFactorsPass =
@@ -3533,7 +3655,6 @@ export function useTradingBot(
           }
         }
         if (!isScalpProfile && !isProProfile && settings.riskMode === "ai-matic") {
-          const tpMeta = aiMaticTp1Ref.current.get(symbol);
           const price = toNumber(pos.markPrice);
           const trailingActive = toNumber(
             (pos as any)?.trailingActivePrice ??
@@ -3548,11 +3669,17 @@ export function useTradingBot(
           );
           const hasTrail =
             Number.isFinite(trailingActive) || Number.isFinite(trailingStop);
-          const rMultiple =
-            Number.isFinite(price) && Number.isFinite(sl)
-              ? computeRMultiple(entry, sl, price, side)
+          const activationPrice =
+            Number.isFinite(entry) && entry > 0
+              ? side === "Buy"
+                ? entry * (1 + AI_MATIC_TRAIL_ACTIVATE_PCT)
+                : entry * (1 - AI_MATIC_TRAIL_ACTIVATE_PCT)
               : Number.NaN;
-          if (!hasTrail && Number.isFinite(rMultiple) && rMultiple >= AI_MATIC_TRAIL_PROTECT_R) {
+          const activateNow =
+            Number.isFinite(price) &&
+            Number.isFinite(activationPrice) &&
+            (side === "Buy" ? price >= activationPrice : price <= activationPrice);
+          if (!hasTrail && activateNow) {
             const lastAttempt = aiMaticTrailCooldownRef.current.get(symbol) ?? 0;
             if (now - lastAttempt >= 30_000) {
               aiMaticTrailCooldownRef.current.set(symbol, now);
@@ -3560,24 +3687,22 @@ export function useTradingBot(
                 (decisionRef.current[symbol]?.decision as any)?.coreV2?.atr14
               );
               const minDistance = resolveMinProtectionDistance(entry);
-              const risk = Math.abs(entry - sl);
-              const activationDistance = Math.max(
-                Number.isFinite(risk) ? risk * AI_MATIC_TRAIL_PROTECT_R : 0,
-                minDistance
-              );
               const distance = Math.max(
                 Number.isFinite(atr) ? atr * AI_MATIC_TRAIL_ATR_MULT : 0,
-                entry * AI_MATIC_TRAIL_PCT,
+                entry * AI_MATIC_TRAIL_RETRACE_PCT,
                 minDistance
               );
-              const dir = side === "Buy" ? 1 : -1;
-              const activePrice = entry + dir * activationDistance;
-              if (Number.isFinite(distance) && distance > 0 && Number.isFinite(activePrice) && activePrice > 0) {
+              if (
+                Number.isFinite(distance) &&
+                distance > 0 &&
+                Number.isFinite(activationPrice) &&
+                activationPrice > 0
+              ) {
                 try {
                   await postJson("/protection", {
                     symbol,
                     trailingStop: distance,
-                    trailingActivePrice: activePrice,
+                    trailingActivePrice: activationPrice,
                     positionIdx: Number.isFinite(pos.positionIdx)
                       ? pos.positionIdx
                       : undefined,
@@ -3587,7 +3712,7 @@ export function useTradingBot(
                       id: `ai-matic-trail:${symbol}:${now}`,
                       timestamp: new Date(now).toISOString(),
                       action: "STATUS",
-                      message: `${symbol} AI-MATIC trailing protection active`,
+                      message: `${symbol} AI-MATIC trailing active`,
                     },
                   ]);
                 } catch (err) {
@@ -3596,63 +3721,9 @@ export function useTradingBot(
                       id: `ai-matic-trail:error:${symbol}:${now}`,
                       timestamp: new Date(now).toISOString(),
                       action: "ERROR",
-                      message: `${symbol} AI-MATIC trailing protection failed: ${asErrorMessage(err)}`,
+                      message: `${symbol} AI-MATIC trailing failed: ${asErrorMessage(err)}`,
                     },
                   ]);
-                }
-              }
-            }
-          }
-          if (
-            tpMeta &&
-            Number.isFinite(entry) &&
-            Number.isFinite(tpMeta.entry) &&
-            Math.abs(tpMeta.entry - entry) / Math.max(entry, 1e-8) <= 0.01
-          ) {
-            const tpHit =
-              Number.isFinite(price) &&
-              Number.isFinite(tpMeta.tp1) &&
-              (tpMeta.side === "Buy" ? price >= tpMeta.tp1 : price <= tpMeta.tp1);
-            if (tpHit && !hasTrail) {
-              const lastAttempt = aiMaticTrailCooldownRef.current.get(symbol) ?? 0;
-              if (now - lastAttempt >= 30_000) {
-                aiMaticTrailCooldownRef.current.set(symbol, now);
-                const atr = toNumber(
-                  (decisionRef.current[symbol]?.decision as any)?.coreV2?.atr14
-                );
-                const distance = Math.max(
-                  Number.isFinite(atr) ? atr * AI_MATIC_TRAIL_ATR_MULT : 0,
-                  entry * AI_MATIC_TRAIL_PCT
-                );
-                if (Number.isFinite(distance) && distance > 0) {
-                  try {
-                    await postJson("/protection", {
-                      symbol,
-                      trailingStop: distance,
-                      trailingActivePrice: tpMeta.tp1,
-                      positionIdx: Number.isFinite(pos.positionIdx)
-                        ? pos.positionIdx
-                        : undefined,
-                    });
-                    addLogEntries([
-                      {
-                        id: `ai-matic-tp1:${symbol}:${now}`,
-                        timestamp: new Date(now).toISOString(),
-                        action: "STATUS",
-                        message: `${symbol} TP1 hit -> trailing activated`,
-                      },
-                    ]);
-                    aiMaticTp1Ref.current.delete(symbol);
-                  } catch (err) {
-                    addLogEntries([
-                      {
-                        id: `ai-matic-tp1:error:${symbol}:${now}`,
-                        timestamp: new Date(now).toISOString(),
-                        action: "ERROR",
-                        message: `${symbol} TP1 trailing failed: ${asErrorMessage(err)}`,
-                      },
-                    ]);
-                  }
                 }
               }
             }
@@ -4951,11 +5022,15 @@ export function useTradingBot(
         | AiMaticContext
         | null;
       const inferredSide =
-        aiMaticContext?.htf.structureTrend === "BULL"
+        aiMaticContext?.htf.ema?.bullOk
           ? "buy"
-          : aiMaticContext?.htf.structureTrend === "BEAR"
+          : aiMaticContext?.htf.ema?.bearOk
             ? "sell"
-            : null;
+            : aiMaticContext?.htf.structureTrend === "BULL"
+              ? "buy"
+              : aiMaticContext?.htf.structureTrend === "BEAR"
+                ? "sell"
+                : null;
       const signalForEval =
         signal ??
         (inferredSide
