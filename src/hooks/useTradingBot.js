@@ -35,7 +35,7 @@ const ORDER_VALUE_BY_SYMBOL = {
 };
 const MAJOR_SYMBOLS = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const CORE_V2_RISK_PCT = {
-    "ai-matic": 0.3,
+    "ai-matic": 0.1,
     "ai-matic-x": 0.003,
     "ai-matic-scalp": 0.0025,
     "ai-matic-tree": 0.003,
