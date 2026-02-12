@@ -253,7 +253,7 @@ export const defaultConfig: BotConfig = {
   baseTimeframe: "1h",
   signalTimeframe: "5m",
   targetTradesPerDay: 100,
-  riskPerTrade: 0.04,
+  riskPerTrade: 0.1,
   strategyProfile: "ai-matic",
   entryStrictness: "base",
   accountBalance: 1550,
