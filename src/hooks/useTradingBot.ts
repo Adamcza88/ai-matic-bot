@@ -43,7 +43,7 @@ export type ActivePosition = BaseActivePosition & { isBreakeven?: boolean };
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
-const MIN_POSITION_NOTIONAL_USD = 50;
+const MIN_POSITION_NOTIONAL_USD = 5;
 const MAX_POSITION_NOTIONAL_USD = 10000;
 const ORDER_VALUE_BY_SYMBOL: Record<Symbol, number> = {
   BTCUSDT: 10000,
