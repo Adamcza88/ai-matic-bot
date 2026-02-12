@@ -43,7 +43,7 @@ export type ActivePosition = BaseActivePosition & { isBreakeven?: boolean };
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
-const MIN_POSITION_NOTIONAL_USD = 250;
+const MIN_POSITION_NOTIONAL_USD = 20;
 const MAX_POSITION_NOTIONAL_USD = 10000;
 const ORDER_VALUE_BY_SYMBOL: Record<Symbol, number> = {
   BTCUSDT: 5000,
@@ -61,7 +61,7 @@ const ORDER_VALUE_BY_SYMBOL: Record<Symbol, number> = {
 };
 const MAJOR_SYMBOLS = new Set<Symbol>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
-  "ai-matic": 0.1,
+  "ai-matic": 0.04,
   "ai-matic-x": 0.003,
   "ai-matic-scalp": 0.0025,
   "ai-matic-tree": 0.003,
