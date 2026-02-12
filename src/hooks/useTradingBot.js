@@ -18,7 +18,7 @@ const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 50;
-const MAX_POSITION_NOTIONAL_USD = 5500;
+const MAX_POSITION_NOTIONAL_USD = 5000;
 const ORDER_VALUE_BY_SYMBOL = {
     BTCUSDT: 5000,
     ETHUSDT: 5000,
@@ -35,7 +35,7 @@ const ORDER_VALUE_BY_SYMBOL = {
 };
 const MAJOR_SYMBOLS = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const CORE_V2_RISK_PCT = {
-    "ai-matic": 0.025,
+    "ai-matic": 0.3,
     "ai-matic-x": 0.003,
     "ai-matic-scalp": 0.0025,
     "ai-matic-tree": 0.003,
@@ -83,7 +83,7 @@ const CORE_V2_BBO_AGE_DEFAULT_MS = 1000;
 const SCALP_PRIMARY_GATE = "Primary Timeframe: 15m for trend, 1m for entry.";
 const SCALP_ENTRY_GATE = "Entry Logic: Fibo retracement + 1 confirmation (OB/GAP/VP/EMA TL).";
 const SCALP_EXIT_GATE = "Exit Logic: Fibo extension TP (dynamic) or ATR trailing (2.5x).";
-const MAX_OPEN_POSITIONS_CAP = 10000;
+const MAX_OPEN_POSITIONS_CAP = 55000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
 const TS_VERIFY_INTERVAL_MS = 180_000;
