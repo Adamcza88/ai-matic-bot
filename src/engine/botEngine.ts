@@ -256,7 +256,7 @@ export const defaultConfig: BotConfig = {
   riskPerTrade: 0.12,
   strategyProfile: "ai-matic",
   entryStrictness: "base",
-  accountBalance: 6100,
+  accountBalance: 5000,
   atrPeriod: 14,
   adxPeriod: 14,
   adxThreshold: 25,
