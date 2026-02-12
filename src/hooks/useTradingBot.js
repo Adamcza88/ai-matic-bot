@@ -17,25 +17,25 @@ import { loadPnlHistory, mergePnlRecords, resetPnlHistoryMap, } from "../lib/pnl
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
-const MIN_POSITION_NOTIONAL_USD = 100;
-const MAX_POSITION_NOTIONAL_USD = 10000;
+const MIN_POSITION_NOTIONAL_USD = 50;
+const MAX_POSITION_NOTIONAL_USD = 5500;
 const ORDER_VALUE_BY_SYMBOL = {
-    BTCUSDT: 10000,
-    ETHUSDT: 10000,
-    SOLUSDT: 10000,
-    ADAUSDT: 7500,
-    XRPUSDT: 7500,
-    SUIUSDT: 5000,
-    DOGEUSDT: 7500,
-    LINKUSDT: 5000,
-    ZILUSDT: 2500,
-    AVAXUSDT: 5000,
-    HYPEUSDT: 7500,
-    OPUSDT: 5000,
+    BTCUSDT: 5000,
+    ETHUSDT: 5000,
+    SOLUSDT: 5000,
+    ADAUSDT: 3750,
+    XRPUSDT: 3750,
+    SUIUSDT: 2500,
+    DOGEUSDT: 3750,
+    LINKUSDT: 2500,
+    ZILUSDT: 1250,
+    AVAXUSDT: 2500,
+    HYPEUSDT: 2500,
+    OPUSDT: 2500,
 };
 const MAJOR_SYMBOLS = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const CORE_V2_RISK_PCT = {
-    "ai-matic": 0.004,
+    "ai-matic": 0.025,
     "ai-matic-x": 0.003,
     "ai-matic-scalp": 0.0025,
     "ai-matic-tree": 0.003,
