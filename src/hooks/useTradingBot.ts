@@ -6,7 +6,9 @@ import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import {
   computeTimeOfDayVolumeGate,
+  computeCorrelatedExposureScale,
   computeRsiBollingerEnvelope,
+  evaluateAltseasonRegime,
   evaluateStrategyForSymbol,
   resampleCandles,
   resolveRegimeAwareRsiBounds,
@@ -20,7 +22,12 @@ import { computeEma, computeRsi, findPivotsHigh, findPivotsLow, computeATR } fro
 import { CandlestickAnalyzer } from "../engine/universal-candlestick-analyzer";
 import { computeMarketProfile, type MarketProfile } from "../engine/marketProfile";
 import type { PriceFeedDecision } from "../engine/priceFeed";
-import type { BotConfig, Candle } from "../engine/botEngine";
+import type {
+  AltseasonRegimeSnapshot,
+  BotConfig,
+  Candle,
+  PortfolioExposure,
+} from "../engine/botEngine";
 import { TradingMode } from "../types";
 import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy";
 import { getOrderFlowSnapshot, updateOpenInterest } from "../engine/orderflow";
@@ -111,6 +118,12 @@ const CORE_V2_ATR_MIN_PCT_MAJOR = 0.0012;
 const CORE_V2_ATR_MIN_PCT_ALT = 0.0018;
 const CORE_V2_HTF_BUFFER_PCT = 0.001;
 const CORE_V2_NOTIONAL_CAP_PCT = 0.1;
+const CORRELATION_RISK_THRESHOLD = 0.8;
+const CORRELATION_RISK_MIN_SCALE = 0.2;
+const ALTSEASON_SAMPLE_MS = 60_000;
+const ALTSEASON_HISTORY_POINTS = 12;
+const ALTSEASON_DOMINANCE_DROP_THRESHOLD = 0.05;
+const ALTSEASON_ALT_ATR_EXPANSION_RATIO = 1.15;
 const CORE_V2_BBO_AGE_BY_SYMBOL: Partial<Record<Symbol, number>> = {
   BTCUSDT: 800,
   ETHUSDT: 800,
@@ -2949,6 +2962,12 @@ type AiMaticRetestFallbackState = {
   executing: boolean;
 };
 
+type PortfolioRegimeState = {
+  dominanceHistory: number[];
+  lastSampleAt: number;
+  snapshot: AltseasonRegimeSnapshot | null;
+};
+
 function buildEntryFallback(list: any[]) {
   const map = new Map<string, EntryFallback>();
   for (const o of list) {
@@ -3278,6 +3297,11 @@ export function useTradingBot(
   const decisionRef = useRef<
     Record<string, { decision: PriceFeedDecision; ts: number }>
   >({});
+  const portfolioRegimeRef = useRef<PortfolioRegimeState>({
+    dominanceHistory: [],
+    lastSampleAt: 0,
+    snapshot: null,
+  });
   const signalSeenRef = useRef<Set<string>>(new Set());
   const intentPendingRef = useRef<Set<string>>(new Set());
   const feedPauseRef = useRef<Set<string>>(new Set());
@@ -3605,6 +3629,114 @@ export function useTradingBot(
     });
     return { biases, btcBias };
   }, [isEntryOrder, normalizeBias]);
+
+  const resolvePortfolioRegime = useCallback(
+    (now = Date.now()): AltseasonRegimeSnapshot => {
+      const state = portfolioRegimeRef.current;
+      const btcDecision = decisionRef.current["BTCUSDT"]?.decision;
+      const btcCore = (btcDecision as any)?.coreV2 as CoreV2Metrics | undefined;
+      const btcAtrPct = toNumber(btcCore?.atrPct);
+      const btcAdx = toNumber((btcDecision as any)?.trendAdx);
+      const btcTrendRaw = String(
+        (btcDecision as any)?.trend ?? btcCore?.htfBias ?? "none"
+      ).toLowerCase();
+      const altAtrPcts = activeSymbols
+        .filter((s) => s !== "BTCUSDT")
+        .map((s) =>
+          toNumber(
+            ((decisionRef.current[s]?.decision as any)?.coreV2 as
+              | CoreV2Metrics
+              | undefined)?.atrPct
+          )
+        )
+        .filter((value): value is number => Number.isFinite(value) && value > 0);
+      const altAtrMean =
+        altAtrPcts.length > 0
+          ? altAtrPcts.reduce((sum, value) => sum + value, 0) / altAtrPcts.length
+          : Number.NaN;
+
+      if (
+        now - state.lastSampleAt >= ALTSEASON_SAMPLE_MS &&
+        Number.isFinite(btcAtrPct) &&
+        btcAtrPct > 0 &&
+        Number.isFinite(altAtrMean) &&
+        altAtrMean > 0
+      ) {
+        const dominanceProxy = btcAtrPct / altAtrMean;
+        if (Number.isFinite(dominanceProxy) && dominanceProxy > 0) {
+          state.dominanceHistory.push(dominanceProxy);
+          if (state.dominanceHistory.length > ALTSEASON_HISTORY_POINTS) {
+            state.dominanceHistory = state.dominanceHistory.slice(
+              -ALTSEASON_HISTORY_POINTS
+            );
+          }
+        }
+        state.lastSampleAt = now;
+      }
+
+      const snapshot = evaluateAltseasonRegime({
+        btcTrend: btcTrendRaw,
+        btcAdx,
+        btcAtrPct,
+        altAtrPcts,
+        dominanceHistory: state.dominanceHistory,
+        dominanceDropThreshold: ALTSEASON_DOMINANCE_DROP_THRESHOLD,
+        altAtrExpansionRatio: ALTSEASON_ALT_ATR_EXPANSION_RATIO,
+      });
+      state.snapshot = snapshot;
+      return snapshot;
+    },
+    [activeSymbols]
+  );
+
+  const resolvePortfolioRiskScale = useCallback(
+    (symbol: Symbol, side: "Buy" | "Sell", now = Date.now()) => {
+      const targetSide = side === "Buy" ? "bull" : "bear";
+      const exposures: PortfolioExposure[] = [];
+      const selected = new Set(activeSymbols);
+      positionsRef.current.forEach((position) => {
+        const symbolUpper = String(position.symbol ?? "").toUpperCase();
+        if (!selected.has(symbolUpper as Symbol)) return;
+        const size = toNumber(position.size ?? position.qty);
+        if (!Number.isFinite(size) || size <= 0) return;
+        const bias = normalizeBias(position.side);
+        if (!bias) return;
+        exposures.push({ symbol: symbolUpper, side: bias });
+      });
+      ordersRef.current.forEach((order) => {
+        const symbolUpper = String(order?.symbol ?? "").toUpperCase();
+        if (!selected.has(symbolUpper as Symbol)) return;
+        if (!isEntryOrder(order)) return;
+        const bias = normalizeBias(order.side);
+        if (!bias) return;
+        exposures.push({ symbol: symbolUpper, side: bias });
+      });
+      Object.entries(decisionRef.current).forEach(([otherSymbol, payload]) => {
+        const symbolUpper = String(otherSymbol ?? "").toUpperCase();
+        if (!selected.has(symbolUpper as Symbol)) return;
+        const signal = payload?.decision?.signal;
+        const sideRaw = String(signal?.intent?.side ?? "").toLowerCase();
+        const bias =
+          sideRaw === "buy" ? "bull" : sideRaw === "sell" ? "bear" : null;
+        if (!bias) return;
+        exposures.push({ symbol: symbolUpper, side: bias });
+      });
+
+      const regime = resolvePortfolioRegime(now);
+      const skipSymbols =
+        regime.active && symbol !== "BTCUSDT" ? ["BTCUSDT"] : undefined;
+      const scaled = computeCorrelatedExposureScale({
+        targetSymbol: symbol,
+        targetSide,
+        exposures,
+        minCorrelation: CORRELATION_RISK_THRESHOLD,
+        minScale: CORRELATION_RISK_MIN_SCALE,
+        skipSymbols,
+      });
+      return { ...scaled, altseasonActive: regime.active };
+    },
+    [activeSymbols, isEntryOrder, normalizeBias, resolvePortfolioRegime]
+  );
 
   const resolveBtcBias = useCallback(
     (fallbackDir?: "bull" | "bear", symbolUpper?: string) => {
@@ -4739,13 +4871,26 @@ export function useTradingBot(
       const score = scoreItems.filter((g) => g.ok).length;
 
       const scoreCfg = CORE_V2_SCORE_GATE[settings.riskMode];
-      const baseThreshold = isMajor ? scoreCfg.major : scoreCfg.alt;
+      const portfolioRegime = resolvePortfolioRegime(Date.now());
+      const altseasonGateActive =
+        settings.riskMode === "ai-matic" && portfolioRegime.active;
+      const rotatedMajorThreshold = Math.max(scoreCfg.major, scoreCfg.alt);
+      const rotatedAltThreshold = Math.min(scoreCfg.major, scoreCfg.alt);
+      const baseThreshold = altseasonGateActive
+        ? symbol === "BTCUSDT"
+          ? rotatedMajorThreshold
+          : rotatedAltThreshold
+        : isMajor
+          ? scoreCfg.major
+          : scoreCfg.alt;
       const strongTrend =
         (Number.isFinite(adx) && adx >= 25) ||
         (Number.isFinite(core?.htfAtrPct) && core!.htfAtrPct >= atrMin) ||
         (decision as any)?.htfTrend?.alignedCount >= 2;
       const threshold =
-        settings.riskMode === "ai-matic-tree"
+        altseasonGateActive
+          ? baseThreshold
+          : settings.riskMode === "ai-matic-tree"
           ? strongTrend
             ? scoreCfg.major
             : scoreCfg.alt
@@ -4766,9 +4911,11 @@ export function useTradingBot(
         atrMin,
         volumePct,
         isMajor,
+        altseasonGateActive,
+        dominanceProxy: portfolioRegime.dominanceProxy,
       };
     },
-    []
+    [resolvePortfolioRegime]
   );
 
   const evaluateProGates = useCallback(
@@ -4929,13 +5076,15 @@ export function useTradingBot(
   );
 
   const isBtcDecoupling = useCallback(() => {
+    const regime = resolvePortfolioRegime(Date.now());
+    if (regime.active) return true;
     const btcDecision = decisionRef.current["BTCUSDT"]?.decision;
     if (!btcDecision) return false;
     const trend = (btcDecision as any)?.trend;
     const adx = toNumber((btcDecision as any)?.trendAdx);
-    // Condition: BTC Range AND ADX < 25 (Low Volatility / Sideways) -> Altseason/Decoupling
+    // Fallback: BTC Range + low ADX.
     return String(trend).toLowerCase() === "range" && Number.isFinite(adx) && adx < 25;
-  }, []);
+  }, [resolvePortfolioRegime]);
 
   const enforceBtcBiasAlignment = useCallback(
     async (now: number) => {
@@ -6842,6 +6991,7 @@ export function useTradingBot(
       feedLastTickRef.current = now;
       symbolTickRef.current.set(symbol, now);
       decisionRef.current[symbol] = { decision, ts: now };
+      const portfolioRegime = resolvePortfolioRegime(now);
       if (isSelected) {
         setScanDiagnostics((prev) => ({
           ...(prev ?? {}),
@@ -7740,9 +7890,15 @@ export function useTradingBot(
       }
       const riskOffMultiplier =
         isScalpProfile && riskOff ? SCALP_RISK_OFF_MULT : 1;
+      const portfolioScale = resolvePortfolioRiskScale(
+        symbol as Symbol,
+        side,
+        now
+      );
       const riskMultiplier = Math.min(
         protectedEntry ? SCALP_PROTECTED_RISK_MULT : 1,
-        riskOffMultiplier
+        riskOffMultiplier,
+        portfolioScale.scale
       );
       const useFixedQty = fixedSizing?.ok === true;
       const qtyMode = useFixedQty ? "BASE_QTY" : "USDT_NOTIONAL";
@@ -7839,6 +7995,36 @@ export function useTradingBot(
             )}%)`,
           },
         ]);
+      }
+      if (portfolioScale.scale < 0.999) {
+        const clusterKey = `cluster:${symbol}:${side}:${portfolioScale.correlatedSymbols.join("|")}:${Math.round(
+          portfolioScale.scale * 100
+        )}`;
+        const last = skipLogThrottleRef.current.get(clusterKey) ?? 0;
+        if (now - last >= SKIP_LOG_THROTTLE_MS) {
+          skipLogThrottleRef.current.set(clusterKey, now);
+          const clusterDetail =
+            portfolioScale.correlatedSymbols.length > 0
+              ? portfolioScale.correlatedSymbols.join(", ")
+              : "none";
+          addLogEntries([
+            {
+              id: `signal:portfolio:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} portfolio scale ${Math.round(
+                portfolioScale.scale * 100
+              )}% | cluster ${portfolioScale.clusterSize} | corr ${formatNumber(
+                portfolioScale.strongestCorrelation,
+                2
+              )} | ${clusterDetail}${
+                portfolioScale.altseasonActive || portfolioRegime.active
+                  ? " | altseason"
+                  : ""
+              }`,
+            },
+          ]);
+        }
       }
 
       const trailOffset = toNumber((decision as any)?.trailOffsetPct);
@@ -8014,6 +8200,8 @@ export function useTradingBot(
       isEntryOrder,
       maybeRunAiMaticRetestFallback,
       postJson,
+      resolvePortfolioRegime,
+      resolvePortfolioRiskScale,
       resolveScalpExitMode,
       submitReduceOnlyOrder,
     ]
@@ -8040,6 +8228,11 @@ export function useTradingBot(
     proTargetsRef.current.clear();
     proPartialRef.current.clear();
     decisionRef.current = {};
+    portfolioRegimeRef.current = {
+      dominanceHistory: [],
+      lastSampleAt: 0,
+      snapshot: null,
+    };
     setScanDiagnostics(null);
 
     const riskMode = settingsRef.current.riskMode;

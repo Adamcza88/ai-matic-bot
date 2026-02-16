@@ -540,6 +540,175 @@ export function computeTimeOfDayVolumeGate(
  */
 export type DataFrame = Candle[];
 
+export type PortfolioSide = "bull" | "bear";
+
+export type PortfolioExposure = {
+  symbol: string;
+  side: PortfolioSide;
+};
+
+export type CorrelatedExposureScale = {
+  scale: number;
+  clusterSize: number;
+  correlatedSymbols: string[];
+  strongestCorrelation: number;
+};
+
+export type AltseasonRegimeSnapshot = {
+  active: boolean;
+  dominanceProxy: number;
+  btcStagnating: boolean;
+  dominanceDropping: boolean;
+  altVolExpansion: boolean;
+  btcAtrPct: number;
+  altAtrMean: number;
+};
+
+const PAIRWISE_CORRELATION_MAP: Record<string, number> = {
+  "BTCUSDT|ETHUSDT": 0.92,
+  "BTCUSDT|SOLUSDT": 0.86,
+  "BTCUSDT|ADAUSDT": 0.83,
+  "BTCUSDT|XRPUSDT": 0.81,
+  "ETHUSDT|SOLUSDT": 0.88,
+  "ETHUSDT|ADAUSDT": 0.84,
+  "ETHUSDT|XRPUSDT": 0.82,
+  "ETHUSDT|LINKUSDT": 0.82,
+  "SOLUSDT|ADAUSDT": 0.85,
+  "SOLUSDT|AVAXUSDT": 0.84,
+};
+
+function normalizeSymbol(symbol: string): string {
+  return String(symbol ?? "").trim().toUpperCase();
+}
+
+function pairCorrelationKey(symbolA: string, symbolB: string): string {
+  const a = normalizeSymbol(symbolA);
+  const b = normalizeSymbol(symbolB);
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+export function resolvePairCorrelation(symbolA: string, symbolB: string): number {
+  const a = normalizeSymbol(symbolA);
+  const b = normalizeSymbol(symbolB);
+  if (!a || !b) return Number.NaN;
+  if (a === b) return 1;
+  return PAIRWISE_CORRELATION_MAP[pairCorrelationKey(a, b)] ?? 0.65;
+}
+
+export function computeCorrelatedExposureScale(args: {
+  targetSymbol: string;
+  targetSide: PortfolioSide;
+  exposures: PortfolioExposure[];
+  minCorrelation?: number;
+  minScale?: number;
+  skipSymbols?: string[];
+}): CorrelatedExposureScale {
+  const threshold = Number.isFinite(args.minCorrelation)
+    ? Math.max(0, Math.min(1, args.minCorrelation as number))
+    : 0.8;
+  const minScale = Number.isFinite(args.minScale)
+    ? Math.max(0.05, Math.min(1, args.minScale as number))
+    : 0.25;
+  const target = normalizeSymbol(args.targetSymbol);
+  const skip = new Set((args.skipSymbols ?? []).map(normalizeSymbol));
+  const correlated = new Set<string>();
+  let strongest = Number.NaN;
+
+  for (const exposure of args.exposures ?? []) {
+    const symbol = normalizeSymbol(exposure?.symbol ?? "");
+    if (!symbol || symbol === target || skip.has(symbol)) continue;
+    if (exposure?.side !== args.targetSide) continue;
+    const corr = resolvePairCorrelation(target, symbol);
+    if (!Number.isFinite(corr) || corr < threshold) continue;
+    correlated.add(symbol);
+    strongest = Number.isFinite(strongest) ? Math.max(strongest, corr) : corr;
+  }
+
+  const clusterSize = 1 + correlated.size;
+  const scale = Math.max(minScale, 1 / clusterSize);
+  return {
+    scale,
+    clusterSize,
+    correlatedSymbols: Array.from(correlated),
+    strongestCorrelation: strongest,
+  };
+}
+
+export function evaluateAltseasonRegime(args: {
+  btcTrend?: Trend | string;
+  btcAdx?: number;
+  btcAtrPct?: number;
+  altAtrPcts?: number[];
+  dominanceHistory?: number[];
+  dominanceDropThreshold?: number;
+  altAtrExpansionRatio?: number;
+}): AltseasonRegimeSnapshot {
+  const dominanceDropThreshold = Number.isFinite(args.dominanceDropThreshold)
+    ? Math.max(0.01, Math.min(0.25, args.dominanceDropThreshold as number))
+    : 0.05;
+  const altAtrExpansionRatio = Number.isFinite(args.altAtrExpansionRatio)
+    ? Math.max(1.02, args.altAtrExpansionRatio as number)
+    : 1.15;
+  const btcAtrPct = Number(args.btcAtrPct);
+  const btcAdx = Number(args.btcAdx);
+  const trendRaw = String(args.btcTrend ?? "").trim().toLowerCase();
+  const trendIsRangeLike =
+    !trendRaw ||
+    trendRaw === "range" ||
+    trendRaw === "none" ||
+    trendRaw === "neutral";
+  const btcStagnating =
+    trendIsRangeLike || (Number.isFinite(btcAdx) && btcAdx < 23);
+
+  const altAtrValues = (args.altAtrPcts ?? []).filter(
+    (v): v is number => Number.isFinite(v) && v > 0
+  );
+  const altAtrMean =
+    altAtrValues.length > 0
+      ? altAtrValues.reduce((sum, v) => sum + v, 0) / altAtrValues.length
+      : Number.NaN;
+  const altVolExpansion =
+    Number.isFinite(altAtrMean) &&
+    Number.isFinite(btcAtrPct) &&
+    btcAtrPct > 0 &&
+    altAtrMean >= btcAtrPct * altAtrExpansionRatio;
+
+  const history = (args.dominanceHistory ?? []).filter(
+    (v): v is number => Number.isFinite(v) && v > 0
+  );
+  const newest = history[history.length - 1];
+  const prev = history[history.length - 2];
+  const lookbackStart =
+    history.length > 6 ? history[history.length - 6] : history[0];
+  const dominanceDropping =
+    history.length >= 3 &&
+    Number.isFinite(newest) &&
+    Number.isFinite(prev) &&
+    Number.isFinite(lookbackStart) &&
+    newest <= lookbackStart * (1 - dominanceDropThreshold) &&
+    newest <= prev;
+
+  const dominanceProxy =
+    Number.isFinite(altAtrMean) &&
+    Number.isFinite(btcAtrPct) &&
+    altAtrMean > 0 &&
+    btcAtrPct > 0
+      ? btcAtrPct / altAtrMean
+      : Number.isFinite(newest)
+        ? newest
+        : Number.NaN;
+
+  return {
+    active: btcStagnating && altVolExpansion && dominanceDropping,
+    dominanceProxy,
+    btcStagnating,
+    dominanceDropping,
+    altVolExpansion,
+    btcAtrPct,
+    altAtrMean,
+  };
+}
+
 /**
  * TradingBot class encapsulates scanning and trade management logic.
  */
