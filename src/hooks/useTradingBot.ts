@@ -5,6 +5,7 @@ import { EntryType, Profile, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
 import {
+  computeTimeOfDayVolumeGate,
   computeRsiBollingerEnvelope,
   evaluateStrategyForSymbol,
   resampleCandles,
@@ -86,6 +87,8 @@ const CORE_V2_VOLUME_PCTL: Record<AISettings["riskMode"], number> = {
   "ai-matic-tree": 65,
   "ai-matic-pro": 65,
 };
+const CORE_V2_VOLUME_TOD_LOOKBACK_DAYS = 10;
+const CORE_V2_VOLUME_TOD_MIN_SAMPLES = 6;
 const CORE_V2_SCORE_GATE: Record<
   AISettings["riskMode"],
   { major: number; alt: number }
@@ -1028,11 +1031,14 @@ const buildAiMaticContext = (
     ltfStructure.lastLow,
     "bear"
   );
+  const ltfVolumeThreshold = Number.isFinite(core?.volumeTodThreshold)
+    ? core!.volumeTodThreshold
+    : core?.volumeP60;
   const ltfVolumeReaction =
     Boolean(core?.volumeSpike) ||
     (Number.isFinite(core?.volumeCurrent) &&
-      Number.isFinite(core?.volumeP60) &&
-      core!.volumeCurrent >= core!.volumeP60);
+      Number.isFinite(ltfVolumeThreshold) &&
+      core!.volumeCurrent >= ltfVolumeThreshold);
   const htfAdx = toNumber((decision as any)?.trendAdx);
   const htfVolumeRising = resolveVolumeRising(htf);
   const price = Number.isFinite(ltfLast?.close) ? ltfLast.close : Number.NaN;
@@ -1691,6 +1697,12 @@ type CoreV2Metrics = {
   volumeP60: number;
   volumeP65: number;
   volumeP70: number;
+  volumeTodBaseline: number;
+  volumeTodThreshold: number;
+  volumeTodRatio: number;
+  volumeTodSampleCount: number;
+  volumeTodSlotMinute: number;
+  volumeTodFallback: boolean;
   volumeSma: number;
   volumeStd: number;
   volumeZ: number;
@@ -2022,6 +2034,15 @@ const computeCoreV2Metrics = (
   const volumeP60 = percentile(recentVols, 60);
   const volumeP65 = percentile(recentVols, 65);
   const volumeP70 = percentile(recentVols, 70);
+  const volumeTod = computeTimeOfDayVolumeGate(
+    ltf,
+    CORE_V2_VOLUME_PCTL[riskMode] / 100,
+    {
+      lookbackDays: CORE_V2_VOLUME_TOD_LOOKBACK_DAYS,
+      minSamples: CORE_V2_VOLUME_TOD_MIN_SAMPLES,
+      slotMinutes: ltfTimeframeMin,
+    }
+  );
   const volSlice = recentVols.slice(-SCALP_VOL_LEN);
   const volumeSma =
     volSlice.length > 0
@@ -2546,6 +2567,12 @@ const computeCoreV2Metrics = (
     volumeP60,
     volumeP65,
     volumeP70,
+    volumeTodBaseline: volumeTod.baselineVolume,
+    volumeTodThreshold: volumeTod.thresholdVolume,
+    volumeTodRatio: volumeTod.currentToBaselineRatio,
+    volumeTodSampleCount: volumeTod.sampleCount,
+    volumeTodSlotMinute: volumeTod.slotMinuteOfDay,
+    volumeTodFallback: volumeTod.fallbackUsed,
     volumeSma,
     volumeStd,
     volumeZ,
@@ -4473,7 +4500,7 @@ export function useTradingBot(
       const isMajor = MAJOR_SYMBOLS.has(symbol);
       const atrMin = isMajor ? CORE_V2_ATR_MIN_PCT_MAJOR : CORE_V2_ATR_MIN_PCT_ALT;
       const volumePct = CORE_V2_VOLUME_PCTL[settings.riskMode];
-      const volumeThreshold =
+      const percentileVolumeThreshold =
         core == null
           ? Number.NaN
           : volumePct === 50
@@ -4483,6 +4510,13 @@ export function useTradingBot(
               : volumePct === 65
                 ? core.volumeP65
                 : core.volumeP70;
+      const todVolumeThreshold = Number.isFinite(core?.volumeTodThreshold)
+        ? core!.volumeTodThreshold
+        : Number.NaN;
+      const useTodVolumeGate = Number.isFinite(todVolumeThreshold);
+      const volumeThreshold = useTodVolumeGate
+        ? todVolumeThreshold
+        : percentileVolumeThreshold;
       const htfBiasOk =
         direction !== "NONE" &&
         htfDir === direction &&
@@ -4510,7 +4544,7 @@ export function useTradingBot(
       const volumeOk =
         Number.isFinite(core?.volumeCurrent) &&
         Number.isFinite(volumeThreshold) &&
-        core!.volumeCurrent > volumeThreshold;
+        core!.volumeCurrent >= volumeThreshold;
       const requireMicro = settings.riskMode === "ai-matic-x";
       const pullbackOk =
         !requireMicro
@@ -4619,10 +4653,20 @@ export function useTradingBot(
           ok: volumeOk,
           detail:
             Number.isFinite(core?.volumeCurrent) && Number.isFinite(volumeThreshold)
-              ? `vol ${formatNumber(core!.volumeCurrent, 0)} > P${volumePct} ${formatNumber(
-                  volumeThreshold,
-                  0
-                )}`
+              ? useTodVolumeGate
+                ? `vol ${formatNumber(core!.volumeCurrent, 0)} ≥ ${formatNumber(
+                    volumePct,
+                    0
+                  )}% ToD ${formatNumber(core?.volumeTodBaseline ?? Number.NaN, 0)} (need ${formatNumber(
+                    volumeThreshold,
+                    0
+                  )} | ratio ${formatNumber((core?.volumeTodRatio ?? Number.NaN) * 100, 0)}% | n ${Math.round(
+                    core?.volumeTodSampleCount ?? 0
+                  )}${core?.volumeTodFallback ? " fallback" : ""})`
+                : `vol ${formatNumber(core!.volumeCurrent, 0)} ≥ P${volumePct} ${formatNumber(
+                    volumeThreshold,
+                    0
+                  )}`
               : "missing",
           hard: true,
         },

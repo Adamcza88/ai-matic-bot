@@ -425,6 +425,116 @@ export function computeRsiBollingerEnvelope(
   };
 }
 
+export type TimeOfDayVolumeGate = {
+  baselineVolume: number;
+  thresholdVolume: number;
+  currentToBaselineRatio: number;
+  sampleCount: number;
+  slotMinuteOfDay: number;
+  requiredRatio: number;
+  fallbackUsed: boolean;
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MINUTES_PER_DAY = 24 * 60;
+
+const resolveMinuteOfDayUtc = (timestamp: number) => {
+  if (!Number.isFinite(timestamp)) return Number.NaN;
+  const date = new Date(timestamp);
+  return date.getUTCHours() * 60 + date.getUTCMinutes();
+};
+
+const resolveCandleSlotMinutes = (candles: Candle[]) => {
+  for (let i = candles.length - 1; i > 0; i--) {
+    const curr = Number(candles[i]?.openTime);
+    const prev = Number(candles[i - 1]?.openTime);
+    const diffMs = curr - prev;
+    if (!Number.isFinite(diffMs) || diffMs <= 0) continue;
+    return Math.max(1, Math.round(diffMs / 60_000));
+  }
+  return 1;
+};
+
+const resolveSlotMinuteOfDay = (timestamp: number, slotMinutes: number) => {
+  const minuteOfDay = resolveMinuteOfDayUtc(timestamp);
+  if (!Number.isFinite(minuteOfDay)) return Number.NaN;
+  return Math.floor(minuteOfDay / slotMinutes) * slotMinutes;
+};
+
+const mean = (values: number[]) =>
+  values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : Number.NaN;
+
+export function computeTimeOfDayVolumeGate(
+  candles: Candle[],
+  requiredRatio: number,
+  opts: { lookbackDays?: number; minSamples?: number; slotMinutes?: number } = {},
+): TimeOfDayVolumeGate {
+  const latest = candles.length ? candles[candles.length - 1] : undefined;
+  const latestVolume = Number(latest?.volume);
+  const latestOpenTime = Number(latest?.openTime);
+  const ratio = Number.isFinite(requiredRatio) ? Math.max(0, requiredRatio) : Number.NaN;
+  const slotMinutesRaw =
+    Number.isFinite(opts.slotMinutes) && (opts.slotMinutes as number) > 0
+      ? (opts.slotMinutes as number)
+      : resolveCandleSlotMinutes(candles);
+  const slotMinutes = Math.max(1, Math.min(MINUTES_PER_DAY, Math.round(slotMinutesRaw)));
+  const lookbackDaysRaw =
+    Number.isFinite(opts.lookbackDays) && (opts.lookbackDays as number) > 0
+      ? (opts.lookbackDays as number)
+      : 10;
+  const lookbackDays = Math.max(1, Math.round(lookbackDaysRaw));
+  const minSamplesRaw =
+    Number.isFinite(opts.minSamples) && (opts.minSamples as number) > 0
+      ? (opts.minSamples as number)
+      : 6;
+  const minSamples = Math.max(1, Math.round(minSamplesRaw));
+  const slotMinuteOfDay = resolveSlotMinuteOfDay(latestOpenTime, slotMinutes);
+  const lookbackStart = latestOpenTime - lookbackDays * DAY_MS;
+  const historicalSlotVolumes: number[] = [];
+  const fallbackVolumes: number[] = [];
+
+  for (let i = candles.length - 2; i >= 0; i--) {
+    const candle = candles[i];
+    const openTime = Number(candle?.openTime);
+    if (!Number.isFinite(openTime) || !Number.isFinite(latestOpenTime)) continue;
+    if (openTime >= latestOpenTime) continue;
+    if (openTime < lookbackStart) break;
+    const volume = Number(candle?.volume);
+    if (!Number.isFinite(volume) || volume < 0) continue;
+    fallbackVolumes.push(volume);
+    const candleSlot = resolveSlotMinuteOfDay(openTime, slotMinutes);
+    if (Number.isFinite(candleSlot) && candleSlot === slotMinuteOfDay) {
+      historicalSlotVolumes.push(volume);
+    }
+  }
+
+  const slotBaseline = mean(historicalSlotVolumes);
+  const fallbackBaseline = mean(fallbackVolumes.slice(-200));
+  const fallbackUsed =
+    !Number.isFinite(slotBaseline) ||
+    historicalSlotVolumes.length < minSamples ||
+    slotBaseline <= 0;
+  const baselineVolume = fallbackUsed ? fallbackBaseline : slotBaseline;
+  const thresholdVolume =
+    Number.isFinite(baselineVolume) && Number.isFinite(ratio)
+      ? baselineVolume * ratio
+      : Number.NaN;
+  const currentToBaselineRatio =
+    Number.isFinite(latestVolume) && Number.isFinite(baselineVolume) && baselineVolume > 0
+      ? latestVolume / baselineVolume
+      : Number.NaN;
+
+  return {
+    baselineVolume,
+    thresholdVolume,
+    currentToBaselineRatio,
+    sampleCount: historicalSlotVolumes.length,
+    slotMinuteOfDay,
+    requiredRatio: ratio,
+    fallbackUsed,
+  };
+}
+
 /**
  * DataFrame type alias for readability: array of candles.
  */
