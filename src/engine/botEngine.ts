@@ -308,6 +308,123 @@ export const defaultConfig: BotConfig = {
   emaTrendTouchLookback: 2,
 };
 
+export type RegimeRsiContext = {
+  hmmProb?: number;
+  rangeProb?: number;
+  trendProb?: number;
+  regimeOk?: boolean;
+};
+
+export type RegimeAwareRsiBounds = {
+  oversold: number;
+  overbought: number;
+  mode: "BASE" | "BULL_TREND" | "BULL_TREND_RANGE_LOCK";
+};
+
+export type RsiBollingerEnvelope = {
+  valid: boolean;
+  basis: number;
+  upper: number;
+  lower: number;
+  overbought: boolean;
+  oversold: boolean;
+};
+
+type RegimeRsiDirection = "bull" | "bear" | "range" | "none";
+
+function normalizeRegimeRsiDirection(value: unknown): RegimeRsiDirection {
+  const raw = String(value ?? "").toLowerCase();
+  if (raw === Trend.Bull) return "bull";
+  if (raw === Trend.Bear) return "bear";
+  if (raw === Trend.Range) return "range";
+  if (raw === "bull" || raw === "bear" || raw === "range") return raw;
+  return "none";
+}
+
+export function resolveRegimeAwareRsiBounds(args: {
+  baseOversold: number;
+  baseOverbought: number;
+  htfBias?: unknown;
+  regime?: RegimeRsiContext | null;
+}): RegimeAwareRsiBounds {
+  const baseOversold = Number.isFinite(args.baseOversold)
+    ? Math.min(99, Math.max(1, args.baseOversold))
+    : 30;
+  const baseOverbought = Number.isFinite(args.baseOverbought)
+    ? Math.min(99, Math.max(1, args.baseOverbought))
+    : 70;
+  const oversold = Math.min(baseOversold, baseOverbought);
+  const overbought = Math.max(baseOversold, baseOverbought);
+  const bias = normalizeRegimeRsiDirection(args.htfBias);
+  const regime = args.regime ?? null;
+  const rangeProb = Number.isFinite(regime?.rangeProb)
+    ? (regime?.rangeProb as number)
+    : Number.NaN;
+  const trendProb = Number.isFinite(regime?.trendProb)
+    ? (regime?.trendProb as number)
+    : Number.NaN;
+  const hmmProb = Number.isFinite(regime?.hmmProb)
+    ? (regime?.hmmProb as number)
+    : Number.NaN;
+  const rangeLocked =
+    regime?.regimeOk === true ||
+    (Number.isFinite(rangeProb) && rangeProb >= 0.7) ||
+    (Number.isFinite(hmmProb) &&
+      hmmProb >= 0.7 &&
+      !(Number.isFinite(trendProb) && trendProb >= 0.7));
+  if (bias === "bull") {
+    if (rangeLocked) {
+      return { oversold, overbought, mode: "BULL_TREND_RANGE_LOCK" };
+    }
+    return {
+      oversold: Math.max(oversold, 40),
+      overbought: Math.max(overbought, 80),
+      mode: "BULL_TREND",
+    };
+  }
+  return { oversold, overbought, mode: "BASE" };
+}
+
+export function computeRsiBollingerEnvelope(
+  rsiSeries: number[],
+  opts: { period?: number; stdDev?: number } = {},
+): RsiBollingerEnvelope {
+  const period = Math.max(2, Math.round(opts.period ?? 20));
+  const stdDevMult = Number.isFinite(opts.stdDev)
+    ? Math.max(0.1, opts.stdDev as number)
+    : 2;
+  const finite = rsiSeries.filter((v): v is number => Number.isFinite(v));
+  if (finite.length < period) {
+    return {
+      valid: false,
+      basis: Number.NaN,
+      upper: Number.NaN,
+      lower: Number.NaN,
+      overbought: false,
+      oversold: false,
+    };
+  }
+  const window = finite.slice(-period);
+  const basis = window.reduce((sum, value) => sum + value, 0) / period;
+  const variance =
+    window.reduce((sum, value) => {
+      const diff = value - basis;
+      return sum + diff * diff;
+    }, 0) / period;
+  const stdev = Math.sqrt(Math.max(0, variance));
+  const upper = basis + stdDevMult * stdev;
+  const lower = basis - stdDevMult * stdev;
+  const current = finite[finite.length - 1];
+  return {
+    valid: Number.isFinite(current),
+    basis,
+    upper,
+    lower,
+    overbought: Number.isFinite(current) && current >= upper,
+    oversold: Number.isFinite(current) && current <= lower,
+  };
+}
+
 /**
  * DataFrame type alias for readability: array of candles.
  */
@@ -379,7 +496,12 @@ export class TradingBot {
     liquiditySweep: boolean,
     volExpansion: boolean,
     rsi: number,
-    emaAligned: boolean
+    emaAligned: boolean,
+    rsiContext?: {
+      oversold: number;
+      overbought: number;
+      envelope?: RsiBollingerEnvelope;
+    }
   ): number {
     let score = 0;
     // Regime (Max 40)
@@ -395,8 +517,17 @@ export class TradingBot {
     if (emaAligned) score += 15;
     
     // RSI check
-    if (trend === Trend.Bull && rsi < 70) score += 15;
-    else if (trend === Trend.Bear && rsi > 30) score += 15;
+    const overbought = rsiContext?.overbought ?? 70;
+    const oversold = rsiContext?.oversold ?? 30;
+    const envelope = rsiContext?.envelope;
+    const bullRsiOk =
+      Number.isFinite(rsi) &&
+      (rsi < overbought || (envelope?.valid === true && !envelope.overbought));
+    const bearRsiOk =
+      Number.isFinite(rsi) &&
+      (rsi > oversold || (envelope?.valid === true && !envelope.oversold));
+    if (trend === Trend.Bull && bullRsiOk) score += 15;
+    else if (trend === Trend.Bear && bearRsiOk) score += 15;
     else if (trend === Trend.Range) score += 5;
 
     // AI-MATIC-SCALP Specific Adjustments
@@ -1485,6 +1616,15 @@ export class TradingBot {
     const rsiNow = rsiArr[rsiArr.length - 1] || 50;
 
     let trend = this.determineTrend(ht);
+    const regimeAwareRsi = resolveRegimeAwareRsiBounds({
+      baseOversold: this.config.pullbackRsiMin ?? 35,
+      baseOverbought: this.config.pullbackRsiMax ?? 70,
+      htfBias: trend,
+    });
+    const rsiEnvelope = computeRsiBollingerEnvelope(rsiArr, {
+      period: 20,
+      stdDev: 2,
+    });
     if (lt.length < 3) return null;
     const closes = lt.map((c) => c.close);
     const highs = lt.map((c) => c.high);
@@ -1532,7 +1672,12 @@ export class TradingBot {
         conf.liquiditySweep,
         conf.volExpansion,
         rsiNow,
-        candidate.side === emaTrendBias
+        candidate.side === emaTrendBias,
+        {
+          oversold: regimeAwareRsi.oversold,
+          overbought: regimeAwareRsi.overbought,
+          envelope: rsiEnvelope,
+        }
       );
       candidate.sosScore = score;
 

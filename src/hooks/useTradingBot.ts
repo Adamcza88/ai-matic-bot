@@ -4,7 +4,12 @@ import { sendIntent } from "../api/botApi";
 import { EntryType, Profile, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import { startPriceFeed } from "../engine/priceFeed";
-import { evaluateStrategyForSymbol, resampleCandles } from "../engine/botEngine";
+import {
+  computeRsiBollingerEnvelope,
+  evaluateStrategyForSymbol,
+  resampleCandles,
+  resolveRegimeAwareRsiBounds,
+} from "../engine/botEngine";
 import {
   evaluateAiMaticXStrategyForSymbol,
   type AiMaticXContext,
@@ -535,6 +540,13 @@ type AiMaticContext = {
     fakeoutHigh: boolean;
     fakeoutLow: boolean;
     rsi: number;
+    rsiOversold: number;
+    rsiOverbought: number;
+    rsiMode: "BASE" | "BULL_TREND" | "BULL_TREND_RANGE_LOCK";
+    rsiBbLower: number;
+    rsiBbUpper: number;
+    rsiBbOversold: boolean;
+    rsiBbOverbought: boolean;
     rsiExtremeLong: boolean;
     rsiExtremeShort: boolean;
     macdHist: number;
@@ -1020,10 +1032,24 @@ const buildAiMaticContext = (
   const ltfCloses = ltf.map((c) => c.close);
   const ltfRsiArr = computeRsi(ltfCloses, 14);
   const ltfRsi = ltfRsiArr[ltfRsiArr.length - 1] ?? Number.NaN;
+  const regimeAwareRsi = resolveRegimeAwareRsiBounds({
+    baseOversold: AI_MATIC_RSI_OVERSOLD,
+    baseOverbought: AI_MATIC_RSI_OVERBOUGHT,
+    htfBias: htfDir,
+    regime: (decision as any)?.proRegime,
+  });
+  const rsiEnvelope = computeRsiBollingerEnvelope(ltfRsiArr, {
+    period: 20,
+    stdDev: 2,
+  });
   const rsiExtremeLong =
-    Number.isFinite(ltfRsi) && ltfRsi <= AI_MATIC_RSI_OVERSOLD;
+    Number.isFinite(ltfRsi) &&
+    (ltfRsi <= regimeAwareRsi.oversold ||
+      (rsiEnvelope.valid && rsiEnvelope.oversold));
   const rsiExtremeShort =
-    Number.isFinite(ltfRsi) && ltfRsi >= AI_MATIC_RSI_OVERBOUGHT;
+    Number.isFinite(ltfRsi) &&
+    (ltfRsi >= regimeAwareRsi.overbought ||
+      (rsiEnvelope.valid && rsiEnvelope.overbought));
   const macdState = resolveMacdState(ltfCloses);
   const momentumLongOk =
     rsiExtremeLong && (macdState.macdCrossUp || macdState.macdAlignedUp);
@@ -1117,6 +1143,13 @@ const buildAiMaticContext = (
       fakeoutHigh: Boolean(core?.ltfFakeBreakHigh),
       fakeoutLow: Boolean(core?.ltfFakeBreakLow),
       rsi: ltfRsi,
+      rsiOversold: regimeAwareRsi.oversold,
+      rsiOverbought: regimeAwareRsi.overbought,
+      rsiMode: regimeAwareRsi.mode,
+      rsiBbLower: rsiEnvelope.lower,
+      rsiBbUpper: rsiEnvelope.upper,
+      rsiBbOversold: rsiEnvelope.oversold,
+      rsiBbOverbought: rsiEnvelope.overbought,
       rsiExtremeLong,
       rsiExtremeShort,
       macdHist: macdState.macdHist,
