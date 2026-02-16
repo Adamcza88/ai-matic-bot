@@ -177,6 +177,9 @@ export interface BotConfig {
   maxOpenPositions: number;
   maxExitChunks: number;
   trailingActivationR: number;
+  trailingActivationAtrMultiplier: number;
+  trailingRetraceAtrMultiplier: number;
+  tp1AtrMultiplier: number;
   minStopPercent: number;
   pyramidAddScale: number;
   pyramidLevels: { triggerR: number; stopToR: number }[];
@@ -216,6 +219,7 @@ export type EntrySignal = {
   side: "long" | "short";
   entry: number;
   stopLoss: number;
+  entryAtr?: number;
   kind: EntryKind;
   sosScore?: number;
   blocked?: boolean;
@@ -233,6 +237,8 @@ function applyProfileOverrides(cfg: BotConfig): BotConfig {
     maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
     maxOpenPositions: 3,
     trailingActivationR: 0.6,
+    trailingActivationAtrMultiplier: cfg.trailingActivationAtrMultiplier,
+    trailingRetraceAtrMultiplier: cfg.trailingRetraceAtrMultiplier,
     minStopPercent: Math.min(cfg.minStopPercent, 0.02),
     partialSteps: [{ r: 1, exitFraction: 0.5 }],
     maxExitChunks: 2,
@@ -275,6 +281,9 @@ export const defaultConfig: BotConfig = {
   maxOpenPositions: 3,
   maxExitChunks: 3,
   trailingActivationR: 0.6,
+  trailingActivationAtrMultiplier: 1.5,
+  trailingRetraceAtrMultiplier: 0.5,
+  tp1AtrMultiplier: 1.5,
   minStopPercent: 0.02,
   pyramidAddScale: 0.5,
   pyramidLevels: [
@@ -650,12 +659,49 @@ export class TradingBot {
     }
   }
 
+  private usesAtrDynamicExit(): boolean {
+    return (
+      this.config.strategyProfile === "ai-matic" ||
+      this.config.strategyProfile === "ai-matic-tree"
+    );
+  }
+
   /**
-   * Strategy-specific R-based trailing stop staging.
-   * Kicks in at a profile-dependent R multiple and locks a retracement band around entry.
+   * Strategy-specific trailing stop staging.
+   * AI-MATIC core modes use ATR activation/retrace. Other modes keep R-based fallback.
    */
-  private applyStrategyTrailing(rMultiple: number): void {
+  private applyStrategyTrailing(
+    rMultiple: number,
+    currentPrice: number,
+    atr?: number
+  ): void {
     if (!this.position) return;
+    if (this.usesAtrDynamicExit() && Number.isFinite(atr) && (atr as number) > 0) {
+      const openProfit =
+        this.position.side === "long"
+          ? currentPrice - this.position.entryPrice
+          : this.position.entryPrice - currentPrice;
+      const triggerDistance =
+        this.config.trailingActivationAtrMultiplier * (atr as number);
+      if (!Number.isFinite(openProfit) || openProfit < triggerDistance) return;
+      const retraceDistance =
+        this.config.trailingRetraceAtrMultiplier * (atr as number);
+      if (!Number.isFinite(retraceDistance) || retraceDistance <= 0) return;
+      const anchor =
+        this.position.side === "long"
+          ? this.position.highWaterMark
+          : this.position.lowWaterMark;
+      const target =
+        this.position.side === "long"
+          ? anchor - retraceDistance
+          : anchor + retraceDistance;
+      if (this.position.side === "long") {
+        this.position.trailingStop = Math.max(this.position.trailingStop, target);
+      } else {
+        this.position.trailingStop = Math.min(this.position.trailingStop, target);
+      }
+      return;
+    }
     const retracementPct = 0.004; // 0.4% retracement band
     const triggerR = 0.6; // Activate trailing at 0.6R
     if (rMultiple < triggerR || this.position.slDistance <= 0) return;
@@ -694,16 +740,37 @@ export class TradingBot {
 
     const currentPrice = lt[lt.length - 1].close;
     this.updateWaterMarks(currentPrice);
+    const atrSeries = computeATR(
+      lt.map((c) => c.high),
+      lt.map((c) => c.low),
+      lt.map((c) => c.close),
+      this.config.atrPeriod
+    );
+    const latestAtr = atrSeries[atrSeries.length - 1];
     const rMultiple = this.position.slDistance > 0
       ? (this.position.side === "long"
         ? (currentPrice - this.position.entryPrice) / this.position.slDistance
         : (this.position.entryPrice - currentPrice) / this.position.slDistance)
       : 0;
-    if (rMultiple >= this.config.trailingActivationR) {
-      this.updateTrailingStop(lt);
+    if (
+      this.usesAtrDynamicExit() &&
+      Number.isFinite(latestAtr) &&
+      (latestAtr as number) > 0
+    ) {
+      const openProfit =
+        this.position.side === "long"
+          ? currentPrice - this.position.entryPrice
+          : this.position.entryPrice - currentPrice;
+      const activateDistance =
+        this.config.trailingActivationAtrMultiplier * (latestAtr as number);
+      if (Number.isFinite(openProfit) && openProfit >= activateDistance) {
+        this.updateTrailingStop(lt, latestAtr);
+      }
+    } else if (rMultiple >= this.config.trailingActivationR) {
+      this.updateTrailingStop(lt, latestAtr);
     }
     this.applyBreakeven(rMultiple, lt);
-    this.applyStrategyTrailing(rMultiple);
+    this.applyStrategyTrailing(rMultiple, currentPrice, latestAtr);
     this.updateTakeProfit(ht, lt);
     this.applyPyramiding(rMultiple);
     this.applyPartialExits(rMultiple);
@@ -789,7 +856,8 @@ export class TradingBot {
     stopLoss: number,
     kind: EntryKind = "OTHER",
     sizeScale: number = 1.0,
-    sosScore: number = 0
+    sosScore: number = 0,
+    entryAtr?: number
   ): void {
     const profileRisk =
       this.config.strategyProfile === "ai-matic"
@@ -820,7 +888,22 @@ export class TradingBot {
       "ai-matic-scalp": 1.2,  //1.5
       "ai-matic-pro": 1.4,
     };
-    const tp = side === "long" ? entry + rrMap[this.config.strategyProfile] * slDistance : entry - rrMap[this.config.strategyProfile] * slDistance;
+    const fallbackTpDistance = rrMap[this.config.strategyProfile] * slDistance;
+    const useAtrTarget =
+      this.usesAtrDynamicExit() &&
+      Number.isFinite(entryAtr) &&
+      (entryAtr as number) > 0;
+    const dynamicTpDistance = useAtrTarget
+      ? Math.max(
+          this.config.tp1AtrMultiplier * (entryAtr as number),
+          this.config.minStopPercent * entry
+        )
+      : fallbackTpDistance;
+    const tpDistance =
+      Number.isFinite(dynamicTpDistance) && dynamicTpDistance > 0
+        ? dynamicTpDistance
+        : fallbackTpDistance;
+    const tp = side === "long" ? entry + tpDistance : entry - tpDistance;
     this.position = {
       entryPrice: entry,
       size: size,
@@ -865,13 +948,14 @@ export class TradingBot {
     stopLoss: number,
     kind: EntryKind = "OTHER",
     sizeScale: number = 1.0,
-    sosScore: number = 0
+    sosScore: number = 0,
+    entryAtr?: number
   ): boolean {
     if (!this.canEnter()) {
       console.warn("[BotEngine] Entry Blocked: State is not SCAN or Position exists.");
       return false;
     }
-    this.enterPosition(side, entry, stopLoss, kind, sizeScale, sosScore);
+    this.enterPosition(side, entry, stopLoss, kind, sizeScale, sosScore, entryAtr);
     return true;
   }
 
@@ -963,13 +1047,15 @@ export class TradingBot {
    * Update trailing stop of the current position. Chooses the tighter of
    * ATR‑based trailing and swing‑structure trailing.
    */
-  updateTrailingStop(df: DataFrame): void {
+  updateTrailingStop(df: DataFrame, latestAtr?: number): void {
     if (!this.position) return;
     const highs = df.map((c) => c.high);
     const lows = df.map((c) => c.low);
     const closes = df.map((c) => c.close);
-    const atrArray = computeATR(highs, lows, closes, this.config.atrPeriod);
-    const atr = atrArray[atrArray.length - 1];
+    const atr = Number.isFinite(latestAtr)
+      ? (latestAtr as number)
+      : computeATR(highs, lows, closes, this.config.atrPeriod).slice(-1)[0];
+    if (!Number.isFinite(atr) || atr <= 0) return;
     if (this.position.side === "long") {
       const atrStop = this.position.highWaterMark - this.config.atrTrailMultiplier * atr;
       const swingStop = this.computeSwingStop(df, "long");
@@ -1199,7 +1285,15 @@ export class TradingBot {
       if (signal && !signal.blocked) {
         const score = signal.sosScore ?? 50;
         const sizeScale = score >= 80 ? 1.0 : 0.6;
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, sizeScale, score);
+        this.enterPosition(
+          signal.side,
+          signal.entry,
+          signal.stopLoss,
+          signal.kind,
+          sizeScale,
+          score,
+          signal.entryAtr
+        );
       }
     } else if (this.state === State.Manage) {
       await this.managePosition();
@@ -1220,7 +1314,15 @@ export class TradingBot {
       if (signal && !signal.blocked) {
         const score = signal.sosScore ?? 50;
         const sizeScale = score >= 80 ? 1.0 : 0.6;
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, sizeScale, score);
+        this.enterPosition(
+          signal.side,
+          signal.entry,
+          signal.stopLoss,
+          signal.kind,
+          sizeScale,
+          score,
+          signal.entryAtr
+        );
       }
     } else if (this.state === State.Manage) {
       this.managePositionWithFrames(ht, lt);
@@ -1246,7 +1348,15 @@ export class TradingBot {
       if (signal && !signal.blocked) {
         const score = signal.sosScore ?? 50;
         const sizeScale = score >= 80 ? 1.0 : 0.6;
-        this.enterPosition(signal.side, signal.entry, signal.stopLoss, signal.kind, sizeScale, score);
+        this.enterPosition(
+          signal.side,
+          signal.entry,
+          signal.stopLoss,
+          signal.kind,
+          sizeScale,
+          score,
+          signal.entryAtr
+        );
       }
     } else if (this.state === State.Manage) {
       this.managePositionWithFrames(ht, exec);
@@ -1304,6 +1414,7 @@ export class TradingBot {
       side: candidate.side,
       entry,
       stopLoss: stop,
+      entryAtr: latestATR,
       kind: candidate.kind,
       sosScore: candidate.sosScore,
       blocked: candidate.blocked,
@@ -1410,6 +1521,7 @@ export class TradingBot {
 
     const applyEmaTrendGate = (candidate: EntrySignal | null) => {
       if (!candidate) return null;
+      candidate.entryAtr = latestATR;
       if (candidate.side !== emaTrendBias) return null;
       if (emaTouched && candidate.kind !== "PULLBACK") return null;
       

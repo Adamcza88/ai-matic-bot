@@ -189,12 +189,10 @@ const AI_MATIC_CHECKLIST_MIN = 3;
 const AI_MATIC_EMA_CROSS_LOOKBACK = 6;
 const AI_MATIC_POI_DISTANCE_PCT = 0.0015;
 const AI_MATIC_SL_ATR_BUFFER = 0.3;
-const AI_MATIC_TRAIL_ATR_MULT = 1.5;
 const AI_MATIC_MIN_RR = 1.2;
-const AI_MATIC_TRAIL_ACTIVATE_PCT = 0.01;
-const AI_MATIC_TRAIL_RETRACE_PCT = 0.006;
-const AI_MATIC_TP1_PCT_MIN = 0.009;
-const AI_MATIC_TP1_PCT_MAX = 0.012;
+const AI_MATIC_TP1_ATR_MULT = 1.5;
+const AI_MATIC_TRAIL_ACTIVATE_ATR_MULT = 1.5;
+const AI_MATIC_TRAIL_RETRACE_ATR_MULT = 0.5;
 const AI_MATIC_RSI_OVERSOLD = 35;
 const AI_MATIC_RSI_OVERBOUGHT = 70;
 const AI_MATIC_LIQ_SWEEP_LOOKBACK = 15;
@@ -1236,9 +1234,10 @@ const resolveAiMaticTargets = (args: {
   side: "Buy" | "Sell";
   entry: number;
   sl: number;
+  atr?: number;
   aiMatic?: AiMaticContext | null;
 }) => {
-  const { side, entry, sl, aiMatic } = args;
+  const { side, entry, sl, atr, aiMatic } = args;
   if (!Number.isFinite(entry) || !Number.isFinite(sl)) return Number.NaN;
   const risk = Math.abs(entry - sl);
   if (!Number.isFinite(risk) || risk <= 0) return Number.NaN;
@@ -1274,13 +1273,20 @@ const resolveAiMaticTargets = (args: {
       side === "Buy" ? v > entry : v < entry
     )
     .sort((a, b) => Math.abs(a - entry) - Math.abs(b - entry));
-  const band = list.filter((candidate) => {
-    const pctMove = Math.abs(candidate - entry) / Math.max(entry, 1e-8);
-    return (
-      pctMove >= AI_MATIC_TP1_PCT_MIN && pctMove <= AI_MATIC_TP1_PCT_MAX
-    );
-  });
-  if (band.length) return band[0];
+  const atrTarget =
+    Number.isFinite(atr) && (atr as number) > 0
+      ? side === "Buy"
+        ? entry + AI_MATIC_TP1_ATR_MULT * (atr as number)
+        : entry - AI_MATIC_TP1_ATR_MULT * (atr as number)
+      : Number.NaN;
+  if (Number.isFinite(atrTarget) && atrTarget > 0) {
+    for (const candidate of list) {
+      if (side === "Buy" ? candidate >= atrTarget : candidate <= atrTarget) {
+        return candidate;
+      }
+    }
+    return atrTarget;
+  }
   const minTarget =
     side === "Buy" ? entry + risk * AI_MATIC_MIN_RR : entry - risk * AI_MATIC_MIN_RR;
   for (const candidate of list) {
@@ -2961,12 +2967,30 @@ function computeRMultiple(
 
 const TRAIL_PROFILE_BY_RISK_MODE: Record<
   AISettings["riskMode"],
-  { activateR: number; lockR: number; retracementRate?: number }
+  {
+    activateR: number;
+    lockR: number;
+    retracementRate?: number;
+    activateAtrMult?: number;
+    lockAtrMult?: number;
+  }
 > = {
-  "ai-matic": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
+  "ai-matic": {
+    activateR: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
+    lockR: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
+    retracementRate: 0.004,
+    activateAtrMult: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
+    lockAtrMult: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
+  },
   "ai-matic-x": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
   "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
-  "ai-matic-tree": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
+  "ai-matic-tree": {
+    activateR: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
+    lockR: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
+    retracementRate: 0.004,
+    activateAtrMult: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
+    lockAtrMult: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
+  },
   "ai-matic-pro": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
 };
 const TRAIL_SYMBOL_MODE: Partial<Record<Symbol, "on" | "off">> = {
@@ -3623,7 +3647,7 @@ export function useTradingBot(
   );
 
   const computeTrailingPlan = useCallback(
-    (entry: number, sl: number, side: "Buy" | "Sell", symbol: Symbol) => {
+    (entry: number, sl: number, side: "Buy" | "Sell", symbol: Symbol, atr?: number) => {
       const settings = settingsRef.current;
       const isScalpProfile = settings.riskMode === "ai-matic-scalp";
       if (isScalpProfile) {
@@ -3657,21 +3681,38 @@ export function useTradingBot(
         Number.isFinite(overrideRate) && overrideRate > 0
           ? overrideRate
           : profile.retracementRate;
-      const minDistance = resolveMinProtectionDistance(entry);
-      const rawDistance = Number.isFinite(effectiveRate)
-        ? entry * (effectiveRate as number)
-        : Math.abs(activateR - lockR) * r;
+      const minDistance = resolveMinProtectionDistance(entry, atr);
+      const atrValue =
+        Number.isFinite(atr) && (atr as number) > 0 ? (atr as number) : Number.NaN;
+      const useAtrTrail =
+        (settings.riskMode === "ai-matic" ||
+          settings.riskMode === "ai-matic-tree") &&
+        Number.isFinite(atrValue) &&
+        Number.isFinite(profile.activateAtrMult) &&
+        Number.isFinite(profile.lockAtrMult);
+      const rawDistance = useAtrTrail
+        ? (profile.lockAtrMult as number) * atrValue
+        : Number.isFinite(effectiveRate)
+          ? entry * (effectiveRate as number)
+          : Math.abs(activateR - lockR) * r;
       const distance = Math.max(rawDistance, minDistance);
       if (!Number.isFinite(distance) || distance <= 0) return null;
       const dir = side === "Buy" ? 1 : -1;
-      const activePrice = usePercentActivation
-        ? entry + dir * distance
-        : entry +
+      const activePrice = useAtrTrail
+        ? entry +
           dir *
             Math.max(
-              activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
+              (profile.activateAtrMult as number) * atrValue,
               minDistance
-            );
+            )
+        : usePercentActivation
+          ? entry + dir * distance
+          : entry +
+            dir *
+              Math.max(
+                activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
+                minDistance
+              );
       if (!Number.isFinite(activePrice) || activePrice <= 0) return null;
       return { trailingStop: distance, trailingActivePrice: activePrice };
     },
@@ -3978,11 +4019,15 @@ export function useTradingBot(
           trailingSyncRef.current.delete(symbol);
           continue;
         }
+        const decisionAtr = toNumber(
+          (decisionRef.current[symbol]?.decision as any)?.coreV2?.atr14
+        );
         const plan = computeTrailingPlan(
           entry,
           sl,
           side,
-          symbol as Symbol
+          symbol as Symbol,
+          decisionAtr
         );
         if (!plan) continue;
 
@@ -5353,7 +5398,8 @@ export function useTradingBot(
                   resolvedEntry,
                   sl,
                   side === "Sell" ? "Sell" : "Buy",
-                  symbol as Symbol
+                  symbol as Symbol,
+                  toNumber((decisionRef.current[symbol]?.decision as any)?.coreV2?.atr14)
                 )
               : null;
           const trailingActivePrice = Number.isFinite(trailingActiveRaw)
@@ -7290,6 +7336,7 @@ export function useTradingBot(
           side,
           entry,
           sl: resolvedSl,
+          atr: core?.atr14,
           aiMatic,
         });
         if (Number.isFinite(nextTp) && nextTp > 0) {
