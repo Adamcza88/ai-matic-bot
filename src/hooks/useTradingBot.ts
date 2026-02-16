@@ -120,6 +120,8 @@ const CORE_V2_HTF_BUFFER_PCT = 0.001;
 const CORE_V2_NOTIONAL_CAP_PCT = 0.1;
 const CORRELATION_RISK_THRESHOLD = 0.8;
 const CORRELATION_RISK_MIN_SCALE = 0.2;
+const MAINNET_TARGET_POSITION_COST_USD = 10;
+const MAINNET_FALLBACK_LEVERAGE = 50;
 const ALTSEASON_SAMPLE_MS = 60_000;
 const ALTSEASON_HISTORY_POINTS = 12;
 const ALTSEASON_DOMINANCE_DROP_THRESHOLD = 0.05;
@@ -3248,6 +3250,7 @@ export function useTradingBot(
   const positionSnapshotRef = useRef<Map<string, { size: number; side: string }>>(
     new Map()
   );
+  const leverageBySymbolRef = useRef<Map<string, number>>(new Map());
   const execSeenRef = useRef<Set<string>>(new Set());
   const pnlSeenRef = useRef<Set<string>>(new Set());
   const lastLossBySymbolRef = useRef<Map<string, number>>(new Map());
@@ -3784,6 +3787,14 @@ export function useTradingBot(
     []
   );
 
+  const resolveSymbolLeverage = useCallback((symbol: Symbol) => {
+    const cached = leverageBySymbolRef.current.get(symbol);
+    if (Number.isFinite(cached) && (cached as number) > 0) {
+      return cached as number;
+    }
+    return MAINNET_FALLBACK_LEVERAGE;
+  }, []);
+
   const computeNotionalForSignal = useCallback(
     (symbol: Symbol, entry: number, sl: number) => {
       const equity = getEquityValue();
@@ -3815,6 +3826,20 @@ export function useTradingBot(
         qty = notional / entry;
       }
 
+      if (!useTestnet) {
+        const leverage = resolveSymbolLeverage(symbol);
+        const minNotionalByIm = MAINNET_TARGET_POSITION_COST_USD * leverage;
+        if (
+          Number.isFinite(minNotionalByIm) &&
+          minNotionalByIm > 0 &&
+          Number.isFinite(notional) &&
+          notional < minNotionalByIm
+        ) {
+          notional = minNotionalByIm;
+          qty = notional / entry;
+        }
+      }
+
       if (notional < MIN_POSITION_NOTIONAL_USD) {
         return { ok: false, reason: "below_min_notional" as const };
       }
@@ -3828,7 +3853,7 @@ export function useTradingBot(
       const riskUsd = riskPerUnit * qty;
       return { ok: true as const, notional, qty, riskUsd, equity };
     },
-    [getEquityValue]
+    [getEquityValue, resolveSymbolLeverage, useTestnet]
   );
 
   const computeFixedSizing = useCallback(
@@ -5602,6 +5627,20 @@ export function useTradingBot(
 
     if (positionsRes.status === "fulfilled") {
       const list = extractList(positionsRes.value);
+      const leverageMap = leverageBySymbolRef.current;
+      list.forEach((p: any) => {
+        const symbol = String(p?.symbol ?? "").toUpperCase();
+        if (!symbol) return;
+        const leverage = toNumber(
+          p?.leverage ??
+            p?.buyLeverage ??
+            p?.sellLeverage ??
+            p?.effectiveLeverage
+        );
+        if (Number.isFinite(leverage) && leverage > 0) {
+          leverageMap.set(symbol, leverage);
+        }
+      });
       const prevPositions = positionSnapshotRef.current;
       const nextPositions = new Map<string, { size: number; side: string }>();
       const next = list
@@ -7904,12 +7943,25 @@ export function useTradingBot(
       const qtyMode = useFixedQty ? "BASE_QTY" : "USDT_NOTIONAL";
       const baseQty = sizing.qty;
       const baseNotional = sizing.notional;
-      const adjustedQty =
+      let adjustedQty =
         Number.isFinite(baseQty) && baseQty > 0 ? baseQty * riskMultiplier : baseQty;
-      const adjustedNotional =
+      let adjustedNotional =
         Number.isFinite(baseNotional) && baseNotional > 0
           ? baseNotional * riskMultiplier
           : baseNotional;
+      if (!useTestnet && Number.isFinite(entry) && entry > 0) {
+        const leverage = resolveSymbolLeverage(symbol as Symbol);
+        const minNotionalByIm = MAINNET_TARGET_POSITION_COST_USD * leverage;
+        if (
+          Number.isFinite(minNotionalByIm) &&
+          minNotionalByIm > 0 &&
+          Number.isFinite(adjustedNotional) &&
+          adjustedNotional < minNotionalByIm
+        ) {
+          adjustedNotional = minNotionalByIm;
+          adjustedQty = adjustedNotional / entry;
+        }
+      }
       const qtyValue = useFixedQty ? adjustedQty : adjustedNotional;
       const stagedRetestConfig = (signal as any)?.execution?.stagedRetest as
         | {
@@ -8202,8 +8254,10 @@ export function useTradingBot(
       postJson,
       resolvePortfolioRegime,
       resolvePortfolioRiskScale,
+      resolveSymbolLeverage,
       resolveScalpExitMode,
       submitReduceOnlyOrder,
+      useTestnet,
     ]
   );
 
@@ -8227,6 +8281,7 @@ export function useTradingBot(
     partialExitRef.current.clear();
     proTargetsRef.current.clear();
     proPartialRef.current.clear();
+    leverageBySymbolRef.current.clear();
     decisionRef.current = {};
     portfolioRegimeRef.current = {
       dominanceHistory: [],
