@@ -1957,6 +1957,15 @@ export type EngineSignal = {
   risk: number;
   message: string;
   createdAt: string;
+  execution?: {
+    stagedRetest?: {
+      enabled: boolean;
+      primaryRatio: number;
+      retestRatio: number;
+      fallbackBars: number;
+      retestLtfMinutes: number;
+    };
+  };
   blocked?: boolean;
 };
 
@@ -2110,6 +2119,17 @@ export function evaluateStrategyForSymbol(
     position &&
     position.opened !== prevOpened
   ) {
+    const stagedRetest =
+      botConfig.strategyProfile === "ai-matic" ||
+      botConfig.strategyProfile === "ai-matic-tree"
+        ? {
+            enabled: true,
+            primaryRatio: 0.6,
+            retestRatio: 0.4,
+            fallbackBars: 3,
+            retestLtfMinutes: 5,
+          }
+        : undefined;
     // Note: This block is for logging/UI feedback after a trade is opened, not for execution.
     signal = {
       id: `${symbol}-${Date.now()}`,
@@ -2124,6 +2144,7 @@ export function evaluateStrategyForSymbol(
       risk: 1.0, // Default display risk
       message: `Entered ${position.side} | SL ${position.stopLoss.toFixed(2)} | TP ${position.initialTakeProfit.toFixed(2)} | SOS ${position.sosScore ?? "-"}`,
       createdAt: new Date().toISOString(),
+      ...(stagedRetest ? { execution: { stagedRetest } } : {}),
     };
   }
 

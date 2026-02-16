@@ -22,7 +22,7 @@ import type { PriceFeedDecision } from "../engine/priceFeed";
 import type { BotConfig, Candle } from "../engine/botEngine";
 import { TradingMode } from "../types";
 import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy";
-import { updateOpenInterest } from "../engine/orderflow";
+import { getOrderFlowSnapshot, updateOpenInterest } from "../engine/orderflow";
 import {
   SUPPORTED_SYMBOLS,
   filterSupportedSymbols,
@@ -204,6 +204,13 @@ const AI_MATIC_LIQ_SWEEP_LOOKBACK = 15;
 const AI_MATIC_LIQ_SWEEP_ATR_MULT = 0.5;
 const AI_MATIC_LIQ_SWEEP_VOL_MULT = 1.0;
 const AI_MATIC_BREAK_RETEST_LOOKBACK = 6;
+const AI_MATIC_RETEST_PRIMARY_RATIO = 0.6;
+const AI_MATIC_RETEST_SECONDARY_RATIO = 0.4;
+const AI_MATIC_RETEST_FALLBACK_BARS = 3;
+const AI_MATIC_RETEST_ABSORPTION_MIN = 2.5;
+const AI_MATIC_RETEST_DELTA_DOMINANCE_RATIO = 1.4;
+const AI_MATIC_RETEST_TWAP_SLICES = 2;
+const AI_MATIC_RETEST_TWAP_DELAY_MS = 1500;
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -1660,6 +1667,7 @@ function buildScalpContext(candles: Candle[]): ScalpContext {
 
 type CoreV2Metrics = {
   ltfTimeframeMin: number;
+  ltfOpenTime: number;
   ltfClose: number;
   ltfOpen: number;
   ltfHigh: number;
@@ -1949,6 +1957,7 @@ const computeCoreV2Metrics = (
   const ltf = resample(ltfTimeframeMin);
   const ltfLast = ltf.length ? ltf[ltf.length - 1] : undefined;
   const ltfPrev = ltf.length > 1 ? ltf[ltf.length - 2] : undefined;
+  const ltfOpenTime = ltfLast ? toNumber(ltfLast.openTime) : Number.NaN;
   const ltfClose = ltfLast ? ltfLast.close : Number.NaN;
   const ltfOpen = ltfLast ? ltfLast.open : Number.NaN;
   const ltfHigh = ltfLast ? ltfLast.high : Number.NaN;
@@ -2513,6 +2522,7 @@ const computeCoreV2Metrics = (
 
   return {
     ltfTimeframeMin,
+    ltfOpenTime,
     ltfClose,
     ltfOpen,
     ltfHigh,
@@ -2895,6 +2905,23 @@ function extractList(data: any) {
 
 type EntryFallback = { triggerPrice?: number; price?: number; ts: number };
 
+type AiMaticRetestFallbackState = {
+  symbol: string;
+  side: "Buy" | "Sell";
+  signalId: string;
+  createdAt: number;
+  ltfTimeframeMin: number;
+  lastLtfOpenTime: number;
+  missedBars: number;
+  fallbackBars: number;
+  retestIntentId: string;
+  fallbackQty: number;
+  slPrice: number;
+  tpPrices: number[];
+  triggerPrice?: number;
+  executing: boolean;
+};
+
 function buildEntryFallback(list: any[]) {
   const map = new Map<string, EntryFallback>();
   for (const o of list) {
@@ -3233,6 +3260,9 @@ export function useTradingBot(
     Map<string, { entry: number; tp1: number; side: "Buy" | "Sell"; setAt: number }>
   >(new Map());
   const aiMaticTrailCooldownRef = useRef<Map<string, number>>(new Map());
+  const aiMaticRetestFallbackRef = useRef<Map<string, AiMaticRetestFallbackState>>(
+    new Map()
+  );
   const aiMaticStructureLogRef = useRef<Map<string, number>>(new Map());
   const scalpExitStateRef = useRef<
     Map<string, { mode: "TRAIL" | "TP"; switched: boolean; decidedAt: number }>
@@ -3782,6 +3812,19 @@ export function useTradingBot(
         if (!hasPosition && !hasOrder && !hasPending) {
           aiMaticTp1Ref.current.delete(symbol);
           aiMaticTrailCooldownRef.current.delete(symbol);
+        }
+      }
+      for (const [symbol, state] of aiMaticRetestFallbackRef.current.entries()) {
+        const hasPosition = seenSymbols.has(symbol);
+        const hasPending = intentPendingRef.current.has(symbol);
+        const hasRetestOrder = ordersRef.current.some(
+          (order) =>
+            isEntryOrder(order) &&
+            String(order?.symbol ?? "") === symbol &&
+            String(order?.orderLinkId ?? "") === state.retestIntentId
+        );
+        if (!hasPosition && !hasRetestOrder && !hasPending) {
+          aiMaticRetestFallbackRef.current.delete(symbol);
         }
       }
       for (const symbol of proTargetsRef.current.keys()) {
@@ -6576,6 +6619,175 @@ export function useTradingBot(
     await sendIntent(intent, { authToken, useTestnet });
   }
 
+  const resolveAiMaticFlowPressure = useCallback(
+    (
+      decision: PriceFeedDecision,
+      side: "Buy" | "Sell"
+    ): {
+      strong: boolean;
+      absorptionScore: number;
+      delta: number;
+      deltaPrev: number;
+      ofi: number;
+      dominanceRatio: number;
+    } => {
+      const orderflow = (decision as any)?.orderflow as
+        | {
+            absorptionScore?: number;
+            delta?: number;
+            deltaPrev?: number;
+            ofi?: number;
+          }
+        | undefined;
+      const absorptionScore = toNumber(orderflow?.absorptionScore);
+      const delta = toNumber(orderflow?.delta);
+      const deltaPrev = toNumber(orderflow?.deltaPrev);
+      const ofi = toNumber(orderflow?.ofi);
+      const sideAligned =
+        side === "Buy"
+          ? Number.isFinite(delta) && delta > 0
+          : Number.isFinite(delta) && delta < 0;
+      const ofiAligned =
+        side === "Buy"
+          ? Number.isFinite(ofi) && ofi > 0
+          : Number.isFinite(ofi) && ofi < 0;
+      const dominanceRatio =
+        Number.isFinite(delta) && Number.isFinite(deltaPrev)
+          ? Math.abs(delta) / Math.max(1, Math.abs(deltaPrev))
+          : Number.NaN;
+      const absorptionStrong =
+        Number.isFinite(absorptionScore) &&
+        absorptionScore >= AI_MATIC_RETEST_ABSORPTION_MIN;
+      const takerDominance =
+        sideAligned &&
+        ofiAligned &&
+        Number.isFinite(dominanceRatio) &&
+        dominanceRatio >= AI_MATIC_RETEST_DELTA_DOMINANCE_RATIO;
+      return {
+        strong: Boolean(absorptionStrong || takerDominance),
+        absorptionScore,
+        delta,
+        deltaPrev,
+        ofi,
+        dominanceRatio,
+      };
+    },
+    []
+  );
+
+  const maybeRunAiMaticRetestFallback = useCallback(
+    async (symbol: string, decision: PriceFeedDecision, now: number) => {
+      const state = aiMaticRetestFallbackRef.current.get(symbol);
+      if (!state) return;
+      if (settingsRef.current.riskMode !== "ai-matic") {
+        aiMaticRetestFallbackRef.current.delete(symbol);
+        return;
+      }
+
+      const activeRetestOrder = ordersRef.current.find(
+        (order) =>
+          isActiveEntryOrder(order) &&
+          String(order?.symbol ?? "") === symbol &&
+          String(order?.orderLinkId ?? "") === state.retestIntentId
+      );
+      if (!activeRetestOrder) {
+        aiMaticRetestFallbackRef.current.delete(symbol);
+        return;
+      }
+
+      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      const ltfOpenTime = toNumber(core?.ltfOpenTime);
+      if (Number.isFinite(ltfOpenTime) && ltfOpenTime > state.lastLtfOpenTime) {
+        state.lastLtfOpenTime = ltfOpenTime;
+        state.missedBars += 1;
+        aiMaticRetestFallbackRef.current.set(symbol, state);
+      }
+
+      if (state.executing || state.missedBars < state.fallbackBars) return;
+
+      const hasPrimaryPosition = positionsRef.current.some((p) => {
+        if (String(p.symbol ?? "") !== symbol) return false;
+        const size = toNumber(p.size ?? p.qty);
+        if (!Number.isFinite(size) || size <= 0) return false;
+        const posSide = String(p.side ?? "").toLowerCase();
+        return state.side === "Buy" ? posSide === "buy" : posSide === "sell";
+      });
+      if (!hasPrimaryPosition) return;
+
+      const pressure = resolveAiMaticFlowPressure(decision, state.side);
+      if (!pressure.strong) return;
+
+      state.executing = true;
+      aiMaticRetestFallbackRef.current.set(symbol, state);
+
+      try {
+        await postJson("/cancel", {
+          symbol,
+          orderId: activeRetestOrder.orderId || undefined,
+          orderLinkId: activeRetestOrder.orderLinkId || undefined,
+        });
+        addLogEntries([
+          {
+            id: `ai-matic-retest-cancel:${symbol}:${now}`,
+            timestamp: new Date(now).toISOString(),
+            action: "STATUS",
+            message: `${symbol} retest 40% cancel | bars ${state.missedBars} | Abs ${formatNumber(
+              pressure.absorptionScore,
+              2
+            )} | Δ ${formatNumber(pressure.delta, 2)}`,
+          },
+        ]);
+
+        const slices = Math.max(1, AI_MATIC_RETEST_TWAP_SLICES);
+        const sliceQty = state.fallbackQty / slices;
+        if (!Number.isFinite(sliceQty) || sliceQty <= 0) {
+          throw new Error("invalid_retest_fallback_qty");
+        }
+        for (let i = 0; i < slices; i++) {
+          await autoTrade({
+            symbol: state.symbol as Symbol,
+            side: state.side,
+            entryPrice: state.triggerPrice ?? activeRetestOrder.price ?? 0,
+            entryType: "MARKET",
+            slPrice: state.slPrice,
+            tpPrices: state.tpPrices,
+            qtyMode: "BASE_QTY",
+            qtyValue: sliceQty,
+            intentId: crypto.randomUUID(),
+          });
+          if (i < slices - 1) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, AI_MATIC_RETEST_TWAP_DELAY_MS)
+            );
+          }
+        }
+        aiMaticRetestFallbackRef.current.delete(symbol);
+        addLogEntries([
+          {
+            id: `ai-matic-retest-exec:${symbol}:${now}`,
+            timestamp: new Date(now).toISOString(),
+            action: "STATUS",
+            message: `${symbol} retest fallback TWAP ${Math.round(
+              AI_MATIC_RETEST_SECONDARY_RATIO * 100
+            )}% executed`,
+          },
+        ]);
+      } catch (err) {
+        state.executing = false;
+        aiMaticRetestFallbackRef.current.set(symbol, state);
+        addLogEntries([
+          {
+            id: `ai-matic-retest-error:${symbol}:${now}`,
+            timestamp: new Date(now).toISOString(),
+            action: "ERROR",
+            message: `${symbol} retest fallback failed: ${asErrorMessage(err)}`,
+          },
+        ]);
+      }
+    },
+    [addLogEntries, autoTrade, isActiveEntryOrder, postJson, resolveAiMaticFlowPressure]
+  );
+
   const handleDecision = useCallback(
     (symbol: string, decision: PriceFeedDecision) => {
       const now = Date.now();
@@ -6610,6 +6822,7 @@ export function useTradingBot(
       // Pokud je feed pro tento symbol pozastavený, čekáme dokud se nevyčistí
       // pending intent / otevřená pozice / entry order, potom automaticky obnovíme.
       if (paused) {
+        void maybeRunAiMaticRetestFallback(symbol, decision, now);
         if (hasPosition && scalpActive) {
           void handleScalpInTrade(symbol, decision, now);
         }
@@ -6658,6 +6871,7 @@ export function useTradingBot(
           return;
         }
       }
+      void maybeRunAiMaticRetestFallback(symbol, decision, now);
       if (hasPosition || hasEntryOrder) {
         if (hasPosition && scalpActive) {
           void handleScalpInTrade(symbol, decision, now);
@@ -7497,6 +7711,67 @@ export function useTradingBot(
           ? baseNotional * riskMultiplier
           : baseNotional;
       const qtyValue = useFixedQty ? adjustedQty : adjustedNotional;
+      const stagedRetestConfig = (signal as any)?.execution?.stagedRetest as
+        | {
+            enabled?: boolean;
+            primaryRatio?: number;
+            retestRatio?: number;
+            fallbackBars?: number;
+            retestLtfMinutes?: number;
+          }
+        | undefined;
+      const stagedRetestEnabled =
+        settingsRef.current.riskMode === "ai-matic" &&
+        stagedRetestConfig?.enabled !== false &&
+        Number.isFinite(adjustedQty) &&
+        adjustedQty > 0;
+      const stagedPrimaryRatio = Number.isFinite(stagedRetestConfig?.primaryRatio)
+        ? Math.min(0.95, Math.max(0.05, stagedRetestConfig!.primaryRatio as number))
+        : AI_MATIC_RETEST_PRIMARY_RATIO;
+      const stagedSecondaryRatioRaw = Number.isFinite(stagedRetestConfig?.retestRatio)
+        ? (stagedRetestConfig!.retestRatio as number)
+        : AI_MATIC_RETEST_SECONDARY_RATIO;
+      const stagedSecondaryRatio = Math.max(
+        0.01,
+        Math.min(0.95, stagedSecondaryRatioRaw)
+      );
+      const stagedNormalizedTotal = stagedPrimaryRatio + stagedSecondaryRatio;
+      const stagedPrimaryWeight =
+        stagedRetestEnabled && stagedNormalizedTotal > 0
+          ? stagedPrimaryRatio / stagedNormalizedTotal
+          : 1;
+      const stagedSecondaryWeight =
+        stagedRetestEnabled && stagedNormalizedTotal > 0
+          ? stagedSecondaryRatio / stagedNormalizedTotal
+          : 0;
+      const stagedPrimaryQty =
+        stagedRetestEnabled && Number.isFinite(adjustedQty)
+          ? adjustedQty * stagedPrimaryWeight
+          : Number.NaN;
+      const stagedSecondaryQty =
+        stagedRetestEnabled && Number.isFinite(adjustedQty)
+          ? adjustedQty * stagedSecondaryWeight
+          : Number.NaN;
+      const stagedFallbackBars = Number.isFinite(stagedRetestConfig?.fallbackBars)
+        ? Math.max(1, Math.round(stagedRetestConfig!.fallbackBars as number))
+        : AI_MATIC_RETEST_FALLBACK_BARS;
+      const stagedLtfMin = Number.isFinite(stagedRetestConfig?.retestLtfMinutes)
+        ? Math.max(1, Math.round(stagedRetestConfig!.retestLtfMinutes as number))
+        : core?.ltfTimeframeMin ?? 5;
+      const shouldUseStagedRetest =
+        stagedRetestEnabled &&
+        Number.isFinite(stagedPrimaryQty) &&
+        stagedPrimaryQty > 0 &&
+        Number.isFinite(stagedSecondaryQty) &&
+        stagedSecondaryQty > 0;
+      const primaryEntryType: EntryType = shouldUseStagedRetest
+        ? "MARKET"
+        : entryType;
+      const secondaryEntryType: EntryType = shouldUseStagedRetest
+        ? entryType === "CONDITIONAL"
+          ? "CONDITIONAL"
+          : "LIMIT"
+        : entryType;
       if (protectedEntry) {
         addLogEntries([
           {
@@ -7542,7 +7817,10 @@ export function useTradingBot(
         return;
       }
 
-      const intentId = crypto.randomUUID();
+      const primaryIntentId = crypto.randomUUID();
+      const secondaryIntentId = shouldUseStagedRetest
+        ? crypto.randomUUID()
+        : undefined;
       intentPendingRef.current.add(symbol);
       if (isScalpProfile && scalpExitMode) {
         scalpExitStateRef.current.set(symbol, {
@@ -7576,25 +7854,83 @@ export function useTradingBot(
             : [];
       void (async () => {
         try {
-          await autoTrade({
-            symbol: symbol as Symbol,
-            side,
-            entryPrice: entry,
-            entryType,
-            triggerPrice,
-            slPrice: resolvedSl,
-            tpPrices,
-            qtyMode,
-            qtyValue,
-            intentId,
-          });
+          if (shouldUseStagedRetest && secondaryIntentId) {
+            await autoTrade({
+              symbol: symbol as Symbol,
+              side,
+              entryPrice: entry,
+              entryType: primaryEntryType,
+              triggerPrice:
+                primaryEntryType === "CONDITIONAL" ? triggerPrice : undefined,
+              slPrice: resolvedSl,
+              tpPrices,
+              qtyMode: "BASE_QTY",
+              qtyValue: stagedPrimaryQty,
+              intentId: primaryIntentId,
+            });
+            await autoTrade({
+              symbol: symbol as Symbol,
+              side,
+              entryPrice: entry,
+              entryType: secondaryEntryType,
+              triggerPrice:
+                secondaryEntryType === "CONDITIONAL"
+                  ? triggerPrice ?? entry
+                  : undefined,
+              slPrice: resolvedSl,
+              tpPrices,
+              qtyMode: "BASE_QTY",
+              qtyValue: stagedSecondaryQty,
+              intentId: secondaryIntentId,
+            });
+            const ltfOpenTime = toNumber(core?.ltfOpenTime);
+            aiMaticRetestFallbackRef.current.set(symbol, {
+              symbol,
+              side,
+              signalId,
+              createdAt: now,
+              ltfTimeframeMin: stagedLtfMin,
+              lastLtfOpenTime: Number.isFinite(ltfOpenTime)
+                ? ltfOpenTime
+                : now,
+              missedBars: 0,
+              fallbackBars: stagedFallbackBars,
+              retestIntentId: secondaryIntentId,
+              fallbackQty: stagedSecondaryQty,
+              slPrice: resolvedSl,
+              tpPrices,
+              triggerPrice: triggerPrice ?? entry,
+              executing: false,
+            });
+            addLogEntries([
+              {
+                id: `signal:staged:${signalId}`,
+                timestamp: new Date().toISOString(),
+                action: "STATUS",
+                message: `${symbol} staged entry 60/40 | primary ${primaryEntryType} | retest ${secondaryEntryType}`,
+              },
+            ]);
+          } else {
+            await autoTrade({
+              symbol: symbol as Symbol,
+              side,
+              entryPrice: entry,
+              entryType,
+              triggerPrice,
+              slPrice: resolvedSl,
+              tpPrices,
+              qtyMode,
+              qtyValue,
+              intentId: primaryIntentId,
+            });
+          }
           addLogEntries([
             {
               id: `signal:sent:${signalId}`,
               timestamp: new Date().toISOString(),
               action: "STATUS",
               message: `${symbol} intent sent | qty ${formatNumber(
-                sizing.qty,
+                shouldUseStagedRetest ? adjustedQty : sizing.qty,
                 6
               )} | notional ${formatNumber(sizing.notional, 2)}`,
             },
@@ -7629,8 +7965,10 @@ export function useTradingBot(
       getEquityValue,
       getSymbolContext,
       handleScalpInTrade,
+      isActiveEntryOrder,
       isGateEnabled,
       isEntryOrder,
+      maybeRunAiMaticRetestFallback,
       postJson,
       resolveScalpExitMode,
       submitReduceOnlyOrder,
@@ -7652,6 +7990,7 @@ export function useTradingBot(
     scalpTrailCooldownRef.current.clear();
     aiMaticTp1Ref.current.clear();
     aiMaticTrailCooldownRef.current.clear();
+    aiMaticRetestFallbackRef.current.clear();
     aiMaticStructureLogRef.current.clear();
     partialExitRef.current.clear();
     proTargetsRef.current.clear();
@@ -7705,6 +8044,9 @@ export function useTradingBot(
       const aiMaticContext = isAiMaticCore
         ? buildAiMaticContext(candles, baseDecision, coreV2, { resample })
         : null;
+      const aiMaticOrderflow = isAiMaticCore
+        ? getOrderFlowSnapshot(symbol)
+        : undefined;
       return {
         ...baseDecision,
         htfTrend,
@@ -7713,6 +8055,7 @@ export function useTradingBot(
         scalpContext,
         coreV2,
         ...(aiMaticContext ? { aiMatic: aiMaticContext } : {}),
+        ...(aiMaticOrderflow ? { orderflow: aiMaticOrderflow } : {}),
       };
     };
     const maxCandles = isAiMaticX || isAiMatic || isPro ? 5000 : undefined;
@@ -7735,7 +8078,10 @@ export function useTradingBot(
         decisionFn,
         maxCandles,
         backfill,
-        orderflow: isPro ? { enabled: true, depth: 50 } : undefined,
+        orderflow:
+          isPro || isAiMaticCore
+            ? { enabled: true, depth: 50 }
+            : undefined,
       }
     );
 
