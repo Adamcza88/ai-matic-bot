@@ -99,7 +99,7 @@ export default function LogsPanel({
       action={
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>Filter</span>
-          <div className="flex items-center rounded-md border border-border/60 bg-background/60 p-0.5">
+          <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5">
             <Button
               variant={levelFilter === "all" ? "secondary" : "ghost"}
               size="sm"
@@ -187,7 +187,7 @@ export default function LogsPanel({
               return (
                 <div
                   key={entry.id}
-                  className="rounded-lg border border-border/60 bg-background/40 px-3 py-3 text-xs"
+                  className="rounded-lg border border-border/70 bg-card/96 px-3 py-3 text-xs"
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="w-[52px] tabular-nums text-[11px] text-muted-foreground">

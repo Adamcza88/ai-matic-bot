@@ -130,7 +130,7 @@ export default function PositionsTable({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-sm">
+          <table className="w-full min-w-[860px] text-sm lm-table">
             <thead className="text-xs text-muted-foreground">
               <tr className="border-b border-border/60">
                 <th className="w-[170px] py-2 text-left font-medium">Symbol</th>
@@ -149,7 +149,7 @@ export default function PositionsTable({
                 const expanded = Boolean(expandedRows[row.key]);
                 return (
                   <Fragment key={row.key}>
-                    <tr className="border-b border-border/40 text-sm">
+                    <tr className="border-b border-border/40 text-sm lm-table-row">
                       <td className="py-3 pr-2">
                         <div className="flex items-center gap-2">
                           <Button
@@ -194,8 +194,8 @@ export default function PositionsTable({
                         className={`py-3 text-right font-mono tabular-nums ${
                           Number.isFinite(row.upnl)
                             ? row.upnl >= 0
-                              ? "text-emerald-400"
-                              : "text-red-400"
+                              ? "text-emerald-300"
+                              : "text-[#A94B4B] lm-pnl-negative"
                             : "text-muted-foreground"
                         }`}
                       >
@@ -238,7 +238,7 @@ export default function PositionsTable({
                       )}
                     </tr>
                     {expanded && (
-                      <tr className="border-b border-border/40 bg-background/40">
+                      <tr className="border-b border-border/40 bg-background/40 lm-table-row-muted">
                         <td
                           colSpan={showActions ? 7 : 6}
                           className="py-3 pl-12 text-xs text-muted-foreground"

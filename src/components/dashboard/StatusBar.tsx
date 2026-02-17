@@ -54,7 +54,7 @@ export default function StatusBar({
 
   return (
     <div className="sticky top-0 z-20">
-      <div className="rounded-xl border border-border/60 bg-card/80 p-3 backdrop-blur-sm">
+      <div className="rounded-xl border border-border/70 bg-card/96 p-3 shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] lm-panel">
         <div className="space-y-3">
           <div className="min-w-0">
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
@@ -69,7 +69,7 @@ export default function StatusBar({
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span>Prostředí</span>
-                <div className="flex items-center rounded-md border border-border/60 bg-background/60 p-0.5">
+                <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5">
                   <Button
                     variant={useTestnet ? "secondary" : "ghost"}
                     size="sm"
@@ -112,7 +112,7 @@ export default function StatusBar({
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span>Režim</span>
-                <div className="flex items-center rounded-md border border-border/60 bg-background/60 p-0.5">
+                <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5">
                   {MODE_OPTIONS.map((m) => (
                     <Button
                       key={m}
@@ -139,31 +139,31 @@ export default function StatusBar({
                 variant="outline"
                 className={
                   isConnected
-                    ? "min-w-28 justify-center border-emerald-500/50 text-emerald-400"
+                    ? "min-w-32 justify-center rounded-sm border lm-status-badge lm-status-badge-ok"
                     : isError
-                      ? "min-w-28 justify-center border-red-500/50 text-red-400"
-                      : "min-w-28 justify-center border-amber-500/50 text-amber-400"
+                      ? "min-w-32 justify-center rounded-sm border lm-status-badge lm-status-badge-error"
+                      : "min-w-32 justify-center rounded-sm border lm-status-badge lm-status-badge-warn"
                 }
               >
-                {bybitChipLabel}
+                {bybitChipLabel.toUpperCase()}
               </Badge>
               <Badge
                 variant="outline"
                 className={
                   engineStatus === "Running"
-                    ? "min-w-24 justify-center border-emerald-500/50 text-emerald-400"
-                    : "min-w-24 justify-center border-amber-500/50 text-amber-400"
+                    ? "min-w-24 justify-center rounded-sm border lm-status-badge lm-status-badge-ok"
+                    : "min-w-24 justify-center rounded-sm border lm-status-badge lm-status-badge-warn"
                 }
               >
-                Engine • {engineStatus}
+                ENGINE - {engineStatus.toUpperCase()}
               </Badge>
               {systemState.lastError && (
                 <Badge
                   variant="destructive"
-                  className="max-w-[220px] truncate"
+                  className="max-w-[220px] truncate rounded-sm border shadow-none lm-status-badge lm-status-badge-error"
                   title={systemState.lastError}
                 >
-                  Chyba: {systemState.lastError}
+                  ERROR: {systemState.lastError}
                 </Badge>
               )}
             </div>

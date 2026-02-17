@@ -208,7 +208,7 @@ export default function OrdersPanel({
       >
         <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>Filter</span>
-          <div className="flex items-center rounded-md border border-border/60 bg-background/60 p-0.5">
+          <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5">
             <Button
               variant={filterMode === "all" ? "secondary" : "ghost"}
               size="sm"
@@ -287,7 +287,7 @@ export default function OrdersPanel({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-sm">
+            <table className="w-full min-w-[920px] text-sm lm-table">
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="w-[120px] py-2 text-left font-medium">Symbol</th>
@@ -303,7 +303,7 @@ export default function OrdersPanel({
               </thead>
               <tbody>
                 {filteredOrders.map((order) => (
-                  <tr key={order.orderId} className="border-b border-border/40">
+                  <tr key={order.orderId} className="border-b border-border/40 lm-table-row">
                     <td className="py-3 font-mono">{order.symbol}</td>
                     <td className="py-3">
                       <Badge
@@ -372,7 +372,7 @@ export default function OrdersPanel({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
+            <table className="w-full min-w-[760px] text-sm lm-table">
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="py-2 text-left font-medium">Symbol</th>
@@ -386,7 +386,7 @@ export default function OrdersPanel({
               </thead>
               <tbody>
                 {filteredTrades.map((trade) => (
-                  <tr key={trade.id} className="border-b border-border/40">
+                  <tr key={trade.id} className="border-b border-border/40 lm-table-row">
                     <td className="py-3 font-mono">{trade.symbol}</td>
                     <td className="py-3">
                       <Badge

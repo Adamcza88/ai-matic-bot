@@ -187,7 +187,7 @@ export default function OverviewTab({
             Loading gate diagnostics...
           </div>
         ) : activeBlocks.length === 0 ? (
-          <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-3 text-xs text-muted-foreground">
+          <div className="rounded-lg border border-border/70 bg-card/96 px-3 py-3 text-xs text-muted-foreground">
             No active execution block. Signals are idle or waiting for confirmation.
           </div>
         ) : (
@@ -276,7 +276,7 @@ export default function OverviewTab({
             </div>
           ) : (
             <div className="max-h-72 overflow-auto">
-              <table className="w-full min-w-[460px] text-xs">
+              <table className="w-full min-w-[460px] text-xs lm-table">
                 <thead>
                   <tr className="border-b border-border/60 text-muted-foreground">
                     <th className="py-2 pr-2 text-left font-medium">Symbol</th>
@@ -287,7 +287,7 @@ export default function OverviewTab({
                 </thead>
                 <tbody>
                   {signalRows.slice(0, 12).map((row) => (
-                    <tr key={row.symbol} className="border-b border-border/40">
+                    <tr key={row.symbol} className="border-b border-border/40 lm-table-row">
                       <td className="py-2 pr-2 font-mono">{row.symbol}</td>
                       <td className="py-2 pr-2">
                         <Badge
@@ -353,7 +353,7 @@ export default function OverviewTab({
             </div>
           ) : (
             <div className="max-h-72 overflow-auto">
-              <table className="w-full min-w-[520px] text-xs">
+              <table className="w-full min-w-[520px] text-xs lm-table">
                 <thead>
                   <tr className="border-b border-border/60 text-muted-foreground">
                     <th className="py-2 pr-2 text-left font-medium">Symbol</th>
@@ -364,18 +364,22 @@ export default function OverviewTab({
                 </thead>
                 <tbody>
                   {pnlRows.map((row) => (
-                    <tr key={row.symbol} className="border-b border-border/40">
+                    <tr key={row.symbol} className="border-b border-border/40 lm-table-row">
                       <td className="py-2 pr-2 font-mono">{row.symbol}</td>
                       <td
                         className={`py-2 pr-2 text-right tabular-nums ${
-                          row.netPnl >= 0 ? "text-emerald-400" : "text-red-400"
+                          row.netPnl >= 0
+                            ? "text-emerald-300"
+                            : "text-[#A94B4B] lm-pnl-negative"
                         }`}
                       >
                         {formatSignedMoney(row.netPnl)}
                       </td>
                       <td
                         className={`py-2 pr-2 text-right tabular-nums ${
-                          row.latestPnl >= 0 ? "text-emerald-400" : "text-red-400"
+                          row.latestPnl >= 0
+                            ? "text-emerald-300"
+                            : "text-[#A94B4B] lm-pnl-negative"
                         }`}
                       >
                         {formatSignedMoney(row.latestPnl)}
@@ -408,7 +412,7 @@ export default function OverviewTab({
               {recentEvents.map((entry) => (
                 <div
                   key={entry.id}
-                  className="flex gap-3 rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-xs"
+                  className="flex gap-3 rounded-lg border border-border/70 bg-card/96 px-3 py-2 text-xs"
                 >
                   <div
                     className="w-14 tabular-nums text-[11px] text-muted-foreground"

@@ -64,31 +64,31 @@
 
 @layer base {
   :root {
-    --background: 210.0 6.2% 93.7%;
-    --foreground: 217.5 10.8% 14.5%;
-    --card: 0 0% 100%;
-    --card-foreground: 217.5 10.8% 14.5%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 217.5 10.8% 14.5%;
-    --primary: 188.9 82.1% 30.6%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 207.3 6.9% 68.8%;
-    --secondary-foreground: 217.5 10.8% 14.5%;
-    --muted: 210.0 6.2% 93.7%;
-    --muted-foreground: 207.3 6.9% 68.8%;
-    --accent: 188.4 59.8% 60.0%;
-    --accent-foreground: 217.5 10.8% 14.5%;
-    --destructive: 0 84.2% 60.2%;
+    --background: 220 20% 11%;
+    --foreground: 210 22% 93%;
+    --card: 220 18% 15%;
+    --card-foreground: 210 22% 93%;
+    --popover: 220 18% 15%;
+    --popover-foreground: 210 22% 93%;
+    --primary: 187 34% 46%;
+    --primary-foreground: 210 22% 93%;
+    --secondary: 219 14% 24%;
+    --secondary-foreground: 210 22% 93%;
+    --muted: 220 14% 18%;
+    --muted-foreground: 215 12% 56%;
+    --accent: 186 24% 38%;
+    --accent-foreground: 210 22% 93%;
+    --destructive: 2 38% 46%;
     --destructive-foreground: 210 40% 98%;
-    --border: 207.3 6.9% 68.8%;
-    --input: 207.3 6.9% 68.8%;
-    --ring: 188.9 82.1% 30.6%;
+    --border: 219 12% 24%;
+    --input: 219 12% 24%;
+    --ring: 187 34% 46%;
     --radius: 0.5rem;
-    --chart-1: 188.9 82.1% 30.6%;
-    --chart-2: 188.4 59.8% 60.0%;
-    --chart-3: 207.3 6.9% 68.8%;
-    --chart-4: 0 0% 100%;
-    --chart-5: 217.5 10.8% 14.5%;
+    --chart-1: 187 34% 46%;
+    --chart-2: 183 24% 43%;
+    --chart-3: 218 13% 58%;
+    --chart-4: 210 22% 93%;
+    --chart-5: 220 14% 18%;
   }
 
   .dark {
@@ -125,10 +125,129 @@
   }
   body {
     @apply bg-background text-foreground;
+    min-height: 100vh;
+    position: relative;
+    text-shadow: none;
+  }
+
+  html:not(.dark) body {
+    background-color: hsl(var(--background));
+  }
+
+  html:not(.dark) body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    opacity: 0.06;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 1) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 1) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+
+  html:not(.dark) body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.08;
+    mix-blend-mode: soft-light;
+    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.8) 0.45px, transparent 0.55px);
+    background-size: 3px 3px;
   }
 }
 
 @layer utilities {
+  html:not(.dark) .app-shell {
+    position: relative;
+    z-index: 1;
+  }
+
+  html:not(.dark) .app-shell-bg-art {
+    display: none;
+  }
+
+  html:not(.dark) .lm-panel {
+    background-color: hsl(var(--card) / 0.97);
+    border-color: #2a2f38;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 6px 8px -6px rgba(0, 0, 0, 0.55);
+    position: relative;
+    z-index: 2;
+  }
+
+  html:not(.dark) .lm-data-primary {
+    color: hsl(210 24% 95%);
+  }
+
+  html:not(.dark) .lm-data-secondary {
+    color: hsl(215 11% 50%);
+  }
+
+  html:not(.dark) .lm-table thead tr {
+    border-bottom-color: #2a2f38;
+  }
+
+  html:not(.dark) .lm-table tbody tr {
+    border-bottom: 1px solid #2a2f38;
+    background-color: hsl(220 16% 15%);
+    transition: background-color 120ms ease;
+  }
+
+  html:not(.dark) .lm-table tbody tr:hover {
+    background-color: hsl(220 16% 17%);
+  }
+
+  html:not(.dark) .lm-table tbody tr.lm-table-row-muted {
+    background-color: hsl(220 14% 13%);
+  }
+
+  html:not(.dark) .lm-status-badge {
+    border-radius: 0.375rem;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: none;
+    filter: saturate(0.62);
+    position: relative;
+    z-index: 4;
+  }
+
+  html:not(.dark) .lm-status-badge-ok {
+    background-color: rgba(101, 139, 114, 0.12);
+    border-color: rgba(101, 139, 114, 0.6);
+    color: #9ac5a8;
+  }
+
+  html:not(.dark) .lm-status-badge-warn {
+    background-color: rgba(146, 124, 87, 0.12);
+    border-color: rgba(146, 124, 87, 0.6);
+    color: #c9b38f;
+  }
+
+  html:not(.dark) .lm-status-badge-error {
+    background-color: rgba(139, 78, 78, 0.12);
+    border-color: rgba(139, 78, 78, 0.6);
+    color: #c69595;
+  }
+
+  html:not(.dark) .lm-pnl-negative {
+    color: #a94b4b !important;
+    animation: none !important;
+    text-shadow: none !important;
+  }
+
+  html:not(.dark) *,
+  html:not(.dark) *::before,
+  html:not(.dark) *::after {
+    text-shadow: none !important;
+  }
+
   .bg-slate-950 {
     background-color: hsl(var(--background));
   }

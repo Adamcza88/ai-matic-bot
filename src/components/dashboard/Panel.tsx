@@ -19,7 +19,7 @@ export default function Panel({
   return (
     <section
       className={cn(
-        "rounded-xl border border-border/60 bg-card/60 p-4 text-sm text-foreground",
+        "rounded-xl border border-border/70 bg-card/96 p-4 text-sm text-foreground shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] lm-panel",
         className
       )}
     >
