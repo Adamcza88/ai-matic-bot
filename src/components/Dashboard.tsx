@@ -457,27 +457,27 @@ export default function Dashboard({
                 refreshTestnetOrders();
               }
             }}
-            className="space-y-3"
+            className="space-y-3 lm-tabs"
           >
-            <TabsList className="h-12 w-full justify-start gap-2 rounded-xl border border-border/60 bg-card/80 p-1">
-              <TabsTrigger value="overview" className="h-10 px-3 text-sm">
+            <TabsList className="h-12 w-full justify-start gap-2 rounded-xl border border-border/60 bg-card/80 p-1 lm-tabs-shell">
+              <TabsTrigger value="overview" className="h-10 px-3 text-sm lm-tabs-trigger">
                 Overview
               </TabsTrigger>
-              <TabsTrigger value="positions" className="h-10 px-3 text-sm">
+              <TabsTrigger value="positions" className="h-10 px-3 text-sm lm-tabs-trigger">
                 Positions ({openPositionsCount})
               </TabsTrigger>
-              <TabsTrigger value="signals" className="h-10 px-3 text-sm">
+              <TabsTrigger value="signals" className="h-10 px-3 text-sm lm-tabs-trigger">
                 Signals ({allowedSymbols.length})
               </TabsTrigger>
-              <TabsTrigger value="orders" className="h-10 px-3 text-sm">
+              <TabsTrigger value="orders" className="h-10 px-3 text-sm lm-tabs-trigger">
                 Orders ({openOrdersCount})
               </TabsTrigger>
-              <TabsTrigger value="logs" className="h-10 px-3 text-sm">
+              <TabsTrigger value="logs" className="h-10 px-3 text-sm lm-tabs-trigger">
                 Logs
               </TabsTrigger>
             </TabsList>
 
-            <div className="dashboard-tab-viewport">
+            <div className="dashboard-tab-viewport lm-tab-viewport">
               <TabsContent value="overview" className="mt-0">
                 <OverviewTab
                   allowedSymbols={allowedSymbols}

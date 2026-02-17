@@ -181,15 +181,15 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
   };
 
   return (
-    <Card className="bg-slate-900/50 border-white/10 text-white mb-6">
+    <Card className="bg-slate-900/50 border-white/10 text-white mb-6 api-keys-card">
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="space-y-1">
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 api-keys-title">
               <Key className="w-5 h-5 text-emerald-500" />
               API Keys
             </CardTitle>
-            <CardDescription className="text-slate-400">
+            <CardDescription className="text-slate-400 api-keys-description">
               Stored securely per account. Only you can read your keys.
             </CardDescription>
           </div>
@@ -204,19 +204,19 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
       <CardContent>
         <form
           onSubmit={onSubmit}
-          className="flex flex-col md:flex-row gap-4 mb-6"
+          className="flex flex-col md:flex-row gap-4 mb-6 api-keys-form"
         >
           <div className="flex-1 min-w-[200px]">
             <Select value={service} onValueChange={setService}>
-              <SelectTrigger className="bg-slate-950 border-white/10 text-white">
+              <SelectTrigger className="bg-slate-950 border-white/10 text-white api-keys-select-trigger">
                 <SelectValue placeholder="Select service" />
               </SelectTrigger>
-              <SelectContent className="bg-slate-900 border-white/10 text-white">
+              <SelectContent className="bg-slate-900 border-white/10 text-white api-keys-select-content">
                 {SERVICE_OPTIONS.map((opt) => (
                   <SelectItem
                     key={opt.value}
                     value={opt.value}
-                    className="focus:bg-slate-800 focus:text-white"
+                    className="focus:bg-slate-800 focus:text-white api-keys-select-item"
                   >
                     {opt.label}
                   </SelectItem>
@@ -229,13 +229,13 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="Secret value"
-              className="bg-slate-950 border-white/10 text-white placeholder:text-slate-500"
+              className="bg-slate-950 border-white/10 text-white placeholder:text-slate-500 api-keys-input"
             />
           </div>
           <Button
             type="submit"
             disabled={isSaving}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold min-w-[100px]"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold min-w-[100px] api-keys-save"
           >
             {isSaving ? (
               <>
@@ -252,22 +252,22 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
         </form>
 
         {status && (
-          <div className="mb-4 p-3 rounded bg-amber-500/10 border border-amber-500/20 text-amber-500 text-sm">
+          <div className="mb-4 p-3 rounded bg-amber-500/10 border border-amber-500/20 text-amber-500 text-sm api-keys-status">
             {status}
           </div>
         )}
 
         {maskedRecords.length === 0 ? (
-          <div className="text-center py-8 text-slate-500 italic border border-dashed border-slate-800 rounded-lg">
+          <div className="text-center py-8 text-slate-500 italic border border-dashed border-slate-800 rounded-lg api-keys-empty">
             No keys saved yet.
           </div>
         ) : (
-          <div className="rounded-md border border-white/10 overflow-hidden">
+          <div className="rounded-md border border-white/10 overflow-hidden api-keys-list">
             <ul className="divide-y divide-white/10">
               {maskedRecords.map((row) => (
                 <li
                   key={row.id ?? row.service}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-white/5 hover:bg-white/10 transition-colors gap-2"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-white/5 hover:bg-white/10 transition-colors gap-2 api-keys-item"
                 >
                   <div>
                     <div className="font-semibold text-white">{row.label}</div>

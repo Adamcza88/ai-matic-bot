@@ -48,7 +48,7 @@ function formatPct(value?: number) {
 }
 
 function tileClass(base: "a" | "b") {
-  return `dashboard-tile dashboard-tile-${base} rounded-xl border border-border/70 bg-card/96 p-3 dm-surface-elevated`;
+  return `dashboard-tile dashboard-tile-${base} rounded-xl border border-border/70 bg-card/96 p-3 dm-surface-elevated lm-kpi-tile`;
 }
 
 export default function KpiRow({
@@ -82,17 +82,17 @@ export default function KpiRow({
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("a")}>
-            <div className="text-xs text-muted-foreground">Total capital</div>
-            <div className="mt-2 text-2xl font-semibold tabular-nums lm-data-primary">
+            <div className="text-xs text-muted-foreground lm-kpi-label">Total capital</div>
+            <div className="mt-2 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {formatMoney(totalCapital)}
             </div>
           </div>
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("a")}>
-            <div className="text-xs text-muted-foreground">Daily PnL</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Daily PnL</div>
             <div
-              className={`mt-2 text-2xl font-semibold tabular-nums lm-data-primary ${pnlTone(
+              className={`mt-2 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value ${pnlTone(
                 dailyPnl
               )}`}
             >
@@ -105,9 +105,9 @@ export default function KpiRow({
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("a")}>
-            <div className="text-xs text-muted-foreground">Open PnL</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Open PnL</div>
             <div
-              className={`mt-2 text-2xl font-semibold tabular-nums lm-data-primary ${pnlTone(
+              className={`mt-2 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value ${pnlTone(
                 openPositionsPnl
               )}`}
             >
@@ -117,8 +117,8 @@ export default function KpiRow({
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("a")}>
-            <div className="text-xs text-muted-foreground">Allocated</div>
-            <div className="mt-2 text-2xl font-semibold tabular-nums lm-data-primary">
+            <div className="text-xs text-muted-foreground lm-kpi-label">Allocated</div>
+            <div className="mt-2 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {formatMoney(allocated)}
             </div>
           </div>
@@ -128,24 +128,24 @@ export default function KpiRow({
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 sm:col-span-6 xl:col-span-2">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground">Positions</div>
-            <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
+            <div className="text-xs text-muted-foreground lm-kpi-label">Positions</div>
+            <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {openPositions}/{maxOpenPositions}
             </div>
           </div>
         </div>
         <div className="col-span-12 sm:col-span-6 xl:col-span-2">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground">Orders</div>
-            <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
+            <div className="text-xs text-muted-foreground lm-kpi-label">Orders</div>
+            <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {openOrders}/{maxOpenOrders}
             </div>
           </div>
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground">Risk per trade</div>
-            <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
+            <div className="text-xs text-muted-foreground lm-kpi-label">Risk per trade</div>
+            <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {formatPct(riskPerTradePct)}
             </div>
             <div className="text-[11px] text-muted-foreground">
@@ -155,8 +155,8 @@ export default function KpiRow({
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground">Risk status / Gates</div>
-            <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
+            <div className="text-xs text-muted-foreground lm-kpi-label">Risk status / Gates</div>
+            <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {gatesPassCount}/{gatesTotal || 0}
             </div>
             <div className="text-[11px] text-muted-foreground">Blocked signals: {blockedSignals}</div>
@@ -164,8 +164,8 @@ export default function KpiRow({
         </div>
         <div className="col-span-12 sm:col-span-6 xl:col-span-2">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground">Feed / Latency</div>
-            <div className="mt-2 text-sm font-semibold tabular-nums lm-data-primary">
+            <div className="text-xs text-muted-foreground lm-kpi-label">Feed / Latency</div>
+            <div className="mt-2 text-sm font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {Number.isFinite(feedAgeMs) ? `${feedAgeMs} ms` : "Feed N/A"}
             </div>
             <div className="text-[11px] text-muted-foreground">

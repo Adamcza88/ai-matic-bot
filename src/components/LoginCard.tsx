@@ -25,7 +25,7 @@ export default function LoginCard({
 }: Props) {
   return (
     <div
-      className="min-h-screen flex flex-col gap-9 items-center justify-center bg-linear-to-br from-slate-950 to-slate-900 p-6"
+      className="min-h-screen flex flex-col gap-9 items-center justify-center bg-linear-to-br from-slate-950 to-slate-900 p-6 login-shell"
       style={{
         backgroundImage: 'url(/loginBackground.svg)',
         backgroundSize: 'cover',
@@ -33,24 +33,24 @@ export default function LoginCard({
         backgroundRepeat: 'no-repeat',
       }}
     >
-      <div className="flex flex-col items-center justify-center h-full text-6xl font-bold text-white">AI Matic</div>
-      <Card className="w-full max-w-md bg-white/5 backdrop-blur-lg border-white/10 text-white shadow-2xl p-6">
+      <div className="flex flex-col items-center justify-center h-full text-6xl font-bold text-white login-title">AI Matic</div>
+      <Card className="w-full max-w-md bg-white/5 backdrop-blur-lg border-white/10 text-white shadow-2xl p-6 login-card">
         <CardHeader className="space-y-4 text-center">
           <div className="flex justify-center">
-            <Logo className="w-16 h-16 text-blue-600" />
+            <Logo className="w-16 h-16 text-blue-600 login-logo" />
           </div>
           <div className="space-y-2">
-            <CardTitle className="text-3xl font-bold tracking-tighter">
+            <CardTitle className="text-3xl font-bold tracking-tighter login-heading">
               Welcome back
             </CardTitle>
-            <CardDescription className="text-slate-400">
+            <CardDescription className="text-slate-400 login-subtitle">
               Sign in with your allowlisted Google account to continue.
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <Button
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold login-primary-button"
             onClick={onLogin}
             disabled={isAuthenticating}
           >
@@ -60,7 +60,7 @@ export default function LoginCard({
           {allowGuests && onGuestLogin && (
             <Button
               variant="outline"
-              className="w-full border-white/20 text-white hover:bg-white/10 hover:text-white"
+              className="w-full border-white/20 text-white hover:bg-white/10 hover:text-white login-secondary-button"
               onClick={onGuestLogin}
               disabled={isAuthenticating}
             >
@@ -69,7 +69,7 @@ export default function LoginCard({
           )}
 
           {error && (
-            <p className="text-sm text-orange-500 text-center">{error}</p>
+            <p className="text-sm text-orange-500 text-center login-error">{error}</p>
           )}
         </CardContent>
       </Card>

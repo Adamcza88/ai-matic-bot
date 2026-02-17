@@ -566,13 +566,13 @@ const SettingsPanel: React.FC<Props> = ({
   );
 
   return (
-    <div className="fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50">
-      <div className="w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-background/80 backdrop-blur-xs flex items-center justify-center z-50 settings-panel-overlay">
+      <div className="w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto settings-panel">
         <div className="flex flex-col space-y-1.5 mb-6">
           <h2 className="text-lg font-semibold leading-none tracking-tight">
             Nastavení
           </h2>
-          <div className="rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200">
+          <div className="rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200 settings-panel-summary">
             <div className="text-[11px] uppercase tracking-wide text-slate-400">
               Strategie (aktuální stav)
             </div>
@@ -594,7 +594,7 @@ const SettingsPanel: React.FC<Props> = ({
         </div>
 
         <div className="grid gap-4 py-4">
-          <div className="grid gap-2 rounded-md border border-input bg-slate-800 px-3 py-3 text-sm text-secondary-foreground">
+          <div className="grid gap-2 rounded-md border border-input bg-slate-800 px-3 py-3 text-sm text-secondary-foreground settings-panel-account">
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-xs uppercase tracking-wide text-secondary-foreground/70">
@@ -611,14 +611,14 @@ const SettingsPanel: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={onToggleTheme}
-                className="rounded-md border border-slate-700 bg-slate-900/40 px-3 py-1.5 text-xs text-slate-200"
+                className="rounded-md border border-slate-700 bg-slate-900/40 px-3 py-1.5 text-xs text-slate-200 settings-panel-theme-toggle"
               >
                 Toggle theme
               </button>
               <button
                 type="button"
                 onClick={onSignOut}
-                className="rounded-md border border-red-500/40 bg-red-900/20 px-3 py-1.5 text-xs text-red-200"
+                className="rounded-md border border-red-500/40 bg-red-900/20 px-3 py-1.5 text-xs text-red-200 settings-panel-signout"
               >
                 Sign out
               </button>
@@ -645,7 +645,7 @@ const SettingsPanel: React.FC<Props> = ({
             onKeysUpdated={onKeysUpdated}
           />
 
-          <div className="grid gap-2">
+          <div className="grid gap-2 settings-panel-profile-grid">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Profil strategie
             </label>
@@ -712,7 +712,7 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           </div>
 
-          <div className="grid gap-2">
+          <div className="grid gap-2 settings-panel-gates">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Gate pravidla
             </label>
@@ -939,7 +939,7 @@ const SettingsPanel: React.FC<Props> = ({
             </span>
           </div>
 
-          <div className="mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2">
+          <div className="mt-2 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm space-y-2 settings-panel-core-card">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-semibold text-white">{coreMeta.title}</div>
@@ -963,7 +963,7 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           </div>
 
-          <div className="mt-4 border-t border-slate-800 pt-4">
+          <div className="mt-4 border-t border-slate-800 pt-4 settings-panel-notes">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-sm font-medium text-slate-200">
                 Poznámky strategie
@@ -976,7 +976,7 @@ const SettingsPanel: React.FC<Props> = ({
         <div className="mt-6 flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-md border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
+            className="rounded-md border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700 settings-panel-cancel"
           >
             Zrušit
           </button>
@@ -985,7 +985,7 @@ const SettingsPanel: React.FC<Props> = ({
               onUpdateSettings(local);
               onClose();
             }}
-            className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+            className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 settings-panel-save"
           >
             Uložit změny
           </button>
