@@ -138,7 +138,7 @@ export default function Dashboard({
       session: "POI priorita: Breaker > OB > FVG > Liquidity",
       risk: "Risk 0.40% equity/trade · notional cap ~1% equity",
       entry: "Entry 1/2 (60/40): OB reakce/sweep návrat + retest OB/GAP",
-      execution: "SL pod strukturu/OB + ATR buffer · TP1 0.9–1.2% · trailing +1.0%",
+      execution: "SL pod strukturu/OB + ATR buffer · TP1 0.9–1.2% (70%) · TP2 2–3% · trailing +1.0%",
     };
   }, [bot.settings?.entryStrictness, bot.settings?.maxOpenPositions, riskMode]);
 

@@ -59,18 +59,18 @@ const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 5;
 const MAX_POSITION_NOTIONAL_USD = 50000;
 const ORDER_VALUE_BY_SYMBOL: Record<Symbol, number> = {
-  BTCUSDT: 10000,
-  ETHUSDT: 10000,
-  SOLUSDT: 10000,
-  ADAUSDT: 7500,
-  XRPUSDT: 7500,
-  SUIUSDT: 5000,
-  DOGEUSDT: 7500,
-  LINKUSDT: 7500,
-  ZILUSDT: 2500,
-  AVAXUSDT: 5000,
-  HYPEUSDT: 5000,
-  OPUSDT: 5000,
+  BTCUSDT: 20,
+  ETHUSDT: 20,
+  SOLUSDT: 20,
+  ADAUSDT: 20,
+  XRPUSDT: 20,
+  SUIUSDT: 20,
+  DOGEUSDT: 20,
+  LINKUSDT: 20,
+  ZILUSDT: 20,
+  AVAXUSDT: 20,
+  HYPEUSDT: 20,
+  OPUSDT: 20,
 };
 const MAJOR_SYMBOLS = new Set<Symbol>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
@@ -214,6 +214,23 @@ const AI_MATIC_POI_DISTANCE_PCT = 0.0015;
 const AI_MATIC_SL_ATR_BUFFER = 0.3;
 const AI_MATIC_MIN_RR = 1.2;
 const AI_MATIC_TP1_ATR_MULT = 1.5;
+const AI_MATIC_TP1_PCT_MIN = 0.009;
+const AI_MATIC_TP1_PCT_MAX = 0.012;
+const AI_MATIC_TP2_PCT_MIN = 0.02;
+const AI_MATIC_TP2_PCT_MAX = 0.03;
+const AI_MATIC_TP1_PARTIAL_FRACTION = 0.7;
+const AI_MATIC_SIGNAL_EXPIRE_BARS = 2;
+const AI_MATIC_TRAIL_ACTIVATE_PCT = 0.01;
+const AI_MATIC_TRAIL_RETRACE_PCT_MIN = 0.005;
+const AI_MATIC_TRAIL_RETRACE_PCT_MAX = 0.008;
+const AI_MATIC_TRAIL_RETRACE_PCT =
+  (AI_MATIC_TRAIL_RETRACE_PCT_MIN + AI_MATIC_TRAIL_RETRACE_PCT_MAX) / 2;
+const AI_MATIC_SL_HARD_CAP_PCT = 0.018;
+const AI_MATIC_SL_HARD_CAP_ATR_MULT = 3.0;
+const AI_MATIC_BE_MIN_R = 1.0;
+const AI_MATIC_NO_PROGRESS_BARS = 6;
+const AI_MATIC_NO_PROGRESS_MFE_ATR = 0.8;
+const AI_MATIC_NO_PROGRESS_EXIT_COOLDOWN_MS = 30_000;
 const AI_MATIC_TRAIL_ACTIVATE_ATR_MULT = 1.5;
 const AI_MATIC_TRAIL_RETRACE_ATR_MULT = 0.5;
 const AI_MATIC_RSI_OVERSOLD = 35;
@@ -224,11 +241,19 @@ const AI_MATIC_LIQ_SWEEP_VOL_MULT = 1.0;
 const AI_MATIC_BREAK_RETEST_LOOKBACK = 6;
 const AI_MATIC_RETEST_PRIMARY_RATIO = 0.6;
 const AI_MATIC_RETEST_SECONDARY_RATIO = 0.4;
-const AI_MATIC_RETEST_FALLBACK_BARS = 3;
+const AI_MATIC_RETEST_FALLBACK_BARS = 2;
 const AI_MATIC_RETEST_ABSORPTION_MIN = 2.5;
 const AI_MATIC_RETEST_DELTA_DOMINANCE_RATIO = 1.4;
 const AI_MATIC_RETEST_TWAP_SLICES = 2;
 const AI_MATIC_RETEST_TWAP_DELAY_MS = 1500;
+
+type AiMaticAdaptiveRiskParams = {
+  hardCapPct: number;
+  hardCapAtrMult: number;
+  beMinR: number;
+  noProgressBars: number;
+  noProgressMfeAtr: number;
+};
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
@@ -1238,8 +1263,9 @@ const resolveAiMaticStopLoss = (args: {
   atr?: number;
   aiMatic?: AiMaticContext | null;
   core?: CoreV2Metrics;
+  riskParams?: AiMaticAdaptiveRiskParams;
 }) => {
-  const { side, entry, currentSl, atr, aiMatic, core } = args;
+  const { side, entry, currentSl, atr, aiMatic, core, riskParams } = args;
   if (!Number.isFinite(entry) || entry <= 0) return Number.NaN;
   const pivotLow = minFinite(
     aiMatic?.htf.pivotLow,
@@ -1284,6 +1310,39 @@ const resolveAiMaticStopLoss = (args: {
     }
   }
   if (!Number.isFinite(candidate) || candidate <= 0) return Number.NaN;
+  const hardCapByPct = entry * (riskParams?.hardCapPct ?? AI_MATIC_SL_HARD_CAP_PCT);
+  const hardCapByAtr =
+    Number.isFinite(atr) && (atr as number) > 0
+      ? (atr as number) *
+        (riskParams?.hardCapAtrMult ?? AI_MATIC_SL_HARD_CAP_ATR_MULT)
+      : Number.POSITIVE_INFINITY;
+  const hardCapDistance = Math.min(hardCapByPct, hardCapByAtr);
+  if (Number.isFinite(hardCapDistance) && hardCapDistance > 0) {
+    if (side === "Buy") {
+      const capped = entry - hardCapDistance;
+      if (candidate < capped) candidate = capped;
+    } else {
+      const capped = entry + hardCapDistance;
+      if (candidate > capped) candidate = capped;
+    }
+  }
+  if (
+    Number.isFinite(currentSl) &&
+    Number.isFinite(hardCapDistance) &&
+    hardCapDistance > 0
+  ) {
+    if (side === "Buy") {
+      const cappedCurrent = entry - hardCapDistance;
+      if ((currentSl as number) < cappedCurrent) {
+        return cappedCurrent;
+      }
+    } else {
+      const cappedCurrent = entry + hardCapDistance;
+      if ((currentSl as number) > cappedCurrent) {
+        return cappedCurrent;
+      }
+    }
+  }
   if (!Number.isFinite(currentSl)) return candidate;
   if (side === "Buy") {
     return candidate < (currentSl as number) ? candidate : Number.NaN;
@@ -1291,17 +1350,26 @@ const resolveAiMaticStopLoss = (args: {
   return candidate > (currentSl as number) ? candidate : Number.NaN;
 };
 
-const resolveAiMaticTargets = (args: {
+type AiMaticTargetPlan = {
+  tp1: number;
+  tp2: number;
+};
+
+const resolveAiMaticTargetPlan = (args: {
   side: "Buy" | "Sell";
   entry: number;
   sl: number;
   atr?: number;
   aiMatic?: AiMaticContext | null;
-}) => {
+}): AiMaticTargetPlan => {
   const { side, entry, sl, atr, aiMatic } = args;
-  if (!Number.isFinite(entry) || !Number.isFinite(sl)) return Number.NaN;
+  if (!Number.isFinite(entry) || !Number.isFinite(sl)) {
+    return { tp1: Number.NaN, tp2: Number.NaN };
+  }
   const risk = Math.abs(entry - sl);
-  if (!Number.isFinite(risk) || risk <= 0) return Number.NaN;
+  if (!Number.isFinite(risk) || risk <= 0) {
+    return { tp1: Number.NaN, tp2: Number.NaN };
+  }
   const targets = new Set<number>();
   const add = (value: number | undefined | null) => {
     if (!Number.isFinite(value)) return;
@@ -1334,28 +1402,88 @@ const resolveAiMaticTargets = (args: {
       side === "Buy" ? v > entry : v < entry
     )
     .sort((a, b) => Math.abs(a - entry) - Math.abs(b - entry));
+
+  const direction = side === "Buy" ? 1 : -1;
+  const pctMove = (price: number) => Math.abs(price - entry) / entry;
+  const isBeyond = (a: number, b: number) =>
+    side === "Buy" ? a > b : a < b;
+  const pctTarget = (pct: number) => entry * (1 + direction * pct);
+  const pickInPctRange = (
+    minPct: number,
+    maxPct: number,
+    minLevel?: number
+  ) =>
+    list.find((candidate) => {
+      if (Number.isFinite(minLevel) && !isBeyond(candidate, minLevel as number)) {
+        return false;
+      }
+      const pct = pctMove(candidate);
+      return pct >= minPct && pct <= maxPct;
+    });
+  const pickNextBeyond = (level: number) =>
+    list.find((candidate) => isBeyond(candidate, level));
+
   const atrTarget =
     Number.isFinite(atr) && (atr as number) > 0
       ? side === "Buy"
         ? entry + AI_MATIC_TP1_ATR_MULT * (atr as number)
         : entry - AI_MATIC_TP1_ATR_MULT * (atr as number)
       : Number.NaN;
-  if (Number.isFinite(atrTarget) && atrTarget > 0) {
+
+  let tp1 = pickInPctRange(AI_MATIC_TP1_PCT_MIN, AI_MATIC_TP1_PCT_MAX);
+  if (!Number.isFinite(tp1) && Number.isFinite(atrTarget) && atrTarget > 0) {
     for (const candidate of list) {
       if (side === "Buy" ? candidate >= atrTarget : candidate <= atrTarget) {
-        return candidate;
+        tp1 = candidate;
+        break;
       }
     }
-    return atrTarget;
-  }
-  const minTarget =
-    side === "Buy" ? entry + risk * AI_MATIC_MIN_RR : entry - risk * AI_MATIC_MIN_RR;
-  for (const candidate of list) {
-    if (side === "Buy" ? candidate >= minTarget : candidate <= minTarget) {
-      return candidate;
+    if (!Number.isFinite(tp1)) {
+      tp1 = atrTarget;
     }
   }
-  return Number.NaN;
+
+  if (!Number.isFinite(tp1)) {
+    const minTarget =
+      side === "Buy" ? entry + risk * AI_MATIC_MIN_RR : entry - risk * AI_MATIC_MIN_RR;
+    for (const candidate of list) {
+      if (side === "Buy" ? candidate >= minTarget : candidate <= minTarget) {
+        tp1 = candidate;
+        break;
+      }
+    }
+  }
+
+  if (!Number.isFinite(tp1)) {
+    tp1 = pctTarget((AI_MATIC_TP1_PCT_MIN + AI_MATIC_TP1_PCT_MAX) / 2);
+  }
+
+  let tp2 = pickInPctRange(AI_MATIC_TP2_PCT_MIN, AI_MATIC_TP2_PCT_MAX, tp1);
+  if (!Number.isFinite(tp2)) {
+    tp2 = pickNextBeyond(tp1 as number);
+  }
+  if (!Number.isFinite(tp2)) {
+    tp2 = pctTarget((AI_MATIC_TP2_PCT_MIN + AI_MATIC_TP2_PCT_MAX) / 2);
+  }
+  if (!Number.isFinite(tp2) || !isBeyond(tp2, tp1 as number)) {
+    const minDistance = entry * AI_MATIC_TP2_PCT_MIN;
+    tp2 = side === "Buy" ? (tp1 as number) + minDistance : (tp1 as number) - minDistance;
+  }
+
+  return {
+    tp1: Number.isFinite(tp1) ? (tp1 as number) : Number.NaN,
+    tp2: Number.isFinite(tp2) ? (tp2 as number) : Number.NaN,
+  };
+};
+
+const resolveAiMaticTargets = (args: {
+  side: "Buy" | "Sell";
+  entry: number;
+  sl: number;
+  atr?: number;
+  aiMatic?: AiMaticContext | null;
+}) => {
+  return resolveAiMaticTargetPlan(args).tp1;
 };
 
 type EnabledEntryType = Exclude<EntryType, "MARKET_DISABLED">;
@@ -1368,10 +1496,15 @@ const resolveAiMaticEntryType = (args: {
   const { aiMatic, side, entry } = args;
   const dir = side === "Buy" ? "bull" : "bear";
   const patterns = aiMatic.ltf.patterns;
+  const insideBreakout =
+    patterns.insideBar &&
+    (dir === "bull"
+      ? aiMatic.ltf.bosUp || aiMatic.ltf.breakRetestUp
+      : aiMatic.ltf.bosDown || aiMatic.ltf.breakRetestDown);
   const strongPattern =
     dir === "bull"
-      ? patterns.pinbarBull || patterns.engulfBull || patterns.trapBull
-      : patterns.pinbarBear || patterns.engulfBear || patterns.trapBear;
+      ? patterns.pinbarBull || patterns.engulfBull || patterns.trapBull || insideBreakout
+      : patterns.pinbarBear || patterns.engulfBear || patterns.trapBear || insideBreakout;
   const momentumOk =
     dir === "bull" ? aiMatic.ltf.momentumLongOk : aiMatic.ltf.momentumShortOk;
   const strongReaction = strongPattern && aiMatic.ltf.volumeReaction && momentumOk;
@@ -1499,9 +1632,11 @@ const evaluateAiMaticGatesCore = (args: {
   const obCloseOk = mtfPoiReaction;
   const gapPresent = aiMatic.mtf.gapPresent;
   const obRetestOk = aiMatic.mtf.obRetest;
+  const obValidationOk = obReactionOk && obCloseOk && obRetestOk;
   const momentumOk =
     dir === "bull" ? aiMatic.ltf.momentumLongOk : aiMatic.ltf.momentumShortOk;
   const volumeOk = aiMatic.ltf.volumeReaction;
+  const patternVolumeConfirmed = patternOk && volumeOk;
   const hardGates: AiMaticGate[] = [
     { name: "HTF EMA trend", ok: htfAligned },
     { name: "MTF EMA confirm", ok: mtfAligned },
@@ -1513,7 +1648,7 @@ const evaluateAiMaticGatesCore = (args: {
   const entryFactors: AiMaticGate[] = [
     { name: "Sweep return", ok: sweepOk },
     { name: "OB reaction", ok: obReactionOk },
-    { name: "OB retrace", ok: obRetestOk },
+    { name: "OB validation", ok: obValidationOk },
     { name: "GAP present", ok: gapPresent },
     { name: "RSI/MACD", ok: momentumOk },
   ];
@@ -1527,7 +1662,7 @@ const evaluateAiMaticGatesCore = (args: {
     { name: "Likvidita (sweep)", ok: sweepOk },
   ];
   const hardOkCount = hardGates.filter((g) => g.ok).length;
-  const hardPass = hardOkCount >= AI_MATIC_HARD_MIN;
+  const hardPass = hardOkCount >= AI_MATIC_HARD_MIN && patternVolumeConfirmed;
   const entryFactorsPass =
     entryFactors.filter((g) => g.ok).length >= AI_MATIC_ENTRY_FACTOR_MIN;
   const checklistPass =
@@ -2964,6 +3099,14 @@ type AiMaticRetestFallbackState = {
   executing: boolean;
 };
 
+type AiMaticProgressState = {
+  openedAtMs: number;
+  entryRisk: number;
+  bestFavorablePrice: number;
+  beMoved: boolean;
+  lastNoProgressExitAttempt: number;
+};
+
 type PortfolioRegimeState = {
   dominanceHistory: number[];
   lastSampleAt: number;
@@ -3016,6 +3159,59 @@ function computeLossStreak(
     }
   }
   return streak;
+}
+
+function resolveAiMaticAdaptiveRiskParams(args: {
+  symbol: string;
+  records: ClosedPnlRecord[] | null | undefined;
+}): AiMaticAdaptiveRiskParams {
+  const isMajor = MAJOR_SYMBOLS.has(args.symbol as Symbol);
+  const base: AiMaticAdaptiveRiskParams = isMajor
+    ? {
+        hardCapPct: 0.017,
+        hardCapAtrMult: 3.0,
+        beMinR: AI_MATIC_BE_MIN_R,
+        noProgressBars: AI_MATIC_NO_PROGRESS_BARS + 1,
+        noProgressMfeAtr: AI_MATIC_NO_PROGRESS_MFE_ATR,
+      }
+    : {
+        hardCapPct: 0.016,
+        hardCapAtrMult: 2.8,
+        beMinR: AI_MATIC_BE_MIN_R - 0.1,
+        noProgressBars: Math.max(3, AI_MATIC_NO_PROGRESS_BARS - 1),
+        noProgressMfeAtr: Math.max(0.55, AI_MATIC_NO_PROGRESS_MFE_ATR - 0.05),
+      };
+  if (!Array.isArray(args.records) || args.records.length === 0) {
+    return base;
+  }
+  const recent = args.records
+    .filter((r) => String(r.symbol ?? "") === args.symbol)
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 20);
+  if (!recent.length) return base;
+  const wins = recent.filter((r) => r.pnl > 0).length;
+  const winRate = wins / recent.length;
+  const lossStreak = computeLossStreak(recent, 3);
+
+  if (lossStreak >= 2 || (recent.length >= 8 && winRate < 0.45)) {
+    return {
+      hardCapPct: Math.max(0.012, base.hardCapPct * 0.85),
+      hardCapAtrMult: Math.max(2.0, base.hardCapAtrMult - 0.4),
+      beMinR: 0.8,
+      noProgressBars: Math.max(3, base.noProgressBars - 1),
+      noProgressMfeAtr: Math.max(0.55, base.noProgressMfeAtr - 0.1),
+    };
+  }
+  if (recent.length >= 10 && winRate >= 0.6 && lossStreak === 0) {
+    return {
+      hardCapPct: Math.min(0.022, base.hardCapPct * 1.1),
+      hardCapAtrMult: Math.min(3.6, base.hardCapAtrMult + 0.3),
+      beMinR: 1.1,
+      noProgressBars: Math.min(10, base.noProgressBars + 1),
+      noProgressMfeAtr: Math.min(1.0, base.noProgressMfeAtr + 0.05),
+    };
+  }
+  return base;
 }
 
 const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
@@ -3084,11 +3280,9 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
   }
 > = {
   "ai-matic": {
-    activateR: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
-    lockR: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
-    retracementRate: 0.004,
-    activateAtrMult: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
-    lockAtrMult: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
+    activateR: 1.0,
+    lockR: 0.6,
+    retracementRate: AI_MATIC_TRAIL_RETRACE_PCT,
   },
   "ai-matic-x": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
   "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
@@ -3311,12 +3505,16 @@ export function useTradingBot(
   const trailingSyncRef = useRef<Map<string, number>>(new Map());
   const trailOffsetRef = useRef<Map<string, number>>(new Map());
   const aiMaticTp1Ref = useRef<
-    Map<string, { entry: number; tp1: number; side: "Buy" | "Sell"; setAt: number }>
+    Map<
+      string,
+      { entry: number; tp1: number; tp2: number; side: "Buy" | "Sell"; setAt: number }
+    >
   >(new Map());
   const aiMaticTrailCooldownRef = useRef<Map<string, number>>(new Map());
   const aiMaticRetestFallbackRef = useRef<Map<string, AiMaticRetestFallbackState>>(
     new Map()
   );
+  const aiMaticProgressRef = useRef<Map<string, AiMaticProgressState>>(new Map());
   const aiMaticStructureLogRef = useRef<Map<string, number>>(new Map());
   const scalpExitStateRef = useRef<
     Map<string, { mode: "TRAIL" | "TP"; switched: boolean; decidedAt: number }>
@@ -3919,8 +4117,10 @@ export function useTradingBot(
       const activateR = profile.activateR;
       const lockR = profile.lockR;
       const overrideRate = trailOffsetRef.current.get(symbol);
+      const isAiMaticCoreProfile = settings.riskMode === "ai-matic";
       const usePercentActivation =
         isScalpProfile ||
+        isAiMaticCoreProfile ||
         (settings.riskMode === "ai-matic-tree" &&
           Number.isFinite(overrideRate) &&
           (overrideRate as number) > 0);
@@ -3932,8 +4132,7 @@ export function useTradingBot(
       const atrValue =
         Number.isFinite(atr) && (atr as number) > 0 ? (atr as number) : Number.NaN;
       const useAtrTrail =
-        (settings.riskMode === "ai-matic" ||
-          settings.riskMode === "ai-matic-tree") &&
+        settings.riskMode === "ai-matic-tree" &&
         Number.isFinite(atrValue) &&
         Number.isFinite(profile.activateAtrMult) &&
         Number.isFinite(profile.lockAtrMult);
@@ -3945,21 +4144,27 @@ export function useTradingBot(
       const distance = Math.max(rawDistance, minDistance);
       if (!Number.isFinite(distance) || distance <= 0) return null;
       const dir = side === "Buy" ? 1 : -1;
-      const activePrice = useAtrTrail
-        ? entry +
-          dir *
-            Math.max(
-              (profile.activateAtrMult as number) * atrValue,
-              minDistance
-            )
-        : usePercentActivation
-          ? entry + dir * distance
-          : entry +
+      const aiMaticActivationMove = Math.max(
+        entry * AI_MATIC_TRAIL_ACTIVATE_PCT,
+        minDistance
+      );
+      const activePrice = isAiMaticCoreProfile
+        ? entry + dir * aiMaticActivationMove
+        : useAtrTrail
+          ? entry +
             dir *
               Math.max(
-                activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
+                (profile.activateAtrMult as number) * atrValue,
                 minDistance
-              );
+              )
+          : usePercentActivation
+            ? entry + dir * distance
+            : entry +
+              dir *
+                Math.max(
+                  activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
+                  minDistance
+                );
       if (!Number.isFinite(activePrice) || activePrice <= 0) return null;
       return { trailingStop: distance, trailingActivePrice: activePrice };
     },
@@ -4046,6 +4251,11 @@ export function useTradingBot(
           partialExitRef.current.delete(key);
         }
       }
+      for (const key of aiMaticProgressRef.current.keys()) {
+        if (!activePositionKeys.has(key)) {
+          aiMaticProgressRef.current.delete(key);
+        }
+      }
       for (const key of proPartialRef.current.keys()) {
         if (!activePositionKeys.has(key)) {
           proPartialRef.current.delete(key);
@@ -4058,6 +4268,7 @@ export function useTradingBot(
         const settings = settingsRef.current;
         const isScalpProfile = settings.riskMode === "ai-matic-scalp";
         const isProProfile = settings.riskMode === "ai-matic-pro";
+        const isAiMaticProfile = settings.riskMode === "ai-matic";
         const positionKey = String(
           pos.positionId || pos.id || `${pos.symbol}:${pos.openedAt}`
         );
@@ -4073,8 +4284,183 @@ export function useTradingBot(
           continue;
         }
         const side = pos.side === "Sell" ? "Sell" : "Buy";
+        const price = toNumber(pos.markPrice);
+        let aiMaticProgress: AiMaticProgressState | null = null;
+        let aiMaticMfe = Number.NaN;
+        if (
+          isAiMaticProfile &&
+          positionKey &&
+          Number.isFinite(price) &&
+          price > 0
+        ) {
+          const openedAtMsRaw = toEpoch(pos.openedAt);
+          const openedAtMs = Number.isFinite(openedAtMsRaw) ? openedAtMsRaw : now;
+          const entryRiskSeed = Math.abs(entry - sl);
+          aiMaticProgress = aiMaticProgressRef.current.get(positionKey) ?? {
+            openedAtMs,
+            entryRisk: Number.isFinite(entryRiskSeed) ? entryRiskSeed : Number.NaN,
+            bestFavorablePrice: price,
+            beMoved: false,
+            lastNoProgressExitAttempt: 0,
+          };
+          if (
+            (!Number.isFinite(aiMaticProgress.entryRisk) || aiMaticProgress.entryRisk <= 0) &&
+            Number.isFinite(entryRiskSeed) &&
+            entryRiskSeed > 0
+          ) {
+            aiMaticProgress.entryRisk = entryRiskSeed;
+          }
+          if (
+            !Number.isFinite(aiMaticProgress.bestFavorablePrice) ||
+            aiMaticProgress.bestFavorablePrice <= 0
+          ) {
+            aiMaticProgress.bestFavorablePrice = price;
+          }
+          aiMaticProgress.bestFavorablePrice =
+            side === "Buy"
+              ? Math.max(aiMaticProgress.bestFavorablePrice, price)
+              : Math.min(aiMaticProgress.bestFavorablePrice, price);
+          aiMaticMfe =
+            side === "Buy"
+              ? aiMaticProgress.bestFavorablePrice - entry
+              : entry - aiMaticProgress.bestFavorablePrice;
+          if (!aiMaticProgress.beMoved) {
+            const minDistance = resolveMinProtectionDistance(entry);
+            const beSl =
+              side === "Buy" ? entry - minDistance : entry + minDistance;
+            const alreadyAtBeOrBetter =
+              side === "Buy" ? sl >= beSl : sl <= beSl;
+            if (alreadyAtBeOrBetter) {
+              aiMaticProgress.beMoved = true;
+            }
+          }
+          aiMaticProgressRef.current.set(positionKey, aiMaticProgress);
+        }
+        if (
+          isAiMaticProfile &&
+          aiMaticProgress &&
+          Number.isFinite(price) &&
+          price > 0
+        ) {
+          const adaptiveRisk = resolveAiMaticAdaptiveRiskParams({
+            symbol,
+            records: closedPnlRecords,
+          });
+          const core = (decisionRef.current[symbol]?.decision as any)?.coreV2 as
+            | CoreV2Metrics
+            | undefined;
+          const atr = toNumber(core?.atr14);
+          const ltfMinRaw = toNumber(core?.ltfTimeframeMin);
+          const ltfMin =
+            Number.isFinite(ltfMinRaw) && ltfMinRaw > 0
+              ? Math.max(1, Math.round(ltfMinRaw))
+              : 5;
+          const noProgressWindowMs =
+            adaptiveRisk.noProgressBars * ltfMin * 60_000;
+          const elapsedMs = Math.max(0, now - aiMaticProgress.openedAtMs);
+          const noProgress =
+            elapsedMs >= noProgressWindowMs &&
+            Number.isFinite(atr) &&
+            atr > 0 &&
+            Number.isFinite(aiMaticMfe) &&
+            aiMaticMfe < adaptiveRisk.noProgressMfeAtr * atr;
+          const sizeRaw = Math.abs(toNumber(pos.size ?? pos.qty));
+          if (
+            noProgress &&
+            Number.isFinite(sizeRaw) &&
+            sizeRaw > 0 &&
+            now - aiMaticProgress.lastNoProgressExitAttempt >=
+              AI_MATIC_NO_PROGRESS_EXIT_COOLDOWN_MS
+          ) {
+            aiMaticProgress.lastNoProgressExitAttempt = now;
+            aiMaticProgressRef.current.set(positionKey, aiMaticProgress);
+            try {
+              await postJson("/order", {
+                symbol,
+                side: side === "Buy" ? "Sell" : "Buy",
+                qty: sizeRaw,
+                orderType: "Market",
+                reduceOnly: true,
+                timeInForce: "IOC",
+                positionIdx: Number.isFinite(pos.positionIdx)
+                  ? pos.positionIdx
+                  : undefined,
+              });
+              addLogEntries([
+                {
+                  id: `ai-matic:no-progress:${symbol}:${now}`,
+                  timestamp: new Date(now).toISOString(),
+                  action: "STATUS",
+                  message: `${symbol} AI-MATIC no-progress exit (${adaptiveRisk.noProgressBars} bars, MFE < ${formatNumber(
+                    adaptiveRisk.noProgressMfeAtr,
+                    2
+                  )} ATR)`,
+                },
+              ]);
+            } catch (err) {
+              addLogEntries([
+                {
+                  id: `ai-matic:no-progress:error:${symbol}:${now}`,
+                  timestamp: new Date(now).toISOString(),
+                  action: "ERROR",
+                  message: `${symbol} AI-MATIC no-progress exit failed: ${asErrorMessage(err)}`,
+                },
+              ]);
+            }
+            continue;
+          }
+          const mfeR =
+            Number.isFinite(aiMaticProgress.entryRisk) &&
+            aiMaticProgress.entryRisk > 0 &&
+            Number.isFinite(aiMaticMfe)
+              ? aiMaticMfe / aiMaticProgress.entryRisk
+              : Number.NaN;
+          if (
+            !aiMaticProgress.beMoved &&
+            Number.isFinite(mfeR) &&
+            mfeR >= adaptiveRisk.beMinR
+          ) {
+            const minDistance = resolveMinProtectionDistance(entry, atr);
+            const beSl =
+              side === "Buy" ? entry - minDistance : entry + minDistance;
+            const shouldMove =
+              side === "Buy" ? sl < beSl : sl > beSl;
+            if (shouldMove) {
+              try {
+                await postJson("/protection", {
+                  symbol,
+                  sl: beSl,
+                  positionIdx: Number.isFinite(pos.positionIdx)
+                    ? pos.positionIdx
+                    : undefined,
+                });
+                aiMaticProgress.beMoved = true;
+                aiMaticProgressRef.current.set(positionKey, aiMaticProgress);
+                addLogEntries([
+                  {
+                    id: `ai-matic:be:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "STATUS",
+                    message: `${symbol} AI-MATIC BE move @ ${formatNumber(mfeR, 2)}R`,
+                  },
+                ]);
+              } catch (err) {
+                addLogEntries([
+                  {
+                    id: `ai-matic:be:error:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "ERROR",
+                    message: `${symbol} AI-MATIC BE move failed: ${asErrorMessage(err)}`,
+                  },
+                ]);
+              }
+            } else {
+              aiMaticProgress.beMoved = true;
+              aiMaticProgressRef.current.set(positionKey, aiMaticProgress);
+            }
+          }
+        }
         if (isProProfile && positionKey) {
-          const price = toNumber(pos.markPrice);
           const sizeRaw = Math.abs(toNumber(pos.size ?? pos.qty));
           let proState = proPartialRef.current.get(positionKey);
           if (!proState) {
@@ -4199,7 +4585,81 @@ export function useTradingBot(
             }
           }
         }
-        if (!isScalpProfile && !isProProfile && positionKey) {
+        if (isAiMaticProfile && positionKey) {
+          const partialState = partialExitRef.current.get(positionKey);
+          const lastAttempt = partialState?.lastAttempt ?? 0;
+          const tpState = aiMaticTp1Ref.current.get(symbol);
+          const price = toNumber(pos.markPrice);
+          const tp1 = tpState?.tp1;
+          const sizeRaw = Math.abs(toNumber(pos.size ?? pos.qty));
+          const tp1Hit =
+            Number.isFinite(tp1) &&
+            Number.isFinite(price) &&
+            (side === "Buy" ? price >= (tp1 as number) : price <= (tp1 as number));
+          if (
+            tp1Hit &&
+            (!partialState || !partialState.taken) &&
+            now - lastAttempt >= NONSCALP_PARTIAL_COOLDOWN_MS &&
+            Number.isFinite(sizeRaw) &&
+            sizeRaw > 0
+          ) {
+            partialExitRef.current.set(positionKey, {
+              taken: false,
+              lastAttempt: now,
+            });
+            const reduceQty = Math.min(sizeRaw, sizeRaw * AI_MATIC_TP1_PARTIAL_FRACTION);
+            const closeSide = side === "Buy" ? "Sell" : "Buy";
+            try {
+              await postJson("/order", {
+                symbol,
+                side: closeSide,
+                qty: reduceQty,
+                orderType: "Market",
+                reduceOnly: true,
+                timeInForce: "IOC",
+                positionIdx: Number.isFinite(pos.positionIdx)
+                  ? pos.positionIdx
+                  : undefined,
+              });
+              partialExitRef.current.set(positionKey, {
+                taken: true,
+                lastAttempt: now,
+              });
+              const minDistance = resolveMinProtectionDistance(entry);
+              const beSl =
+                side === "Buy"
+                  ? entry - minDistance
+                  : entry + minDistance;
+              await postJson("/protection", {
+                symbol,
+                sl: beSl,
+                positionIdx: Number.isFinite(pos.positionIdx)
+                  ? pos.positionIdx
+                  : undefined,
+              });
+              addLogEntries([
+                {
+                  id: `partial:ai-matic:${symbol}:${now}`,
+                  timestamp: new Date(now).toISOString(),
+                  action: "STATUS",
+                  message: `${symbol} AI-MATIC TP1 partial ${Math.round(
+                    AI_MATIC_TP1_PARTIAL_FRACTION * 100
+                  )}% + BE`,
+                },
+              ]);
+            } catch (err) {
+              addLogEntries([
+                {
+                  id: `partial:ai-matic:error:${symbol}:${now}`,
+                  timestamp: new Date(now).toISOString(),
+                  action: "ERROR",
+                  message: `${symbol} AI-MATIC TP1 partial failed: ${asErrorMessage(err)}`,
+                },
+              ]);
+            }
+          }
+        }
+        if (!isScalpProfile && !isProProfile && !isAiMaticProfile && positionKey) {
           const partialState = partialExitRef.current.get(positionKey);
           const lastAttempt = partialState?.lastAttempt ?? 0;
           const price = toNumber(pos.markPrice);
@@ -6853,6 +7313,7 @@ export function useTradingBot(
     qtyMode: "USDT_NOTIONAL" | "BASE_QTY";
     qtyValue: number;
     intentId?: string;
+    expireAfterMs?: number;
   }) {
     if (!authToken) throw new Error("missing_auth_token");
     const intentId = signal.intentId ?? crypto.randomUUID();
@@ -6869,7 +7330,9 @@ export function useTradingBot(
       qtyValue: signal.qtyValue,
       slPrice: signal.slPrice,
       tpPrices: signal.tpPrices ?? [],
-      expireAfterMs: 30_000,
+      expireAfterMs: Number.isFinite(signal.expireAfterMs)
+        ? Math.max(1_000, signal.expireAfterMs as number)
+        : 30_000,
       tags: { env: useTestnet ? "testnet" : "mainnet", mode: "intent" },
     } as const;
 
@@ -7728,6 +8191,7 @@ export function useTradingBot(
       const proTargets = isProProfile ? (signal as any)?.proTargets : null;
       let resolvedSl = sl;
       let resolvedTp = tp;
+      let aiMaticTargets: AiMaticTargetPlan | null = null;
       if (
         isScalpProfile &&
         Number.isFinite(entry) &&
@@ -7827,28 +8291,35 @@ export function useTradingBot(
         }
       }
 
-      if (isAiMaticProfile) {
-        const aiMatic = (decision as any)?.aiMatic as AiMaticContext | null;
-        const nextSl = resolveAiMaticStopLoss({
-          side,
-          entry,
-          currentSl: resolvedSl,
-          atr: core?.atr14,
-          aiMatic,
-          core,
-        });
+        if (isAiMaticProfile) {
+          const aiMatic = (decision as any)?.aiMatic as AiMaticContext | null;
+          const riskParams = resolveAiMaticAdaptiveRiskParams({
+            symbol,
+            records: closedPnlRecords,
+          });
+          const nextSl = resolveAiMaticStopLoss({
+            side,
+            entry,
+            currentSl: resolvedSl,
+            atr: core?.atr14,
+            aiMatic,
+            core,
+            riskParams,
+          });
         if (Number.isFinite(nextSl) && nextSl > 0) {
           resolvedSl = nextSl;
         }
-        const nextTp = resolveAiMaticTargets({
+        aiMaticTargets = resolveAiMaticTargetPlan({
           side,
           entry,
           sl: resolvedSl,
           atr: core?.atr14,
           aiMatic,
         });
-        if (Number.isFinite(nextTp) && nextTp > 0) {
-          resolvedTp = nextTp;
+        if (Number.isFinite(aiMaticTargets.tp2) && aiMaticTargets.tp2 > 0) {
+          resolvedTp = aiMaticTargets.tp2;
+        } else if (Number.isFinite(aiMaticTargets.tp1) && aiMaticTargets.tp1 > 0) {
+          resolvedTp = aiMaticTargets.tp1;
         }
       }
 
@@ -7897,10 +8368,19 @@ export function useTradingBot(
         return;
       }
 
-      if (isAiMaticProfile && Number.isFinite(resolvedTp) && resolvedTp > 0) {
+      if (
+        isAiMaticProfile &&
+        aiMaticTargets &&
+        Number.isFinite(aiMaticTargets.tp1) &&
+        aiMaticTargets.tp1 > 0
+      ) {
         aiMaticTp1Ref.current.set(symbol, {
           entry,
-          tp1: resolvedTp,
+          tp1: aiMaticTargets.tp1,
+          tp2:
+            Number.isFinite(aiMaticTargets.tp2) && aiMaticTargets.tp2 > 0
+              ? aiMaticTargets.tp2
+              : aiMaticTargets.tp1,
           side,
           setAt: now,
         });
@@ -8162,6 +8642,10 @@ export function useTradingBot(
           : Number.isFinite(resolvedTp)
             ? [resolvedTp]
             : [];
+      const aiMaticLtfMin = Math.max(1, Math.round(core?.ltfTimeframeMin ?? 5));
+      const signalExpireAfterMs = isAiMaticProfile
+        ? aiMaticLtfMin * AI_MATIC_SIGNAL_EXPIRE_BARS * 60_000
+        : 30_000;
       void (async () => {
         try {
           if (shouldUseStagedRetest && secondaryIntentId) {
@@ -8177,6 +8661,7 @@ export function useTradingBot(
               qtyMode: "BASE_QTY",
               qtyValue: stagedPrimaryQty,
               intentId: primaryIntentId,
+              expireAfterMs: signalExpireAfterMs,
             });
             await autoTrade({
               symbol: symbol as Symbol,
@@ -8192,6 +8677,7 @@ export function useTradingBot(
               qtyMode: "BASE_QTY",
               qtyValue: stagedSecondaryQty,
               intentId: secondaryIntentId,
+              expireAfterMs: signalExpireAfterMs,
             });
             const ltfOpenTime = toNumber(core?.ltfOpenTime);
             aiMaticRetestFallbackRef.current.set(symbol, {
@@ -8232,6 +8718,7 @@ export function useTradingBot(
               qtyMode,
               qtyValue,
               intentId: primaryIntentId,
+              expireAfterMs: signalExpireAfterMs,
             });
           }
           addLogEntries([
@@ -8305,6 +8792,7 @@ export function useTradingBot(
     aiMaticTp1Ref.current.clear();
     aiMaticTrailCooldownRef.current.clear();
     aiMaticRetestFallbackRef.current.clear();
+    aiMaticProgressRef.current.clear();
     aiMaticStructureLogRef.current.clear();
     partialExitRef.current.clear();
     proTargetsRef.current.clear();
