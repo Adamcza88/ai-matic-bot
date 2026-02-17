@@ -70,7 +70,7 @@ export default function StatusBar({
 
   return (
     <div className="sticky top-0 z-20">
-      <div className="rounded-xl border border-border/70 bg-card/96 p-3 shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] lm-panel">
+      <div className="rounded-xl border border-border/70 bg-card/96 p-3 shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] lm-panel dm-surface">
         <div className="space-y-3">
           <div className="min-w-0">
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground lm-micro">
@@ -85,7 +85,7 @@ export default function StatusBar({
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground lm-micro">
                 <span>{isTvaTheme ? "Operation Scope" : "Prostředí"}</span>
-                <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5">
+                <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5 dm-surface-elevated dm-border-soft">
                   <Button
                     variant={useTestnet ? "secondary" : "ghost"}
                     size="sm"
@@ -97,9 +97,9 @@ export default function StatusBar({
                         ? envAvailability.demoReason ?? "Demo environment unavailable"
                         : "Use demo environment"
                     }
-                    className={`tva-button ${
+                    className={`tva-button dm-button-control ${
                       useTestnet
-                        ? "min-w-20 bg-muted text-foreground"
+                        ? "min-w-20 bg-muted text-foreground dm-button-control-active"
                         : "min-w-20 text-muted-foreground hover:text-foreground"
                     }`}
                   >
@@ -116,9 +116,9 @@ export default function StatusBar({
                         ? envAvailability.mainnetReason ?? "Mainnet environment unavailable"
                         : "Use mainnet environment"
                     }
-                    className={`tva-button ${
+                    className={`tva-button dm-button-control ${
                       !useTestnet
-                        ? "min-w-20 bg-emerald-600 text-white hover:bg-emerald-700"
+                        ? "min-w-20 bg-emerald-600 text-white hover:bg-emerald-700 dm-button-control-active"
                         : "min-w-20 text-muted-foreground hover:text-foreground"
                     }`}
                   >
@@ -128,7 +128,7 @@ export default function StatusBar({
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground lm-micro">
                 <span>{isTvaTheme ? "Control Mode" : "Režim"}</span>
-                <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5">
+                <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5 dm-surface-elevated dm-border-soft">
                   {MODE_OPTIONS.map((m) => (
                     <Button
                       key={m}
@@ -138,9 +138,9 @@ export default function StatusBar({
                         m === TradingMode.OFF ? "mode-manual-button" : "mode-auto-button"
                       }
                       onClick={() => setMode(m)}
-                      className={`tva-button ${
+                      className={`tva-button dm-button-control ${
                         mode === m
-                          ? "min-w-44 bg-sky-600 text-white hover:bg-sky-700"
+                          ? "min-w-44 bg-sky-600 text-white hover:bg-sky-700 dm-button-control-active"
                           : "min-w-44 text-muted-foreground hover:text-foreground"
                       }`}
                     >
@@ -155,10 +155,10 @@ export default function StatusBar({
                 variant="outline"
                 className={
                   isConnected
-                    ? "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-ok"
+                    ? "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-ok dm-status-pass"
                     : isError
-                      ? "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-error"
-                      : "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-warn"
+                      ? "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-error dm-status-sell"
+                      : "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-warn dm-status-warn"
                 }
               >
                 {isTvaTheme ? bybitChipLabel : bybitChipLabel.toUpperCase()}
@@ -167,8 +167,8 @@ export default function StatusBar({
                 variant="outline"
                 className={
                   engineStatus === "Running"
-                    ? "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-ok"
-                    : "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-warn"
+                    ? "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-ok dm-status-pass"
+                    : "min-w-40 justify-center rounded-none border lm-status-badge lm-status-badge-warn dm-status-warn"
                 }
               >
                 {engineLabel}
@@ -176,7 +176,7 @@ export default function StatusBar({
               {systemState.lastError && (
                 <Badge
                   variant="destructive"
-                  className="max-w-[260px] truncate rounded-none border shadow-none lm-status-badge lm-status-badge-error"
+                  className="max-w-[260px] truncate rounded-none border shadow-none lm-status-badge lm-status-badge-error dm-status-sell"
                   title={systemState.lastError}
                 >
                   ERROR: {systemState.lastError}

@@ -130,7 +130,7 @@ export default function PositionsTable({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-sm lm-table">
+          <table className="w-full min-w-[860px] text-sm lm-table dm-table">
             <thead className="text-xs text-muted-foreground">
               <tr className="border-b border-border/60">
                 <th className="w-[170px] py-2 text-left font-medium">Symbol</th>
@@ -177,8 +177,8 @@ export default function PositionsTable({
                           variant="outline"
                           className={
                             row.isBuy
-                              ? "border-emerald-500/50 text-emerald-400"
-                              : "border-red-500/50 text-red-400"
+                              ? "border-emerald-500/50 text-emerald-400 dm-status-pass"
+                              : "border-red-500/50 text-red-400 dm-status-sell"
                           }
                         >
                           {row.isBuy ? "LONG" : "SHORT"}
@@ -194,8 +194,8 @@ export default function PositionsTable({
                         className={`py-3 text-right font-mono tabular-nums ${
                           Number.isFinite(row.upnl)
                             ? row.upnl >= 0
-                              ? "text-emerald-300"
-                              : "text-[#A94B4B] lm-pnl-negative"
+                              ? "text-emerald-300 dm-pnl-positive"
+                              : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
                             : "text-muted-foreground"
                         }`}
                       >
@@ -203,13 +203,20 @@ export default function PositionsTable({
                       </td>
                       <td className="py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <Badge variant="outline" className={`${row.protectionClass} text-[10px]`}>
+                          <Badge
+                            variant="outline"
+                            className={`${row.protectionClass} text-[10px] ${
+                              row.protectionLabel === "Protected"
+                                ? "dm-status-pass"
+                                : "dm-status-warn"
+                            }`}
+                          >
                             {row.protectionLabel}
                           </Badge>
                           {row.hasTrailing ? (
                             <Badge
                               variant="outline"
-                              className="border-sky-500/50 text-[10px] text-sky-300"
+                              className="border-sky-500/50 text-[10px] text-sky-300 dm-status-muted"
                             >
                               TRAIL
                             </Badge>
@@ -217,7 +224,7 @@ export default function PositionsTable({
                           {row.activationHit ? (
                             <Badge
                               variant="outline"
-                              className="border-emerald-500/50 text-[10px] text-emerald-400"
+                              className="border-emerald-500/50 text-[10px] text-emerald-400 dm-status-pass"
                             >
                               Active
                             </Badge>
@@ -229,7 +236,7 @@ export default function PositionsTable({
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-8 text-xs"
+                            className="h-8 text-xs dm-action-close"
                             onClick={() => onClosePosition?.(row.raw)}
                           >
                             Close
@@ -238,7 +245,7 @@ export default function PositionsTable({
                       )}
                     </tr>
                     {expanded && (
-                      <tr className="border-b border-border/40 bg-background/40 lm-table-row-muted">
+                      <tr className="border-b border-border/40 bg-background/40 lm-table-row-muted dm-table-row-muted">
                         <td
                           colSpan={showActions ? 7 : 6}
                           className="py-3 pl-12 text-xs text-muted-foreground"

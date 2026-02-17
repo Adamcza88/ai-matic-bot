@@ -199,7 +199,7 @@ export default function OrdersPanel({
               variant="outline"
               size="icon"
               onClick={refreshOrders}
-              className="h-8 w-8"
+              className="h-8 w-8 dm-button-control"
               title="Obnovit příkazy"
             >
               <RefreshCw className="h-3.5 w-3.5" />
@@ -209,16 +209,16 @@ export default function OrdersPanel({
       >
         <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>Filter</span>
-          <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5">
+          <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5 dm-surface-elevated dm-border-soft">
             <Button
               variant={filterMode === "all" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setFilterMode("all")}
-              className={
+              className={`dm-button-control ${
                 filterMode === "all"
-                  ? "bg-muted text-foreground"
+                  ? "bg-muted text-foreground dm-button-control-active"
                   : "text-muted-foreground hover:text-foreground"
-              }
+              }`}
             >
               All
             </Button>
@@ -226,11 +226,11 @@ export default function OrdersPanel({
               variant={filterMode === "symbol" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setFilterMode("symbol")}
-              className={
+              className={`dm-button-control ${
                 filterMode === "symbol"
-                  ? "bg-muted text-foreground"
+                  ? "bg-muted text-foreground dm-button-control-active"
                   : "text-muted-foreground hover:text-foreground"
-              }
+              }`}
             >
               Symbol
             </Button>
@@ -238,11 +238,11 @@ export default function OrdersPanel({
               variant={filterMode === "last1h" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setFilterMode("last1h")}
-              className={
+              className={`dm-button-control ${
                 filterMode === "last1h"
-                  ? "bg-muted text-foreground"
+                  ? "bg-muted text-foreground dm-button-control-active"
                   : "text-muted-foreground hover:text-foreground"
-              }
+              }`}
             >
               Last 1h
             </Button>
@@ -269,13 +269,13 @@ export default function OrdersPanel({
         </div>
 
         {actionError && (
-          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300 dm-status-warn">
             Order action failed: {actionError}
           </div>
         )}
 
         {ordersError ? (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 py-6 text-center text-xs text-red-400">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 py-6 text-center text-xs text-red-400 dm-status-sell">
             Orders API failed: {ordersError}
           </div>
         ) : !ordersLoaded ? (
@@ -288,7 +288,7 @@ export default function OrdersPanel({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-sm lm-table">
+            <table className="w-full min-w-[920px] text-sm lm-table dm-table">
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="w-[120px] py-2 text-left font-medium">Symbol</th>
@@ -311,8 +311,8 @@ export default function OrdersPanel({
                         variant="outline"
                         className={
                           order.side === "Buy"
-                            ? "border-emerald-500/50 text-emerald-400"
-                            : "border-red-500/50 text-red-400"
+                            ? "border-emerald-500/50 text-emerald-400 dm-status-pass"
+                            : "border-red-500/50 text-red-400 dm-status-sell"
                         }
                       >
                         {order.side}
@@ -328,7 +328,7 @@ export default function OrdersPanel({
                       {formatPrice(order.triggerPrice)}
                     </td>
                     <td className="py-3 text-left text-xs">
-                      <Badge variant="outline" className="border-border/60 text-muted-foreground">
+                      <Badge variant="outline" className="border-border/60 text-muted-foreground dm-status-muted">
                         {getOrderTypeTag(order)}
                       </Badge>
                     </td>
@@ -342,7 +342,7 @@ export default function OrdersPanel({
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 border border-border/60"
+                            className="h-7 w-7 border border-border/60 dm-button-control"
                             onClick={() => handleCancel(order)}
                             disabled={closingOrderId === order.orderId}
                             title={closingOrderId === order.orderId ? "Closing..." : "Close order"}
@@ -373,7 +373,7 @@ export default function OrdersPanel({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm lm-table">
+            <table className="w-full min-w-[760px] text-sm lm-table dm-table">
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="py-2 text-left font-medium">Symbol</th>
@@ -394,8 +394,8 @@ export default function OrdersPanel({
                         variant="outline"
                         className={
                           trade.side === "Buy"
-                            ? "border-emerald-500/50 text-emerald-400"
-                            : "border-red-500/50 text-red-400"
+                            ? "border-emerald-500/50 text-emerald-400 dm-status-pass"
+                            : "border-red-500/50 text-red-400 dm-status-sell"
                         }
                       >
                         {trade.side}

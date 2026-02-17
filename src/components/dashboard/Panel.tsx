@@ -21,12 +21,12 @@ export default function Panel({
   return (
     <section
       className={cn(
-        "rounded-xl border border-border/70 bg-card/96 p-4 text-sm text-foreground shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] lm-panel",
+        "rounded-xl border border-border/70 bg-card/96 p-4 text-sm text-foreground shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] lm-panel dm-surface",
         className
       )}
     >
       {(title || action || description) && (
-        <div className="mb-3 border-b-2 border-border/80 pb-2 lm-panel-header">
+        <div className="mb-3 border-b-2 border-border/80 pb-2 lm-panel-header dm-border-soft">
           {fileId && (
             <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground lm-micro lm-file-id">
               {fileId}

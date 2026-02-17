@@ -202,7 +202,7 @@ export default function App() {
           backgroundRepeat: "no-repeat",
         }}
       />
-      <header className="mb-6 flex flex-col gap-5 rounded-xl border border-border/70 bg-card/96 p-4 shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] sm:flex-row sm:items-center sm:justify-between lm-panel">
+      <header className="mb-6 flex flex-col gap-5 rounded-xl border border-border/70 bg-card/96 p-4 shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] sm:flex-row sm:items-center sm:justify-between lm-panel dm-surface">
         <div className="flex items-center gap-4">
           <Logo className="w-10 h-10 text-primary" />
           <div>

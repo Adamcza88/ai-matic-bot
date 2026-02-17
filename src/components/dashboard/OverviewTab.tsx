@@ -197,7 +197,7 @@ export default function OverviewTab({
             {activeBlocks.map((row) => (
               <div
                 key={row.symbol}
-                className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs"
+                className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs dm-status-sell"
               >
                 <div className="font-mono text-foreground">{row.symbol}</div>
                 <div className="mt-1 text-muted-foreground">{row.executionReason}</div>
@@ -216,7 +216,7 @@ export default function OverviewTab({
               variant="outline"
               size="sm"
               onClick={onOpenSettings}
-              className="h-8 text-xs"
+              className="h-8 text-xs dm-button-control"
             >
               Settings
             </Button>
@@ -225,7 +225,7 @@ export default function OverviewTab({
           <div className="space-y-3 text-sm">
             <div className="flex items-center justify-between gap-4">
               <span className="text-muted-foreground">Profile</span>
-              <Badge variant="outline" className="border-emerald-500/50 text-emerald-400">
+              <Badge variant="outline" className="border-emerald-500/50 text-emerald-400 dm-status-pass">
                 {profileMeta.label}
               </Badge>
             </div>
@@ -283,7 +283,7 @@ export default function OverviewTab({
             </div>
           ) : (
             <div className="max-h-72 overflow-auto">
-              <table className="w-full min-w-[460px] text-xs lm-table">
+              <table className="w-full min-w-[460px] text-xs lm-table dm-table">
                 <thead>
                   <tr className="border-b border-border/60 text-muted-foreground">
                     <th className="py-2 pr-2 text-left font-medium">Symbol</th>
@@ -301,8 +301,8 @@ export default function OverviewTab({
                           variant="outline"
                           className={
                             row.signalActive
-                              ? "border-emerald-500/50 text-emerald-400"
-                              : "border-border/60 text-muted-foreground"
+                              ? "border-emerald-500/50 text-emerald-400 dm-status-pass"
+                              : "border-border/60 text-muted-foreground dm-status-muted"
                           }
                         >
                           {row.signalActive ? "Skenuje" : "Idle"}
@@ -313,10 +313,10 @@ export default function OverviewTab({
                           variant="outline"
                           className={
                             row.gate.tone === "blocked"
-                              ? "border-red-500/50 text-red-400"
+                              ? "border-red-500/50 text-red-400 dm-status-sell"
                               : row.gate.tone === "pass"
-                                ? "border-emerald-500/50 text-emerald-400"
-                                : "border-border/60 text-muted-foreground"
+                                ? "border-emerald-500/50 text-emerald-400 dm-status-pass"
+                                : "border-border/60 text-muted-foreground dm-status-muted"
                           }
                         >
                           {row.gate.label}
@@ -345,7 +345,7 @@ export default function OverviewTab({
               variant="outline"
               size="sm"
               onClick={resetPnlHistory}
-              className="h-8 text-xs"
+              className="h-8 text-xs dm-button-control"
             >
               Reset
             </Button>
@@ -361,7 +361,7 @@ export default function OverviewTab({
             </div>
           ) : (
             <div className="max-h-72 overflow-auto">
-              <table className="w-full min-w-[520px] text-xs lm-table">
+              <table className="w-full min-w-[520px] text-xs lm-table dm-table">
                 <thead>
                   <tr className="border-b border-border/60 text-muted-foreground">
                     <th className="py-2 pr-2 text-left font-medium">Symbol</th>
@@ -377,8 +377,8 @@ export default function OverviewTab({
                       <td
                         className={`py-2 pr-2 text-right tabular-nums ${
                           row.netPnl >= 0
-                            ? "text-emerald-300"
-                            : "text-[#A94B4B] lm-pnl-negative"
+                            ? "text-emerald-300 dm-pnl-positive"
+                            : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
                         }`}
                       >
                         {formatSignedMoney(row.netPnl)}
@@ -386,8 +386,8 @@ export default function OverviewTab({
                       <td
                         className={`py-2 pr-2 text-right tabular-nums ${
                           row.latestPnl >= 0
-                            ? "text-emerald-300"
-                            : "text-[#A94B4B] lm-pnl-negative"
+                            ? "text-emerald-300 dm-pnl-positive"
+                            : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
                         }`}
                       >
                         {formatSignedMoney(row.latestPnl)}
@@ -420,7 +420,7 @@ export default function OverviewTab({
               {recentEvents.map((entry) => (
                 <div
                   key={entry.id}
-                  className="flex gap-3 rounded-lg border border-border/70 bg-card/96 px-3 py-2 text-xs"
+                  className="flex gap-3 rounded-lg border border-border/70 bg-card/96 px-3 py-2 text-xs dm-surface-elevated"
                 >
                   <div
                     className="w-14 tabular-nums text-[11px] text-muted-foreground"

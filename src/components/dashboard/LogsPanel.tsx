@@ -100,16 +100,16 @@ export default function LogsPanel({
       action={
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>Filter</span>
-          <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5">
+          <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5 dm-surface-elevated dm-border-soft">
             <Button
               variant={levelFilter === "all" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setLevelFilter("all")}
-              className={
+              className={`dm-button-control ${
                 levelFilter === "all"
-                  ? "bg-muted text-foreground"
+                  ? "bg-muted text-foreground dm-button-control-active"
                   : "text-muted-foreground hover:text-foreground"
-              }
+              }`}
             >
               All
             </Button>
@@ -117,11 +117,11 @@ export default function LogsPanel({
               variant={levelFilter === "blocked" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setLevelFilter("blocked")}
-              className={
+              className={`dm-button-control ${
                 levelFilter === "blocked"
-                  ? "bg-muted text-foreground"
+                  ? "bg-muted text-foreground dm-button-control-active"
                   : "text-muted-foreground hover:text-foreground"
-              }
+              }`}
             >
               Blocked
             </Button>
@@ -129,11 +129,11 @@ export default function LogsPanel({
               variant={levelFilter === "error" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setLevelFilter("error")}
-              className={
+              className={`dm-button-control ${
                 levelFilter === "error"
-                  ? "bg-muted text-foreground"
+                  ? "bg-muted text-foreground dm-button-control-active"
                   : "text-muted-foreground hover:text-foreground"
-              }
+              }`}
             >
               Error
             </Button>
@@ -141,11 +141,11 @@ export default function LogsPanel({
               variant={levelFilter === "warn" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setLevelFilter("warn")}
-              className={
+              className={`dm-button-control ${
                 levelFilter === "warn"
-                  ? "bg-muted text-foreground"
+                  ? "bg-muted text-foreground dm-button-control-active"
                   : "text-muted-foreground hover:text-foreground"
-              }
+              }`}
             >
               Warn
             </Button>
@@ -153,11 +153,11 @@ export default function LogsPanel({
               variant={levelFilter === "info" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setLevelFilter("info")}
-              className={
+              className={`dm-button-control ${
                 levelFilter === "info"
-                  ? "bg-muted text-foreground"
+                  ? "bg-muted text-foreground dm-button-control-active"
                   : "text-muted-foreground hover:text-foreground"
-              }
+              }`}
             >
               Info
             </Button>
@@ -188,7 +188,7 @@ export default function LogsPanel({
               return (
                 <div
                   key={entry.id}
-                  className="rounded-lg border border-border/70 bg-card/96 px-3 py-3 text-xs"
+                  className="rounded-lg border border-border/70 bg-card/96 px-3 py-3 text-xs dm-surface-elevated"
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="w-[52px] tabular-nums text-[11px] text-muted-foreground">
@@ -198,12 +198,12 @@ export default function LogsPanel({
                       variant="outline"
                       className={
                         level === "error"
-                          ? "border-red-500/50 text-red-400"
+                          ? "border-red-500/50 text-red-400 dm-status-sell"
                           : level === "blocked"
-                            ? "border-orange-500/50 text-orange-400"
+                            ? "border-orange-500/50 text-orange-400 dm-status-warn"
                             : level === "warn"
-                              ? "border-amber-500/50 text-amber-400"
-                              : "border-border/60 text-muted-foreground"
+                              ? "border-amber-500/50 text-amber-400 dm-status-warn"
+                              : "border-border/60 text-muted-foreground dm-status-muted"
                       }
                     >
                       {entry.action}
@@ -217,7 +217,7 @@ export default function LogsPanel({
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-5 w-5"
+                          className="h-5 w-5 dm-button-control"
                           onClick={() => copyText(orderId)}
                           title="Copy order id"
                         >
@@ -231,7 +231,7 @@ export default function LogsPanel({
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-5 w-5"
+                          className="h-5 w-5 dm-button-control"
                           onClick={() => copyText(linkId)}
                           title="Copy link id"
                         >

@@ -92,30 +92,30 @@
   }
 
   .dark {
-    --background: 225.0 26.7% 17.6%;
-    --foreground: 188 42% 98%;
-    --card: 227.5 41.4% 11.4%;
-    --card-foreground: 188 42% 98%;
-    --popover: 227.5 41.4% 11.4%;
-    --popover-foreground: 188 42% 98%;
-    --primary: 172.2 58% 67%;
-    --primary-foreground: 227.5 41.4% 11.4%;
-    --secondary: 220.8 21.7% 22.5%;
-    --secondary-foreground: 188 42% 98%;
-    --muted: 220.8 21.7% 22.5%;
-    --muted-foreground: 192 20% 68%;
-    --accent: 161.6 34% 58%;
-    --accent-foreground: 188 42% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --background: 222 85% 8%;
+    --foreground: 218 36% 93%;
+    --card: 224 53% 14%;
+    --card-foreground: 218 36% 93%;
+    --popover: 224 53% 14%;
+    --popover-foreground: 218 36% 93%;
+    --primary: 194 36% 54%;
+    --primary-foreground: 223 72% 9%;
+    --secondary: 224 41% 19%;
+    --secondary-foreground: 218 36% 93%;
+    --muted: 224 41% 19%;
+    --muted-foreground: 222 24% 63%;
+    --accent: 194 36% 54%;
+    --accent-foreground: 223 72% 9%;
+    --destructive: 6 54% 53%;
     --destructive-foreground: 210 40% 98%;
-    --border: 220.8 21.7% 22.5%;
-    --input: 220.8 21.7% 22.5%;
-    --ring: 172.2 45.1% 60.0%;
-    --chart-1: 172.2 45.1% 60.0%;
-    --chart-2: 161.6 20.0% 48.0%;
-    --chart-3: 196.2 11.2% 54.5%;
-    --chart-4: 210.0 2.2% 82.4%;
-    --chart-5: 206.1 12.8% 35.1%;
+    --border: 224 33% 25%;
+    --input: 224 33% 25%;
+    --ring: 194 36% 54%;
+    --chart-1: 194 36% 54%;
+    --chart-2: 157 33% 57%;
+    --chart-3: 29 56% 51%;
+    --chart-4: 218 36% 93%;
+    --chart-5: 223 28% 35%;
   }
 }
 
@@ -162,6 +162,111 @@
 }
 
 @layer utilities {
+  html.dark .dm-surface {
+    background-color: #111a38;
+    border-color: #2b3654;
+    box-shadow:
+      inset 0 0 0 1px rgba(113, 135, 174, 0.12),
+      0 6px 10px -8px rgba(0, 0, 0, 0.72);
+  }
+
+  html.dark .dm-surface-elevated {
+    background-color: #172042;
+    border-color: #2f3c5e;
+  }
+
+  html.dark .dm-border-soft {
+    border-color: #2f3c5e;
+  }
+
+  html.dark .dm-table thead tr {
+    border-bottom-color: #2f3c5e;
+  }
+
+  html.dark .dm-table tbody tr {
+    border-bottom: 1px solid #2f3c5e;
+    background-color: #111a38;
+    transition: background-color 120ms ease;
+  }
+
+  html.dark .dm-table tbody tr:hover {
+    background-color: #172042;
+  }
+
+  html.dark .dm-table tbody tr.dm-table-row-muted {
+    background-color: #0f1632;
+  }
+
+  html.dark .dm-status-pass {
+    border-color: rgba(89, 200, 155, 0.58);
+    background-color: rgba(89, 200, 155, 0.14);
+    color: #59c89b;
+    box-shadow: none;
+  }
+
+  html.dark .dm-status-warn {
+    border-color: rgba(200, 124, 58, 0.58);
+    background-color: rgba(200, 124, 58, 0.14);
+    color: #c87c3a;
+    box-shadow: none;
+  }
+
+  html.dark .dm-status-sell {
+    border-color: rgba(200, 78, 74, 0.58);
+    background-color: rgba(200, 78, 74, 0.14);
+    color: #c84e4a;
+    box-shadow: none;
+  }
+
+  html.dark .dm-status-muted {
+    border-color: rgba(47, 60, 94, 0.9);
+    background-color: rgba(38, 50, 81, 0.36);
+    color: #8c99b4;
+    box-shadow: none;
+  }
+
+  html.dark .dm-pnl-positive {
+    color: #59c89b !important;
+    text-shadow: none !important;
+  }
+
+  html.dark .dm-pnl-negative {
+    color: #c84e4a !important;
+    text-shadow: none !important;
+  }
+
+  html.dark .dm-button-control {
+    border-color: #2f3c5e;
+    background-color: #172042;
+    color: #cfd8ea;
+    box-shadow: none;
+  }
+
+  html.dark .dm-button-control:hover {
+    border-color: #3e4f78;
+    background-color: #1d2a53;
+    color: #e7ecf5;
+  }
+
+  html.dark .dm-button-control-active {
+    border-color: #4a5f90;
+    background-color: #22315f;
+    color: #e7ecf5;
+  }
+
+  html.dark .dm-action-close {
+    border-color: #a44541 !important;
+    background-color: #7c2c2a !important;
+    color: #f4e1e0 !important;
+    box-shadow: none !important;
+  }
+
+  html.dark .dm-action-close:hover {
+    border-color: #b5544f !important;
+    background-color: #8d3431 !important;
+    color: #f9e9e8 !important;
+  }
+
   html.dark .lm-file-id {
     display: none;
   }

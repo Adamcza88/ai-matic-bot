@@ -60,8 +60,8 @@ export default function KpiRow({
   const pnlTone = (value?: number) =>
     Number.isFinite(value)
       ? (value as number) >= 0
-        ? "text-emerald-300"
-        : "text-[#A94B4B] lm-pnl-negative"
+        ? "text-emerald-300 dm-pnl-positive"
+        : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
       : "text-muted-foreground";
 
   return (
@@ -70,7 +70,7 @@ export default function KpiRow({
         {isTvaTheme ? "RISK MODULE ID: TR-04-A" : "Today Risk & Performance"}
       </div>
       <div className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-lg border border-border/70 bg-card/96 p-3">
+        <div className="rounded-lg border border-border/70 bg-card/96 p-3 dm-surface-elevated">
           <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
             {isTvaTheme ? "Total Capital Allocation" : "Total capital"}
           </div>
@@ -78,7 +78,7 @@ export default function KpiRow({
             {formatMoney(totalCapital)}
           </div>
         </div>
-        <div className="rounded-lg border border-border/70 bg-card/96 p-3">
+        <div className="rounded-lg border border-border/70 bg-card/96 p-3 dm-surface-elevated">
           <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
             {isTvaTheme ? "Daily Temporal Deviation" : "Daily PnL"}
           </div>
@@ -118,7 +118,7 @@ export default function KpiRow({
             ) : null}
           </div>
         </div>
-        <div className="rounded-lg border border-border/70 bg-card/96 p-3">
+        <div className="rounded-lg border border-border/70 bg-card/96 p-3 dm-surface-elevated">
           <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
             {isTvaTheme ? "Open Position Deviation" : "Open PnL"}
           </div>
@@ -132,19 +132,19 @@ export default function KpiRow({
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-lg border border-border/70 bg-card/96 p-3">
+        <div className="rounded-lg border border-border/70 bg-card/96 p-3 dm-surface-elevated">
           <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">Positions</div>
           <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
             {openPositions}/{maxOpenPositions}
           </div>
         </div>
-        <div className="rounded-lg border border-border/70 bg-card/96 p-3">
+        <div className="rounded-lg border border-border/70 bg-card/96 p-3 dm-surface-elevated">
           <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">Orders</div>
           <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
             {openOrders}/{maxOpenOrders}
           </div>
         </div>
-        <div className="rounded-lg border border-border/70 bg-card/96 p-3">
+        <div className="rounded-lg border border-border/70 bg-card/96 p-3 dm-surface-elevated">
           <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
             {isTvaTheme ? "Risk Per Directive" : "Risk per trade"}
           </div>
@@ -155,7 +155,7 @@ export default function KpiRow({
             </span>
           </div>
         </div>
-        <div className="rounded-lg border border-border/70 bg-card/96 p-3">
+        <div className="rounded-lg border border-border/70 bg-card/96 p-3 dm-surface-elevated">
           <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
             {isTvaTheme ? "Allocated Ceiling" : "Allocated (limit)"}
           </div>
@@ -165,7 +165,7 @@ export default function KpiRow({
         </div>
       </div>
       {dailyPnlBreakdown?.note ? (
-        <div className="rounded-lg border border-border/70 bg-card/96 px-3 py-2 text-[11px] text-muted-foreground lm-data-secondary">
+        <div className="rounded-lg border border-border/70 bg-card/96 px-3 py-2 text-[11px] text-muted-foreground lm-data-secondary dm-surface-elevated">
           {dailyPnlBreakdown.note}
         </div>
       ) : null}
