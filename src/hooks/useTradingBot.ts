@@ -4959,10 +4959,12 @@ export function useTradingBot(
             delta: number;
             regimeOk: boolean;
             shock: boolean;
+            trendProb?: number;
+            manipProb?: number;
           }
         | undefined;
       const profile = (decision as any)?.marketProfile as
-        | { vah?: number; val?: number; poc?: number }
+        | { vah?: number; val?: number; poc?: number; vwap?: number }
         | undefined;
       const orderflow = (decision as any)?.orderflow as
         | {
@@ -4974,6 +4976,20 @@ export function useTradingBot(
             absorptionScore?: number;
           }
         | undefined;
+      const proState = String((decision as any)?.proState ?? "").toUpperCase();
+      const rangeRegimeRequired =
+        proState === "RANGE_TRADING" || proState === "MANIPULATION_WATCH";
+      const vaEdgeRequired = rangeRegimeRequired;
+      const sideRaw = String((signal as any)?.intent?.side ?? "").toLowerCase();
+      const side =
+        sideRaw === "buy"
+          ? "Buy"
+          : sideRaw === "sell"
+            ? "Sell"
+            : null;
+      const refPrice = toNumber(
+        (signal as any)?.intent?.entry ?? (decision as any)?.coreV2?.ltfClose
+      );
       const hurstOk =
         Number.isFinite(regime?.hurst) && (regime?.hurst ?? 1) < 0.45;
       const chopOk =
@@ -4988,49 +5004,67 @@ export function useTradingBot(
         Number.isFinite(absorptionScore) && absorptionScore >= 2;
       const ofi = orderflow?.ofi ?? 0;
       const delta = orderflow?.delta ?? 0;
-      const ofiPrev = orderflow?.ofiPrev ?? 0;
-      const deltaPrev = orderflow?.deltaPrev ?? 0;
       const ofiUp = Number.isFinite(ofi) && ofi > 0;
       const ofiDown = Number.isFinite(ofi) && ofi < 0;
       const deltaUp = Number.isFinite(delta) && delta > 0;
       const deltaDown = Number.isFinite(delta) && delta < 0;
-      const ofiFlipUp = ofiUp && ofiPrev <= 0;
-      const ofiFlipDown = ofiDown && ofiPrev >= 0;
-      const deltaFlipUp = deltaUp && deltaPrev <= 0;
-      const deltaFlipDown = deltaDown && deltaPrev >= 0;
-      const flowBuy = absorptionOk && ofiUp && deltaUp && (ofiFlipUp || deltaFlipUp);
-      const flowSell =
-        absorptionOk && ofiDown && deltaDown && (ofiFlipDown || deltaFlipDown);
-      const ofiDeltaOk = flowBuy || flowSell || Boolean(signal);
-      const absorptionGateOk = absorptionOk || Boolean(signal);
-      const vaOk =
+      const sideDeltaOk =
+        side === "Buy"
+          ? deltaUp
+          : side === "Sell"
+            ? deltaDown
+            : false;
+      const sideOfiOk =
+        side === "Buy"
+          ? ofiUp
+          : side === "Sell"
+            ? ofiDown
+            : false;
+      const directionalFlowOk = sideDeltaOk || sideOfiOk;
+      const flowTriggerOk = side
+        ? sideDeltaOk || absorptionOk
+        : directionalFlowOk || absorptionOk;
+      const vaBoundsOk =
         Number.isFinite(profile?.vah) &&
         Number.isFinite(profile?.val) &&
         (profile?.vah ?? 0) > 0 &&
         (profile?.val ?? 0) > 0;
+      const vaEdgeBySide =
+        !side || !Number.isFinite(refPrice)
+          ? vaBoundsOk
+          : side === "Buy"
+            ? refPrice <= (profile?.val ?? 0) * 1.001
+            : refPrice >= (profile?.vah ?? 0) * 0.999;
+      const vaOk = vaEdgeRequired ? vaBoundsOk && vaEdgeBySide : true;
       const gates = [
         {
           name: "Hurst < 0.45",
-          ok: hurstOk,
-          detail: Number.isFinite(regime?.hurst)
-            ? `H ${formatNumber(regime!.hurst, 3)}`
-            : "missing",
+          ok: rangeRegimeRequired ? hurstOk : true,
+          detail: rangeRegimeRequired
+            ? Number.isFinite(regime?.hurst)
+              ? `H ${formatNumber(regime!.hurst, 3)}`
+              : "missing"
+            : "not required",
           hard: false,
         },
         {
           name: "CHOP > 60",
-          ok: chopOk,
-          detail: Number.isFinite(regime?.chop)
-            ? `CHOP ${formatNumber(regime!.chop, 1)}`
-            : "missing",
+          ok: rangeRegimeRequired ? chopOk : true,
+          detail: rangeRegimeRequired
+            ? Number.isFinite(regime?.chop)
+              ? `CHOP ${formatNumber(regime!.chop, 1)}`
+              : "missing"
+            : "not required",
           hard: false,
         },
         {
           name: "HMM state0 p>=0.7",
-          ok: hmmOk,
-          detail: Number.isFinite(regime?.hmmProb)
-            ? `p ${formatNumber(regime!.hmmProb, 2)}`
-            : "missing",
+          ok: rangeRegimeRequired ? hmmOk : true,
+          detail: rangeRegimeRequired
+            ? Number.isFinite(regime?.hmmProb)
+              ? `p ${formatNumber(regime!.hmmProb, 2)}`
+              : "missing"
+            : "not required",
           hard: false,
         },
         {
@@ -5045,53 +5079,36 @@ export function useTradingBot(
           hard: false,
         },
         {
-          name: "Absorption >= 2",
-          ok: absorptionGateOk,
-          detail: Number.isFinite(absorptionScore)
-            ? `Abs ${formatNumber(absorptionScore, 2)}`
-            : signal
-              ? "signal"
-              : "missing",
-          hard: false,
-        },
-        {
-          name: "OFI/Delta absorpce",
-          ok: ofiDeltaOk,
+          name: "OFI/Delta trigger",
+          ok: flowTriggerOk,
           detail:
             Number.isFinite(orderflow?.ofi) || Number.isFinite(orderflow?.delta)
-              ? `OFI ${formatNumber(orderflow?.ofi ?? 0, 2)} | Δ ${formatNumber(
-                  orderflow?.delta ?? 0,
-                  2
-                )}`
-              : signal
-                ? "signal"
-                : "missing",
+              ? `OFI ${formatNumber(orderflow?.ofi ?? 0, 2)} | Δ ${formatNumber(orderflow?.delta ?? 0, 2)} | Abs ${formatNumber(absorptionScore, 2)}`
+              : "missing",
           hard: false,
         },
         {
           name: "VA edge",
           ok: vaOk,
-          detail:
-            Number.isFinite(profile?.vah) && Number.isFinite(profile?.val)
-              ? `VAL ${formatNumber(profile!.val, 2)} | VAH ${formatNumber(
-                  profile!.vah,
-                  2
-                )}`
-              : "missing",
+          detail: vaEdgeRequired
+            ? Number.isFinite(profile?.vah) && Number.isFinite(profile?.val)
+              ? `VAL ${formatNumber(profile!.val, 2)} | VAH ${formatNumber(profile!.vah, 2)}${Number.isFinite(refPrice) ? ` | Px ${formatNumber(refPrice, 2)}` : ""}`
+              : "missing"
+            : "not required",
           hard: false,
         },
       ];
-      const score = gates.filter((g) => g.ok).length;
-      const scoreTotal = gates.length;
-      const scorePass =
-        scoreTotal > 0 ? gates.every((g) => g.ok) : true;
+      const required = gates.filter((g) => g.detail !== "not required");
+      const score = required.filter((g) => g.ok).length;
+      const scoreTotal = required.length;
+      const scorePass = scoreTotal > 0 ? score >= scoreTotal : true;
       return {
         gates,
         score,
         scoreTotal,
         threshold: scoreTotal,
         scorePass,
-        hardFailures: gates.filter((g) => !g.ok).map((g) => g.name),
+        hardFailures: required.filter((g) => !g.ok).map((g) => g.name),
         atrMin: Number.NaN,
         volumePct: 0,
         isMajor: false,
@@ -5512,6 +5529,12 @@ export function useTradingBot(
             passedCount: aiMaticEval.checklist.filter((g) => g.ok).length,
             pass: aiMaticEval.checklistPass,
           }
+        : isProProfile
+          ? {
+              eligibleCount: coreEval.scoreTotal,
+              passedCount: coreEval.score,
+              pass: coreEval.scorePass !== false,
+            }
         : evaluateChecklistPass(gates);
       const signalActive = Boolean(signal) || checklist.pass;
       let executionAllowed: boolean | null = null;
@@ -5533,7 +5556,9 @@ export function useTradingBot(
         executionReason = `AI-MATIC gates hard ${hardCount}/${AI_MATIC_HARD_MIN} · entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN}`;
       } else if (!checklist.pass) {
         executionAllowed = false;
-        executionReason = `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`;
+        executionReason = isProProfile
+          ? `Checklist ${checklist.passedCount}/${checklist.eligibleCount}`
+          : `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`;
       } else if (softBlocked) {
         executionAllowed = false;
         executionReason = `Score ${quality.score ?? "—"} / ${quality.threshold ?? "—"}`;
@@ -7669,12 +7694,15 @@ export function useTradingBot(
             }
           : evaluateChecklistPass(checklistGates);
       if (!checklistExec.pass) {
+        const checklistThreshold = isProProfile
+          ? checklistExec.eligibleCount
+          : MIN_CHECKLIST_PASS;
         addLogEntries([
           {
             id: `signal:checklist:${signalId}`,
             timestamp: new Date(now).toISOString(),
             action: "RISK_BLOCK",
-            message: `${symbol} checklist ${checklistExec.passedCount}/${MIN_CHECKLIST_PASS}`,
+            message: `${symbol} checklist ${checklistExec.passedCount}/${checklistThreshold}`,
           },
         ]);
         return;

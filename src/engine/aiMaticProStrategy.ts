@@ -1,6 +1,6 @@
 import type { Candle, EngineDecision, EngineSignal } from "./botEngine";
 import { findPivotsHigh, findPivotsLow, computeAtr, computeRsi } from "./ta";
-import { computeMarketProfile } from "./marketProfile";
+import { computeMarketProfile, type MarketProfile } from "./marketProfile";
 import { getOrderFlowSnapshot } from "./orderflow";
 import { analyzeRegimePro } from "./regimePro";
 
@@ -114,20 +114,129 @@ function findConfirmationLevel(candles: Candle[], swingIdx: number, sfpIdx: numb
   }
 }
 
-function detectFvgMid(candles: Candle[], side: "Buy" | "Sell") {
-  if (candles.length < 3) return null;
-  const a = candles[candles.length - 3];
-  const c = candles[candles.length - 1];
-  if (side === "Buy") {
-    if (a.high < c.low) {
-      return (a.high + c.low) / 2;
-    }
-  } else {
-    if (a.low > c.high) {
-      return (a.low + c.high) / 2;
+function isSfpBodyConfirmed(
+  trigger: Candle,
+  confirm: Candle,
+  side: "Buy" | "Sell"
+) {
+  if (side === "Sell") {
+    return Math.max(confirm.open, confirm.close) < trigger.low;
+  }
+  return Math.min(confirm.open, confirm.close) > trigger.high;
+}
+
+function isGapMitigated(
+  candles: Candle[],
+  startIdx: number,
+  gapLow: number,
+  gapHigh: number
+) {
+  for (let i = startIdx + 1; i < candles.length; i++) {
+    const c = candles[i];
+    if (c.low <= gapHigh && c.high >= gapLow) {
+      return true;
     }
   }
+  return false;
+}
+
+function detectFvgMid(candles: Candle[], side: "Buy" | "Sell") {
+  if (candles.length < 3) return null;
+  for (let i = candles.length - 1; i >= 2; i--) {
+    const a = candles[i - 2];
+    const c = candles[i];
+    if (side === "Buy") {
+      if (!(a.high < c.low)) continue;
+      const gapLow = a.high;
+      const gapHigh = c.low;
+      if (isGapMitigated(candles, i, gapLow, gapHigh)) continue;
+      return (gapLow + gapHigh) / 2;
+    }
+    if (!(a.low > c.high)) continue;
+    const gapLow = c.high;
+    const gapHigh = a.low;
+    if (isGapMitigated(candles, i, gapLow, gapHigh)) continue;
+    return (gapLow + gapHigh) / 2;
+  }
   return null;
+}
+
+function resolveTrendSide(
+  candles: Candle[],
+  orderflow: { ofi?: number; delta?: number }
+): "Buy" | "Sell" | null {
+  if (candles.length < 6) return null;
+  const last = candles[candles.length - 1];
+  const anchor = candles[candles.length - 6];
+  const momentum = last.close - anchor.close;
+  const ofi = orderflow.ofi ?? 0;
+  const delta = orderflow.delta ?? 0;
+  if (momentum > 0 && (ofi >= 0 || delta >= 0)) return "Buy";
+  if (momentum < 0 && (ofi <= 0 || delta <= 0)) return "Sell";
+  if (momentum > 0) return "Buy";
+  if (momentum < 0) return "Sell";
+  return null;
+}
+
+function resolveTrendEntryAnchor(
+  profile: MarketProfile,
+  side: "Buy" | "Sell",
+  price: number
+) {
+  const strongPoc =
+    Number.isFinite(profile.poc) &&
+    profile.hvn.some((h) => Math.abs(h - profile.poc) <= profile.bucketSize * 1.5);
+  const candidates = [
+    Number.isFinite(profile.vwap) ? { level: profile.vwap, source: "VWAP" as const } : null,
+    strongPoc && Number.isFinite(profile.poc)
+      ? { level: profile.poc, source: "POC" as const }
+      : null,
+  ].filter((x): x is { level: number; source: "VWAP" | "POC" } => Boolean(x));
+
+  if (!candidates.length) return null;
+  if (side === "Buy") {
+    const below = candidates.filter((c) => c.level <= price);
+    if (below.length) {
+      return below.reduce((best, c) => (c.level > best.level ? c : best), below[0]);
+    }
+    return candidates.reduce(
+      (best, c) =>
+        Math.abs(c.level - price) < Math.abs(best.level - price) ? c : best,
+      candidates[0]
+    );
+  }
+  const above = candidates.filter((c) => c.level >= price);
+  if (above.length) {
+    return above.reduce((best, c) => (c.level < best.level ? c : best), above[0]);
+  }
+  return candidates.reduce(
+    (best, c) =>
+      Math.abs(c.level - price) < Math.abs(best.level - price) ? c : best,
+    candidates[0]
+  );
+}
+
+function volumeOutsideSwingRatio(args: {
+  trades: any[];
+  candleOpenTime: number;
+  timeframeMs: number;
+  swingLevel: number;
+  side: "Sell" | "Buy";
+}) {
+  const inCandle = (args.trades ?? []).filter(
+    (t: any) =>
+      t.ts >= args.candleOpenTime &&
+      t.ts < args.candleOpenTime + args.timeframeMs
+  );
+  const total = inCandle.reduce((sum: number, t: any) => sum + t.size, 0);
+  if (total <= 0) return 0;
+  const outside = inCandle.reduce((sum: number, t: any) => {
+    if (args.side === "Sell") {
+      return t.price > args.swingLevel ? sum + t.size : sum;
+    }
+    return t.price < args.swingLevel ? sum + t.size : sum;
+  }, 0);
+  return outside / total;
 }
 
 function detectCvdDivergence(
@@ -206,7 +315,8 @@ export function evaluateAiMaticProStrategyForSymbol(
       price: t.price,
       size: t.size,
     })),
-    bucketPct: 0.001,
+    atrDivisor: 20,
+    kdeSigma: 1.2,
     valueAreaPct: 0.8, // Relaxed VA (Chapter 2.1)
   });
 
@@ -240,32 +350,52 @@ export function evaluateAiMaticProStrategyForSymbol(
   const lastSwingLow = findLastPivot(candles, "low", 30);
   const swingHigh = lastSwingHigh?.price ?? Math.max(...highs.slice(-30));
   const swingLow = lastSwingLow?.price ?? Math.min(...lows.slice(-30));
-  const lastOpenTime = Number(last.openTime);
-  const tradesInCandle = (orderflow.trades ?? []).filter(
-    (t: any) =>
-      t.ts >= lastOpenTime && t.ts < lastOpenTime + timeframeMs
-  );
-  const totalTradeVol = tradesInCandle.reduce(
-    (sum: number, t: any) => sum + t.size,
-    0
-  );
-  const volAboveSwing = tradesInCandle.reduce(
-    (sum: number, t: any) => (t.price > swingHigh ? sum + t.size : sum),
-    0
-  );
-  const volBelowSwing = tradesInCandle.reduce(
-    (sum: number, t: any) => (t.price < swingLow ? sum + t.size : sum),
-    0
-  );
-  const volumeOutsideBear =
-    totalTradeVol > 0 ? volAboveSwing / totalTradeVol : 0;
-  const volumeOutsideBull =
-    totalTradeVol > 0 ? volBelowSwing / totalTradeVol : 0;
+  const triggerIdx = candles.length - 2;
+  const trigger = triggerIdx >= 0 ? candles[triggerIdx] : null;
+  const confirm = last;
+  const triggerOpenTime = Number(trigger?.openTime);
 
-  const bearishSfp =
-    last.high > swingHigh && last.close < swingHigh && volumeOutsideBear >= 0.1; // Relaxed SFP (Chapter 2.2)
-  const bullishSfp =
-    last.low < swingLow && last.close > swingLow && volumeOutsideBull >= 0.1; // Relaxed SFP
+  const volumeOutsideBear = Number.isFinite(triggerOpenTime)
+    ? volumeOutsideSwingRatio({
+        trades: orderflow.trades ?? [],
+        candleOpenTime: triggerOpenTime,
+        timeframeMs,
+        swingLevel: swingHigh,
+        side: "Sell",
+      })
+    : 0;
+  const volumeOutsideBull = Number.isFinite(triggerOpenTime)
+    ? volumeOutsideSwingRatio({
+        trades: orderflow.trades ?? [],
+        candleOpenTime: triggerOpenTime,
+        timeframeMs,
+        swingLevel: swingLow,
+        side: "Buy",
+      })
+    : 0;
+
+  const bearishSfpTrigger = Boolean(
+    trigger &&
+      trigger.high > swingHigh &&
+      trigger.close < swingHigh &&
+      volumeOutsideBear >= 0.1
+  );
+  const bullishSfpTrigger = Boolean(
+    trigger &&
+      trigger.low < swingLow &&
+      trigger.close > swingLow &&
+      volumeOutsideBull >= 0.1
+  );
+  const bearishSfp = Boolean(
+    trigger &&
+      bearishSfpTrigger &&
+      isSfpBodyConfirmed(trigger, confirm, "Sell")
+  );
+  const bullishSfp = Boolean(
+    trigger &&
+      bullishSfpTrigger &&
+      isSfpBodyConfirmed(trigger, confirm, "Buy")
+  );
 
   const cvdBear = detectCvdDivergence(candles, orderflow.cvdSeries ?? [], "Sell");
   const cvdBull = detectCvdDivergence(candles, orderflow.cvdSeries ?? [], "Buy");
@@ -286,6 +416,8 @@ export function evaluateAiMaticProStrategyForSymbol(
   const proSignals = {
     sfpBear: bearishSfp,
     sfpBull: bullishSfp,
+    sfpBearTrigger: bearishSfpTrigger,
+    sfpBullTrigger: bullishSfpTrigger,
     cvdBear,
     cvdBull,
     oiBear,
@@ -331,20 +463,20 @@ export function evaluateAiMaticProStrategyForSymbol(
     
     // Transition to PRE_ENTRY on SFP detection
     if (bearishSfp && (cvdBear || iceberg || absorption) && lastSwingHigh) {
-      const confLevel = findConfirmationLevel(candles, lastSwingHigh.idx, candles.length - 1, "Sell");
-      if (confLevel) {
+      const confLevel = findConfirmationLevel(candles, lastSwingHigh.idx, triggerIdx, "Sell");
+      if (Number.isFinite(confLevel)) {
         nextData.state = "PRE_ENTRY";
         nextData.pendingSide = "Sell";
         nextData.confirmationLevel = confLevel;
-        nextData.invalidationLevel = Math.max(last.high, swingHigh);
+        nextData.invalidationLevel = Math.max(trigger?.high ?? last.high, swingHigh);
       }
     } else if (bullishSfp && (cvdBull || iceberg || absorption) && lastSwingLow) {
-      const confLevel = findConfirmationLevel(candles, lastSwingLow.idx, candles.length - 1, "Buy");
-      if (confLevel) {
+      const confLevel = findConfirmationLevel(candles, lastSwingLow.idx, triggerIdx, "Buy");
+      if (Number.isFinite(confLevel)) {
         nextData.state = "PRE_ENTRY";
         nextData.pendingSide = "Buy";
         nextData.confirmationLevel = confLevel;
-        nextData.invalidationLevel = Math.min(last.low, swingLow);
+        nextData.invalidationLevel = Math.min(trigger?.low ?? last.low, swingLow);
       }
     } else if (invalidation) {
       nextData.state = "RANGE_TRADING";
@@ -390,19 +522,6 @@ export function evaluateAiMaticProStrategyForSymbol(
     } as EngineDecision;
   }
 
-  if (proState === "TRENDING") {
-    return {
-      state: "SCAN",
-      trend: "range", // V budoucnu zde lze vracet "bull"/"bear" pro trendové strategie
-      signal: null,
-      proRegime: { ...regime, rfSignal },
-      proState,
-      proSignals,
-      marketProfile: profile,
-      orderflow,
-    } as EngineDecision;
-  }
-
   // --- Weighted Scoring System (SOS) ---
   let sosScore = 0;
 
@@ -440,6 +559,93 @@ export function evaluateAiMaticProStrategyForSymbol(
     ? Math.max(entryTfMin * 10, 60) 
     : Math.max(entryTfMin * 6, 30); // More aggressive for lower quality
   // -------------------------------------
+
+  if (proState === "TRENDING") {
+    const side = resolveTrendSide(candles, orderflow);
+    const anchor = side ? resolveTrendEntryAnchor(profile, side, price) : null;
+    const deltaOk =
+      side === "Buy"
+        ? Number.isFinite(orderflow.delta) && orderflow.delta > 0
+        : side === "Sell"
+          ? Number.isFinite(orderflow.delta) && orderflow.delta < 0
+          : false;
+    const absorptionOk =
+      Number.isFinite(absorptionScore) && absorptionScore >= 2;
+    const flowConfirmed = deltaOk || absorptionOk;
+    const anchorDistance = anchor ? Math.abs(price - anchor.level) : Number.NaN;
+    const maxDistance = Math.max(
+      Number.isFinite(atr) ? 2 * atr : price * 0.004,
+      price * 0.01
+    );
+    const pullbackReady =
+      anchor &&
+      anchorDistance > 0 &&
+      anchorDistance <= maxDistance &&
+      ((side === "Buy" && anchor.level <= price) ||
+        (side === "Sell" && anchor.level >= price));
+
+    if (!side || !anchor || !pullbackReady || !flowConfirmed || sosScore < 50) {
+      return {
+        state: "SCAN",
+        trend: side === "Buy" ? "bull" : side === "Sell" ? "bear" : "range",
+        signal: null,
+        proRegime: { ...regime, rfSignal },
+        proState,
+        proSignals,
+        marketProfile: profile,
+        orderflow,
+      } as EngineDecision;
+    }
+
+    const stopBuffer = Number.isFinite(atr) ? 1.5 * atr : price * 0.003;
+    const entry = anchor.level;
+    const sl =
+      side === "Buy"
+        ? Math.min(swingLow, entry - stopBuffer)
+        : Math.max(swingHigh, entry + stopBuffer);
+    const t2 =
+      side === "Buy"
+        ? Math.max(profile.vah, price + (Number.isFinite(atr) ? 2 * atr : price * 0.004))
+        : Math.min(profile.val, price - (Number.isFinite(atr) ? 2 * atr : price * 0.004));
+
+    const signal: EngineSignal = {
+      id: `${symbol}-${Date.now()}`,
+      symbol,
+      intent: {
+        side: side === "Buy" ? "buy" : "sell",
+        entry,
+        sl,
+        tp: t2,
+      },
+      entryType: "LIMIT_MAKER_FIRST",
+      kind: "PULLBACK",
+      risk: sizeScale,
+      message: `PRO trend ${side} | anchor ${anchor.source} ${entry.toFixed(
+        2
+      )} | Δ ${Number(orderflow.delta ?? 0).toFixed(2)} | Abs ${absorptionScore.toFixed(2)} | SOS ${Math.round(
+        sosScore
+      )}`,
+      createdAt: new Date().toISOString(),
+    };
+
+    (signal as any).proTargets = {
+      t1: Number.isFinite(profile.poc) ? profile.poc : profile.vwap,
+      t2,
+      timeStopMinutes,
+      entryTfMin,
+    } satisfies ProTargets;
+
+    return {
+      state: "MANAGE",
+      trend: side === "Buy" ? "bull" : "bear",
+      signal,
+      proRegime: { ...regime, rfSignal },
+      proState,
+      proSignals,
+      marketProfile: profile,
+      orderflow,
+    } as EngineDecision;
+  }
 
   if (useRangeLogic) {
     const longZone = price <= profile.val;
@@ -600,3 +806,11 @@ export function evaluateAiMaticProStrategyForSymbol(
     orderflow,
   } as EngineDecision;
 }
+
+export const __aiMaticProTest = {
+  detectFvgMid,
+  isSfpBodyConfirmed,
+  resolveTrendSide,
+  resolveTrendEntryAnchor,
+  volumeOutsideSwingRatio,
+};
