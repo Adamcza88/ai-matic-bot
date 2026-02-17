@@ -40,6 +40,8 @@ export interface AISettings {
   makerFeePct: number;
   takerFeePct: number;
   slippageBufferPct: number;
+  perTradeTestnetUsd: number;
+  perTradeMainnetUsd: number;
 }
 
 // ===== API & COMMON TYPES (MIGRATION A1) =====

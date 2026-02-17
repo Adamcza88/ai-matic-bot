@@ -58,20 +58,8 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const FEED_AGE_OK_MS = 60_000;
 const MIN_POSITION_NOTIONAL_USD = 5;
 const MAX_POSITION_NOTIONAL_USD = 50000;
-const ORDER_VALUE_BY_SYMBOL: Record<Symbol, number> = {
-  BTCUSDT: 20,
-  ETHUSDT: 20,
-  SOLUSDT: 20,
-  ADAUSDT: 20,
-  XRPUSDT: 20,
-  SUIUSDT: 20,
-  DOGEUSDT: 20,
-  LINKUSDT: 20,
-  ZILUSDT: 20,
-  AVAXUSDT: 20,
-  HYPEUSDT: 20,
-  OPUSDT: 20,
-};
+const DEFAULT_TESTNET_PER_TRADE_USD = 50;
+const DEFAULT_MAINNET_PER_TRADE_USD = 20;
 const MAJOR_SYMBOLS = new Set<Symbol>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
   "ai-matic": 0.12,
@@ -120,7 +108,6 @@ const CORE_V2_HTF_BUFFER_PCT = 0.001;
 const CORE_V2_NOTIONAL_CAP_PCT = 0.1;
 const CORRELATION_RISK_THRESHOLD = 0.8;
 const CORRELATION_RISK_MIN_SCALE = 0.2;
-const MAINNET_TARGET_POSITION_COST_USD = 10;
 const MAINNET_FALLBACK_LEVERAGE = 50;
 const ALTSEASON_SAMPLE_MS = 60_000;
 const ALTSEASON_HISTORY_POINTS = 12;
@@ -298,6 +285,8 @@ const DEFAULT_SETTINGS: AISettings = {
   makerFeePct: 0.01,
   takerFeePct: 0.06,
   slippageBufferPct: 0.02,
+  perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
+  perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
 };
 
 function loadStoredSettings(): AISettings | null {
@@ -350,6 +339,14 @@ function loadStoredSettings(): AISettings | null {
     if (!Number.isFinite(merged.slippageBufferPct) || merged.slippageBufferPct < 0) {
       merged.slippageBufferPct = DEFAULT_SETTINGS.slippageBufferPct;
     }
+    merged.perTradeTestnetUsd = clampPerTradeUsd(
+      merged.perTradeTestnetUsd,
+      DEFAULT_SETTINGS.perTradeTestnetUsd
+    );
+    merged.perTradeMainnetUsd = clampPerTradeUsd(
+      merged.perTradeMainnetUsd,
+      DEFAULT_SETTINGS.perTradeMainnetUsd
+    );
     const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
     merged.selectedSymbols =
       selectedSymbols.length > 0
@@ -374,10 +371,13 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : Number.NaN;
 }
 
-function resolveOrderNotional(symbol: Symbol) {
-  const value = ORDER_VALUE_BY_SYMBOL[symbol];
-  if (Number.isFinite(value) && value > 0) return value;
-  return MIN_POSITION_NOTIONAL_USD;
+function clampPerTradeUsd(value: unknown, fallback: number) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(
+    MAX_POSITION_NOTIONAL_USD,
+    Math.max(MIN_POSITION_NOTIONAL_USD, n)
+  );
 }
 
 type EmaTrendFrame = {
@@ -4346,8 +4346,12 @@ export function useTradingBot(
       }
 
       if (!useTestnet) {
+        const perTradeMainnetUsd = clampPerTradeUsd(
+          settings.perTradeMainnetUsd,
+          DEFAULT_MAINNET_PER_TRADE_USD
+        );
         const leverage = resolveSymbolLeverage(symbol);
-        const minNotionalByIm = MAINNET_TARGET_POSITION_COST_USD * leverage;
+        const minNotionalByIm = perTradeMainnetUsd * leverage;
         if (
           Number.isFinite(minNotionalByIm) &&
           minNotionalByIm > 0 &&
@@ -4381,8 +4385,18 @@ export function useTradingBot(
       if (!Number.isFinite(entry) || entry <= 0) {
         return { ok: false as const, reason: "invalid_entry" as const };
       }
+      const settings = settingsRef.current;
+      const perTradeTestnetUsd = clampPerTradeUsd(
+        settings.perTradeTestnetUsd,
+        DEFAULT_TESTNET_PER_TRADE_USD
+      );
+      const leverage = resolveSymbolLeverage(symbol);
       const targetNotional = Math.min(
-        Math.max(resolveOrderNotional(symbol), MIN_POSITION_NOTIONAL_USD),
+        Math.max(
+          perTradeTestnetUsd *
+            (Number.isFinite(leverage) && leverage > 0 ? leverage : 1),
+          MIN_POSITION_NOTIONAL_USD
+        ),
         MAX_POSITION_NOTIONAL_USD
       );
       const resolvedQty = targetNotional / entry;
@@ -4409,7 +4423,7 @@ export function useTradingBot(
         equity,
       };
     },
-    [getEquityValue, useTestnet]
+    [getEquityValue, resolveSymbolLeverage, useTestnet]
   );
 
   const computeTrailingPlan = useCallback(
@@ -8875,8 +8889,12 @@ export function useTradingBot(
         adjustedQty = adjustedNotional / entry;
       }
       if (!useTestnet && Number.isFinite(entry) && entry > 0) {
+        const perTradeMainnetUsd = clampPerTradeUsd(
+          settingsRef.current.perTradeMainnetUsd,
+          DEFAULT_MAINNET_PER_TRADE_USD
+        );
         const leverage = resolveSymbolLeverage(symbol as Symbol);
-        const minNotionalByIm = MAINNET_TARGET_POSITION_COST_USD * leverage;
+        const minNotionalByIm = perTradeMainnetUsd * leverage;
         if (
           Number.isFinite(minNotionalByIm) &&
           minNotionalByIm > 0 &&

@@ -35,8 +35,12 @@ const MAX_OPEN_POSITIONS_CAP = 100;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * 4;
 const MIN_AUTO_REFRESH_MINUTES = 1;
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
+const MIN_PER_TRADE_USD = 5;
+const MAX_PER_TRADE_USD = 50000;
+const DEFAULT_TESTNET_PER_TRADE_USD = 50;
+const DEFAULT_MAINNET_PER_TRADE_USD = 20;
 const ORDER_VALUE_NOTE =
-  "Core v2 sizing: risk % equity (ai-matic 0.40%, x 0.30%, scalp 0.25%, tree 0.30%), notional cap ~1% equity, min 100 USDT.";
+  "Core v2 sizing: risk % equity + manuální Per-trade limity (testnet/mainnet).";
 
 type ProfileSettingsMap = Partial<Record<AISettings["riskMode"], AISettings>>;
 
@@ -114,6 +118,12 @@ function compactLine(line: string, maxLen = 140): string {
   text = text.replace(/^.*?NEJDŮLEŽITĚJŠÍ:\s*/i, "POINT: ");
   if (text.length > maxLen) return `${text.slice(0, maxLen - 1)}…`;
   return text;
+}
+
+function clampPerTradeUsd(value: unknown, fallback: number) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(MAX_PER_TRADE_USD, Math.max(MIN_PER_TRADE_USD, n));
 }
 
 const SettingsPanel: React.FC<Props> = ({
@@ -301,6 +311,8 @@ const SettingsPanel: React.FC<Props> = ({
     makerFeePct: 0.01,
     takerFeePct: 0.06,
     slippageBufferPct: 0.02,
+    perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
+    perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
   };
 
   const AI_MATIC_X_PRESET_UI: AISettings = {
@@ -330,6 +342,8 @@ const SettingsPanel: React.FC<Props> = ({
     makerFeePct: 0.01,
     takerFeePct: 0.06,
     slippageBufferPct: 0.02,
+    perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
+    perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
   };
 
   const AI_MATIC_SCALP_PRESET_UI: AISettings = {
@@ -359,6 +373,8 @@ const SettingsPanel: React.FC<Props> = ({
     makerFeePct: 0.01,
     takerFeePct: 0.06,
     slippageBufferPct: 0.02,
+    perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
+    perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
   };
 
   const AI_MATIC_TREE_PRESET_UI: AISettings = {
@@ -388,6 +404,8 @@ const SettingsPanel: React.FC<Props> = ({
     makerFeePct: 0.01,
     takerFeePct: 0.06,
     slippageBufferPct: 0.005,
+    perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
+    perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
   };
 
   const AI_MATIC_PRO_PRESET_UI: AISettings = {
@@ -417,6 +435,8 @@ const SettingsPanel: React.FC<Props> = ({
     makerFeePct: 0.01,
     takerFeePct: 0.06,
     slippageBufferPct: 0.02,
+    perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
+    perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
   };
 
   const presets: Record<AISettings["riskMode"], AISettings> = {
@@ -476,6 +496,14 @@ const SettingsPanel: React.FC<Props> = ({
     if (!Number.isFinite(merged.slippageBufferPct) || merged.slippageBufferPct < 0) {
       merged.slippageBufferPct = preset.slippageBufferPct;
     }
+    merged.perTradeTestnetUsd = clampPerTradeUsd(
+      merged.perTradeTestnetUsd,
+      preset.perTradeTestnetUsd
+    );
+    merged.perTradeMainnetUsd = clampPerTradeUsd(
+      merged.perTradeMainnetUsd,
+      preset.perTradeMainnetUsd
+    );
     const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
     merged.selectedSymbols =
       selectedSymbols.length > 0
@@ -894,6 +922,66 @@ const SettingsPanel: React.FC<Props> = ({
               <span className="text-xs text-secondary-foreground/70">
                 0-{MAX_OPEN_ORDERS_CAP} orderů (0 = žádná objednávka)
               </span>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-sm font-medium leading-none">
+              Per-trade limit (USDT)
+            </label>
+            <div className="grid grid-cols-1 gap-2 rounded-md border border-input bg-slate-800 px-3 py-3 text-sm md:grid-cols-2">
+              <div className="space-y-1">
+                <div className="text-xs text-secondary-foreground/70">
+                  Demo (testnet)
+                </div>
+                <input
+                  type="number"
+                  min={MIN_PER_TRADE_USD}
+                  max={MAX_PER_TRADE_USD}
+                  step={1}
+                  value={local.perTradeTestnetUsd}
+                  onChange={(event) => {
+                    const next = event.currentTarget.valueAsNumber;
+                    setLocal({
+                      ...local,
+                      perTradeTestnetUsd: clampPerTradeUsd(
+                        next,
+                        DEFAULT_TESTNET_PER_TRADE_USD
+                      ),
+                    });
+                  }}
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
+                />
+                <div className="text-[11px] text-secondary-foreground/70">
+                  Na demo se použije: per-trade * leverage.
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-secondary-foreground/70">
+                  Mainnet
+                </div>
+                <input
+                  type="number"
+                  min={MIN_PER_TRADE_USD}
+                  max={MAX_PER_TRADE_USD}
+                  step={1}
+                  value={local.perTradeMainnetUsd}
+                  onChange={(event) => {
+                    const next = event.currentTarget.valueAsNumber;
+                    setLocal({
+                      ...local,
+                      perTradeMainnetUsd: clampPerTradeUsd(
+                        next,
+                        DEFAULT_MAINNET_PER_TRADE_USD
+                      ),
+                    });
+                  }}
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
+                />
+                <div className="text-[11px] text-secondary-foreground/70">
+                  Na mainnetu se použije: per-trade * leverage.
+                </div>
+              </div>
             </div>
           </div>
 
