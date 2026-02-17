@@ -184,6 +184,7 @@ export default function OrdersPanel({
     <div className="space-y-6">
       <Panel
         title={useTestnet ? "Příkazy (DEMO)" : "Příkazy (MAINNET)"}
+        fileId="ORDER MODULE ID: TR-05-O"
         action={
           <div className="flex items-center gap-2">
             {ordersError && (
@@ -361,7 +362,7 @@ export default function OrdersPanel({
         )}
       </Panel>
 
-      <Panel title="Fills">
+      <Panel title="Fills" fileId="EXECUTION LEDGER ID: TR-06-F">
         {!tradesLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
             Loading fills...

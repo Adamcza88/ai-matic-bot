@@ -119,7 +119,7 @@ export default function PositionsTable({
   };
 
   return (
-    <Panel title="Positions">
+    <Panel title="Positions" fileId="POSITION MODULE ID: TR-02-P">
       {!positionsLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-10 text-center text-xs text-muted-foreground">
           Loading positions...

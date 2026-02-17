@@ -5,6 +5,7 @@ import { ChevronDown } from "lucide-react";
 import Panel from "@/components/dashboard/Panel";
 
 type SignalsAccordionProps = {
+  theme: "dark" | "light";
   allowedSymbols: string[];
   scanDiagnostics: Record<string, any> | null;
   scanLoaded: boolean;
@@ -145,13 +146,13 @@ function GateRow({
 }) {
   const enabled = checklistEnabled[gate.name] ?? true;
   const muted = !enabled || gate.detail === "not required" || (!signalActive && !gate.ok);
-  const toneClass = muted ? "bg-slate-600" : gate.ok ? "bg-emerald-400" : "bg-red-400";
+  const toneClass = muted ? "bg-[#6a625b]" : gate.ok ? "bg-[#3FA7A3]" : "bg-[#C87C3A]";
 
   return (
     <button
       type="button"
       onClick={() => toggleChecklist(gate.name)}
-      className="flex items-start gap-2 rounded-md border border-border/40 bg-background/40 px-2 py-1 text-left"
+      className="flex items-start gap-2 rounded-none border border-border/60 bg-background/30 px-2 py-1 text-left"
       title={gateTooltip(gate.name) ?? "Toggle gate enforcement for this check."}
     >
       <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${toneClass}`} />
@@ -164,6 +165,7 @@ function GateRow({
 }
 
 export default function SignalsAccordion({
+  theme,
   allowedSymbols,
   scanDiagnostics,
   scanLoaded,
@@ -174,20 +176,22 @@ export default function SignalsAccordion({
   mode,
   profileGateNames,
 }: SignalsAccordionProps) {
+  const isTvaTheme = theme === "light";
   const lastScanLabel = formatClock(lastScanTs);
 
   return (
     <Panel
-      title="Signal checklist"
-      description={`Last scan: ${lastScanLabel}`}
+      title={isTvaTheme ? "Authorization Case Registry" : "Signal checklist"}
+      description={isTvaTheme ? `Last archive refresh: ${lastScanLabel}` : `Last scan: ${lastScanLabel}`}
+      fileId={isTvaTheme ? "AUTHORIZATION MODULE ID: TR-03-S" : undefined}
       action={
         <Button
           variant="outline"
           size="sm"
           onClick={resetChecklist}
-          className="h-8 text-xs"
+          className="h-8 text-xs tva-button"
         >
-          Reset gates
+          {isTvaTheme ? "Revoke Authorizations" : "Reset gates"}
         </Button>
       }
     >
@@ -206,6 +210,33 @@ export default function SignalsAccordion({
             feedAgeOk == null ? "Feed —" : feedAgeOk ? "Feed OK" : "Feed Fail";
           const feedAgeValue =
             feedAgeMs != null && Number.isFinite(feedAgeMs) ? `${feedAgeMs} ms` : "—";
+          const trendBias = String(
+            diag?.trendBias ?? diag?.symbolState ?? diag?.marketBias ?? "UNRESOLVED"
+          )
+            .replace(/\s+/g, "_")
+            .toUpperCase();
+          const executionProtocol = (() => {
+            const source = String(
+              diag?.executionProtocol ?? diag?.executionReason ?? diag?.manageReason ?? ""
+            ).toLowerCase();
+            if (source.includes("maker")) return "LIMIT_MAKER_FIRST";
+            if (source.includes("market")) return "MARKET_FOLLOW";
+            if (source.includes("blocked")) return "BLOCKED";
+            return source ? source.replace(/\s+/g, "_").toUpperCase() : "LIMIT_MAKER_FIRST";
+          })();
+          const caseStatus =
+            summary.tone === "pass"
+              ? "AUTHORIZED"
+              : summary.tone === "hold"
+                ? "HOLD"
+                : summary.tone === "blocked"
+                  ? "RESTRICTED"
+                  : "PENDING";
+          const manualOverride =
+            checklistEnabled["Exec allowed"] === false ? "DISABLED" : "ENABLED";
+          const advisoryMetrics = Number.isFinite(diag?.qualityScore)
+            ? "ACTIVE"
+            : "INACTIVE";
 
           const groups = {
             trend: [] as any[],
@@ -219,46 +250,80 @@ export default function SignalsAccordion({
           return (
             <details
               key={symbol}
-              className="group rounded-lg border border-border/60 bg-background/40"
+              className={`group border border-border/60 bg-background/40 ${
+                isTvaTheme ? "rounded-none" : "rounded-lg"
+              }`}
             >
               <summary className="flex cursor-pointer list-none items-start justify-between gap-3 px-3 py-2 text-xs">
                 <div className="min-w-0">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="font-mono text-sm text-foreground">{symbol}</span>
-                    <span className="text-muted-foreground">·</span>
-                    <Badge
-                      variant="outline"
-                      className={
-                        summary.tone === "blocked"
-                          ? "border-red-500/50 text-red-400"
-                          : summary.tone === "hold"
-                            ? "border-amber-500/50 text-amber-400"
-                            : summary.tone === "pass"
+                  {isTvaTheme ? (
+                    <div className="space-y-1">
+                      <div className="font-mono text-[11px] tracking-[0.16em] text-foreground lm-micro">
+                        CASE FILE: {symbol}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge
+                          variant="outline"
+                          className={
+                            summary.tone === "blocked"
+                              ? "rounded-none border lm-status-badge lm-status-badge-error"
+                              : summary.tone === "hold"
+                                ? "rounded-none border lm-status-badge lm-status-badge-warn"
+                                : summary.tone === "pass"
+                                  ? "rounded-none border lm-status-badge lm-status-badge-ok"
+                                  : "rounded-none border border-border/70 text-muted-foreground lm-status-badge"
+                          }
+                        >
+                          {caseStatus}
+                        </Badge>
+                        <span className="text-[11px] text-muted-foreground lm-micro">
+                          FEED LATENCY: {feedAgeValue}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground lm-micro">
+                          MODE: {mode === TradingMode.AUTO_ON ? "AUTOMATED DIRECTIVE" : "MANUAL INTERVENTION"}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="font-mono text-sm text-foreground">{symbol}</span>
+                        <span className="text-muted-foreground">·</span>
+                        <Badge
+                          variant="outline"
+                          className={
+                            summary.tone === "blocked"
+                              ? "border-red-500/50 text-red-400"
+                              : summary.tone === "hold"
+                                ? "border-amber-500/50 text-amber-400"
+                                : summary.tone === "pass"
+                                  ? "border-emerald-500/50 text-emerald-400"
+                                  : "border-border/60 text-muted-foreground"
+                          }
+                        >
+                          {summary.label}
+                        </Badge>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-muted-foreground">
+                          {feedAgeLabel} ({feedAgeValue})
+                        </span>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-muted-foreground">Režim {MODE_LABELS[mode]}</span>
+                        <span className="text-muted-foreground">·</span>
+                        <Badge
+                          variant="outline"
+                          className={
+                            signalActive
                               ? "border-emerald-500/50 text-emerald-400"
                               : "border-border/60 text-muted-foreground"
-                      }
-                    >
-                      {summary.label}
-                    </Badge>
-                    <span className="text-muted-foreground">·</span>
-                    <span className="text-muted-foreground">
-                      {feedAgeLabel} ({feedAgeValue})
-                    </span>
-                    <span className="text-muted-foreground">·</span>
-                    <span className="text-muted-foreground">Režim {MODE_LABELS[mode]}</span>
-                    <span className="text-muted-foreground">·</span>
-                    <Badge
-                      variant="outline"
-                      className={
-                        signalActive
-                          ? "border-emerald-500/50 text-emerald-400"
-                          : "border-border/60 text-muted-foreground"
-                      }
-                    >
-                      {signalActive ? "Skenuje" : "Idle"}
-                    </Badge>
-                  </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">Důvod: {reason}</div>
+                          }
+                        >
+                          {signalActive ? "Skenuje" : "Idle"}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">Důvod: {reason}</div>
+                    </>
+                  )}
                 </div>
                 <ChevronDown className="mt-1 h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
               </summary>
@@ -269,9 +334,22 @@ export default function SignalsAccordion({
                   <div className="text-muted-foreground">No scan data for this symbol.</div>
                 ) : (
                   <div className="space-y-3">
+                    {isTvaTheme && (
+                      <div className="grid gap-1 border border-border/70 bg-background/20 px-3 py-2 font-mono text-[11px]">
+                        <div className="lm-micro">CASE FILE: {symbol}</div>
+                        <div className="lm-micro">STATUS: {caseStatus}</div>
+                        <div className="lm-micro">FEED LATENCY: {feedAgeValue}</div>
+                        <div className="lm-micro">TREND BIAS: {trendBias}</div>
+                        <div className="lm-micro">EXECUTION PROTOCOL: {executionProtocol}</div>
+                        <div className="lm-micro">MANUAL OVERRIDE: {manualOverride}</div>
+                        <div className="lm-micro">ADVISORY METRICS: {advisoryMetrics}</div>
+                      </div>
+                    )}
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <div className="rounded-md border border-border/40 bg-background/30 px-2 py-1.5">
-                        <div className="text-[11px] text-muted-foreground">Trend</div>
+                      <div className={`border border-border/40 bg-background/30 px-2 py-1.5 ${isTvaTheme ? "rounded-none" : "rounded-md"}`}>
+                        <div className="text-[11px] text-muted-foreground lm-micro">
+                          {isTvaTheme ? "Trend Review" : "Trend"}
+                        </div>
                         <div className="mt-1 grid gap-1">
                           {groups.trend.map((gate: any) => (
                             <GateRow
@@ -287,8 +365,10 @@ export default function SignalsAccordion({
                           ) : null}
                         </div>
                       </div>
-                      <div className="rounded-md border border-border/40 bg-background/30 px-2 py-1.5">
-                        <div className="text-[11px] text-muted-foreground">Likvidita/Volatilita</div>
+                      <div className={`border border-border/40 bg-background/30 px-2 py-1.5 ${isTvaTheme ? "rounded-none" : "rounded-md"}`}>
+                        <div className="text-[11px] text-muted-foreground lm-micro">
+                          {isTvaTheme ? "Liquidity and Volatility" : "Likvidita/Volatilita"}
+                        </div>
                         <div className="mt-1 grid gap-1">
                           {groups.liquidity.map((gate: any) => (
                             <GateRow
@@ -304,8 +384,10 @@ export default function SignalsAccordion({
                           ) : null}
                         </div>
                       </div>
-                      <div className="sm:col-span-2 rounded-md border border-border/40 bg-background/30 px-2 py-1.5">
-                        <div className="text-[11px] text-muted-foreground">Exekuce</div>
+                      <div className={`sm:col-span-2 border border-border/40 bg-background/30 px-2 py-1.5 ${isTvaTheme ? "rounded-none" : "rounded-md"}`}>
+                        <div className="text-[11px] text-muted-foreground lm-micro">
+                          {isTvaTheme ? "Execution Authority" : "Exekuce"}
+                        </div>
                         <div className="mt-1 grid gap-1 sm:grid-cols-2">
                           {groups.execution.map((gate: any) => (
                             <GateRow
@@ -319,7 +401,7 @@ export default function SignalsAccordion({
                           <button
                             type="button"
                             onClick={() => toggleChecklist("Exec allowed")}
-                            className="flex items-start gap-2 rounded-md border border-border/40 bg-background/40 px-2 py-1 text-left"
+                            className="flex items-start gap-2 rounded-none border border-border/40 bg-background/40 px-2 py-1 text-left"
                             title="Toggle gate enforcement for this check."
                           >
                             <span
@@ -340,11 +422,17 @@ export default function SignalsAccordion({
                                   : "text-muted-foreground"
                               }
                             >
-                              <span className="text-muted-foreground">Exec:</span>{" "}
+                              <span className="text-muted-foreground">
+                                {isTvaTheme ? "Manual Override:" : "Exec:"}
+                              </span>{" "}
                               {diag?.executionAllowed === true
-                                ? "Yes"
+                                ? isTvaTheme
+                                  ? "Enabled"
+                                  : "Yes"
                                 : diag?.executionAllowed === false
-                                  ? "Blocked"
+                                  ? isTvaTheme
+                                    ? "Disabled"
+                                    : "Blocked"
                                   : "N/A"}
                             </span>
                           </button>

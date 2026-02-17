@@ -1,4 +1,5 @@
 type KpiRowProps = {
+  theme: "dark" | "light";
   totalCapital?: number;
   allocated?: number;
   dailyPnl?: number;
@@ -26,13 +27,14 @@ const USD_FORMATTER = new Intl.NumberFormat("en-US", {
 });
 
 function formatMoney(value?: number) {
-  return Number.isFinite(value) ? USD_FORMATTER.format(value as number) : "—";
+  if (!Number.isFinite(value)) return "—";
+  return USD_FORMATTER.format(value as number).replace(/,/g, " ");
 }
 
 function formatSignedMoney(value?: number) {
   if (!Number.isFinite(value)) return "—";
   const resolved = value as number;
-  return `${resolved >= 0 ? "+" : ""}${USD_FORMATTER.format(resolved)}`;
+  return `${resolved >= 0 ? "+" : ""}${USD_FORMATTER.format(resolved).replace(/,/g, " ")}`;
 }
 
 function formatPct(value?: number) {
@@ -41,6 +43,7 @@ function formatPct(value?: number) {
 }
 
 export default function KpiRow({
+  theme,
   totalCapital,
   allocated,
   dailyPnl,
@@ -53,6 +56,7 @@ export default function KpiRow({
   riskPerTradePct,
   riskPerTradeUsd,
 }: KpiRowProps) {
+  const isTvaTheme = theme === "light";
   const pnlTone = (value?: number) =>
     Number.isFinite(value)
       ? (value as number) >= 0
@@ -62,18 +66,22 @@ export default function KpiRow({
 
   return (
     <section className="space-y-3">
-      <div className="text-[11px] uppercase tracking-widest text-muted-foreground lm-data-secondary">
-        Today Risk & Performance
+      <div className="text-[11px] uppercase tracking-widest text-muted-foreground lm-data-secondary lm-micro">
+        {isTvaTheme ? "RISK MODULE ID: TR-04-A" : "Today Risk & Performance"}
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-lg border border-border/70 bg-card/96 p-3">
-          <div className="text-xs text-muted-foreground lm-data-secondary">Total capital</div>
+          <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
+            {isTvaTheme ? "Total Capital Allocation" : "Total capital"}
+          </div>
           <div className="mt-2 text-2xl font-semibold tabular-nums lm-data-primary">
             {formatMoney(totalCapital)}
           </div>
         </div>
         <div className="rounded-lg border border-border/70 bg-card/96 p-3">
-          <div className="text-xs text-muted-foreground lm-data-secondary">Daily PnL</div>
+          <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
+            {isTvaTheme ? "Daily Temporal Deviation" : "Daily PnL"}
+          </div>
           <div
             className={`mt-2 text-2xl font-semibold tabular-nums lm-data-primary ${pnlTone(
               dailyPnl
@@ -83,31 +91,37 @@ export default function KpiRow({
           </div>
           <div className="mt-2 space-y-1 text-[11px] text-muted-foreground lm-data-secondary">
             <div className="flex items-center justify-between gap-4">
-              <span>Realized</span>
+              <span className="lm-micro">
+                {isTvaTheme ? "Closed Ledger Impact" : "Realized"}
+              </span>
               <span className="tabular-nums">
                 {formatSignedMoney(dailyPnlBreakdown?.realized)}
               </span>
             </div>
-            {Number.isFinite(dailyPnlBreakdown?.fees) ? (
+            {Number.isFinite(dailyPnlBreakdown?.fees) ||
+            Number.isFinite(dailyPnlBreakdown?.funding) ? (
               <div className="flex items-center justify-between gap-4">
-                <span>Fees</span>
+                <span className="lm-micro">
+                  {isTvaTheme ? "Operational Friction" : "Fees / Funding"}
+                </span>
                 <span className="tabular-nums">
-                  {formatSignedMoney(dailyPnlBreakdown?.fees)}
+                  {formatSignedMoney(
+                    (dailyPnlBreakdown?.fees ?? 0) + (dailyPnlBreakdown?.funding ?? 0)
+                  )}
                 </span>
               </div>
-            ) : null}
-            {Number.isFinite(dailyPnlBreakdown?.funding) ? (
+            ) : isTvaTheme ? (
               <div className="flex items-center justify-between gap-4">
-                <span>Funding</span>
-                <span className="tabular-nums">
-                  {formatSignedMoney(dailyPnlBreakdown?.funding)}
-                </span>
+                <span className="lm-micro">Operational Friction</span>
+                <span className="tabular-nums">N/A</span>
               </div>
             ) : null}
           </div>
         </div>
         <div className="rounded-lg border border-border/70 bg-card/96 p-3">
-          <div className="text-xs text-muted-foreground lm-data-secondary">Open PnL</div>
+          <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
+            {isTvaTheme ? "Open Position Deviation" : "Open PnL"}
+          </div>
           <div
             className={`mt-2 text-2xl font-semibold tabular-nums lm-data-primary ${pnlTone(
               openPositionsPnl
@@ -119,19 +133,21 @@ export default function KpiRow({
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-border/70 bg-card/96 p-3">
-          <div className="text-xs text-muted-foreground lm-data-secondary">Positions</div>
+          <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">Positions</div>
           <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
             {openPositions}/{maxOpenPositions}
           </div>
         </div>
         <div className="rounded-lg border border-border/70 bg-card/96 p-3">
-          <div className="text-xs text-muted-foreground lm-data-secondary">Orders</div>
+          <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">Orders</div>
           <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
             {openOrders}/{maxOpenOrders}
           </div>
         </div>
         <div className="rounded-lg border border-border/70 bg-card/96 p-3">
-          <div className="text-xs text-muted-foreground lm-data-secondary">Risk per trade</div>
+          <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
+            {isTvaTheme ? "Risk Per Directive" : "Risk per trade"}
+          </div>
           <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
             {formatPct(riskPerTradePct)}{" "}
             <span className="text-sm text-muted-foreground lm-data-secondary">
@@ -140,7 +156,9 @@ export default function KpiRow({
           </div>
         </div>
         <div className="rounded-lg border border-border/70 bg-card/96 p-3">
-          <div className="text-xs text-muted-foreground lm-data-secondary">Allocated (limit)</div>
+          <div className="text-xs text-muted-foreground lm-data-secondary lm-micro">
+            {isTvaTheme ? "Allocated Ceiling" : "Allocated (limit)"}
+          </div>
           <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary">
             {formatMoney(allocated)}
           </div>

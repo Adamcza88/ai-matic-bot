@@ -26,6 +26,7 @@ type DashboardProps = {
   setMode: (m: TradingMode) => void;
   useTestnet: boolean;
   setUseTestnet: (v: boolean) => void;
+  theme: "dark" | "light";
   envAvailability?: {
     canUseDemo: boolean;
     canUseMainnet: boolean;
@@ -40,6 +41,7 @@ export default function Dashboard({
   setMode,
   useTestnet,
   setUseTestnet,
+  theme,
   envAvailability,
   bot,
 }: DashboardProps) {
@@ -338,22 +340,31 @@ export default function Dashboard({
     [dailyPnl]
   );
   const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";
+  const isTvaTheme = theme === "light";
+  const dashboardTitle = isTvaTheme ? "Temporal Risk Authority" : profileMeta.label;
+  const dashboardSubtitle = isTvaTheme
+    ? "Multi-TF Stability Engine · Clearance Level 6"
+    : profileMeta.subtitle;
 
   return (
     <div className="space-y-6">
         <StatusBar
-          title={profileMeta.label}
-          subtitle={profileMeta.subtitle}
+          title={dashboardTitle}
+          subtitle={dashboardSubtitle}
           mode={mode}
           setMode={setMode}
           useTestnet={useTestnet}
           setUseTestnet={setUseTestnet}
+          theme={theme}
           systemState={systemState}
           engineStatus={engineStatus}
           envAvailability={envAvailability}
         />
 
+      <div className="h-0.5 w-full bg-border/80 lm-section-divider" />
+
       <KpiRow
+        theme={theme}
         totalCapital={totalCapital}
         allocated={allocated}
         dailyPnl={dailyPnl}
@@ -366,6 +377,8 @@ export default function Dashboard({
         riskPerTradePct={riskPerTradePct}
         riskPerTradeUsd={riskPerTradeUsd}
       />
+
+      <div className="h-0.5 w-full bg-border/80 lm-section-divider" />
 
       <Tabs
         value={activeTab}
@@ -436,6 +449,7 @@ export default function Dashboard({
         </TabsContent>
           <TabsContent value="signals">
             <SignalsAccordion
+              theme={theme}
               allowedSymbols={allowedSymbols}
               scanDiagnostics={scanDiagnostics}
               scanLoaded={scanLoaded}

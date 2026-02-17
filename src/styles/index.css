@@ -64,48 +64,48 @@
 
 @layer base {
   :root {
-    --background: 220 20% 11%;
-    --foreground: 210 22% 93%;
-    --card: 220 18% 15%;
-    --card-foreground: 210 22% 93%;
-    --popover: 220 18% 15%;
-    --popover-foreground: 210 22% 93%;
-    --primary: 187 34% 46%;
-    --primary-foreground: 210 22% 93%;
-    --secondary: 219 14% 24%;
-    --secondary-foreground: 210 22% 93%;
-    --muted: 220 14% 18%;
-    --muted-foreground: 215 12% 56%;
-    --accent: 186 24% 38%;
-    --accent-foreground: 210 22% 93%;
-    --destructive: 2 38% 46%;
+    --background: 27 8% 11%;
+    --foreground: 34 24% 88%;
+    --card: 26 10% 21%;
+    --card-foreground: 34 24% 88%;
+    --popover: 26 10% 21%;
+    --popover-foreground: 34 24% 88%;
+    --primary: 177 45% 45%;
+    --primary-foreground: 35 22% 10%;
+    --secondary: 30 46% 51%;
+    --secondary-foreground: 35 22% 10%;
+    --muted: 25 10% 17%;
+    --muted-foreground: 30 14% 62%;
+    --accent: 30 46% 51%;
+    --accent-foreground: 35 22% 10%;
+    --destructive: 2 38% 48%;
     --destructive-foreground: 210 40% 98%;
-    --border: 219 12% 24%;
-    --input: 219 12% 24%;
-    --ring: 187 34% 46%;
+    --border: 26 10% 32%;
+    --input: 26 10% 32%;
+    --ring: 177 45% 45%;
     --radius: 0.5rem;
-    --chart-1: 187 34% 46%;
-    --chart-2: 183 24% 43%;
-    --chart-3: 218 13% 58%;
-    --chart-4: 210 22% 93%;
-    --chart-5: 220 14% 18%;
+    --chart-1: 177 45% 45%;
+    --chart-2: 30 46% 51%;
+    --chart-3: 2 38% 48%;
+    --chart-4: 34 24% 88%;
+    --chart-5: 25 10% 17%;
   }
 
   .dark {
     --background: 225.0 26.7% 17.6%;
-    --foreground: 240 6.7% 97.1%;
+    --foreground: 188 42% 98%;
     --card: 227.5 41.4% 11.4%;
-    --card-foreground: 240 6.7% 97.1%;
+    --card-foreground: 188 42% 98%;
     --popover: 227.5 41.4% 11.4%;
-    --popover-foreground: 240 6.7% 97.1%;
-    --primary: 172.2 45.1% 60.0%;
+    --popover-foreground: 188 42% 98%;
+    --primary: 172.2 58% 67%;
     --primary-foreground: 227.5 41.4% 11.4%;
     --secondary: 220.8 21.7% 22.5%;
-    --secondary-foreground: 240 6.7% 97.1%;
+    --secondary-foreground: 188 42% 98%;
     --muted: 220.8 21.7% 22.5%;
-    --muted-foreground: 196.2 11.2% 54.5%;
-    --accent: 161.6 20.0% 48.0%;
-    --accent-foreground: 240 6.7% 97.1%;
+    --muted-foreground: 192 20% 68%;
+    --accent: 161.6 34% 58%;
+    --accent-foreground: 188 42% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
     --border: 220.8 21.7% 22.5%;
@@ -131,7 +131,8 @@
   }
 
   html:not(.dark) body {
-    background-color: hsl(var(--background));
+    background-color: #1c1a18;
+    background-image: linear-gradient(160deg, #1c1a18 0%, #2a2622 100%);
   }
 
   html:not(.dark) body::before {
@@ -140,11 +141,11 @@
     inset: 0;
     z-index: -2;
     pointer-events: none;
-    opacity: 0.06;
+    opacity: 0.05;
     background-image:
-      linear-gradient(rgba(255, 255, 255, 1) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 1) 1px, transparent 1px);
-    background-size: 64px 64px;
+      linear-gradient(rgba(213, 191, 166, 0.55) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(213, 191, 166, 0.55) 1px, transparent 1px);
+    background-size: 72px 72px;
   }
 
   html:not(.dark) body::after {
@@ -153,14 +154,27 @@
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    opacity: 0.08;
-    mix-blend-mode: soft-light;
-    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.8) 0.45px, transparent 0.55px);
+    opacity: 0.12;
+    mix-blend-mode: overlay;
+    background-image: radial-gradient(circle, rgba(236, 222, 202, 0.7) 0.45px, transparent 0.55px);
     background-size: 3px 3px;
   }
 }
 
 @layer utilities {
+  html.dark .lm-file-id {
+    display: none;
+  }
+
+  html.dark .lm-panel-header {
+    border-bottom-width: 0;
+    padding-bottom: 0;
+  }
+
+  html.dark .lm-section-divider {
+    display: none;
+  }
+
   html:not(.dark) .app-shell {
     position: relative;
     z-index: 1;
@@ -170,70 +184,131 @@
     display: none;
   }
 
+  html:not(.dark) .tva-dashboard button {
+    border-radius: 0;
+    border: 1px solid #655c53;
+    background: #332f2b;
+    color: #ddd1c5;
+    box-shadow: none;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  html:not(.dark) .tva-dashboard button:hover {
+    background: #3d3732;
+    color: #efe2d5;
+  }
+
+  html:not(.dark) .tva-dashboard button:disabled {
+    opacity: 0.45;
+  }
+
+  html:not(.dark) .lm-heading {
+    font-family: "DIN Condensed", "Arial Narrow", "Roboto Condensed", "Avenir Next Condensed", sans-serif;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+  }
+
+  html:not(.dark) .lm-micro {
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
   html:not(.dark) .lm-panel {
-    background-color: hsl(var(--card) / 0.97);
-    border-color: #2a2f38;
+    background-color: #3a3530f5;
+    border-color: #5a5148;
     box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+      inset 0 0 0 1px rgba(220, 201, 176, 0.13),
       0 6px 8px -6px rgba(0, 0, 0, 0.55);
     position: relative;
     z-index: 2;
   }
 
+  html:not(.dark) .lm-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(198, 178, 150, 0.16) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(198, 178, 150, 0.16) 1px, transparent 1px);
+    background-size: 18px 18px;
+    opacity: 0.08;
+  }
+
+  html:not(.dark) .lm-panel::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.12;
+    mix-blend-mode: soft-light;
+    background-image: radial-gradient(circle, rgba(231, 215, 193, 0.9) 0.35px, transparent 0.65px);
+    background-size: 3px 3px;
+  }
+
+  html:not(.dark) .lm-panel > * {
+    position: relative;
+    z-index: 1;
+  }
+
   html:not(.dark) .lm-data-primary {
-    color: hsl(210 24% 95%);
+    color: #f2e6da;
+    font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.035em;
   }
 
   html:not(.dark) .lm-data-secondary {
-    color: hsl(215 11% 50%);
+    color: #b7a99a;
   }
 
   html:not(.dark) .lm-table thead tr {
-    border-bottom-color: #2a2f38;
+    border-bottom-color: #6a6056;
   }
 
   html:not(.dark) .lm-table tbody tr {
-    border-bottom: 1px solid #2a2f38;
-    background-color: hsl(220 16% 15%);
+    border-bottom: 1px solid #6a6056;
+    background-color: #3a3530;
     transition: background-color 120ms ease;
   }
 
   html:not(.dark) .lm-table tbody tr:hover {
-    background-color: hsl(220 16% 17%);
+    background-color: #433c36;
   }
 
   html:not(.dark) .lm-table tbody tr.lm-table-row-muted {
-    background-color: hsl(220 14% 13%);
+    background-color: #342f2a;
   }
 
   html:not(.dark) .lm-status-badge {
-    border-radius: 0.375rem;
+    border-radius: 0;
     font-size: 10px;
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
     box-shadow: none;
-    filter: saturate(0.62);
+    filter: none;
     position: relative;
     z-index: 4;
   }
 
   html:not(.dark) .lm-status-badge-ok {
-    background-color: rgba(101, 139, 114, 0.12);
-    border-color: rgba(101, 139, 114, 0.6);
-    color: #9ac5a8;
+    background-color: rgba(63, 167, 163, 0.12);
+    border-color: rgba(63, 167, 163, 0.62);
+    color: #8ad0cd;
   }
 
   html:not(.dark) .lm-status-badge-warn {
-    background-color: rgba(146, 124, 87, 0.12);
-    border-color: rgba(146, 124, 87, 0.6);
-    color: #c9b38f;
+    background-color: rgba(200, 124, 58, 0.12);
+    border-color: rgba(200, 124, 58, 0.62);
+    color: #e0ae81;
   }
 
   html:not(.dark) .lm-status-badge-error {
-    background-color: rgba(139, 78, 78, 0.12);
-    border-color: rgba(139, 78, 78, 0.6);
-    color: #c69595;
+    background-color: rgba(169, 75, 75, 0.14);
+    border-color: rgba(169, 75, 75, 0.62);
+    color: #d4a4a4;
   }
 
   html:not(.dark) .lm-pnl-negative {

@@ -192,7 +192,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-6 relative isolate app-shell">
+    <div className="min-h-screen bg-background text-foreground p-6 relative isolate app-shell tva-dashboard">
       <div
         className="absolute inset-0 opacity-10 -z-10 app-shell-bg-art"
         style={{
@@ -300,6 +300,7 @@ export default function App() {
         setMode={setMode}
         useTestnet={useTestnet}
         setUseTestnet={setUseTestnet}
+        theme={theme}
         envAvailability={envAvailability}
         bot={bot}
       />

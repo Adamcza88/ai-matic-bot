@@ -96,6 +96,7 @@ export default function LogsPanel({
     <Panel
       title="Logs"
       description={`Live feed and system events (${useTestnet ? "DEMO" : "MAINNET"}).`}
+      fileId="AUDIT MODULE ID: TR-07-L"
       action={
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>Filter</span>

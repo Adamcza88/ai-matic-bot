@@ -41,13 +41,14 @@ const USD_FORMATTER = new Intl.NumberFormat("en-US", {
 });
 
 function formatMoney(value?: number) {
-  return Number.isFinite(value) ? USD_FORMATTER.format(value as number) : "—";
+  if (!Number.isFinite(value)) return "—";
+  return USD_FORMATTER.format(value as number).replace(/,/g, " ");
 }
 
 function formatSignedMoney(value?: number) {
   if (!Number.isFinite(value)) return "—";
   const resolved = value as number;
-  return `${resolved >= 0 ? "+" : ""}${USD_FORMATTER.format(resolved)}`;
+  return `${resolved >= 0 ? "+" : ""}${USD_FORMATTER.format(resolved).replace(/,/g, " ")}`;
 }
 
 function formatPct(value?: number) {
@@ -181,6 +182,7 @@ export default function OverviewTab({
       <Panel
         title="Why not trading now"
         description={`Last scan: ${lastScanLabel}`}
+        fileId="GATE DIAGNOSTICS ID: TR-01-G"
       >
         {!scanLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
@@ -208,6 +210,7 @@ export default function OverviewTab({
       <div className="grid gap-6 lg:grid-cols-[1fr,1fr]">
         <Panel
           title="Strategy profile"
+          fileId="PROFILE DOSSIER ID: TR-08-P"
           action={
             <Button
               variant="outline"
@@ -265,7 +268,11 @@ export default function OverviewTab({
           </div>
         </Panel>
 
-        <Panel title="Signals" description={`Last scan: ${lastScanLabel}`}>
+        <Panel
+          title="Signals"
+          description={`Last scan: ${lastScanLabel}`}
+          fileId="SIGNAL RELAY ID: TR-09-S"
+        >
           {!scanLoaded ? (
             <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
               Loading signal diagnostics...
@@ -332,6 +339,7 @@ export default function OverviewTab({
       <div className="grid gap-6 lg:grid-cols-[1fr,1fr]">
         <Panel
           title="PnL history by symbol"
+          fileId="LEDGER ARCHIVE ID: TR-10-H"
           action={
             <Button
               variant="outline"
@@ -398,7 +406,7 @@ export default function OverviewTab({
           )}
         </Panel>
 
-        <Panel title="Recent events">
+        <Panel title="Recent events" fileId="EVENT TRACE ID: TR-11-E">
           {!logsLoaded ? (
             <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
               Loading events...

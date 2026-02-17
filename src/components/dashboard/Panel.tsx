@@ -5,6 +5,7 @@ type PanelProps = {
   title?: string;
   action?: ReactNode;
   description?: string;
+  fileId?: string;
   className?: string;
   children: ReactNode;
 };
@@ -13,6 +14,7 @@ export default function Panel({
   title,
   action,
   description,
+  fileId,
   className,
   children,
 }: PanelProps) {
@@ -24,10 +26,16 @@ export default function Panel({
       )}
     >
       {(title || action || description) && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="mb-3 border-b-2 border-border/80 pb-2 lm-panel-header">
+          {fileId && (
+            <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground lm-micro lm-file-id">
+              {fileId}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
             {title && (
-              <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
+              <h3 className="text-sm font-semibold tracking-tight lm-heading">{title}</h3>
             )}
             {description && (
               <p className="mt-1 text-xs text-muted-foreground max-w-[70ch]">
@@ -36,6 +44,7 @@ export default function Panel({
             )}
           </div>
           {action && <div className="flex items-center gap-2">{action}</div>}
+        </div>
         </div>
       )}
       {children}
