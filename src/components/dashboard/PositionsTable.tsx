@@ -13,11 +13,24 @@ type PositionsTableProps = {
 };
 
 function formatNumber(value?: number, digits = 4) {
-  return Number.isFinite(value) ? value.toFixed(digits) : "—";
+  return Number.isFinite(value) ? Number(value).toFixed(digits) : "—";
 }
 
-function formatMoney(value?: number, digits = 2) {
-  return Number.isFinite(value) ? value.toFixed(digits) : "—";
+function formatSignedMoney(value?: number, digits = 2) {
+  if (!Number.isFinite(value)) return "—";
+  const amount = Number(value).toFixed(digits);
+  return `${value && value > 0 ? "+" : ""}${amount}`;
+}
+
+function formatClock(value?: string) {
+  if (!value) return "—";
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) return value;
+  return new Date(ts).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 export default function PositionsTable({
@@ -54,10 +67,6 @@ export default function PositionsTable({
         : Number.isFinite(p.triggerPrice)
           ? p.triggerPrice
           : Number.NaN;
-      const entryLabel =
-        Number.isFinite(p.entryPrice) || !Number.isFinite(p.triggerPrice)
-          ? null
-          : "trg";
       const protectionLabel =
         slMissing && tpMissing
           ? "TP/SL pending"
@@ -96,7 +105,6 @@ export default function PositionsTable({
         tp,
         upnl,
         entryValue,
-        entryLabel,
         updateLabel,
         protectionLabel,
         protectionClass,
@@ -122,19 +130,17 @@ export default function PositionsTable({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[860px] text-sm">
             <thead className="text-xs text-muted-foreground">
               <tr className="border-b border-border/60">
-                <th className="py-2 text-left font-medium">Symbol</th>
-                <th className="py-2 text-left font-medium">Side</th>
-                <th className="py-2 text-right font-medium">Size</th>
-                <th className="py-2 text-right font-medium">Entry</th>
-                <th className="py-2 text-right font-medium">PnL</th>
-                <th className="py-2 text-right font-medium">TP</th>
-                <th className="py-2 text-right font-medium">SL</th>
+                <th className="w-[170px] py-2 text-left font-medium">Symbol</th>
+                <th className="w-[90px] py-2 text-left font-medium">Side</th>
+                <th className="w-[90px] py-2 text-right font-medium">Size</th>
+                <th className="w-[130px] py-2 text-right font-medium">Entry</th>
+                <th className="w-[120px] py-2 text-right font-medium">PnL</th>
                 <th className="py-2 text-left font-medium">Status</th>
                 {showActions && (
-                  <th className="py-2 text-right font-medium">Actions</th>
+                  <th className="w-[100px] py-2 text-right font-medium">Actions</th>
                 )}
               </tr>
             </thead>
@@ -163,55 +169,26 @@ export default function PositionsTable({
                               <ChevronRight className="h-4 w-4" />
                             )}
                           </Button>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono">{row.raw.symbol}</span>
-                            {row.hasTrailing ? (
-                              <Badge
-                                variant="outline"
-                                className="border-sky-500/50 text-sky-300 text-[10px] uppercase tracking-wide"
-                              >
-                                Trail
-                              </Badge>
-                            ) : null}
-                            {row.activationHit ? (
-                              <Badge
-                                variant="outline"
-                                className="border-emerald-500/50 text-emerald-400 text-[10px] uppercase tracking-wide"
-                              >
-                                Activated
-                              </Badge>
-                            ) : null}
-                          </div>
+                          <span className="font-mono text-foreground">{row.raw.symbol}</span>
                         </div>
                       </td>
                       <td className="py-3">
-                      <Badge
-                        variant="outline"
-                        className={
-                          row.isBuy
-                            ? "border-emerald-500/50 text-emerald-400"
-                            : "border-red-500/50 text-red-400"
-                        }
-                      >
-                        {row.isBuy ? "LONG" : "SHORT"}
-                      </Badge>
-                    </td>
-                      <td className="py-3 text-right font-mono tabular-nums">
-                        {formatNumber(row.size)}
+                        <Badge
+                          variant="outline"
+                          className={
+                            row.isBuy
+                              ? "border-emerald-500/50 text-emerald-400"
+                              : "border-red-500/50 text-red-400"
+                          }
+                        >
+                          {row.isBuy ? "LONG" : "SHORT"}
+                        </Badge>
                       </td>
                       <td className="py-3 text-right font-mono tabular-nums">
-                        {Number.isFinite(row.entryValue) ? (
-                          <div className="flex items-center justify-end gap-1">
-                            {row.entryLabel && (
-                              <span className="text-[10px] uppercase text-muted-foreground">
-                                {row.entryLabel}
-                              </span>
-                            )}
-                            <span>{formatNumber(row.entryValue)}</span>
-                          </div>
-                        ) : (
-                          "—"
-                        )}
+                        {formatNumber(row.size, 2)}
+                      </td>
+                      <td className="py-3 text-right font-mono tabular-nums">
+                        {Number.isFinite(row.entryValue) ? formatNumber(row.entryValue) : "—"}
                       </td>
                       <td
                         className={`py-3 text-right font-mono tabular-nums ${
@@ -222,26 +199,37 @@ export default function PositionsTable({
                             : "text-muted-foreground"
                         }`}
                       >
-                        {Number.isFinite(row.upnl)
-                          ? `${row.upnl > 0 ? "+" : ""}${formatMoney(row.upnl)}`
-                          : "—"}
-                      </td>
-                      <td className="py-3 text-right font-mono tabular-nums">
-                        {Number.isFinite(row.tp) ? formatNumber(row.tp) : "—"}
-                      </td>
-                      <td className="py-3 text-right font-mono tabular-nums">
-                        {Number.isFinite(row.sl) ? formatNumber(row.sl) : "—"}
+                        {formatSignedMoney(row.upnl)}
                       </td>
                       <td className="py-3">
-                        <Badge variant="outline" className={row.protectionClass}>
-                          {row.protectionLabel}
-                        </Badge>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant="outline" className={`${row.protectionClass} text-[10px]`}>
+                            {row.protectionLabel}
+                          </Badge>
+                          {row.hasTrailing ? (
+                            <Badge
+                              variant="outline"
+                              className="border-sky-500/50 text-[10px] text-sky-300"
+                            >
+                              TRAIL
+                            </Badge>
+                          ) : null}
+                          {row.activationHit ? (
+                            <Badge
+                              variant="outline"
+                              className="border-emerald-500/50 text-[10px] text-emerald-400"
+                            >
+                              Active
+                            </Badge>
+                          ) : null}
+                        </div>
                       </td>
                       {showActions && (
                         <td className="py-3 text-right">
                           <Button
-                            variant="destructive"
+                            variant="outline"
                             size="sm"
+                            className="h-8 text-xs"
                             onClick={() => onClosePosition?.(row.raw)}
                           >
                             Close
@@ -252,24 +240,18 @@ export default function PositionsTable({
                     {expanded && (
                       <tr className="border-b border-border/40 bg-background/40">
                         <td
-                          colSpan={showActions ? 9 : 8}
+                          colSpan={showActions ? 7 : 6}
                           className="py-3 pl-12 text-xs text-muted-foreground"
                         >
                           <div className="flex flex-wrap gap-4">
                             <span>
                               Trailing:{" "}
                               <span className="font-mono text-foreground">
-                                {formatNumber(row.raw.trailingStop ?? row.raw.currentTrailingStop)}
+                                {formatNumber(
+                                  row.raw.trailingStop ?? row.raw.currentTrailingStop
+                                )}
                               </span>
                             </span>
-                            {row.raw.openedAt ? (
-                              <span>
-                                Opened:{" "}
-                                <span className="font-mono text-foreground">
-                                  {new Date(row.raw.openedAt).toLocaleString()}
-                                </span>
-                              </span>
-                            ) : null}
                             <span>
                               RRR:{" "}
                               <span className="font-mono text-foreground">
@@ -279,11 +261,24 @@ export default function PositionsTable({
                               </span>
                             </span>
                             <span>
-                              Update:{" "}
-                              <span className="text-foreground">
-                                {row.updateLabel}
+                              TP:{" "}
+                              <span className="font-mono text-foreground">
+                                {Number.isFinite(row.tp) ? formatNumber(row.tp) : "—"}
                               </span>
                             </span>
+                            <span>
+                              SL:{" "}
+                              <span className="font-mono text-foreground">
+                                {Number.isFinite(row.sl) ? formatNumber(row.sl) : "—"}
+                              </span>
+                            </span>
+                            <span>
+                              Update:{" "}
+                              <span className="text-foreground">
+                                {formatClock(row.raw.timestamp)}
+                              </span>
+                            </span>
+                            <span className="text-muted-foreground">{row.updateLabel}</span>
                           </div>
                         </td>
                       </tr>

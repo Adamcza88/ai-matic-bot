@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { RefreshCw, X } from "lucide-react";
 import type { TestnetOrder, TestnetTrade } from "@/types";
 import Panel from "@/components/dashboard/Panel";
 
@@ -19,7 +20,9 @@ type OrdersPanelProps = {
   trades: TestnetTrade[];
   tradesLoaded: boolean;
   useTestnet: boolean;
-  onCancelOrder?: (order: TestnetOrder) => Promise<boolean> | void;
+  onCancelOrder?: (
+    order: TestnetOrder
+  ) => boolean | undefined | Promise<boolean | undefined>;
   allowCancel?: boolean;
 };
 
@@ -37,32 +40,52 @@ function asErrorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err ?? "unknown_error");
 }
 
-function getOrderTypeBadge(order: TestnetOrder) {
+function getOrderTypeTag(order: TestnetOrder) {
   const stopType = String(order.stopOrderType ?? "").trim().toLowerCase();
   const orderType = String(order.orderType ?? "").trim().toLowerCase();
   const typeHint = `${stopType} ${orderType}`.trim();
-  if (!typeHint) return null;
+  if (!typeHint) return "—";
   if (
     stopType === "tp" ||
     stopType === "takeprofit" ||
     typeHint.includes("takeprofit")
   ) {
-    return {
-      label: "TP",
-      className: "border-emerald-500/50 text-emerald-400",
-    };
+    return "TP";
   }
   if (
     stopType === "sl" ||
     stopType === "stoploss" ||
     typeHint.includes("stoploss")
   ) {
-    return {
-      label: "SL",
-      className: "border-red-500/50 text-red-400",
-    };
+    return "SL";
   }
-  return null;
+  return "—";
+}
+
+function formatOrderStatus(status?: string) {
+  const value = String(status ?? "").trim();
+  if (!value) return "—";
+  if (value.toLowerCase() === "untriggered") return "Neaktivní";
+  return value;
+}
+
+function formatOrderTime(value?: string) {
+  if (!value) return "—";
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) return "—";
+  return new Date(ts).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function formatQty(value?: number) {
+  return Number.isFinite(value) ? Number(value).toFixed(2) : "—";
+}
+
+function formatPrice(value?: number | null) {
+  return Number.isFinite(value) ? Number(value).toFixed(4) : "—";
 }
 
 export default function OrdersPanel({
@@ -160,7 +183,7 @@ export default function OrdersPanel({
   return (
     <div className="space-y-6">
       <Panel
-        title={useTestnet ? "Demo orders" : "Mainnet orders"}
+        title={useTestnet ? "Příkazy (DEMO)" : "Příkazy (MAINNET)"}
         action={
           <div className="flex items-center gap-2">
             {ordersError && (
@@ -173,11 +196,12 @@ export default function OrdersPanel({
             )}
             <Button
               variant="outline"
-              size="sm"
+              size="icon"
               onClick={refreshOrders}
-              className="h-8 text-xs"
+              className="h-8 w-8"
+              title="Obnovit příkazy"
             >
-              Refresh
+              <RefreshCw className="h-3.5 w-3.5" />
             </Button>
           </div>
         }
@@ -207,7 +231,7 @@ export default function OrdersPanel({
                   : "text-muted-foreground hover:text-foreground"
               }
             >
-              Selected symbol
+              Symbol
             </Button>
             <Button
               variant={filterMode === "last1h" ? "secondary" : "ghost"}
@@ -263,18 +287,18 @@ export default function OrdersPanel({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[920px] text-sm">
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b border-border/60">
-                  <th className="py-2 text-left font-medium">Symbol</th>
-                  <th className="py-2 text-left font-medium">Side</th>
-                  <th className="py-2 text-right font-medium">Qty</th>
-                  <th className="py-2 text-right font-medium">Price</th>
-                  <th className="py-2 text-left font-medium">Status</th>
-                  <th className="py-2 text-left font-medium">Time</th>
-                  {showActions && (
-                    <th className="py-2 text-right font-medium">Actions</th>
-                  )}
+                  <th className="w-[120px] py-2 text-left font-medium">Symbol</th>
+                  <th className="w-[84px] py-2 text-left font-medium">Side</th>
+                  <th className="w-[92px] py-2 text-right font-medium">Qty</th>
+                  <th className="w-[120px] py-2 text-right font-medium">Price</th>
+                  <th className="w-[120px] py-2 text-right font-medium">TRG</th>
+                  <th className="w-[76px] py-2 text-left font-medium">Tag</th>
+                  <th className="w-[140px] py-2 text-left font-medium">Status</th>
+                  <th className="w-[90px] py-2 text-right font-medium">Time</th>
+                  {showActions && <th className="w-[72px] py-2 text-right font-medium"> </th>}
                 </tr>
               </thead>
               <tbody>
@@ -294,78 +318,35 @@ export default function OrdersPanel({
                       </Badge>
                     </td>
                     <td className="py-3 text-right font-mono tabular-nums">
-                      {Number.isFinite(order.qty) ? order.qty : "—"}
+                      {formatQty(order.qty)}
                     </td>
                     <td className="py-3 text-right font-mono tabular-nums">
-                      {(() => {
-                        const price =
-                          typeof order.price === "number" &&
-                          Number.isFinite(order.price) &&
-                          order.price > 0
-                            ? order.price
-                            : null;
-                        const trigger =
-                          typeof order.triggerPrice === "number" &&
-                          Number.isFinite(order.triggerPrice) &&
-                          order.triggerPrice > 0
-                            ? order.triggerPrice
-                            : null;
-                        if (price) {
-                          return (
-                            <div className="flex flex-col items-end">
-                              <span>{price}</span>
-                              {trigger && (
-                                <span className="text-[10px] uppercase text-muted-foreground">
-                                  trg {trigger}
-                                </span>
-                              )}
-                            </div>
-                          );
-                        }
-                        if (trigger) {
-                          return (
-                            <div className="flex items-center justify-end gap-1">
-                              <span className="text-[10px] uppercase text-muted-foreground">
-                                trg
-                              </span>
-                              <span>{trigger}</span>
-                            </div>
-                          );
-                        }
-                        return "mkt";
-                      })()}
+                      {formatPrice(order.price)}
                     </td>
-                    <td className="py-3 text-xs text-muted-foreground">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {(() => {
-                          const badge = getOrderTypeBadge(order);
-                          return badge ? (
-                            <Badge variant="outline" className={badge.className}>
-                              {badge.label}
-                            </Badge>
-                          ) : null;
-                        })()}
-                        <span>{order.status || "—"}</span>
-                      </div>
+                    <td className="py-3 text-right font-mono tabular-nums">
+                      {formatPrice(order.triggerPrice)}
                     </td>
-                    <td className="py-3 text-xs text-muted-foreground">
-                      {order.createdTime
-                        ? new Date(order.createdTime).toLocaleString()
-                        : "—"}
+                    <td className="py-3 text-left text-xs">
+                      <Badge variant="outline" className="border-border/60 text-muted-foreground">
+                        {getOrderTypeTag(order)}
+                      </Badge>
+                    </td>
+                    <td className="py-3 text-xs text-muted-foreground">{formatOrderStatus(order.status)}</td>
+                    <td className="py-3 text-right text-xs tabular-nums text-muted-foreground">
+                      {formatOrderTime(order.createdTime)}
                     </td>
                     {showActions && (
                       <td className="py-3 text-right text-xs text-muted-foreground">
                         {canCancelOrder(order) ? (
                           <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 whitespace-nowrap border-sky-500/40 text-xs text-sky-300 hover:bg-sky-500/10 hover:text-white"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 border border-border/60"
                             onClick={() => handleCancel(order)}
                             disabled={closingOrderId === order.orderId}
+                            title={closingOrderId === order.orderId ? "Closing..." : "Close order"}
                           >
-                            {closingOrderId === order.orderId
-                              ? "Closing..."
-                              : "Close position"}
+                            <X className="h-3.5 w-3.5" />
                           </Button>
                         ) : (
                           "—"
@@ -391,7 +372,7 @@ export default function OrdersPanel({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="py-2 text-left font-medium">Symbol</th>
@@ -400,7 +381,7 @@ export default function OrdersPanel({
                   <th className="py-2 text-right font-medium">Price</th>
                   <th className="py-2 text-right font-medium">Fee</th>
                   <th className="py-2 text-right font-medium">PnL</th>
-                  <th className="py-2 text-left font-medium">Time</th>
+                  <th className="py-2 text-right font-medium">Time</th>
                 </tr>
               </thead>
               <tbody>
@@ -419,26 +400,12 @@ export default function OrdersPanel({
                         {trade.side}
                       </Badge>
                     </td>
-                    <td className="py-3 text-right font-mono tabular-nums">
-                      {Number.isFinite(trade.qty) ? trade.qty : "—"}
-                    </td>
-                    <td className="py-3 text-right font-mono tabular-nums">
-                      {Number.isFinite(trade.price) ? trade.price : "—"}
-                    </td>
-                    <td className="py-3 text-right font-mono tabular-nums">
-                      {Number.isFinite(trade.fee) ? trade.fee : "—"}
-                    </td>
-                    <td className="py-3 text-right font-mono tabular-nums text-muted-foreground">
-                      —
-                    </td>
-                    <td className="py-3 text-xs text-muted-foreground">
-                      {trade.time
-                        ? new Date(trade.time).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            second: "2-digit",
-                          })
-                        : "—"}
+                    <td className="py-3 text-right font-mono tabular-nums">{formatQty(trade.qty)}</td>
+                    <td className="py-3 text-right font-mono tabular-nums">{formatPrice(trade.price)}</td>
+                    <td className="py-3 text-right font-mono tabular-nums">{formatPrice(trade.fee)}</td>
+                    <td className="py-3 text-right font-mono tabular-nums text-muted-foreground">—</td>
+                    <td className="py-3 text-right text-xs tabular-nums text-muted-foreground">
+                      {formatOrderTime(trade.time)}
                     </td>
                   </tr>
                 ))}

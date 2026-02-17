@@ -66,18 +66,18 @@ function formatClock(ts?: number | null) {
 
 function gateSummary(diag: any, scanLoaded: boolean) {
   if (!scanLoaded || !diag) {
-    return { label: "Gate: N/A", tone: "na" as const };
+    return { label: "—", tone: "na" as const };
   }
   if (!diag?.signalActive) {
-    return { label: "Gate: N/A", tone: "na" as const };
+    return { label: "—", tone: "na" as const };
   }
   if (diag?.executionAllowed === false) {
-    return { label: "Gate: BLOCKED", tone: "blocked" as const };
+    return { label: "BLOCKED", tone: "blocked" as const };
   }
   if (diag?.executionAllowed === true) {
-    return { label: "Gate: PASS", tone: "pass" as const };
+    return { label: "PASS", tone: "pass" as const };
   }
-  return { label: "Gate: N/A", tone: "na" as const };
+  return { label: "—", tone: "na" as const };
 }
 
 function normalizeBlockReason(reason?: string) {
@@ -298,7 +298,7 @@ export default function OverviewTab({
                               : "border-border/60 text-muted-foreground"
                           }
                         >
-                          {row.signalActive ? "Active" : "Idle"}
+                          {row.signalActive ? "Skenuje" : "Idle"}
                         </Badge>
                       </td>
                       <td className="py-2 pr-2">

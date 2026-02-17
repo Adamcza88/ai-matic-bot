@@ -238,18 +238,18 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
   const activeGateNames =
     checklistGatesByProfile[local.riskMode] ?? checklistGatesByProfile["ai-matic"];
   const statusItems = [
-    { label: "Hard gates", value: local.enableHardGates ? "On" : "Off" },
-    { label: "Soft gates", value: local.enableSoftGates ? "On" : "Off" },
+    { label: "Hard", value: local.enableHardGates ? "On" : "Off" },
+    { label: "Soft", value: local.enableSoftGates ? "On" : "Off" },
     {
-      label: "Trend gate",
+      label: "Trend",
       value:
         local.riskMode === "ai-matic-pro"
           ? "Off (PRO)"
           : local.trendGateMode,
     },
-    { label: "Max pos", value: String(local.maxOpenPositions) },
-    { label: "Max orders", value: String(local.maxOpenOrders) },
-    { label: "Symbols", value: local.selectedSymbols.join(", ") },
+    { label: "Max pozic", value: String(local.maxOpenPositions) },
+    { label: "Max příkazů", value: String(local.maxOpenOrders) },
+    { label: "Symboly", value: local.selectedSymbols.join(", ") },
   ];
 
   const AI_MATIC_PRESET_UI: AISettings = {
@@ -548,7 +548,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
       <div className="w-full max-w-lg bg-card text-card-foreground rounded-xl border shadow-lg p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex flex-col space-y-1.5 mb-6">
           <h2 className="text-lg font-semibold leading-none tracking-tight">
-            Settings
+            Nastavení
           </h2>
           <div className="rounded-md border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm text-slate-200">
             <div className="text-[11px] uppercase tracking-wide text-slate-400">
@@ -574,7 +574,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Strategy Profile
+              Profil strategie
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -632,21 +632,21 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
               <button
                 type="button"
                 onClick={resetToPreset}
-                className="text-xs text-slate-500 hover:text-slate-300 underline"
+                className="text-xs text-amber-400/90 underline underline-offset-2 hover:text-amber-300"
               >
-                Reset current profile to defaults
+                Resetovat aktuální profil na výchozí hodnoty
               </button>
             </div>
           </div>
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Strategy Gates
+              Gate pravidla
             </label>
             <div className="grid gap-2">
               <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
                 <div>
-                  <div className="font-medium">Hard podmínky</div>
+                  <div className="font-medium">Hard</div>
                   <div className="text-xs text-secondary-foreground/70 mt-1">
                     Přísné blokace vstupu (spread hard, impulse, stale BBO).
                   </div>
@@ -671,7 +671,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
 
               <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
                 <div>
-                  <div className="font-medium">Soft podmínky</div>
+                  <div className="font-medium">Soft</div>
                   <div className="text-xs text-secondary-foreground/70 mt-1">
                     Jemné snížení risku podle quality score.
                   </div>
@@ -694,9 +694,16 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 </button>
               </div>
               <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
-                <div className="text-xs text-secondary-foreground/70">Checklist gates</div>
-                <div className="mt-1 text-secondary-foreground">
-                  {activeGateNames.join(" · ")}
+                <div className="text-xs text-secondary-foreground/70">Checklist</div>
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                  {activeGateNames.map((gateName) => (
+                    <span
+                      key={gateName}
+                      className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-[11px] text-secondary-foreground"
+                    >
+                      {gateName}
+                    </span>
+                  ))}
                 </div>
               </div>
             </div>
@@ -706,7 +713,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           local.riskMode !== "ai-matic-pro" ? (
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Trend Gate Mode
+                Režim trend gate
               </label>
               <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
                 <select
@@ -732,7 +739,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Entry Strictness
+              Přísnost vstupu
             </label>
             <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
               <select
@@ -750,14 +757,14 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
                 <option value="ultra">Ultra (Sniper)</option>
               </select>
               <div className="text-xs text-secondary-foreground/70">
-                Controls filter sensitivity (Spread, Volume, Trend). Base = Balanced, Strict = Precision, Ultra = Sniper.
+                Citlivost filtrů (Spread, Volume, Trend). Base = Balanced, Strict = Precision, Ultra = Sniper.
               </div>
             </div>
           </div>
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none">
-              Max Positions
+              Max pozic
             </label>
             <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
               <input
@@ -788,7 +795,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none">
-              Max Orders
+              Max příkazů
             </label>
             <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
               <input
@@ -819,7 +826,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
 
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none">
-              Trading Symbols
+              Obchodované symboly
             </label>
             <div className="flex flex-wrap gap-2 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
               {SUPPORTED_SYMBOLS.map((symbol) => {
@@ -871,14 +878,14 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             </div>
             <div className="flex items-center justify-between text-xs text-slate-500">
               <div>
-                View: {compactNotes ? "Compact" : "Full"}
+                Zobrazení: {compactNotes ? "Kompaktní" : "Plné"}
               </div>
               <button
                 type="button"
                 onClick={() => setCompactNotes(!compactNotes)}
                 className="text-sky-400 hover:text-sky-300 underline underline-offset-2"
               >
-                {compactNotes ? "Show all" : "Compact view"}
+                {compactNotes ? "Zobrazit vše" : "Kompaktní režim"}
               </button>
             </div>
           </div>
@@ -886,7 +893,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
           <div className="mt-4 border-t border-slate-800 pt-4">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-sm font-medium text-slate-200">
-                Strategy Notes
+                Poznámky strategie
               </h3>
             </div>
             {renderNoteBlocks(noteBlocks)}
@@ -898,7 +905,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             onClick={onClose}
             className="rounded-md border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
           >
-            Cancel
+            Zrušit
           </button>
           <button
             onClick={() => {
@@ -907,7 +914,7 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
             }}
             className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
           >
-            Save Changes
+            Uložit změny
           </button>
         </div>
       </div>

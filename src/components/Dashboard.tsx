@@ -315,13 +315,25 @@ export default function Dashboard({
     Number.isFinite(totalCapital) && Number.isFinite(riskPerTradePct)
       ? (totalCapital as number) * (riskPerTradePct as number)
       : Number.NaN;
+  const blockedSignalsCount = useMemo(() => {
+    if (!scanDiagnostics) return 0;
+    return Object.values(scanDiagnostics).filter((diag: any) => {
+      if (!diag) return false;
+      if (diag?.executionAllowed === false) return true;
+      if (diag?.symbolState === "HOLD") return true;
+      const entryBlockReasons = Array.isArray(diag?.entryBlockReasons)
+        ? diag.entryBlockReasons
+        : [];
+      return entryBlockReasons.length > 0;
+    }).length;
+  }, [scanDiagnostics]);
   const dailyPnlBreakdown = useMemo(
     () => ({
       realized: dailyPnl,
       fees: Number.NaN,
       funding: Number.NaN,
       other: Number.NaN,
-      note: "Fees and funding are not available in the current closed-PnL payload.",
+      note: "Fees a funding nejsou dostupné v closed-PnL payload.",
     }),
     [dailyPnl]
   );
@@ -365,12 +377,37 @@ export default function Dashboard({
         }}
         className="space-y-4"
       >
-        <TabsList className="w-full justify-start">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="positions">Positions</TabsTrigger>
-          <TabsTrigger value="signals">Signals</TabsTrigger>
-          <TabsTrigger value="orders">Orders</TabsTrigger>
-          <TabsTrigger value="logs">Logs</TabsTrigger>
+        <TabsList className="h-auto w-full justify-start gap-4 rounded-none border-b border-border/60 bg-transparent p-0">
+          <TabsTrigger
+            value="overview"
+            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
+          >
+            Overview
+          </TabsTrigger>
+          <TabsTrigger
+            value="positions"
+            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
+          >
+            Positions ({openPositionsCount})
+          </TabsTrigger>
+          <TabsTrigger
+            value="signals"
+            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
+          >
+            Signals (Blocked {blockedSignalsCount})
+          </TabsTrigger>
+          <TabsTrigger
+            value="orders"
+            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
+          >
+            Orders ({openOrdersCount})
+          </TabsTrigger>
+          <TabsTrigger
+            value="logs"
+            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
+          >
+            Logs
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="overview">
           <OverviewTab

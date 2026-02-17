@@ -37,7 +37,7 @@ function formatSignedMoney(value?: number) {
 
 function formatPct(value?: number) {
   if (!Number.isFinite(value)) return "—";
-  return `${((value as number) * 100).toFixed(2)}%`;
+  return `${((value as number) * 100).toFixed(2)} %`;
 }
 
 export default function KpiRow({
@@ -65,28 +65,17 @@ export default function KpiRow({
       <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
         Today Risk & Performance
       </div>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      <div className="rounded-lg border border-border/60 bg-card/60 p-3">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <div className="text-xs text-muted-foreground">Total capital</div>
-            <div className="mt-2 text-lg font-semibold tabular-nums">
-              {formatMoney(totalCapital)}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground">Allocated</div>
-            <div className="mt-2 text-lg font-semibold tabular-nums">
-              {formatMoney(allocated)}
-            </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+          <div className="text-xs text-muted-foreground">Total capital</div>
+          <div className="mt-2 text-2xl font-semibold tabular-nums">
+            {formatMoney(totalCapital)}
           </div>
         </div>
-      </div>
-      <div className="rounded-lg border border-border/60 bg-card/60 p-3">
-        <div>
+        <div className="rounded-lg border border-border/60 bg-card/60 p-3">
           <div className="text-xs text-muted-foreground">Daily PnL</div>
           <div
-            className={`mt-2 text-lg font-semibold tabular-nums ${pnlTone(
+            className={`mt-2 text-2xl font-semibold tabular-nums ${pnlTone(
               dailyPnl
             )}`}
           >
@@ -99,68 +88,69 @@ export default function KpiRow({
                 {formatSignedMoney(dailyPnlBreakdown?.realized)}
               </span>
             </div>
-            <div className="flex items-center justify-between gap-4">
-              <span>Fees</span>
-              <span className="tabular-nums">
-                {formatSignedMoney(dailyPnlBreakdown?.fees)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <span>Funding</span>
-              <span className="tabular-nums">
-                {formatSignedMoney(dailyPnlBreakdown?.funding)}
-              </span>
-            </div>
-            {dailyPnlBreakdown?.note ? (
-              <div className="pt-1">{dailyPnlBreakdown.note}</div>
+            {Number.isFinite(dailyPnlBreakdown?.fees) ? (
+              <div className="flex items-center justify-between gap-4">
+                <span>Fees</span>
+                <span className="tabular-nums">
+                  {formatSignedMoney(dailyPnlBreakdown?.fees)}
+                </span>
+              </div>
+            ) : null}
+            {Number.isFinite(dailyPnlBreakdown?.funding) ? (
+              <div className="flex items-center justify-between gap-4">
+                <span>Funding</span>
+                <span className="tabular-nums">
+                  {formatSignedMoney(dailyPnlBreakdown?.funding)}
+                </span>
+              </div>
             ) : null}
           </div>
         </div>
-      </div>
-      <div className="rounded-lg border border-border/60 bg-card/60 p-3">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <div className="text-xs text-muted-foreground">Open positions</div>
-            <div className="mt-2 text-lg font-semibold tabular-nums">
-              {openPositions}/{maxOpenPositions}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground">Open PnL</div>
-            <div
-              className={`mt-2 text-lg font-semibold tabular-nums ${pnlTone(
-                openPositionsPnl
-              )}`}
-            >
-              {formatSignedMoney(openPositionsPnl)}
-            </div>
+        <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+          <div className="text-xs text-muted-foreground">Open PnL</div>
+          <div
+            className={`mt-2 text-2xl font-semibold tabular-nums ${pnlTone(
+              openPositionsPnl
+            )}`}
+          >
+            {formatSignedMoney(openPositionsPnl)}
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-4">
-          <div>
-            <div className="text-xs text-muted-foreground">Open orders</div>
-            <div className="mt-2 text-lg font-semibold tabular-nums">
-              {openOrders}/{maxOpenOrders}
-            </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+          <div className="text-xs text-muted-foreground">Positions</div>
+          <div className="mt-2 text-lg font-semibold tabular-nums">
+            {openPositions}/{maxOpenPositions}
           </div>
-          <div />
+        </div>
+        <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+          <div className="text-xs text-muted-foreground">Orders</div>
+          <div className="mt-2 text-lg font-semibold tabular-nums">
+            {openOrders}/{maxOpenOrders}
+          </div>
+        </div>
+        <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+          <div className="text-xs text-muted-foreground">Risk per trade</div>
+          <div className="mt-2 text-lg font-semibold tabular-nums">
+            {formatPct(riskPerTradePct)}{" "}
+            <span className="text-sm text-muted-foreground">
+              ({Number.isFinite(riskPerTradeUsd) ? `≈ ${formatMoney(riskPerTradeUsd)}` : "N/A"})
+            </span>
+          </div>
+        </div>
+        <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+          <div className="text-xs text-muted-foreground">Allocated (limit)</div>
+          <div className="mt-2 text-lg font-semibold tabular-nums">
+            {formatMoney(allocated)}
+          </div>
         </div>
       </div>
-      <div className="rounded-lg border border-border/60 bg-card/60 p-3">
-        <div className="text-xs text-muted-foreground">Risk per trade</div>
-        <div className="mt-2 text-lg font-semibold tabular-nums">
-          {formatPct(riskPerTradePct)}
+      {dailyPnlBreakdown?.note ? (
+        <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-[11px] text-muted-foreground">
+          {dailyPnlBreakdown.note}
         </div>
-        <div className="mt-2 text-xs text-muted-foreground">
-          {Number.isFinite(riskPerTradeUsd)
-            ? `≈ ${formatMoney(riskPerTradeUsd)}`
-            : "N/A"}
-        </div>
-        <div className="mt-3 text-[11px] text-muted-foreground">
-          Based on current total capital.
-        </div>
-      </div>
-    </div>
+      ) : null}
     </section>
   );
 }
