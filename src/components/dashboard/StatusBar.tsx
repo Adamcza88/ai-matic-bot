@@ -54,7 +54,7 @@ export default function StatusBar({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
-              Strategy
+              System status
             </div>
             <div className="text-lg font-semibold leading-tight">{title}</div>
             {subtitle && (
@@ -80,8 +80,8 @@ export default function StatusBar({
                   }
                   className={
                     useTestnet
-                      ? "bg-muted text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? "min-w-20 bg-muted text-foreground"
+                      : "min-w-20 text-muted-foreground hover:text-foreground"
                   }
                 >
                   DEMO
@@ -99,8 +99,8 @@ export default function StatusBar({
                   }
                   className={
                     !useTestnet
-                      ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? "min-w-20 bg-emerald-600 text-white hover:bg-emerald-700"
+                      : "min-w-20 text-muted-foreground hover:text-foreground"
                   }
                 >
                   MAINNET
@@ -108,7 +108,7 @@ export default function StatusBar({
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>Execution</span>
+              <span>Execution mode</span>
               <div className="flex items-center rounded-md border border-border/60 bg-background/60 p-0.5">
                 {MODE_OPTIONS.map((m) => (
                   <Button
@@ -121,8 +121,8 @@ export default function StatusBar({
                     onClick={() => setMode(m)}
                     className={
                       mode === m
-                        ? "bg-sky-600 text-white hover:bg-sky-700"
-                        : "text-muted-foreground hover:text-foreground"
+                        ? "min-w-20 bg-sky-600 text-white hover:bg-sky-700"
+                        : "min-w-20 text-muted-foreground hover:text-foreground"
                     }
                   >
                     {MODE_LABELS[m]}
@@ -135,16 +135,19 @@ export default function StatusBar({
                 variant="outline"
                 className={
                   isConnected
-                    ? "border-emerald-500/50 text-emerald-400"
+                    ? "min-w-28 justify-center border-emerald-500/50 text-emerald-400"
                     : isError
-                      ? "border-red-500/50 text-red-400"
-                      : "border-amber-500/50 text-amber-400"
+                      ? "min-w-28 justify-center border-red-500/50 text-red-400"
+                      : "min-w-28 justify-center border-amber-500/50 text-amber-400"
                 }
               >
                 Bybit {bybitStatus}
               </Badge>
               {latencyLabel && (
-                <Badge variant="outline" className="border-border/60 text-foreground">
+                <Badge
+                  variant="outline"
+                  className="min-w-20 justify-center border-border/60 text-foreground"
+                >
                   {latencyLabel}
                 </Badge>
               )}
@@ -152,8 +155,8 @@ export default function StatusBar({
                 variant="outline"
                 className={
                   engineStatus === "Running"
-                    ? "border-emerald-500/50 text-emerald-400"
-                    : "border-amber-500/50 text-amber-400"
+                    ? "min-w-28 justify-center border-emerald-500/50 text-emerald-400"
+                    : "min-w-28 justify-center border-amber-500/50 text-amber-400"
                 }
               >
                 Engine {engineStatus}

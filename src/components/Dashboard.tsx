@@ -13,6 +13,14 @@ import SignalsAccordion from "./dashboard/SignalsAccordion";
 import LogsPanel from "./dashboard/LogsPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
 
+const RISK_PCT_BY_MODE = {
+  "ai-matic": 0.004,
+  "ai-matic-x": 0.003,
+  "ai-matic-scalp": 0.0025,
+  "ai-matic-tree": 0.003,
+  "ai-matic-pro": 0.003,
+} as const;
+
 type DashboardProps = {
   mode: TradingMode;
   setMode: (m: TradingMode) => void;
@@ -88,6 +96,7 @@ export default function Dashboard({
         timeframes: "15m trend · 1m entry",
         session: "24/7",
         risk: "Risk 0.25% equity/trade · notional cap ~1% equity",
+        riskPct: RISK_PCT_BY_MODE["ai-matic-scalp"],
         entry: "Fibo retrace + 1 potvrzení (OB/GAP/VP/EMA TL)",
         execution: "TP Fibo extension (dynamic) · ATR trailing 2.5x",
       };
@@ -100,6 +109,7 @@ export default function Dashboard({
         timeframes: "15m vstup · 1h kontext",
         session: "24/7",
         risk: "2 vstupy (60 % / 40 %) · TP1 0.9–1.2 % · TP2 2–3 %",
+        riskPct: RISK_PCT_BY_MODE["ai-matic-x"],
         entry: "Entry 1: reakce z OB/sweep · Entry 2: retest OB/GAP/Fibo",
         execution: "SL pod strukturu/OB + ATR buffer · trailing 1.0R",
       };
@@ -114,6 +124,7 @@ export default function Dashboard({
         timeframes: "HTF 1h/15m · LTF 5m/1m",
         session: "24/7",
         risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
+        riskPct: RISK_PCT_BY_MODE["ai-matic-tree"],
         entry: `Strictness: ${strictness.toUpperCase()} · Momentum/Pullback/Breakout`,
         execution: "TP 2.2R + partial 1R · time stop ~2h",
       };
@@ -126,6 +137,7 @@ export default function Dashboard({
         timeframes: "1h režim · 15m/mid · 5m entry · 1m exec",
         session: "24/7",
         risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
+        riskPct: RISK_PCT_BY_MODE["ai-matic-pro"],
         entry: "VA edge + OFI/Delta absorpce",
         execution: "T1 VWAP/mid (60%) · T2 POC/VAH/VAL · time stop 10 svíček/60m",
       };
@@ -137,6 +149,7 @@ export default function Dashboard({
       timeframes: "HTF 1h · 15m · LTF 5m",
       session: "POI priorita: Breaker > OB > FVG > Liquidity",
       risk: "Risk 0.40% equity/trade · notional cap ~1% equity",
+      riskPct: RISK_PCT_BY_MODE["ai-matic"],
       entry: "Entry 1/2 (60/40): OB reakce/sweep návrat + retest OB/GAP",
       execution: "SL pod strukturu/OB + ATR buffer · TP1 0.9–1.2% (70%) · TP2 2–3% · trailing +1.0%",
     };
@@ -297,6 +310,21 @@ export default function Dashboard({
   const totalCapital =
     portfolioState?.totalCapital ?? portfolioState?.totalEquity;
   const allocated = portfolioState?.allocatedCapital;
+  const riskPerTradePct = profileMeta.riskPct;
+  const riskPerTradeUsd =
+    Number.isFinite(totalCapital) && Number.isFinite(riskPerTradePct)
+      ? (totalCapital as number) * (riskPerTradePct as number)
+      : Number.NaN;
+  const dailyPnlBreakdown = useMemo(
+    () => ({
+      realized: dailyPnl,
+      fees: Number.NaN,
+      funding: Number.NaN,
+      other: Number.NaN,
+      note: "Fees and funding are not available in the current closed-PnL payload.",
+    }),
+    [dailyPnl]
+  );
   const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";
 
   return (
@@ -317,11 +345,14 @@ export default function Dashboard({
         totalCapital={totalCapital}
         allocated={allocated}
         dailyPnl={dailyPnl}
+        dailyPnlBreakdown={dailyPnlBreakdown}
         openPositionsPnl={openPositionsPnl}
         openPositions={openPositionsCount}
         maxOpenPositions={maxOpenPositions}
         openOrders={openOrdersCount}
         maxOpenOrders={maxOpenOrders}
+        riskPerTradePct={riskPerTradePct}
+        riskPerTradeUsd={riskPerTradeUsd}
       />
 
       <Tabs
@@ -353,7 +384,8 @@ export default function Dashboard({
             lastScanTs={lastScanTs}
             logEntries={logEntries}
             logsLoaded={logsLoaded}
-            useTestnet={useTestnet}
+            totalCapital={totalCapital}
+            riskPerTradePct={riskPerTradePct}
             onOpenSettings={() => setShowSettings(true)}
           />
         </TabsContent>
