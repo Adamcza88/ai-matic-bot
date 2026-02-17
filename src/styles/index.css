@@ -518,4 +518,46 @@
   .border-cyan-600 {
     border-color: hsl(var(--secondary));
   }
+
+  .dashboard-tile {
+    border-radius: 14px;
+  }
+
+  .dashboard-tile-a {
+    min-height: 102px;
+  }
+
+  .dashboard-tile-b {
+    min-height: 86px;
+  }
+
+  .dashboard-tab-viewport {
+    max-height: 560px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .dashboard-right-stack {
+    position: sticky;
+    top: 24px;
+  }
+
+  .dashboard-detail-panel {
+    min-height: 420px;
+    max-height: 520px;
+    overflow-y: auto;
+  }
+
+  .dashboard-strategy-mini {
+    min-height: 180px;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+
+  @media (max-width: 1279px) {
+    .dashboard-right-stack {
+      position: static;
+      top: auto;
+    }
+  }
 }

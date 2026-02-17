@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Symbol } from "../api/types";
 import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../constants/symbols";
 import { AISettings } from "../types";
+import ApiKeysManager from "./ApiKeysManager";
 
 interface Props {
   theme: string;
@@ -9,6 +10,14 @@ interface Props {
   settings: AISettings;
   onUpdateSettings: (s: AISettings) => void;
   onClose: () => void;
+  userEmail: string;
+  isGuest: boolean;
+  missingServices: string[];
+  keysError: string | null;
+  onSignOut: () => void;
+  onToggleTheme: () => void;
+  apiKeysUserId: string;
+  onKeysUpdated: () => void | Promise<void>;
 }
 
 type NoteBlock = { title?: string; lines: string[] };
@@ -107,7 +116,20 @@ function compactLine(line: string, maxLen = 140): string {
   return text;
 }
 
-const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose }) => {
+const SettingsPanel: React.FC<Props> = ({
+  settings,
+  onUpdateSettings,
+  onClose,
+  userEmail,
+  isGuest,
+  missingServices,
+  keysError,
+  onSignOut,
+  onToggleTheme,
+  apiKeysUserId,
+  onKeysUpdated,
+  theme,
+}) => {
   const [local, setLocal] = useState(settings);
   const [compactNotes, setCompactNotes] = useState(true);
   const profileSettingsRef = useRef<ProfileSettingsMap>(
@@ -572,6 +594,57 @@ const SettingsPanel: React.FC<Props> = ({ settings, onUpdateSettings, onClose })
         </div>
 
         <div className="grid gap-4 py-4">
+          <div className="grid gap-2 rounded-md border border-input bg-slate-800 px-3 py-3 text-sm text-secondary-foreground">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-secondary-foreground/70">
+                  Account
+                </div>
+                <div className="font-medium">{userEmail || (isGuest ? "Guest" : "Unknown")}</div>
+              </div>
+              <div className="text-xs text-secondary-foreground/70">
+                Theme: {theme === "dark" ? "Dark" : "Light"}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={onToggleTheme}
+                className="rounded-md border border-slate-700 bg-slate-900/40 px-3 py-1.5 text-xs text-slate-200"
+              >
+                Toggle theme
+              </button>
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="rounded-md border border-red-500/40 bg-red-900/20 px-3 py-1.5 text-xs text-red-200"
+              >
+                Sign out
+              </button>
+            </div>
+
+            {keysError ? (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-300">
+                {keysError}
+              </div>
+            ) : null}
+            {missingServices.length > 0 ? (
+              <div className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-300">
+                Missing API keys: {missingServices.join(", ")}
+              </div>
+            ) : (
+              <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300">
+                API keys status: OK
+              </div>
+            )}
+          </div>
+
+          <ApiKeysManager
+            userId={apiKeysUserId}
+            onKeysUpdated={onKeysUpdated}
+          />
+
           <div className="grid gap-2">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Profil strategie

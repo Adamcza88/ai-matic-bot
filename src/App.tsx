@@ -4,13 +4,9 @@ import { useTradingBot } from "./hooks/useTradingBot";
 import Dashboard from "./components/Dashboard";
 import LoginCard from "./components/LoginCard";
 import NotReleased from "./components/NotReleased";
-import ApiKeysManager, { SERVICE_OPTIONS } from "./components/ApiKeysManager";
+import { SERVICE_OPTIONS } from "./components/ApiKeysManager";
 import { useAuth } from "./hooks/useAuth";
 import { supabase } from "./lib/supabaseClient";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { LogOut, Moon, Settings, Sun, User } from "lucide-react";
-import Logo from "./components/Logo";
 
 // Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
 const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
@@ -30,7 +26,7 @@ export default function App() {
       const saved = localStorage.getItem("ai-matic-useTestnet");
       if (saved !== null) return saved === "true";
     }
-    return false; // Default to MAINNET
+    return false;
   });
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     if (typeof localStorage !== "undefined") {
@@ -57,7 +53,7 @@ export default function App() {
       root.classList.remove("dark");
     }
   }, [theme]);
-  const [showKeyPanel, setShowKeyPanel] = useState(false);
+
   const [missingServices, setMissingServices] = useState<string[]>([]);
   const [keysError, setKeysError] = useState<string | null>(null);
   const [isGuest, setIsGuest] = useState(false);
@@ -89,7 +85,6 @@ export default function App() {
         "Supabase is not configured (VITE_SUPABASE_URL/KEY). Unable to load API keys."
       );
       setMissingServices(missing);
-      setShowKeyPanel(true);
       return;
     }
     setKeysError(null);
@@ -119,9 +114,6 @@ export default function App() {
       (opt) => opt.label
     );
     setMissingServices(missing);
-    if (missing.length > 0) {
-      setShowKeyPanel(true);
-    }
   }, [auth.user]);
 
   useEffect(() => {
@@ -131,10 +123,7 @@ export default function App() {
   }, [auth.status, auth.user, refreshKeyStatus]);
 
   const missingMainnet = useMemo(
-    () =>
-      missingServices.some((s) =>
-        s.toLowerCase().includes("mainnet")
-      ),
+    () => missingServices.some((s) => s.toLowerCase().includes("mainnet")),
     [missingServices]
   );
   const missingDemo = useMemo(
@@ -145,20 +134,17 @@ export default function App() {
     () => ({
       canUseMainnet: !missingMainnet,
       canUseDemo: !missingDemo,
-      mainnetReason: missingMainnet
-        ? "Missing mainnet API keys"
-        : undefined,
+      mainnetReason: missingMainnet ? "Missing mainnet API keys" : undefined,
       demoReason: missingDemo ? "Missing demo API keys" : undefined,
     }),
     [missingDemo, missingMainnet]
   );
 
-  // Pokud chybí mainnetové klíče, automaticky přepnout na demo, aby se API volání nesypala.
   useEffect(() => {
-    const missingMainnet = missingServices.some((s) =>
+    const currentMissingMainnet = missingServices.some((s) =>
       s.toLowerCase().includes("mainnet")
     );
-    if (!useTestnet && missingMainnet) {
+    if (!useTestnet && currentMissingMainnet) {
       setUseTestnet(true);
     }
   }, [missingServices, useTestnet]);
@@ -191,8 +177,16 @@ export default function App() {
     return <NotReleased message="Unable to verify access." />;
   }
 
+  const handleSignOut = () => {
+    if (isGuest) {
+      setIsGuest(false);
+      return;
+    }
+    auth.signOut();
+  };
+
   return (
-    <div className="min-h-screen bg-background text-foreground p-6 relative isolate app-shell tva-dashboard">
+    <div className="min-h-screen bg-background text-foreground relative isolate app-shell tva-dashboard">
       <div
         className="absolute inset-0 opacity-10 -z-10 app-shell-bg-art"
         style={{
@@ -202,98 +196,6 @@ export default function App() {
           backgroundRepeat: "no-repeat",
         }}
       />
-      <header className="mb-6 flex flex-col gap-5 rounded-xl border border-border/70 bg-card/96 p-4 shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] sm:flex-row sm:items-center sm:justify-between lm-panel dm-surface">
-        <div className="flex items-center gap-4">
-          <Logo className="w-10 h-10 text-primary" />
-          <div>
-            <div className="font-bold text-xl tracking-tight">AI Matic</div>
-            <div className="text-muted-foreground text-sm flex items-center gap-2">
-              <User className="w-3 h-3" />
-              Signed in as {userEmail}
-            </div>
-          </div>
-        </div>
-        <div className="flex gap-2 items-center">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="border-border/60 text-foreground hover:bg-accent hover:text-accent-foreground"
-          >
-            {theme === "dark" ? (
-              <Sun className="w-4 h-4 mr-2" />
-            ) : (
-              <Moon className="w-4 h-4 mr-2" />
-            )}
-            {theme === "dark" ? "Light" : "Dark"}
-          </Button>
-          <Button
-            variant={missingServices.length > 0 ? "destructive" : "outline"}
-            size="sm"
-            onClick={() => setShowKeyPanel((v) => !v)}
-            className={
-              missingServices.length > 0
-                ? "bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20"
-                : "border-border/60 text-foreground hover:bg-accent hover:text-accent-foreground"
-            }
-          >
-            <Settings className="w-4 h-4 mr-2" />
-            Profile / API keys
-            {missingServices.length > 0 && (
-              <Badge variant="destructive" className="ml-2 px-1.5 py-0.5 h-5">
-                {missingServices.length}
-              </Badge>
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              if (isGuest) {
-                setIsGuest(false);
-              } else {
-                auth.signOut();
-              }
-            }}
-            className="text-muted-foreground hover:text-foreground hover:bg-accent"
-          >
-            <LogOut className="w-4 h-4 mr-2" />
-            Sign out
-          </Button>
-        </div>
-      </header>
-
-      {missingServices.length > 0 && !showKeyPanel && (
-        <div className="mb-6 p-4 rounded-xl border border-red-500/30 bg-red-500/10 flex items-center justify-between gap-4">
-          <div>
-            <div className="font-bold text-red-400">
-              {missingServices.length === 1
-                ? "Missing API key"
-                : "Missing API keys"}
-            </div>
-            <div className="text-sm text-red-300/80">
-              Please add: {missingServices.join(", ")}
-            </div>
-            {keysError && (
-              <div className="text-amber-400 mt-1.5 text-xs">{keysError}</div>
-            )}
-          </div>
-          <Button
-            size="sm"
-            onClick={() => setShowKeyPanel(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold border-none"
-          >
-            Open settings
-          </Button>
-        </div>
-      )}
-
-      {showKeyPanel && (
-        <ApiKeysManager
-          userId={isGuest ? "guest" : auth.user?.id ?? ""}
-          onKeysUpdated={refreshKeyStatus}
-        />
-      )}
 
       <Dashboard
         mode={mode}
@@ -303,6 +205,16 @@ export default function App() {
         theme={theme}
         envAvailability={envAvailability}
         bot={bot}
+        userEmail={userEmail}
+        isGuest={isGuest}
+        missingServices={missingServices}
+        keysError={keysError}
+        onSignOut={handleSignOut}
+        onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+        apiKeysUserId={isGuest ? "guest" : auth.user?.id ?? ""}
+        onKeysUpdated={() => {
+          void refreshKeyStatus();
+        }}
       />
     </div>
   );

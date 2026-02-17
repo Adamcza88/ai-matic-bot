@@ -1,4 +1,3 @@
-// src/components/Dashboard.tsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TradingMode } from "../types";
 import type { TradingBotApi } from "../hooks/useTradingBot";
@@ -11,6 +10,9 @@ import PositionsTable from "./dashboard/PositionsTable";
 import OrdersPanel from "./dashboard/OrdersPanel";
 import SignalsAccordion from "./dashboard/SignalsAccordion";
 import LogsPanel from "./dashboard/LogsPanel";
+import SignalDetailPanel from "./dashboard/SignalDetailPanel";
+import StrategyProfileMini from "./dashboard/StrategyProfileMini";
+import RecentEventsPanel from "./dashboard/RecentEventsPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
 
 const RISK_PCT_BY_MODE = {
@@ -34,6 +36,14 @@ type DashboardProps = {
     mainnetReason?: string;
   };
   bot: TradingBotApi;
+  userEmail: string;
+  isGuest: boolean;
+  missingServices: string[];
+  keysError: string | null;
+  onSignOut: () => void;
+  onToggleTheme: () => void;
+  apiKeysUserId: string;
+  onKeysUpdated: () => void | Promise<void>;
 };
 
 export default function Dashboard({
@@ -44,6 +54,14 @@ export default function Dashboard({
   theme,
   envAvailability,
   bot,
+  userEmail,
+  isGuest,
+  missingServices,
+  keysError,
+  onSignOut,
+  onToggleTheme,
+  apiKeysUserId,
+  onKeysUpdated,
 }: DashboardProps) {
   const {
     systemState,
@@ -153,14 +171,16 @@ export default function Dashboard({
       risk: "Risk 0.40% equity/trade · notional cap ~1% equity",
       riskPct: RISK_PCT_BY_MODE["ai-matic"],
       entry: "Entry 1/2 (60/40): OB reakce/sweep návrat + retest OB/GAP",
-      execution: "SL pod strukturu/OB + ATR buffer · TP1 0.9–1.2% (70%) · TP2 2–3% · trailing +1.0%",
+      execution:
+        "SL pod strukturu/OB + ATR buffer · TP1 0.9–1.2% (70%) · TP2 2–3% · trailing +1.0%",
     };
   }, [bot.settings?.entryStrictness, bot.settings?.maxOpenPositions, riskMode]);
 
   const selectedSymbols =
     bot.settings?.selectedSymbols?.length ? bot.settings.selectedSymbols : null;
-  const allowedSymbols =
-    selectedSymbols ?? profileMeta.symbols;
+  const allowedSymbols = (selectedSymbols ?? profileMeta.symbols).map((symbol) =>
+    String(symbol)
+  );
 
   const exchangeOrders = ordersLoaded ? testnetOrders : [];
   const exchangeTrades = tradesLoaded ? testnetTrades : [];
@@ -302,6 +322,19 @@ export default function Dashboard({
     setChecklistEnabled(CHECKLIST_DEFAULTS);
   }, [CHECKLIST_DEFAULTS]);
   const [showSettings, setShowSettings] = useState(false);
+  const [selectedSignalSymbol, setSelectedSignalSymbol] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!allowedSymbols.length) {
+      setSelectedSignalSymbol(null);
+      return;
+    }
+    if (selectedSignalSymbol && allowedSymbols.includes(selectedSignalSymbol)) return;
+    const blocked = allowedSymbols.find(
+      (symbol) => scanDiagnostics?.[symbol]?.executionAllowed === false
+    );
+    setSelectedSignalSymbol(blocked ?? allowedSymbols[0]);
+  }, [allowedSymbols, scanDiagnostics, selectedSignalSymbol]);
 
   const rawMaxOpenPositions =
     portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
@@ -317,6 +350,7 @@ export default function Dashboard({
     Number.isFinite(totalCapital) && Number.isFinite(riskPerTradePct)
       ? (totalCapital as number) * (riskPerTradePct as number)
       : Number.NaN;
+
   const blockedSignalsCount = useMemo(() => {
     if (!scanDiagnostics) return 0;
     return Object.values(scanDiagnostics).filter((diag: any) => {
@@ -329,6 +363,38 @@ export default function Dashboard({
       return entryBlockReasons.length > 0;
     }).length;
   }, [scanDiagnostics]);
+
+  const gateStats = useMemo(() => {
+    let pass = 0;
+    let total = 0;
+    const gateSet = new Set(checklistGateNames);
+    allowedSymbols.forEach((symbol) => {
+      const diag = scanDiagnostics?.[symbol];
+      const gates = Array.isArray(diag?.gates) ? diag.gates : [];
+      gates.forEach((gate: any) => {
+        if (!gateSet.has(gate.name)) return;
+        total += 1;
+        if (gate.ok) pass += 1;
+      });
+    });
+    return { pass, total };
+  }, [allowedSymbols, checklistGateNames, scanDiagnostics]);
+
+  const feedStats = useMemo(() => {
+    const ages: number[] = [];
+    let ok = true;
+    allowedSymbols.forEach((symbol) => {
+      const diag = scanDiagnostics?.[symbol];
+      const age = Number(diag?.feedAgeMs);
+      if (Number.isFinite(age)) ages.push(age);
+      if (diag?.feedAgeOk === false) ok = false;
+    });
+    return {
+      maxAge: ages.length ? Math.max(...ages) : undefined,
+      ok,
+    };
+  }, [allowedSymbols, scanDiagnostics]);
+
   const dailyPnlBreakdown = useMemo(
     () => ({
       realized: dailyPnl,
@@ -340,159 +406,181 @@ export default function Dashboard({
     [dailyPnl]
   );
   const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";
-  const isTvaTheme = theme === "light";
-  const dashboardTitle = isTvaTheme ? "Temporal Risk Authority" : profileMeta.label;
-  const dashboardSubtitle = isTvaTheme
-    ? "Multi-TF Stability Engine · Clearance Level 6"
-    : profileMeta.subtitle;
 
   return (
-    <div className="space-y-6">
-        <StatusBar
-          title={dashboardTitle}
-          subtitle={dashboardSubtitle}
-          mode={mode}
-          setMode={setMode}
-          useTestnet={useTestnet}
-          setUseTestnet={setUseTestnet}
-          theme={theme}
-          systemState={systemState}
-          engineStatus={engineStatus}
-          envAvailability={envAvailability}
-        />
-
-      <div className="h-0.5 w-full bg-border/80 lm-section-divider" />
-
-      <KpiRow
-        theme={theme}
-        totalCapital={totalCapital}
-        allocated={allocated}
-        dailyPnl={dailyPnl}
-        dailyPnlBreakdown={dailyPnlBreakdown}
-        openPositionsPnl={openPositionsPnl}
-        openPositions={openPositionsCount}
-        maxOpenPositions={maxOpenPositions}
-        openOrders={openOrdersCount}
-        maxOpenOrders={maxOpenOrders}
-        riskPerTradePct={riskPerTradePct}
-        riskPerTradeUsd={riskPerTradeUsd}
-      />
-
-      <div className="h-0.5 w-full bg-border/80 lm-section-divider" />
-
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => {
-          setActiveTab(value);
-          if (value === "logs" || value === "overview") {
-            refreshTestnetOrders();
-          }
-        }}
-        className="space-y-4"
-      >
-        <TabsList className="h-auto w-full justify-start gap-4 rounded-none border-b border-border/60 bg-transparent p-0">
-          <TabsTrigger
-            value="overview"
-            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
-          >
-            Overview
-          </TabsTrigger>
-          <TabsTrigger
-            value="positions"
-            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
-          >
-            Positions ({openPositionsCount})
-          </TabsTrigger>
-          <TabsTrigger
-            value="signals"
-            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
-          >
-            Signals (Blocked {blockedSignalsCount})
-          </TabsTrigger>
-          <TabsTrigger
-            value="orders"
-            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
-          >
-            Orders ({openOrdersCount})
-          </TabsTrigger>
-          <TabsTrigger
-            value="logs"
-            className="rounded-none border-b-2 border-transparent px-0 pb-2 pt-1 data-[state=active]:border-primary data-[state=active]:bg-primary/15 data-[state=active]:shadow-none"
-          >
-            Logs
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="overview">
-          <OverviewTab
-            profileMeta={profileMeta}
-            allowedSymbols={allowedSymbols}
-            assetPnlHistory={assetPnlHistory}
-            pnlLoaded={pnlLoaded}
-            resetPnlHistory={resetPnlHistory}
-            scanDiagnostics={scanDiagnostics}
-            scanLoaded={scanLoaded}
+    <div className="mx-auto max-w-[1360px] px-6 pt-6 pb-4">
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12">
+          <StatusBar
+            title={profileMeta.label}
+            subtitle={profileMeta.subtitle}
+            mode={mode}
+            setMode={setMode}
+            useTestnet={useTestnet}
+            setUseTestnet={setUseTestnet}
+            systemState={systemState}
+            engineStatus={engineStatus}
             lastScanTs={lastScanTs}
-            logEntries={logEntries}
-            logsLoaded={logsLoaded}
-            totalCapital={totalCapital}
-            riskPerTradePct={riskPerTradePct}
+            envAvailability={envAvailability}
             onOpenSettings={() => setShowSettings(true)}
           />
-        </TabsContent>
-        <TabsContent value="positions">
-          <PositionsTable
-            positions={positionsLoaded ? activePositions : []}
-            positionsLoaded={positionsLoaded}
-            onClosePosition={manualClosePosition}
-            allowClose={allowPositionClose}
+        </div>
+
+        <div className="col-span-12">
+          <KpiRow
+            totalCapital={totalCapital}
+            allocated={allocated}
+            dailyPnl={dailyPnl}
+            dailyPnlBreakdown={dailyPnlBreakdown}
+            openPositionsPnl={openPositionsPnl}
+            openPositions={openPositionsCount}
+            maxOpenPositions={maxOpenPositions}
+            openOrders={openOrdersCount}
+            maxOpenOrders={maxOpenOrders}
+            riskPerTradePct={riskPerTradePct}
+            riskPerTradeUsd={riskPerTradeUsd}
+            blockedSignals={blockedSignalsCount}
+            gatesPassCount={gateStats.pass}
+            gatesTotal={gateStats.total}
+            feedAgeMs={feedStats.maxAge}
+            feedOk={feedStats.ok}
+            latencyMs={systemState.latency}
           />
-        </TabsContent>
-          <TabsContent value="signals">
-            <SignalsAccordion
-              theme={theme}
-              allowedSymbols={allowedSymbols}
+        </div>
+
+        <div className="col-span-12 xl:col-span-8">
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => {
+              setActiveTab(value);
+              if (value === "logs" || value === "overview") {
+                refreshTestnetOrders();
+              }
+            }}
+            className="space-y-3"
+          >
+            <TabsList className="h-12 w-full justify-start gap-2 rounded-xl border border-border/60 bg-card/80 p-1">
+              <TabsTrigger value="overview" className="h-10 px-3 text-sm">
+                Overview
+              </TabsTrigger>
+              <TabsTrigger value="positions" className="h-10 px-3 text-sm">
+                Positions ({openPositionsCount})
+              </TabsTrigger>
+              <TabsTrigger value="signals" className="h-10 px-3 text-sm">
+                Signals ({allowedSymbols.length})
+              </TabsTrigger>
+              <TabsTrigger value="orders" className="h-10 px-3 text-sm">
+                Orders ({openOrdersCount})
+              </TabsTrigger>
+              <TabsTrigger value="logs" className="h-10 px-3 text-sm">
+                Logs
+              </TabsTrigger>
+            </TabsList>
+
+            <div className="dashboard-tab-viewport">
+              <TabsContent value="overview" className="mt-0">
+                <OverviewTab
+                  allowedSymbols={allowedSymbols}
+                  assetPnlHistory={assetPnlHistory}
+                  pnlLoaded={pnlLoaded}
+                  resetPnlHistory={resetPnlHistory}
+                  scanDiagnostics={scanDiagnostics}
+                  scanLoaded={scanLoaded}
+                  lastScanTs={lastScanTs}
+                />
+              </TabsContent>
+
+              <TabsContent value="positions" className="mt-0">
+                <PositionsTable
+                  positions={positionsLoaded ? activePositions : []}
+                  positionsLoaded={positionsLoaded}
+                  onClosePosition={manualClosePosition}
+                  allowClose={allowPositionClose}
+                />
+              </TabsContent>
+
+              <TabsContent value="signals" className="mt-0">
+                <SignalsAccordion
+                  allowedSymbols={allowedSymbols}
+                  scanDiagnostics={scanDiagnostics}
+                  scanLoaded={scanLoaded}
+                  lastScanTs={lastScanTs}
+                  checklistEnabled={checklistEnabled}
+                  resetChecklist={resetChecklist}
+                  profileGateNames={checklistGateNames}
+                  selectedSymbol={selectedSignalSymbol}
+                  onSelectSymbol={setSelectedSignalSymbol}
+                />
+              </TabsContent>
+
+              <TabsContent value="orders" className="mt-0">
+                <OrdersPanel
+                  orders={exchangeOrders}
+                  trades={exchangeTrades}
+                  ordersLoaded={ordersLoaded}
+                  tradesLoaded={tradesLoaded}
+                  onCancelOrder={cancelOrder}
+                  allowCancel={allowOrderCancel}
+                  refreshOrders={refreshOrders}
+                  ordersError={ordersError}
+                  useTestnet={useTestnet}
+                />
+              </TabsContent>
+
+              <TabsContent value="logs" className="mt-0">
+                <LogsPanel
+                  logEntries={logEntries}
+                  logsLoaded={logsLoaded}
+                  useTestnet={useTestnet}
+                  isActive={activeTab === "logs"}
+                />
+              </TabsContent>
+            </div>
+          </Tabs>
+        </div>
+
+        <div className="col-span-12 xl:col-span-4">
+          <div className="dashboard-right-stack space-y-4">
+            <SignalDetailPanel
+              selectedSymbol={selectedSignalSymbol}
               scanDiagnostics={scanDiagnostics}
               scanLoaded={scanLoaded}
-              lastScanTs={lastScanTs}
               checklistEnabled={checklistEnabled}
               toggleChecklist={toggleChecklist}
-              resetChecklist={resetChecklist}
-              mode={mode}
               profileGateNames={checklistGateNames}
             />
-          </TabsContent>
-          <TabsContent value="orders">
-            <OrdersPanel
-              orders={exchangeOrders}
-              trades={exchangeTrades}
-              ordersLoaded={ordersLoaded}
-              tradesLoaded={tradesLoaded}
-              onCancelOrder={cancelOrder}
-              allowCancel={allowOrderCancel}
-              refreshOrders={refreshOrders}
-              ordersError={ordersError}
-              useTestnet={useTestnet}
+            <StrategyProfileMini
+              profileMeta={profileMeta}
+              onOpenSettings={() => setShowSettings(true)}
             />
-          </TabsContent>
-          <TabsContent value="logs">
-            <LogsPanel
-              logEntries={logEntries}
-              logsLoaded={logsLoaded}
-              useTestnet={useTestnet}
-              isActive={activeTab === "logs"}
-            />
-          </TabsContent>
-        </Tabs>
+          </div>
+        </div>
 
-        {showSettings && bot.settings && (
-          <SettingsPanel
-            theme="dark"
-            lang="en"
-            settings={bot.settings}
-            onUpdateSettings={bot.updateSettings}
-            onClose={() => setShowSettings(false)}
+        <div className="col-span-12">
+          <RecentEventsPanel
+            logEntries={logEntries}
+            logsLoaded={logsLoaded}
           />
-        )}
+        </div>
       </div>
-    );
-  }
+
+      {showSettings && bot.settings && (
+        <SettingsPanel
+          theme={theme}
+          lang="en"
+          settings={bot.settings}
+          onUpdateSettings={bot.updateSettings}
+          onClose={() => setShowSettings(false)}
+          userEmail={userEmail}
+          isGuest={isGuest}
+          missingServices={missingServices}
+          keysError={keysError}
+          onSignOut={onSignOut}
+          onToggleTheme={onToggleTheme}
+          apiKeysUserId={apiKeysUserId}
+          onKeysUpdated={onKeysUpdated}
+        />
+      )}
+    </div>
+  );
+}
