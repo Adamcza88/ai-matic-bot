@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import Panel from "@/components/dashboard/Panel";
 import type {
   DiagnosticGate,
@@ -12,7 +13,11 @@ type SignalDetailPanelProps = {
   checklistEnabled: Record<string, boolean>;
   toggleChecklist: (name: string) => void;
   profileGateNames: string[];
+  resetChecklist: () => void;
 };
+
+const FEED_OK_MS = 2_000;
+const FEED_WARN_MS = 10_000;
 
 function gateGroup(name: string): "trend" | "liquidity" | "execution" {
   const key = name.toLowerCase();
@@ -47,6 +52,20 @@ function formatDetail(detail?: string) {
   if (!detail) return "—";
   if (detail === "not required") return "N/A";
   return String(detail).replace(/\s+/g, " ").trim();
+}
+
+function formatFeedAge(feedAgeMs?: number) {
+  if (!Number.isFinite(feedAgeMs)) return "N/A";
+  const ms = feedAgeMs as number;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function feedToneClass(feedAgeMs?: number) {
+  if (!Number.isFinite(feedAgeMs)) return "text-muted-foreground";
+  const ms = feedAgeMs as number;
+  if (ms < FEED_OK_MS) return "text-emerald-300";
+  if (ms <= FEED_WARN_MS) return "text-amber-300";
+  return "text-red-300";
 }
 
 function GateList({
@@ -107,6 +126,7 @@ export default function SignalDetailPanel({
   checklistEnabled,
   toggleChecklist,
   profileGateNames,
+  resetChecklist,
 }: SignalDetailPanelProps) {
   const diag = selectedSymbol ? scanDiagnostics?.[selectedSymbol] : null;
   const rawGates = Array.isArray(diag?.gates) ? diag.gates : [];
@@ -136,6 +156,7 @@ export default function SignalDetailPanel({
       : diag?.executionAllowed === false
         ? "HOLD"
         : "IDLE";
+  const overrideEnabled = checklistEnabled["Exec allowed"] ?? true;
 
   return (
     <Panel
@@ -143,6 +164,31 @@ export default function SignalDetailPanel({
       description={selectedSymbol ? `Trh: ${selectedSymbol}` : "Není vybraný trh."}
       fileId="SIGNAL DETAIL ID: TR-12-D"
       className="dashboard-detail-panel"
+      action={
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant="outline"
+            className={
+              overrideEnabled
+                ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
+                : "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+            }
+          >
+            {overrideEnabled ? "Override ON" : "Override OFF"}
+          </Badge>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => toggleChecklist("Exec allowed")}
+          >
+            Přepnout override
+          </Button>
+          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={resetChecklist}>
+            Reset gate
+          </Button>
+        </div>
+      }
     >
       {!scanLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
@@ -168,6 +214,15 @@ export default function SignalDetailPanel({
                   {statusLabel}
                 </Badge>
               </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border/60 bg-card/70 p-2 text-xs">
+            <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
+              Feed age
+            </div>
+            <div className={`mt-1 tabular-nums ${feedToneClass(diag?.feedAgeMs)}`}>
+              {formatFeedAge(diag?.feedAgeMs)} (OK &lt; 2.0s, WARN 2.0–10.0s, BAD &gt; 10.0s)
             </div>
           </div>
 

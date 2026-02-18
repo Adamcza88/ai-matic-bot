@@ -157,6 +157,10 @@
   * {
     @apply border-border;
   }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
   body {
     @apply bg-background text-foreground;
     min-height: 100vh;
@@ -202,6 +206,10 @@
 }
 
 @layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
   html.dark .dm-surface {
     background-color: #111a38;
     border-color: #2b3654;

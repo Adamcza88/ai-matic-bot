@@ -24,6 +24,8 @@ const RISK_PCT_BY_MODE = {
   "ai-matic-pro": 0.003,
 } as const;
 
+const HEALTH_OK_MS = 2_000;
+
 type DashboardProps = {
   mode: TradingMode;
   setMode: (m: TradingMode) => void;
@@ -399,6 +401,21 @@ export default function Dashboard({
     };
   }, [allowedSymbols, scanDiagnostics]);
 
+  const execOverrideEnabled = checklistEnabled["Exec allowed"] ?? true;
+  const dataHealthSafe = useMemo(() => {
+    if (mode !== TradingMode.AUTO_ON) return false;
+    if (systemState.bybitStatus !== "Connected") return false;
+    if (!Number.isFinite(feedStats.maxAge)) return false;
+    return (feedStats.maxAge as number) < HEALTH_OK_MS && feedStats.ok;
+  }, [feedStats.maxAge, feedStats.ok, mode, systemState.bybitStatus]);
+
+  const riskLevel = useMemo(() => {
+    if (execOverrideEnabled) return "CRITICAL" as const;
+    if (blockedSignalsCount > 0) return "ELEVATED" as const;
+    if (gateStats.total > 0 && gateStats.pass < gateStats.total) return "ELEVATED" as const;
+    return "LOW" as const;
+  }, [blockedSignalsCount, execOverrideEnabled, gateStats.pass, gateStats.total]);
+
   const dailyPnlBreakdown = useMemo(
     () => ({
       realized: dailyPnl,
@@ -412,155 +429,151 @@ export default function Dashboard({
   const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";
 
   return (
-    <div className="mx-auto max-w-[1360px] px-6 pt-6 pb-4">
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12">
-          <StatusBar
-            title={profileMeta.label}
-            subtitle={profileMeta.subtitle}
-            mode={mode}
-            setMode={setMode}
-            useTestnet={useTestnet}
-            setUseTestnet={setUseTestnet}
-            systemState={systemState}
-            engineStatus={engineStatus}
-            lastScanTs={lastScanTs}
-            envAvailability={envAvailability}
-            onOpenSettings={() => setShowSettings(true)}
-          />
-        </div>
+    <div className="mx-auto max-w-[1200px] space-y-4 px-4 py-4 lg:px-6">
+      <StatusBar
+        title={profileMeta.label}
+        subtitle={profileMeta.subtitle}
+        mode={mode}
+        setMode={setMode}
+        useTestnet={useTestnet}
+        setUseTestnet={setUseTestnet}
+        systemState={systemState}
+        engineStatus={engineStatus}
+        lastScanTs={lastScanTs}
+        envAvailability={envAvailability}
+        blockedSignals={blockedSignalsCount}
+        gatesPassCount={gateStats.pass}
+        gatesTotal={gateStats.total}
+        feedAgeMs={feedStats.maxAge}
+        feedOk={feedStats.ok}
+        riskLevel={riskLevel}
+        dataHealthSafe={dataHealthSafe}
+        overrideEnabled={execOverrideEnabled}
+        onOpenSettings={() => setShowSettings(true)}
+      />
 
-        <div className="col-span-12">
-          <KpiRow
-            totalCapital={totalCapital}
-            allocated={allocated}
-            dailyPnl={dailyPnl}
-            dailyPnlBreakdown={dailyPnlBreakdown}
-            openPositionsPnl={openPositionsPnl}
-            openPositions={openPositionsCount}
-            maxOpenPositions={maxOpenPositions}
-            openOrders={openOrdersCount}
-            maxOpenOrders={maxOpenOrders}
-            riskPerTradePct={riskPerTradePct}
-            riskPerTradeUsd={riskPerTradeUsd}
-            blockedSignals={blockedSignalsCount}
-            gatesPassCount={gateStats.pass}
-            gatesTotal={gateStats.total}
-            feedAgeMs={feedStats.maxAge}
-            feedOk={feedStats.ok}
-            latencyMs={systemState.latency}
-          />
-        </div>
+      <KpiRow
+        totalCapital={totalCapital}
+        allocated={allocated}
+        dailyPnl={dailyPnl}
+        dailyPnlBreakdown={dailyPnlBreakdown}
+        openPositionsPnl={openPositionsPnl}
+        openPositions={openPositionsCount}
+        maxOpenPositions={maxOpenPositions}
+        openOrders={openOrdersCount}
+        maxOpenOrders={maxOpenOrders}
+        riskPerTradePct={riskPerTradePct}
+        riskPerTradeUsd={riskPerTradeUsd}
+      />
 
-        <div className="col-span-12">
-          <Tabs
-            value={activeTab}
-            onValueChange={(value) => {
-              setActiveTab(value);
-              if (value === "audit" || value === "decision") {
-                refreshTestnetOrders();
-              }
-            }}
-            className="space-y-3 lm-tabs"
-          >
-            <TabsList className="h-12 w-full justify-start gap-2 rounded-xl border border-border/60 bg-card/80 p-1 lm-tabs-shell">
-              <TabsTrigger value="decision" className="h-10 px-3 text-sm lm-tabs-trigger">
-                Rozhodování
-              </TabsTrigger>
-              <TabsTrigger value="execution" className="h-10 px-3 text-sm lm-tabs-trigger">
-                Exekuce ({openPositionsCount + openOrdersCount})
-              </TabsTrigger>
-              <TabsTrigger value="audit" className="h-10 px-3 text-sm lm-tabs-trigger">
-                Audit
-              </TabsTrigger>
-            </TabsList>
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          setActiveTab(value);
+          if (value === "audit" || value === "decision") {
+            refreshTestnetOrders();
+          }
+        }}
+        className="space-y-3 lm-tabs"
+      >
+        <TabsList className="h-12 w-full justify-start gap-2 rounded-xl border border-border/60 bg-card/80 p-1 lm-tabs-shell">
+          <TabsTrigger value="decision" className="h-10 px-3 text-sm lm-tabs-trigger">
+            Rozhodování
+          </TabsTrigger>
+          <TabsTrigger value="execution" className="h-10 px-3 text-sm lm-tabs-trigger">
+            Exekuce ({openPositionsCount + openOrdersCount})
+          </TabsTrigger>
+          <TabsTrigger value="audit" className="h-10 px-3 text-sm lm-tabs-trigger">
+            Audit
+          </TabsTrigger>
+        </TabsList>
 
-            <div className="dashboard-tab-viewport lm-tab-viewport">
-              <TabsContent value="decision" className="mt-0">
-                <div className="grid grid-cols-12 gap-4">
-                  <div className="col-span-12 xl:col-span-8">
-                    <OverviewTab
-                      allowedSymbols={allowedSymbols}
-                      assetPnlHistory={assetPnlHistory}
-                      pnlLoaded={pnlLoaded}
-                      resetPnlHistory={resetPnlHistory}
-                      scanDiagnostics={scanDiagnostics}
-                      scanLoaded={scanLoaded}
-                      lastScanTs={lastScanTs}
-                    />
-                  </div>
-                  <div className="col-span-12 xl:col-span-4 space-y-4">
-                    <SignalsAccordion
-                      allowedSymbols={allowedSymbols}
-                      scanDiagnostics={scanDiagnostics}
-                      scanLoaded={scanLoaded}
-                      lastScanTs={lastScanTs}
-                      checklistEnabled={checklistEnabled}
-                      resetChecklist={resetChecklist}
-                      profileGateNames={checklistGateNames}
-                      selectedSymbol={selectedSignalSymbol}
-                      onSelectSymbol={setSelectedSignalSymbol}
-                    />
-                    <SignalDetailPanel
-                      selectedSymbol={selectedSignalSymbol}
-                      scanDiagnostics={scanDiagnostics}
-                      scanLoaded={scanLoaded}
-                      checklistEnabled={checklistEnabled}
-                      toggleChecklist={toggleChecklist}
-                      profileGateNames={checklistGateNames}
-                    />
-                  </div>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="execution" className="mt-0">
-                <div className="space-y-4">
-                  <PositionsTable
-                    positions={positionsLoaded ? activePositions : []}
-                    positionsLoaded={positionsLoaded}
-                    onClosePosition={manualClosePosition}
-                    allowClose={allowPositionClose}
-                  />
-                  <OrdersPanel
-                    orders={exchangeOrders}
-                    trades={exchangeTrades}
-                    ordersLoaded={ordersLoaded}
-                    tradesLoaded={tradesLoaded}
-                    onCancelOrder={cancelOrder}
-                    allowCancel={allowOrderCancel}
-                    refreshOrders={refreshOrders}
-                    ordersError={ordersError}
-                    useTestnet={useTestnet}
-                  />
-                </div>
-              </TabsContent>
-
-              <TabsContent value="audit" className="mt-0">
-                <div className="grid grid-cols-12 gap-4">
-                  <div className="col-span-12 xl:col-span-8 space-y-4">
-                    <LogsPanel
-                      logEntries={logEntries}
-                      logsLoaded={logsLoaded}
-                      useTestnet={useTestnet}
-                      isActive={activeTab === "audit"}
-                    />
-                    <RecentEventsPanel
-                      logEntries={logEntries}
-                      logsLoaded={logsLoaded}
-                    />
-                  </div>
-                  <div className="col-span-12 xl:col-span-4">
-                    <StrategyProfileMini
-                      profileMeta={profileMeta}
-                      onOpenSettings={() => setShowSettings(true)}
-                    />
-                  </div>
-                </div>
-              </TabsContent>
+        <div className="dashboard-tab-viewport lm-tab-viewport">
+          <TabsContent value="decision" className="mt-0">
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12 xl:col-span-8">
+                <OverviewTab
+                  allowedSymbols={allowedSymbols}
+                  assetPnlHistory={assetPnlHistory}
+                  pnlLoaded={pnlLoaded}
+                  resetPnlHistory={resetPnlHistory}
+                  scanDiagnostics={scanDiagnostics}
+                  scanLoaded={scanLoaded}
+                  lastScanTs={lastScanTs}
+                  selectedSymbol={selectedSignalSymbol}
+                />
+              </div>
+              <div className="col-span-12 xl:col-span-4 space-y-4">
+                <SignalsAccordion
+                  allowedSymbols={allowedSymbols}
+                  scanDiagnostics={scanDiagnostics}
+                  scanLoaded={scanLoaded}
+                  lastScanTs={lastScanTs}
+                  checklistEnabled={checklistEnabled}
+                  resetChecklist={resetChecklist}
+                  profileGateNames={checklistGateNames}
+                  selectedSymbol={selectedSignalSymbol}
+                  onSelectSymbol={setSelectedSignalSymbol}
+                />
+                <SignalDetailPanel
+                  selectedSymbol={selectedSignalSymbol}
+                  scanDiagnostics={scanDiagnostics}
+                  scanLoaded={scanLoaded}
+                  checklistEnabled={checklistEnabled}
+                  toggleChecklist={toggleChecklist}
+                  profileGateNames={checklistGateNames}
+                  resetChecklist={resetChecklist}
+                />
+              </div>
             </div>
-          </Tabs>
+          </TabsContent>
+
+          <TabsContent value="execution" className="mt-0">
+            <div className="space-y-4">
+              <PositionsTable
+                positions={positionsLoaded ? activePositions : []}
+                positionsLoaded={positionsLoaded}
+                onClosePosition={manualClosePosition}
+                allowClose={allowPositionClose}
+              />
+              <OrdersPanel
+                orders={exchangeOrders}
+                trades={exchangeTrades}
+                ordersLoaded={ordersLoaded}
+                tradesLoaded={tradesLoaded}
+                onCancelOrder={cancelOrder}
+                allowCancel={allowOrderCancel}
+                refreshOrders={refreshOrders}
+                ordersError={ordersError}
+                useTestnet={useTestnet}
+              />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="audit" className="mt-0">
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12 xl:col-span-8 space-y-4">
+                <LogsPanel
+                  logEntries={logEntries}
+                  logsLoaded={logsLoaded}
+                  useTestnet={useTestnet}
+                  isActive={activeTab === "audit"}
+                />
+                <RecentEventsPanel
+                  logEntries={logEntries}
+                  logsLoaded={logsLoaded}
+                />
+              </div>
+              <div className="col-span-12 xl:col-span-4">
+                <StrategyProfileMini
+                  profileMeta={profileMeta}
+                  onOpenSettings={() => setShowSettings(true)}
+                />
+              </div>
+            </div>
+          </TabsContent>
         </div>
-      </div>
+      </Tabs>
 
       {showSettings && bot.settings && (
         <SettingsPanel
