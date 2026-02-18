@@ -81,11 +81,11 @@ export default function KpiRow({
 
         <div className={tileClass("primary")}>
           <div className="text-xs text-muted-foreground lm-kpi-label">Realizováno</div>
-          <div className={`mt-1 text-2xl font-semibold tabular-nums lm-kpi-value ${pnlTone(dailyPnlBreakdown?.realized)}`}>
-            {formatSignedMoney(dailyPnlBreakdown?.realized)}
+          <div className={`mt-1 text-2xl font-semibold tabular-nums lm-kpi-value ${pnlTone(openPositionsPnl)}`}>
+            {formatSignedMoney(openPositionsPnl)}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            Denní PnL <span className={`tabular-nums ${pnlTone(dailyPnl)}`}>{formatSignedMoney(dailyPnl)}</span>
+            Aktuální PnL otevřených pozic
           </div>
         </div>
       </div>
