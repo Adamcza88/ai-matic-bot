@@ -39,6 +39,14 @@ function formatSignedMoneyRange(range?: { min: number; max: number }) {
   return `${formatSignedMoney(range.min)} – ${formatSignedMoney(range.max)}`;
 }
 
+function pnlRangeTone(range?: { min: number; max: number }) {
+  if (!range) return "text-muted-foreground";
+  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) return "text-muted-foreground";
+  if (range.min >= 0) return "text-[#00C853]";
+  if (range.max <= 0) return "text-[#D32F2F]";
+  return "text-[#FFB300]";
+}
+
 export default function StatusBar({
   title,
   subtitle,
@@ -130,7 +138,14 @@ export default function StatusBar({
           </div>
         </div>
 
-        <div className="grid gap-2 rounded-xl border border-border/70 bg-card/70 p-3 sm:grid-cols-2">
+        <div className="grid gap-2 rounded-xl border border-border/70 bg-card/70 p-3 sm:grid-cols-3">
+          <div className="text-right sm:text-left">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">Aktuální PnL otevřených pozic</div>
+            <div className={`mt-1 text-[30px] font-semibold tabular-nums leading-none ${pnlRangeTone(openPositionsPnlRange)}`}>
+              {formatSignedMoneyRange(openPositionsPnlRange)}
+            </div>
+            <div className="mt-2 text-xs text-muted-foreground">Neuzavřené pozice</div>
+          </div>
           <div className="text-right">
             <div className="text-xs uppercase tracking-wide text-muted-foreground">Denní PnL</div>
             <div
@@ -147,9 +162,7 @@ export default function StatusBar({
             <div className="mt-1 text-[30px] font-semibold tabular-nums leading-none text-foreground">
               {formatMoneyRange(capitalRange) !== "—" ? formatMoneyRange(capitalRange) : formatMoney(totalCapital)}
             </div>
-            <div className="mt-2 text-xs text-muted-foreground">
-              Otevřené PnL {formatSignedMoneyRange(openPositionsPnlRange)}
-            </div>
+            <div className="mt-2 text-xs text-muted-foreground">Aktuální zůstatek účtu</div>
           </div>
         </div>
       </div>
