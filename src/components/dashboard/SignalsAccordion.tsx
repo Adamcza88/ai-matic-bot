@@ -1,10 +1,16 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Panel from "@/components/dashboard/Panel";
+import { formatClock } from "@/lib/uiFormat";
+import type {
+  DiagnosticGate,
+  ScanDiagnostics,
+  SymbolDiagnostic,
+} from "@/lib/diagnosticsTypes";
 
 type SignalsAccordionProps = {
   allowedSymbols: string[];
-  scanDiagnostics: Record<string, any> | null;
+  scanDiagnostics: ScanDiagnostics | null;
   scanLoaded: boolean;
   lastScanTs: number | null;
   checklistEnabled: Record<string, boolean>;
@@ -14,16 +20,7 @@ type SignalsAccordionProps = {
   onSelectSymbol: (symbol: string) => void;
 };
 
-function formatClock(ts?: number | null) {
-  if (!Number.isFinite(ts)) return "—";
-  return new Date(ts as number).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-function gateSummary(diag: any, scanLoaded: boolean) {
+function gateSummary(diag: SymbolDiagnostic | undefined, scanLoaded: boolean) {
   if (!scanLoaded || !diag) {
     return { label: "IDLE", tone: "na" as const };
   }
@@ -40,21 +37,26 @@ function gateSummary(diag: any, scanLoaded: boolean) {
   return { label: "IDLE", tone: "na" as const };
 }
 
-function normalizeReason(diag: any) {
+function normalizeReason(diag: SymbolDiagnostic | undefined) {
   const entryBlockReasons = Array.isArray(diag?.entryBlockReasons)
     ? diag.entryBlockReasons
     : [];
-  if (entryBlockReasons.length > 0) return String(entryBlockReasons[0]);
-  if (diag?.manageReason) return String(diag.manageReason);
-  if (diag?.executionReason) return String(diag.executionReason);
-  return "No active reason";
+  const reason =
+    entryBlockReasons[0] ??
+    diag?.manageReason ??
+    diag?.executionReason ??
+    "";
+  if (!reason) return "Bez aktivního důvodu.";
+  if (reason === "Exec OFF") return "Exekuce je vypnutá (manuál).";
+  if (reason === "čeká na signál") return "Čeká na potvrzení signálu.";
+  return String(reason);
 }
 
-function gatePassRatio(diag: any, profileGateNames: string[]) {
+function gatePassRatio(diag: SymbolDiagnostic | undefined, profileGateNames: string[]) {
   const rawGates = Array.isArray(diag?.gates) ? diag.gates : [];
   const set = new Set(profileGateNames);
-  const gates = rawGates.filter((gate: any) => set.has(gate.name));
-  const pass = gates.filter((gate: any) => Boolean(gate.ok)).length;
+  const gates = rawGates.filter((gate: DiagnosticGate) => set.has(gate.name));
+  const pass = gates.filter((gate: DiagnosticGate) => Boolean(gate.ok)).length;
   return `${pass}/${gates.length}`;
 }
 
@@ -73,8 +75,8 @@ export default function SignalsAccordion({
 
   return (
     <Panel
-      title="Signals"
-      description={`Compact list mode · Last scan: ${lastScanLabel}`}
+      title="Signály"
+      description={`Kompaktní režim · Poslední sken: ${lastScanLabel}`}
       fileId="SIGNAL RELAY ID: TR-09-S"
       action={
         <div className="flex items-center gap-2">
@@ -82,18 +84,18 @@ export default function SignalsAccordion({
             Exec override: {(checklistEnabled["Exec allowed"] ?? true) ? "ON" : "OFF"}
           </div>
           <Button variant="outline" size="sm" onClick={resetChecklist} className="h-8 text-xs">
-            Reset gates
+            Reset gate
           </Button>
         </div>
       }
     >
       {!scanLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          Loading diagnostics...
+          Načítám diagnostiku…
         </div>
       ) : allowedSymbols.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          No symbols configured.
+          Není vybraný žádný trh.
         </div>
       ) : (
         <div className="max-h-[520px] overflow-y-auto pr-1">
@@ -132,7 +134,7 @@ export default function SignalsAccordion({
                   </div>
                   <div className="text-right text-[11px] text-muted-foreground">
                     {gatePassRatio(diag, profileGateNames)}
-                    <span className="ml-1">Details</span>
+                    <span className="ml-1">Detail</span>
                   </div>
                 </button>
               );

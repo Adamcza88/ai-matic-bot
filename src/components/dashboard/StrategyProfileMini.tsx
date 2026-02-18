@@ -26,7 +26,7 @@ export default function StrategyProfileMini({
 }: StrategyProfileMiniProps) {
   return (
     <Panel
-      title="Strategy profile (mini)"
+      title="Profil strategie"
       fileId="PROFILE MINI ID: TR-13-P"
       className="dashboard-strategy-mini"
       action={
@@ -36,29 +36,29 @@ export default function StrategyProfileMini({
           onClick={onOpenSettings}
           className="h-8 text-xs dm-button-control"
         >
-          Settings
+          Nastavení
         </Button>
       }
     >
       <div className="space-y-2 text-xs">
         <div className="flex items-start justify-between gap-3">
-          <span className="text-muted-foreground">Profile</span>
+          <span className="text-muted-foreground">Profil</span>
           <span className="text-right font-semibold text-foreground">{profileMeta.label}</span>
         </div>
         <div className="flex items-start justify-between gap-3">
-          <span className="text-muted-foreground">Timeframes</span>
+          <span className="text-muted-foreground">Timeframy</span>
           <span className="text-right text-foreground">{compactText(profileMeta.timeframes)}</span>
         </div>
         <div className="flex items-start justify-between gap-3">
-          <span className="text-muted-foreground">POI priority</span>
+          <span className="text-muted-foreground">POI priorita</span>
           <span className="text-right text-foreground">{compactText(profileMeta.session)}</span>
         </div>
         <div className="flex items-start justify-between gap-3">
-          <span className="text-muted-foreground">Risk</span>
+          <span className="text-muted-foreground">Riziko</span>
           <span className="text-right text-foreground">{compactText(profileMeta.risk)}</span>
         </div>
         <div className="flex items-start justify-between gap-3">
-          <span className="text-muted-foreground">Entry model</span>
+          <span className="text-muted-foreground">Vstupní model</span>
           <span className="text-right text-foreground">{compactText(profileMeta.entry)}</span>
         </div>
       </div>

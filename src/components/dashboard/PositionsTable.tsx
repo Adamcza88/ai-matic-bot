@@ -69,12 +69,12 @@ export default function PositionsTable({
           : Number.NaN;
       const protectionLabel =
         slMissing && tpMissing
-          ? "TP/SL pending"
+          ? "Čeká na TP/SL"
           : slMissing
-            ? "SL missing"
+            ? "Chybí SL"
             : tpMissing
-              ? "TP missing"
-              : "Protected";
+              ? "Chybí TP"
+              : "Zajištěno";
       const protectionClass =
         slMissing || tpMissing
           ? "border-amber-500/50 text-amber-300"
@@ -119,14 +119,14 @@ export default function PositionsTable({
   };
 
   return (
-    <Panel title="Positions" fileId="POSITION MODULE ID: TR-02-P">
+    <Panel title="Pozice" fileId="POSITION MODULE ID: TR-02-P">
       {!positionsLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-10 text-center text-xs text-muted-foreground">
-          Loading positions...
+          Načítám pozice…
         </div>
       ) : rows.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border/60 py-10 text-center text-xs text-muted-foreground">
-          No open positions.
+          Žádné otevřené pozice.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -134,13 +134,13 @@ export default function PositionsTable({
             <thead className="text-xs text-muted-foreground">
               <tr className="border-b border-border/60">
                 <th className="w-[170px] py-2 text-left font-medium">Symbol</th>
-                <th className="w-[90px] py-2 text-left font-medium">Side</th>
-                <th className="w-[90px] py-2 text-right font-medium">Size</th>
-                <th className="w-[130px] py-2 text-right font-medium">Entry</th>
+                <th className="w-[90px] py-2 text-left font-medium">Směr</th>
+                <th className="w-[90px] py-2 text-right font-medium">Objem</th>
+                <th className="w-[130px] py-2 text-right font-medium">Vstup</th>
                 <th className="w-[120px] py-2 text-right font-medium">PnL</th>
-                <th className="py-2 text-left font-medium">Status</th>
+                <th className="py-2 text-left font-medium">Stav</th>
                 {showActions && (
-                  <th className="w-[100px] py-2 text-right font-medium">Actions</th>
+                  <th className="w-[100px] py-2 text-right font-medium">Akce</th>
                 )}
               </tr>
             </thead>
@@ -159,8 +159,8 @@ export default function PositionsTable({
                             onClick={() => toggleRow(row.key)}
                             aria-label={
                               expanded
-                                ? "Collapse position details"
-                                : "Expand position details"
+                                ? "Sbalit detail pozice"
+                                : "Rozbalit detail pozice"
                             }
                           >
                             {expanded ? (
@@ -206,7 +206,7 @@ export default function PositionsTable({
                           <Badge
                             variant="outline"
                             className={`${row.protectionClass} text-[10px] ${
-                              row.protectionLabel === "Protected"
+                              row.protectionLabel === "Zajištěno"
                                 ? "dm-status-pass"
                                 : "dm-status-warn"
                             }`}
@@ -226,7 +226,7 @@ export default function PositionsTable({
                               variant="outline"
                               className="border-emerald-500/50 text-[10px] text-emerald-400 dm-status-pass"
                             >
-                              Active
+                              Aktivní
                             </Badge>
                           ) : null}
                         </div>
@@ -239,7 +239,7 @@ export default function PositionsTable({
                             className="h-8 text-xs dm-action-close"
                             onClick={() => onClosePosition?.(row.raw)}
                           >
-                            Close
+                            Zavřít
                           </Button>
                         </td>
                       )}
@@ -280,7 +280,7 @@ export default function PositionsTable({
                               </span>
                             </span>
                             <span>
-                              Update:{" "}
+                              Aktualizace:{" "}
                               <span className="text-foreground">
                                 {formatClock(row.raw.timestamp)}
                               </span>

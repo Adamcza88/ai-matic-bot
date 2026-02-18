@@ -1,6 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TradingMode, type SystemState } from "@/types";
+import { UI_COPY } from "@/lib/uiCopy";
+import { formatClock, formatMs } from "@/lib/uiFormat";
 
 type StatusBarProps = {
   title: string;
@@ -24,16 +26,9 @@ type StatusBarProps = {
 const MODE_OPTIONS: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
 
 function modeLabel(value: TradingMode) {
-  return value === TradingMode.AUTO_ON ? "Auto" : "Manual";
-}
-
-function formatClock(ts?: number | null) {
-  if (!Number.isFinite(ts)) return "—";
-  return new Date(ts as number).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return value === TradingMode.AUTO_ON
+    ? UI_COPY.statusBar.auto
+    : UI_COPY.statusBar.manual;
 }
 
 export default function StatusBar({
@@ -50,11 +45,10 @@ export default function StatusBar({
   onOpenSettings,
 }: StatusBarProps) {
   const bybitStatus = systemState.bybitStatus ?? "Disconnected";
-  const latencyLabel = Number.isFinite(systemState.latency)
-    ? `${systemState.latency} ms`
-    : "N/A";
-  const bybitChipLabel =
-    bybitStatus === "Connected" ? `BYBIT • ${latencyLabel}` : `BYBIT • ${bybitStatus}`;
+  const latencyLabel = formatMs(systemState.latency);
+  const bybitChipLabel = bybitStatus === "Connected"
+    ? `BYBIT • ${latencyLabel}`
+    : UI_COPY.statusBar.bybitDisconnected;
 
   return (
     <section className="rounded-xl border border-border/70 bg-card/96 p-3 shadow-[0_6px_8px_-6px_rgba(0,0,0,0.45)] lm-panel dm-surface lm-topbar">
@@ -64,7 +58,7 @@ export default function StatusBar({
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground lm-topbar-meta">
             {subtitle ? <span>{subtitle}</span> : null}
             <span>•</span>
-            <span>Last scan {formatClock(lastScanTs)}</span>
+            <span>{UI_COPY.dashboard.lastScan} {formatClock(lastScanTs)}</span>
           </div>
         </div>
 
@@ -79,12 +73,12 @@ export default function StatusBar({
                 disabled={envAvailability ? !envAvailability.canUseDemo : false}
                 title={
                   envAvailability && !envAvailability.canUseDemo
-                    ? envAvailability.demoReason ?? "Demo environment unavailable"
-                    : "Use demo environment"
+                    ? envAvailability.demoReason ?? "Demo prostředí není dostupné"
+                    : "Použít demo prostředí"
                 }
                 className={useTestnet ? "h-8 min-w-20" : "h-8 min-w-20 text-muted-foreground"}
               >
-                DEMO
+                {UI_COPY.statusBar.demo}
               </Button>
               <Button
                 variant={!useTestnet ? "secondary" : "ghost"}
@@ -94,12 +88,12 @@ export default function StatusBar({
                 disabled={envAvailability ? !envAvailability.canUseMainnet : false}
                 title={
                   envAvailability && !envAvailability.canUseMainnet
-                    ? envAvailability.mainnetReason ?? "Mainnet environment unavailable"
-                    : "Use mainnet environment"
+                    ? envAvailability.mainnetReason ?? "Mainnet prostředí není dostupné"
+                    : "Použít mainnet prostředí"
                 }
                 className={!useTestnet ? "h-8 min-w-20" : "h-8 min-w-20 text-muted-foreground"}
               >
-                MAINNET
+                {UI_COPY.statusBar.mainnet}
               </Button>
             </div>
 
@@ -139,7 +133,9 @@ export default function StatusBar({
                   : "h-8 min-w-32 justify-center border-amber-500/50 text-amber-400 dm-status-warn lm-status-badge lm-status-badge-warn"
               }
             >
-              ENGINE: {engineStatus.toUpperCase()}
+              {engineStatus === "Running"
+                ? UI_COPY.statusBar.engineRunning
+                : UI_COPY.statusBar.enginePaused}
             </Badge>
             <Button
               variant="outline"
@@ -147,7 +143,7 @@ export default function StatusBar({
               onClick={onOpenSettings}
               className="h-8 px-3 text-xs dm-button-control lm-topbar-settings"
             >
-              Settings
+              {UI_COPY.common.settings}
             </Button>
           </div>
         </div>

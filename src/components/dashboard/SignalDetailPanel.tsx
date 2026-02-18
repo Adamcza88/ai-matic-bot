@@ -1,9 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import Panel from "@/components/dashboard/Panel";
+import type {
+  DiagnosticGate,
+  ScanDiagnostics,
+} from "@/lib/diagnosticsTypes";
 
 type SignalDetailPanelProps = {
   selectedSymbol: string | null;
-  scanDiagnostics: Record<string, any> | null;
+  scanDiagnostics: ScanDiagnostics | null;
   scanLoaded: boolean;
   checklistEnabled: Record<string, boolean>;
   toggleChecklist: (name: string) => void;
@@ -52,7 +56,7 @@ function GateList({
   toggleChecklist,
 }: {
   title: string;
-  gates: any[];
+  gates: DiagnosticGate[];
   checklistEnabled: Record<string, boolean>;
   toggleChecklist: (name: string) => void;
 }) {
@@ -61,7 +65,7 @@ function GateList({
       <div className="text-[11px] uppercase tracking-widest text-muted-foreground">{title}</div>
       <div className="mt-2 space-y-1.5">
         {gates.length === 0 ? (
-          <div className="text-xs text-muted-foreground">No gates</div>
+          <div className="text-xs text-muted-foreground">Bez gate</div>
         ) : (
           gates.map((gate) => {
             const enabled = checklistEnabled[gate.name] ?? true;
@@ -107,10 +111,10 @@ export default function SignalDetailPanel({
   const diag = selectedSymbol ? scanDiagnostics?.[selectedSymbol] : null;
   const rawGates = Array.isArray(diag?.gates) ? diag.gates : [];
   const gateSet = new Set(profileGateNames);
-  const gates = rawGates.filter((gate: any) => gateSet.has(gate.name));
-  const trend = gates.filter((gate: any) => gateGroup(gate.name) === "trend");
-  const liquidity = gates.filter((gate: any) => gateGroup(gate.name) === "liquidity");
-  const execution = gates.filter((gate: any) => gateGroup(gate.name) === "execution");
+  const gates = rawGates.filter((gate: DiagnosticGate) => gateSet.has(gate.name));
+  const trend = gates.filter((gate: DiagnosticGate) => gateGroup(gate.name) === "trend");
+  const liquidity = gates.filter((gate: DiagnosticGate) => gateGroup(gate.name) === "liquidity");
+  const execution = gates.filter((gate: DiagnosticGate) => gateGroup(gate.name) === "execution");
   const entryBlocks = Array.isArray(diag?.entryBlockReasons)
     ? diag.entryBlockReasons
     : [];
@@ -118,7 +122,7 @@ export default function SignalDetailPanel({
     entryBlocks[0] ??
     diag?.executionReason ??
     diag?.manageReason ??
-    "No active execution reason.";
+    "Bez aktivního důvodu exekuce.";
 
   const statusTone =
     diag?.executionAllowed === true
@@ -135,18 +139,18 @@ export default function SignalDetailPanel({
 
   return (
     <Panel
-      title="Selected signal detail"
-      description={selectedSymbol ? `Symbol: ${selectedSymbol}` : "No symbol selected."}
+      title="Detail vybraného signálu"
+      description={selectedSymbol ? `Trh: ${selectedSymbol}` : "Není vybraný trh."}
       fileId="SIGNAL DETAIL ID: TR-12-D"
       className="dashboard-detail-panel"
     >
       {!scanLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          Loading diagnostics...
+          Načítám diagnostiku…
         </div>
       ) : !selectedSymbol ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          No symbol selected.
+          Není vybraný trh.
         </div>
       ) : (
         <div className="space-y-3">
@@ -158,7 +162,7 @@ export default function SignalDetailPanel({
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-card/70 p-2">
-              <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Execution</div>
+              <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Exekuce</div>
               <div className="mt-1">
                 <Badge variant="outline" className={statusTone}>
                   {statusLabel}
@@ -169,7 +173,7 @@ export default function SignalDetailPanel({
 
           <div className="rounded-lg border border-border/60 bg-card/70 p-2 text-xs">
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
-              Checklist / reason
+              Checklist / důvod
             </div>
             <div className="mt-1 text-foreground">{reason}</div>
           </div>
@@ -181,13 +185,13 @@ export default function SignalDetailPanel({
             toggleChecklist={toggleChecklist}
           />
           <GateList
-            title="Liquidity / Volatility"
+            title="Likvidita / volatilita"
             gates={liquidity}
             checklistEnabled={checklistEnabled}
             toggleChecklist={toggleChecklist}
           />
           <GateList
-            title="Checklist / Gates"
+            title="Checklist / gate"
             gates={execution}
             checklistEnabled={checklistEnabled}
             toggleChecklist={toggleChecklist}

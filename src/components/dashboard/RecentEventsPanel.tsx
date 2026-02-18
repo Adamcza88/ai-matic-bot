@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Panel from "@/components/dashboard/Panel";
 import type { LogEntry } from "@/types";
+import { formatClock } from "@/lib/uiFormat";
 
 type RecentEventsPanelProps = {
   logEntries: LogEntry[] | null;
@@ -10,16 +11,6 @@ type RecentEventsPanelProps = {
 };
 
 type EventFilter = "all" | "risk" | "orders" | "engine";
-
-function formatClock(timestamp: string) {
-  const parsed = Date.parse(timestamp);
-  if (!Number.isFinite(parsed)) return "—";
-  return new Date(parsed).toLocaleTimeString([], {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 function eventGroup(entry: LogEntry): EventFilter {
   if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT") return "risk";
@@ -62,8 +53,8 @@ export default function RecentEventsPanel({
 
   return (
     <Panel
-      title="Recent events"
-      description="Compact event stream with risk/order/engine filters."
+      title="Poslední události"
+      description="Kompaktní stream s filtry riziko, příkazy a engine."
       fileId="EVENT TRACE ID: TR-11-E"
       action={
         <div className="flex items-center gap-1 rounded-md border border-border/60 bg-card/80 p-0.5">
@@ -73,7 +64,7 @@ export default function RecentEventsPanel({
             className="h-7 px-2 text-xs"
             onClick={() => setEventFilter("all")}
           >
-            All
+            Vše
           </Button>
           <Button
             variant={eventFilter === "risk" ? "secondary" : "ghost"}
@@ -81,7 +72,7 @@ export default function RecentEventsPanel({
             className="h-7 px-2 text-xs"
             onClick={() => setEventFilter("risk")}
           >
-            Risk
+            Riziko
           </Button>
           <Button
             variant={eventFilter === "orders" ? "secondary" : "ghost"}
@@ -89,7 +80,7 @@ export default function RecentEventsPanel({
             className="h-7 px-2 text-xs"
             onClick={() => setEventFilter("orders")}
           >
-            Orders
+            Příkazy
           </Button>
           <Button
             variant={eventFilter === "engine" ? "secondary" : "ghost"}
@@ -104,11 +95,11 @@ export default function RecentEventsPanel({
     >
       {!logsLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          Loading events...
+          Načítám události…
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          No events for this filter.
+          Pro tento filtr nejsou události.
         </div>
       ) : (
         <div className="max-h-[240px] overflow-y-auto pr-1">

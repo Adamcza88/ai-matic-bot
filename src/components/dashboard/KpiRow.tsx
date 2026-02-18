@@ -1,3 +1,5 @@
+import { formatMoney, formatMs, formatPercentRatio, formatSignedMoney } from "@/lib/uiFormat";
+
 type KpiRowProps = {
   totalCapital?: number;
   allocated?: number;
@@ -23,29 +25,6 @@ type KpiRowProps = {
   feedOk: boolean;
   latencyMs?: number;
 };
-
-const USD_FORMATTER = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
-function formatMoney(value?: number) {
-  if (!Number.isFinite(value)) return "—";
-  return USD_FORMATTER.format(value as number).replace(/,/g, " ");
-}
-
-function formatSignedMoney(value?: number) {
-  if (!Number.isFinite(value)) return "—";
-  const resolved = value as number;
-  return `${resolved >= 0 ? "+" : ""}${USD_FORMATTER.format(resolved).replace(/,/g, " ")}`;
-}
-
-function formatPct(value?: number) {
-  if (!Number.isFinite(value)) return "—";
-  return `${((value as number) * 100).toFixed(2)} %`;
-}
 
 function tileClass(base: "a" | "b") {
   return `dashboard-tile dashboard-tile-${base} rounded-xl border border-border/70 bg-card/96 p-3 dm-surface-elevated lm-kpi-tile`;
@@ -82,7 +61,7 @@ export default function KpiRow({
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("a")}>
-            <div className="text-xs text-muted-foreground lm-kpi-label">Total capital</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Celkový kapitál</div>
             <div className="mt-2 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {formatMoney(totalCapital)}
             </div>
@@ -90,7 +69,7 @@ export default function KpiRow({
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("a")}>
-            <div className="text-xs text-muted-foreground lm-kpi-label">Daily PnL</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Denní PnL</div>
             <div
               className={`mt-2 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value ${pnlTone(
                 dailyPnl
@@ -99,13 +78,13 @@ export default function KpiRow({
               {formatSignedMoney(dailyPnl)}
             </div>
             <div className="mt-2 text-[11px] text-muted-foreground">
-              Realized {formatSignedMoney(dailyPnlBreakdown?.realized)}
+              Realizováno {formatSignedMoney(dailyPnlBreakdown?.realized)}
             </div>
           </div>
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("a")}>
-            <div className="text-xs text-muted-foreground lm-kpi-label">Open PnL</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Otevřené PnL</div>
             <div
               className={`mt-2 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value ${pnlTone(
                 openPositionsPnl
@@ -117,7 +96,7 @@ export default function KpiRow({
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("a")}>
-            <div className="text-xs text-muted-foreground lm-kpi-label">Allocated</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Alokováno</div>
             <div className="mt-2 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {formatMoney(allocated)}
             </div>
@@ -128,7 +107,7 @@ export default function KpiRow({
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 sm:col-span-6 xl:col-span-2">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground lm-kpi-label">Positions</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Pozice</div>
             <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {openPositions}/{maxOpenPositions}
             </div>
@@ -136,7 +115,7 @@ export default function KpiRow({
         </div>
         <div className="col-span-12 sm:col-span-6 xl:col-span-2">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground lm-kpi-label">Orders</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Příkazy</div>
             <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {openOrders}/{maxOpenOrders}
             </div>
@@ -144,9 +123,9 @@ export default function KpiRow({
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground lm-kpi-label">Risk per trade</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Riziko na obchod</div>
             <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
-              {formatPct(riskPerTradePct)}
+              {formatPercentRatio(riskPerTradePct)}
             </div>
             <div className="text-[11px] text-muted-foreground">
               {Number.isFinite(riskPerTradeUsd) ? `≈ ${formatMoney(riskPerTradeUsd)}` : "N/A"}
@@ -155,21 +134,21 @@ export default function KpiRow({
         </div>
         <div className="col-span-12 md:col-span-6 xl:col-span-3">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground lm-kpi-label">Risk status / Gates</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Gate stav</div>
             <div className="mt-2 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
               {gatesPassCount}/{gatesTotal || 0}
             </div>
-            <div className="text-[11px] text-muted-foreground">Blocked signals: {blockedSignals}</div>
+            <div className="text-[11px] text-muted-foreground">Blokované signály: {blockedSignals}</div>
           </div>
         </div>
         <div className="col-span-12 sm:col-span-6 xl:col-span-2">
           <div className={tileClass("b")}>
-            <div className="text-xs text-muted-foreground lm-kpi-label">Feed / Latency</div>
+            <div className="text-xs text-muted-foreground lm-kpi-label">Feed / latence</div>
             <div className="mt-2 text-sm font-semibold tabular-nums lm-data-primary lm-kpi-value">
-              {Number.isFinite(feedAgeMs) ? `${feedAgeMs} ms` : "Feed N/A"}
+              {Number.isFinite(feedAgeMs) ? formatMs(feedAgeMs) : "Feed N/A"}
             </div>
             <div className="text-[11px] text-muted-foreground">
-              {feedOk ? "Feed OK" : "Feed delay"} · {Number.isFinite(latencyMs) ? `${latencyMs} ms` : "N/A"}
+              {feedOk ? "Feed OK" : "Feed zpožděný"} · {Number.isFinite(latencyMs) ? formatMs(latencyMs) : "N/A"}
             </div>
           </div>
         </div>

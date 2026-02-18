@@ -1,0 +1,62 @@
+export const UI_COPY = {
+  common: {
+    loading: "Načítám data…",
+    noData: "Zatím bez dat.",
+    notAvailable: "N/A",
+    filter: "Filtr",
+    all: "Vše",
+    save: "Uložit",
+    cancel: "Zrušit",
+    settings: "Nastavení",
+    refresh: "Obnovit",
+    reset: "Reset",
+  },
+  app: {
+    loadingSession: "Načítám relaci…",
+    accessCheckFailed: "Nepodařilo se ověřit přístup.",
+  },
+  dashboard: {
+    modes: {
+      decision: "Rozhodování",
+      execution: "Exekuce",
+      audit: "Audit",
+    },
+    lastScan: "Poslední sken",
+    whyNoTrade: "Proč se teď neobchoduje",
+    signalsSnapshot: "Přehled signálů",
+    signalDetail: "Detail signálu",
+  },
+  statusBar: {
+    demo: "Demo",
+    mainnet: "Mainnet",
+    auto: "Auto",
+    manual: "Manuál",
+    engineRunning: "ENGINE: RUNNING",
+    enginePaused: "ENGINE: PAUSED",
+    bybitDisconnected: "BYBIT • Odpojeno",
+  },
+  login: {
+    title: "AI Matic",
+    welcome: "Přihlášení",
+    subtitle: "Použijte schválený Google účet.",
+    continueGoogle: "Pokračovat přes Google",
+    continueGuest: "Pokračovat jako host",
+    redirecting: "Přesměrování…",
+  },
+  notReleased: {
+    title: "Aplikace ještě není veřejná",
+    description: "Přístup je aktuálně omezený na testovací účty.",
+  },
+  apiKeys: {
+    title: "API klíče",
+    description: "Klíče jsou uložené po účtu.",
+    loading: "Načítám…",
+    selectService: "Vyberte službu",
+    secretPlaceholder: "Tajná hodnota",
+    save: "Uložit klíč",
+    saving: "Ukládám",
+    empty: "Zatím nemáte uložené klíče.",
+    updated: "Aktualizováno",
+  },
+} as const;
+

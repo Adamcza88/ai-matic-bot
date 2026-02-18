@@ -14,6 +14,7 @@ import SignalDetailPanel from "./dashboard/SignalDetailPanel";
 import StrategyProfileMini from "./dashboard/StrategyProfileMini";
 import RecentEventsPanel from "./dashboard/RecentEventsPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
+import type { DiagnosticGate, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
 
 const RISK_PCT_BY_MODE = {
   "ai-matic": 0.004,
@@ -95,12 +96,12 @@ export default function Dashboard({
   const logsLoaded = Array.isArray(logEntries);
   const pnlLoaded = Boolean(assetPnlHistory);
   const scanLoaded = scanDiagnostics !== null;
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState("decision");
 
   const lastScanTs = useMemo(() => {
     if (!scanDiagnostics) return null;
     const values = Object.values(scanDiagnostics)
-      .map((d: any) => d?.lastScanTs)
+      .map((d: SymbolDiagnostic) => d?.lastScanTs)
       .filter((ts) => Number.isFinite(ts));
     if (!values.length) return null;
     return Math.max(...(values as number[]));
@@ -353,7 +354,7 @@ export default function Dashboard({
 
   const blockedSignalsCount = useMemo(() => {
     if (!scanDiagnostics) return 0;
-    return Object.values(scanDiagnostics).filter((diag: any) => {
+    return Object.values(scanDiagnostics).filter((diag: SymbolDiagnostic) => {
       if (!diag) return false;
       if (diag?.executionAllowed === false) return true;
       if (diag?.symbolState === "HOLD") return true;
@@ -371,7 +372,7 @@ export default function Dashboard({
     allowedSymbols.forEach((symbol) => {
       const diag = scanDiagnostics?.[symbol];
       const gates = Array.isArray(diag?.gates) ? diag.gates : [];
-      gates.forEach((gate: any) => {
+      gates.forEach((gate: DiagnosticGate) => {
         if (!gateSet.has(gate.name)) return;
         total += 1;
         if (gate.ok) pass += 1;
@@ -448,119 +449,113 @@ export default function Dashboard({
           />
         </div>
 
-        <div className="col-span-12 xl:col-span-8">
+        <div className="col-span-12">
           <Tabs
             value={activeTab}
             onValueChange={(value) => {
               setActiveTab(value);
-              if (value === "logs" || value === "overview") {
+              if (value === "audit" || value === "decision") {
                 refreshTestnetOrders();
               }
             }}
             className="space-y-3 lm-tabs"
           >
             <TabsList className="h-12 w-full justify-start gap-2 rounded-xl border border-border/60 bg-card/80 p-1 lm-tabs-shell">
-              <TabsTrigger value="overview" className="h-10 px-3 text-sm lm-tabs-trigger">
-                Overview
+              <TabsTrigger value="decision" className="h-10 px-3 text-sm lm-tabs-trigger">
+                Rozhodování
               </TabsTrigger>
-              <TabsTrigger value="positions" className="h-10 px-3 text-sm lm-tabs-trigger">
-                Positions ({openPositionsCount})
+              <TabsTrigger value="execution" className="h-10 px-3 text-sm lm-tabs-trigger">
+                Exekuce ({openPositionsCount + openOrdersCount})
               </TabsTrigger>
-              <TabsTrigger value="signals" className="h-10 px-3 text-sm lm-tabs-trigger">
-                Signals ({allowedSymbols.length})
-              </TabsTrigger>
-              <TabsTrigger value="orders" className="h-10 px-3 text-sm lm-tabs-trigger">
-                Orders ({openOrdersCount})
-              </TabsTrigger>
-              <TabsTrigger value="logs" className="h-10 px-3 text-sm lm-tabs-trigger">
-                Logs
+              <TabsTrigger value="audit" className="h-10 px-3 text-sm lm-tabs-trigger">
+                Audit
               </TabsTrigger>
             </TabsList>
 
             <div className="dashboard-tab-viewport lm-tab-viewport">
-              <TabsContent value="overview" className="mt-0">
-                <OverviewTab
-                  allowedSymbols={allowedSymbols}
-                  assetPnlHistory={assetPnlHistory}
-                  pnlLoaded={pnlLoaded}
-                  resetPnlHistory={resetPnlHistory}
-                  scanDiagnostics={scanDiagnostics}
-                  scanLoaded={scanLoaded}
-                  lastScanTs={lastScanTs}
-                />
+              <TabsContent value="decision" className="mt-0">
+                <div className="grid grid-cols-12 gap-4">
+                  <div className="col-span-12 xl:col-span-8">
+                    <OverviewTab
+                      allowedSymbols={allowedSymbols}
+                      assetPnlHistory={assetPnlHistory}
+                      pnlLoaded={pnlLoaded}
+                      resetPnlHistory={resetPnlHistory}
+                      scanDiagnostics={scanDiagnostics}
+                      scanLoaded={scanLoaded}
+                      lastScanTs={lastScanTs}
+                    />
+                  </div>
+                  <div className="col-span-12 xl:col-span-4 space-y-4">
+                    <SignalsAccordion
+                      allowedSymbols={allowedSymbols}
+                      scanDiagnostics={scanDiagnostics}
+                      scanLoaded={scanLoaded}
+                      lastScanTs={lastScanTs}
+                      checklistEnabled={checklistEnabled}
+                      resetChecklist={resetChecklist}
+                      profileGateNames={checklistGateNames}
+                      selectedSymbol={selectedSignalSymbol}
+                      onSelectSymbol={setSelectedSignalSymbol}
+                    />
+                    <SignalDetailPanel
+                      selectedSymbol={selectedSignalSymbol}
+                      scanDiagnostics={scanDiagnostics}
+                      scanLoaded={scanLoaded}
+                      checklistEnabled={checklistEnabled}
+                      toggleChecklist={toggleChecklist}
+                      profileGateNames={checklistGateNames}
+                    />
+                  </div>
+                </div>
               </TabsContent>
 
-              <TabsContent value="positions" className="mt-0">
-                <PositionsTable
-                  positions={positionsLoaded ? activePositions : []}
-                  positionsLoaded={positionsLoaded}
-                  onClosePosition={manualClosePosition}
-                  allowClose={allowPositionClose}
-                />
+              <TabsContent value="execution" className="mt-0">
+                <div className="space-y-4">
+                  <PositionsTable
+                    positions={positionsLoaded ? activePositions : []}
+                    positionsLoaded={positionsLoaded}
+                    onClosePosition={manualClosePosition}
+                    allowClose={allowPositionClose}
+                  />
+                  <OrdersPanel
+                    orders={exchangeOrders}
+                    trades={exchangeTrades}
+                    ordersLoaded={ordersLoaded}
+                    tradesLoaded={tradesLoaded}
+                    onCancelOrder={cancelOrder}
+                    allowCancel={allowOrderCancel}
+                    refreshOrders={refreshOrders}
+                    ordersError={ordersError}
+                    useTestnet={useTestnet}
+                  />
+                </div>
               </TabsContent>
 
-              <TabsContent value="signals" className="mt-0">
-                <SignalsAccordion
-                  allowedSymbols={allowedSymbols}
-                  scanDiagnostics={scanDiagnostics}
-                  scanLoaded={scanLoaded}
-                  lastScanTs={lastScanTs}
-                  checklistEnabled={checklistEnabled}
-                  resetChecklist={resetChecklist}
-                  profileGateNames={checklistGateNames}
-                  selectedSymbol={selectedSignalSymbol}
-                  onSelectSymbol={setSelectedSignalSymbol}
-                />
-              </TabsContent>
-
-              <TabsContent value="orders" className="mt-0">
-                <OrdersPanel
-                  orders={exchangeOrders}
-                  trades={exchangeTrades}
-                  ordersLoaded={ordersLoaded}
-                  tradesLoaded={tradesLoaded}
-                  onCancelOrder={cancelOrder}
-                  allowCancel={allowOrderCancel}
-                  refreshOrders={refreshOrders}
-                  ordersError={ordersError}
-                  useTestnet={useTestnet}
-                />
-              </TabsContent>
-
-              <TabsContent value="logs" className="mt-0">
-                <LogsPanel
-                  logEntries={logEntries}
-                  logsLoaded={logsLoaded}
-                  useTestnet={useTestnet}
-                  isActive={activeTab === "logs"}
-                />
+              <TabsContent value="audit" className="mt-0">
+                <div className="grid grid-cols-12 gap-4">
+                  <div className="col-span-12 xl:col-span-8 space-y-4">
+                    <LogsPanel
+                      logEntries={logEntries}
+                      logsLoaded={logsLoaded}
+                      useTestnet={useTestnet}
+                      isActive={activeTab === "audit"}
+                    />
+                    <RecentEventsPanel
+                      logEntries={logEntries}
+                      logsLoaded={logsLoaded}
+                    />
+                  </div>
+                  <div className="col-span-12 xl:col-span-4">
+                    <StrategyProfileMini
+                      profileMeta={profileMeta}
+                      onOpenSettings={() => setShowSettings(true)}
+                    />
+                  </div>
+                </div>
               </TabsContent>
             </div>
           </Tabs>
-        </div>
-
-        <div className="col-span-12 xl:col-span-4">
-          <div className="dashboard-right-stack space-y-4">
-            <SignalDetailPanel
-              selectedSymbol={selectedSignalSymbol}
-              scanDiagnostics={scanDiagnostics}
-              scanLoaded={scanLoaded}
-              checklistEnabled={checklistEnabled}
-              toggleChecklist={toggleChecklist}
-              profileGateNames={checklistGateNames}
-            />
-            <StrategyProfileMini
-              profileMeta={profileMeta}
-              onOpenSettings={() => setShowSettings(true)}
-            />
-          </div>
-        </div>
-
-        <div className="col-span-12">
-          <RecentEventsPanel
-            logEntries={logEntries}
-            logsLoaded={logsLoaded}
-          />
         </div>
       </div>
 

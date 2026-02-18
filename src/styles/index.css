@@ -389,7 +389,7 @@
   }
 
   html:not(.dark) .lm-topbar-meta {
-    color: #c7b193;
+    color: #dbc6a8;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     font-size: 10px;
@@ -478,7 +478,7 @@
   }
 
   html:not(.dark) .lm-panel-description {
-    color: #bda488;
+    color: #d3bea2;
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -1111,5 +1111,32 @@
       position: static;
       top: auto;
     }
+  }
+
+  :where(
+    button,
+    a,
+    input,
+    select,
+    textarea,
+    [role="button"],
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
+    outline: 2px solid #d9b078;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 2px rgba(24, 18, 12, 0.65);
+  }
+
+  html.dark :where(
+    button,
+    a,
+    input,
+    select,
+    textarea,
+    [role="button"],
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
+    outline: 2px solid #8bc7d8;
+    box-shadow: 0 0 0 2px rgba(10, 15, 35, 0.82);
   }
 }

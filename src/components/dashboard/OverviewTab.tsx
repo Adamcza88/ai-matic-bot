@@ -3,40 +3,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { AssetPnlMap } from "@/lib/pnlHistory";
 import Panel from "@/components/dashboard/Panel";
+import { formatClock, formatSignedMoney } from "@/lib/uiFormat";
+import { UI_COPY } from "@/lib/uiCopy";
+import type { ScanDiagnostics, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
 
 type OverviewTabProps = {
   allowedSymbols: string[];
   assetPnlHistory: AssetPnlMap | null;
   pnlLoaded: boolean;
   resetPnlHistory: () => void;
-  scanDiagnostics: Record<string, any> | null;
+  scanDiagnostics: ScanDiagnostics | null;
   scanLoaded: boolean;
   lastScanTs: number | null;
 };
 
-const USD_FORMATTER = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
-function formatSignedMoney(value?: number) {
-  if (!Number.isFinite(value)) return "—";
-  const resolved = value as number;
-  return `${resolved >= 0 ? "+" : ""}${USD_FORMATTER.format(resolved).replace(/,/g, " ")}`;
-}
-
-function formatClock(ts?: number | null) {
-  if (!Number.isFinite(ts)) return "—";
-  return new Date(ts as number).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-function gateSummary(diag: any, scanLoaded: boolean) {
+function gateSummary(diag: SymbolDiagnostic | undefined, scanLoaded: boolean) {
   if (!scanLoaded || !diag) {
     return { label: "IDLE", tone: "na" as const };
   }
@@ -50,9 +31,9 @@ function gateSummary(diag: any, scanLoaded: boolean) {
 }
 
 function normalizeBlockReason(reason?: string) {
-  if (!reason) return "No execution reason.";
-  if (reason === "Exec OFF") return "Execution mode is manual.";
-  if (reason === "čeká na signál") return "No active signal.";
+  if (!reason) return "Chybí důvod blokace.";
+  if (reason === "Exec OFF") return "Exekuce je vypnutá (režim manuál).";
+  if (reason === "čeká na signál") return "Čeká se na aktivní signál.";
   return reason;
 }
 
@@ -116,17 +97,17 @@ export default function OverviewTab({
   return (
     <div className="space-y-4">
       <Panel
-        title="Why not trading now"
-        description={`Last scan: ${formatClock(lastScanTs)}`}
+        title={UI_COPY.dashboard.whyNoTrade}
+        description={`${UI_COPY.dashboard.lastScan}: ${formatClock(lastScanTs)}`}
         fileId="GATE DIAGNOSTICS ID: TR-01-G"
       >
         {!scanLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            Loading gate diagnostics...
+            Načítám diagnostiku gate…
           </div>
         ) : activeBlocks.length === 0 ? (
           <div className="rounded-lg border border-border/70 bg-card/96 px-3 py-3 text-xs text-muted-foreground">
-            No active execution block. Signals are idle or waiting for confirmation.
+            Není aktivní blokace. Signály čekají nebo jsou neaktivní.
           </div>
         ) : (
           <div className="space-y-2">
@@ -144,27 +125,27 @@ export default function OverviewTab({
       </Panel>
 
       <Panel
-        title="Signals snapshot"
-        description={`Last scan: ${formatClock(lastScanTs)}`}
+        title={UI_COPY.dashboard.signalsSnapshot}
+        description={`${UI_COPY.dashboard.lastScan}: ${formatClock(lastScanTs)}`}
         fileId="SIGNAL SNAPSHOT ID: TR-14-S"
       >
         {!scanLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            Loading signal diagnostics...
+            Načítám diagnostiku signálů…
           </div>
         ) : signalRows.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            No signal diagnostics yet.
+            Zatím nejsou dostupné signály.
           </div>
         ) : (
           <div className="max-h-64 overflow-auto">
             <table className="w-full min-w-[460px] text-xs lm-table dm-table">
               <thead>
                 <tr className="border-b border-border/60 text-muted-foreground">
-                  <th className="py-2 pr-2 text-left font-medium">Symbol</th>
-                  <th className="py-2 pr-2 text-left font-medium">Status</th>
+                  <th className="py-2 pr-2 text-left font-medium">Trh</th>
+                  <th className="py-2 pr-2 text-left font-medium">Stav</th>
                   <th className="py-2 pr-2 text-left font-medium">Gate</th>
-                  <th className="py-2 text-right font-medium">Feed age</th>
+                  <th className="py-2 text-right font-medium">Stáří feedu</th>
                 </tr>
               </thead>
               <tbody>
@@ -180,7 +161,7 @@ export default function OverviewTab({
                             : "border-border/60 text-muted-foreground dm-status-muted"
                         }
                       >
-                        {row.signalActive ? "Scanning" : "Idle"}
+                        {row.signalActive ? "Skenuje" : "Idle"}
                       </Badge>
                     </td>
                     <td className="py-2 pr-2">
@@ -211,7 +192,7 @@ export default function OverviewTab({
       </Panel>
 
       <Panel
-        title="PnL history by symbol"
+        title="Historie PnL podle trhu"
         fileId="LEDGER ARCHIVE ID: TR-10-H"
         action={
           <Button
@@ -226,20 +207,20 @@ export default function OverviewTab({
       >
         {!pnlLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            Loading PnL history...
+            Načítám historii PnL…
           </div>
         ) : pnlRows.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            No PnL history yet.
+            Zatím bez historie PnL.
           </div>
         ) : (
           <div className="max-h-64 overflow-auto">
             <table className="w-full min-w-[520px] text-xs lm-table dm-table">
               <thead>
                 <tr className="border-b border-border/60 text-muted-foreground">
-                  <th className="py-2 pr-2 text-left font-medium">Symbol</th>
-                  <th className="py-2 pr-2 text-right font-medium">Net PnL</th>
-                  <th className="py-2 pr-2 text-right font-medium">Last</th>
+                  <th className="py-2 pr-2 text-left font-medium">Trh</th>
+                  <th className="py-2 pr-2 text-right font-medium">Čisté PnL</th>
+                  <th className="py-2 pr-2 text-right font-medium">Poslední</th>
                 </tr>
               </thead>
               <tbody>

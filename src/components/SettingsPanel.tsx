@@ -519,8 +519,11 @@ const SettingsPanel: React.FC<Props> = ({
 
   const resetToPreset = () => {
     const preset = presets[local.riskMode];
-    const nextStorage = { ...profileSettingsRef.current };
-    delete nextStorage[local.riskMode];
+    const nextStorage = Object.fromEntries(
+      Object.entries(profileSettingsRef.current).filter(
+        ([mode]) => mode !== local.riskMode
+      )
+    ) as ProfileSettingsMap;
     profileSettingsRef.current = nextStorage;
     persistProfileSettingsMap(nextStorage);
     setLocal(preset);
@@ -617,23 +620,23 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           </div>
           <p className="text-sm text-muted-foreground">
-            Zvolený profil nastaví výchozí parametry; vybrané podmínky můžeš přepnout.
+            Profil nastaví výchozí parametry. Jednotlivé podmínky lze upravit.
           </p>
         </div>
 
         <div className="grid gap-4 py-4">
           <div className="grid gap-2 rounded-md border border-input bg-slate-800 px-3 py-3 text-sm text-secondary-foreground settings-panel-account">
             <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-secondary-foreground/70">
-                  Account
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-secondary-foreground/70">
+                  Účet
+                  </div>
+                  <div className="font-medium">{userEmail || (isGuest ? "Guest" : "Unknown")}</div>
                 </div>
-                <div className="font-medium">{userEmail || (isGuest ? "Guest" : "Unknown")}</div>
+                <div className="text-xs text-secondary-foreground/70">
+                Motiv: {theme === "dark" ? "Tmavý" : "Světlý"}
+                </div>
               </div>
-              <div className="text-xs text-secondary-foreground/70">
-                Theme: {theme === "dark" ? "Dark" : "Light"}
-              </div>
-            </div>
 
             <div className="flex flex-wrap gap-2">
               <button
@@ -641,14 +644,14 @@ const SettingsPanel: React.FC<Props> = ({
                 onClick={onToggleTheme}
                 className="rounded-md border border-slate-700 bg-slate-900/40 px-3 py-1.5 text-xs text-slate-200 settings-panel-theme-toggle"
               >
-                Toggle theme
+                Přepnout motiv
               </button>
               <button
                 type="button"
                 onClick={onSignOut}
                 className="rounded-md border border-red-500/40 bg-red-900/20 px-3 py-1.5 text-xs text-red-200 settings-panel-signout"
               >
-                Sign out
+                Odhlásit
               </button>
             </div>
 
@@ -659,11 +662,11 @@ const SettingsPanel: React.FC<Props> = ({
             ) : null}
             {missingServices.length > 0 ? (
               <div className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-300">
-                Missing API keys: {missingServices.join(", ")}
+                Chybí API klíče: {missingServices.join(", ")}
               </div>
             ) : (
               <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300">
-                API keys status: OK
+                Stav API klíčů: OK
               </div>
             )}
           </div>
@@ -675,7 +678,7 @@ const SettingsPanel: React.FC<Props> = ({
 
           <div className="grid gap-2 settings-panel-profile-grid">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Profil strategie
+              Profil
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -742,7 +745,7 @@ const SettingsPanel: React.FC<Props> = ({
 
           <div className="grid gap-2 settings-panel-gates">
             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Gate pravidla
+              Riziko a gate
             </label>
             <div className="grid gap-2">
               <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
@@ -766,7 +769,7 @@ const SettingsPanel: React.FC<Props> = ({
                       : "border-slate-700 bg-slate-900/40 text-slate-200"
                   }`}
                 >
-                  {local.enableHardGates ? "On" : "Off"}
+                  {local.enableHardGates ? "Zapnuto" : "Vypnuto"}
                 </button>
               </div>
 
@@ -791,7 +794,7 @@ const SettingsPanel: React.FC<Props> = ({
                       : "border-slate-700 bg-slate-900/40 text-slate-200"
                   }`}
                 >
-                  {local.enableSoftGates ? "On" : "Off"}
+                  {local.enableSoftGates ? "Zapnuto" : "Vypnuto"}
                 </button>
               </div>
               <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
@@ -832,7 +835,7 @@ const SettingsPanel: React.FC<Props> = ({
                   <option value="reverse">Reverse</option>
                 </select>
                 <div className="text-xs text-secondary-foreground/70">
-                  Trend Gate filtruje vstupy podle směru trendu z HTF 1h. Adaptive: přepíná Follow/Reverse podle síly trendu (ADX/score); Reverse jen při slabém trendu a mean‑reversion signálu. Follow: pouze se směrem 1h trendu.
+                  Filtr směru trendu z HTF 1h. Adaptive přepíná Follow/Reverse podle síly trendu.
                 </div>
               </div>
             </div>
@@ -858,9 +861,14 @@ const SettingsPanel: React.FC<Props> = ({
                 <option value="ultra">Ultra (Sniper)</option>
               </select>
               <div className="text-xs text-secondary-foreground/70">
-                Citlivost filtrů (Spread, Volume, Trend). Base = Balanced, Strict = Precision, Ultra = Sniper.
+                Citlivost filtrů. Base = balanced, Strict = precision, Ultra = sniper.
               </div>
             </div>
+          </div>
+
+          <div className="grid gap-1">
+            <div className="text-sm font-medium">Limity</div>
+            <div className="text-xs text-secondary-foreground/70">Kapitálové a provozní limity exekuce.</div>
           </div>
 
           <div className="grid gap-2">
@@ -1054,7 +1062,7 @@ const SettingsPanel: React.FC<Props> = ({
           <div className="mt-4 border-t border-slate-800 pt-4 settings-panel-notes">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-sm font-medium text-slate-200">
-                Poznámky strategie
+                Poznámky
               </h3>
             </div>
             {renderNoteBlocks(noteBlocks)}

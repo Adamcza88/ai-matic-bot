@@ -17,6 +17,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Loader2, Save, Key } from "lucide-react";
+import { UI_COPY } from "@/lib/uiCopy";
+import { formatDate } from "@/lib/uiFormat";
 
 type ApiKeyRow = {
   id?: string;
@@ -31,19 +33,19 @@ type Props = {
 };
 
 export const SERVICE_OPTIONS = [
-  { value: "bybit demo api key", label: "Bybit Demo API Key" },
-  { value: "bybit demo api secret", label: "Bybit Demo API Secret" },
-  { value: "bybit mainnet api key", label: "Bybit Mainnet API Key" },
-  { value: "bybit mainnet api secret", label: "Bybit Mainnet API Secret" },
+  { value: "bybit demo api key", label: "Bybit Demo API klíč" },
+  { value: "bybit demo api secret", label: "Bybit Demo API secret" },
+  { value: "bybit mainnet api key", label: "Bybit Mainnet API klíč" },
+  { value: "bybit mainnet api secret", label: "Bybit Mainnet API secret" },
   // legacy fallback
-  { value: "bybit api key", label: "Bybit API Key (legacy)" },
-  { value: "bybit api secret", label: "Bybit API Secret (legacy)" },
-  { value: "cryptopanic api key", label: "Cryptopanic API Key" },
+  { value: "bybit api key", label: "Bybit API klíč (legacy)" },
+  { value: "bybit api secret", label: "Bybit API secret (legacy)" },
+  { value: "cryptopanic api key", label: "Cryptopanic API klíč" },
 ];
 
 const LEGACY_SERVICE_LABELS: Record<string, string> = {
-  "bybit testnet api key": "Bybit Demo API Key (legacy)",
-  "bybit testnet api secret": "Bybit Demo API Secret (legacy)",
+  "bybit testnet api key": "Bybit Demo API klíč (legacy)",
+  "bybit testnet api secret": "Bybit Demo API secret (legacy)",
 };
 
 export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
@@ -114,7 +116,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!service.trim() || !apiKey.trim()) {
-      setStatus("Service name and key are required.");
+      setStatus("Vyberte službu a vyplňte klíč.");
       return;
     }
     setIsSaving(true);
@@ -143,7 +145,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
 
       localStorage.setItem("guest_api_keys", JSON.stringify(currentKeys));
 
-      setStatus("Key saved (Guest mode).");
+      setStatus("Klíč uložen (host režim).");
       setApiKey("");
       setRecords(currentKeys);
       setIsSaving(false);
@@ -164,7 +166,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
     if (error) {
       setStatus(error.message);
     } else {
-      setStatus("Key saved.");
+      setStatus("Klíč uložen.");
       setApiKey("");
       const refreshed = await supabase
         .from("user_api_keys")
@@ -187,16 +189,16 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
           <div className="space-y-1">
             <CardTitle className="flex items-center gap-2 api-keys-title">
               <Key className="w-5 h-5 text-emerald-500" />
-              API Keys
+              {UI_COPY.apiKeys.title}
             </CardTitle>
             <CardDescription className="text-slate-400 api-keys-description">
-              Stored securely per account. Only you can read your keys.
+              {UI_COPY.apiKeys.description}
             </CardDescription>
           </div>
           {isLoading && (
             <div className="flex items-center text-slate-400 text-sm">
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Loading...
+              {UI_COPY.apiKeys.loading}
             </div>
           )}
         </div>
@@ -209,7 +211,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
           <div className="flex-1 min-w-[200px]">
             <Select value={service} onValueChange={setService}>
               <SelectTrigger className="bg-slate-950 border-white/10 text-white api-keys-select-trigger">
-                <SelectValue placeholder="Select service" />
+                <SelectValue placeholder={UI_COPY.apiKeys.selectService} />
               </SelectTrigger>
               <SelectContent className="bg-slate-900 border-white/10 text-white api-keys-select-content">
                 {SERVICE_OPTIONS.map((opt) => (
@@ -228,7 +230,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
             <Input
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Secret value"
+              placeholder={UI_COPY.apiKeys.secretPlaceholder}
               className="bg-slate-950 border-white/10 text-white placeholder:text-slate-500 api-keys-input"
             />
           </div>
@@ -240,12 +242,12 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
             {isSaving ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Saving
+                {UI_COPY.apiKeys.saving}
               </>
             ) : (
               <>
                 <Save className="w-4 h-4 mr-2" />
-                Save
+                {UI_COPY.apiKeys.save}
               </>
             )}
           </Button>
@@ -259,7 +261,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
 
         {maskedRecords.length === 0 ? (
           <div className="text-center py-8 text-slate-500 italic border border-dashed border-slate-800 rounded-lg api-keys-empty">
-            No keys saved yet.
+            {UI_COPY.apiKeys.empty}
           </div>
         ) : (
           <div className="rounded-md border border-white/10 overflow-hidden api-keys-list">
@@ -277,7 +279,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
                   </div>
                   {row.updated_at && (
                     <span className="text-xs text-slate-500">
-                      Updated {new Date(row.updated_at).toLocaleDateString()}
+                      {UI_COPY.apiKeys.updated} {formatDate(row.updated_at)}
                     </span>
                   )}
                 </li>

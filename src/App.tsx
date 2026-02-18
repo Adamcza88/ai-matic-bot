@@ -7,6 +7,7 @@ import NotReleased from "./components/NotReleased";
 import { SERVICE_OPTIONS } from "./components/ApiKeysManager";
 import { useAuth } from "./hooks/useAuth";
 import { supabase } from "./lib/supabaseClient";
+import { UI_COPY } from "./lib/uiCopy";
 
 // Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
 const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
@@ -152,7 +153,7 @@ export default function App() {
   if (auth.status === "checking") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        Loading session...
+        {UI_COPY.app.loadingSession}
       </div>
     );
   }
@@ -174,7 +175,7 @@ export default function App() {
   }
 
   if ((auth.status !== "ready" || !auth.user) && !isGuest) {
-    return <NotReleased message="Unable to verify access." />;
+    return <NotReleased message={UI_COPY.app.accessCheckFailed} />;
   }
 
   const handleSignOut = () => {

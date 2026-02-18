@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Copy } from "lucide-react";
 import type { LogEntry } from "@/types";
 import Panel from "@/components/dashboard/Panel";
+import { formatClock } from "@/lib/uiFormat";
 
 type LogsPanelProps = {
   logEntries: LogEntry[] | null;
@@ -38,16 +39,6 @@ function extractIds(message: string) {
     orderId: orderMatch?.[1] ?? null,
     linkId: linkMatch?.[1] ?? null,
   };
-}
-
-function formatClock(timestamp: string) {
-  const parsed = Date.parse(timestamp);
-  if (!Number.isFinite(parsed)) return "—";
-  return new Date(parsed).toLocaleTimeString([], {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 async function copyText(value?: string | null) {
@@ -94,12 +85,12 @@ export default function LogsPanel({
 
   return (
     <Panel
-      title="Logs"
-      description={`Live feed and system events (${useTestnet ? "DEMO" : "MAINNET"}).`}
+      title="Logy"
+      description={`Live feed a systémové události (${useTestnet ? "DEMO" : "MAINNET"}).`}
       fileId="AUDIT MODULE ID: TR-07-L"
       action={
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>Filter</span>
+          <span>Filtr</span>
           <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5 dm-surface-elevated dm-border-soft">
             <Button
               variant={levelFilter === "all" ? "secondary" : "ghost"}
@@ -111,7 +102,7 @@ export default function LogsPanel({
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              All
+              Vše
             </Button>
             <Button
               variant={levelFilter === "blocked" ? "secondary" : "ghost"}
@@ -123,7 +114,7 @@ export default function LogsPanel({
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              Blocked
+              Blokace
             </Button>
             <Button
               variant={levelFilter === "error" ? "secondary" : "ghost"}
@@ -135,7 +126,7 @@ export default function LogsPanel({
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              Error
+              Chyba
             </Button>
             <Button
               variant={levelFilter === "warn" ? "secondary" : "ghost"}
@@ -147,7 +138,7 @@ export default function LogsPanel({
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              Warn
+              Varování
             </Button>
             <Button
               variant={levelFilter === "info" ? "secondary" : "ghost"}
@@ -167,11 +158,11 @@ export default function LogsPanel({
     >
       {!logsLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          Loading logs...
+          Načítám logy…
         </div>
       ) : filteredEntries.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          No log activity yet.
+          Zatím bez logů pro tento filtr.
         </div>
       ) : (
         <div
@@ -219,7 +210,7 @@ export default function LogsPanel({
                           size="icon"
                           className="h-5 w-5 dm-button-control"
                           onClick={() => copyText(orderId)}
-                          title="Copy order id"
+                          title="Kopírovat order id"
                         >
                           <Copy className="h-3 w-3" />
                         </Button>
@@ -233,7 +224,7 @@ export default function LogsPanel({
                           size="icon"
                           className="h-5 w-5 dm-button-control"
                           onClick={() => copyText(linkId)}
-                          title="Copy link id"
+                          title="Kopírovat link id"
                         >
                           <Copy className="h-3 w-3" />
                         </Button>

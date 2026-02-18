@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Logo from "./Logo";
+import { UI_COPY } from "@/lib/uiCopy";
 
 type Props = {
   onLogin: () => void;
@@ -33,7 +34,9 @@ export default function LoginCard({
         backgroundRepeat: 'no-repeat',
       }}
     >
-      <div className="flex flex-col items-center justify-center h-full text-6xl font-bold text-white login-title">AI Matic</div>
+      <div className="flex flex-col items-center justify-center h-full text-6xl font-bold text-white login-title">
+        {UI_COPY.login.title}
+      </div>
       <Card className="w-full max-w-md bg-white/5 backdrop-blur-lg border-white/10 text-white shadow-2xl p-6 login-card">
         <CardHeader className="space-y-4 text-center">
           <div className="flex justify-center">
@@ -41,10 +44,10 @@ export default function LoginCard({
           </div>
           <div className="space-y-2">
             <CardTitle className="text-3xl font-bold tracking-tighter login-heading">
-              Welcome back
+              {UI_COPY.login.welcome}
             </CardTitle>
             <CardDescription className="text-slate-400 login-subtitle">
-              Sign in with your allowlisted Google account to continue.
+              {UI_COPY.login.subtitle}
             </CardDescription>
           </div>
         </CardHeader>
@@ -54,7 +57,9 @@ export default function LoginCard({
             onClick={onLogin}
             disabled={isAuthenticating}
           >
-            {isAuthenticating ? "Redirecting..." : "Continue with Google"}
+            {isAuthenticating
+              ? UI_COPY.login.redirecting
+              : UI_COPY.login.continueGoogle}
           </Button>
 
           {allowGuests && onGuestLogin && (
@@ -64,7 +69,7 @@ export default function LoginCard({
               onClick={onGuestLogin}
               disabled={isAuthenticating}
             >
-              Continue as Guest
+              {UI_COPY.login.continueGuest}
             </Button>
           )}
 
@@ -73,6 +78,6 @@ export default function LoginCard({
           )}
         </CardContent>
       </Card>
-    </div >
+    </div>
   );
 }

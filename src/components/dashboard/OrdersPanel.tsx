@@ -183,7 +183,7 @@ export default function OrdersPanel({
   return (
     <div className="space-y-6">
       <Panel
-        title={useTestnet ? "Příkazy (DEMO)" : "Příkazy (MAINNET)"}
+        title={useTestnet ? "Příkazy (demo)" : "Příkazy (mainnet)"}
         fileId="ORDER MODULE ID: TR-05-O"
         action={
           <div className="flex items-center gap-2">
@@ -208,7 +208,7 @@ export default function OrdersPanel({
         }
       >
         <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span>Filter</span>
+          <span>Filtr</span>
           <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5 dm-surface-elevated dm-border-soft">
             <Button
               variant={filterMode === "all" ? "secondary" : "ghost"}
@@ -220,7 +220,7 @@ export default function OrdersPanel({
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              All
+              Vše
             </Button>
             <Button
               variant={filterMode === "symbol" ? "secondary" : "ghost"}
@@ -232,7 +232,7 @@ export default function OrdersPanel({
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              Symbol
+              Trh
             </Button>
             <Button
               variant={filterMode === "last1h" ? "secondary" : "ghost"}
@@ -244,7 +244,7 @@ export default function OrdersPanel({
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              Last 1h
+              Poslední 1 h
             </Button>
           </div>
           {filterMode === "symbol" && (
@@ -254,7 +254,7 @@ export default function OrdersPanel({
                 onValueChange={(value) => setSelectedSymbol(value)}
               >
                 <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Select symbol" />
+                  <SelectValue placeholder="Vyberte trh" />
                 </SelectTrigger>
                 <SelectContent>
                   {symbolOptions.map((symbol) => (
@@ -270,21 +270,21 @@ export default function OrdersPanel({
 
         {actionError && (
           <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300 dm-status-warn">
-            Order action failed: {actionError}
+            Akce s příkazem se nezdařila: {actionError}. Zkuste obnovit data a opakovat.
           </div>
         )}
 
         {ordersError ? (
           <div className="rounded-lg border border-red-500/30 bg-red-500/5 py-6 text-center text-xs text-red-400 dm-status-sell">
-            Orders API failed: {ordersError}
+            Načtení příkazů selhalo: {ordersError}. Zkontrolujte připojení a API klíče.
           </div>
         ) : !ordersLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            Loading orders...
+            Načítám příkazy…
           </div>
         ) : filteredOrders.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            No active orders.
+            Žádné aktivní příkazy.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -292,13 +292,13 @@ export default function OrdersPanel({
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="w-[120px] py-2 text-left font-medium">Symbol</th>
-                  <th className="w-[84px] py-2 text-left font-medium">Side</th>
-                  <th className="w-[92px] py-2 text-right font-medium">Qty</th>
-                  <th className="w-[120px] py-2 text-right font-medium">Price</th>
+                  <th className="w-[84px] py-2 text-left font-medium">Směr</th>
+                  <th className="w-[92px] py-2 text-right font-medium">Objem</th>
+                  <th className="w-[120px] py-2 text-right font-medium">Cena</th>
                   <th className="w-[120px] py-2 text-right font-medium">TRG</th>
-                  <th className="w-[76px] py-2 text-left font-medium">Tag</th>
-                  <th className="w-[140px] py-2 text-left font-medium">Status</th>
-                  <th className="w-[90px] py-2 text-right font-medium">Time</th>
+                  <th className="w-[76px] py-2 text-left font-medium">Typ</th>
+                  <th className="w-[140px] py-2 text-left font-medium">Stav</th>
+                  <th className="w-[90px] py-2 text-right font-medium">Čas</th>
                   {showActions && <th className="w-[72px] py-2 text-right font-medium"> </th>}
                 </tr>
               </thead>
@@ -345,7 +345,7 @@ export default function OrdersPanel({
                             className="h-7 w-7 border border-border/60 dm-button-control"
                             onClick={() => handleCancel(order)}
                             disabled={closingOrderId === order.orderId}
-                            title={closingOrderId === order.orderId ? "Closing..." : "Close order"}
+                            title={closingOrderId === order.orderId ? "Ruším…" : "Zrušit příkaz"}
                           >
                             <X className="h-3.5 w-3.5" />
                           </Button>
@@ -362,14 +362,14 @@ export default function OrdersPanel({
         )}
       </Panel>
 
-      <Panel title="Fills" fileId="EXECUTION LEDGER ID: TR-06-F">
+      <Panel title="Filly" fileId="EXECUTION LEDGER ID: TR-06-F">
         {!tradesLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            Loading fills...
+            Načítám filly…
           </div>
         ) : filteredTrades.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            No fills yet.
+            Zatím bez fillů.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -377,12 +377,12 @@ export default function OrdersPanel({
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="py-2 text-left font-medium">Symbol</th>
-                  <th className="py-2 text-left font-medium">Side</th>
-                  <th className="py-2 text-right font-medium">Qty</th>
-                  <th className="py-2 text-right font-medium">Price</th>
-                  <th className="py-2 text-right font-medium">Fee</th>
+                  <th className="py-2 text-left font-medium">Směr</th>
+                  <th className="py-2 text-right font-medium">Objem</th>
+                  <th className="py-2 text-right font-medium">Cena</th>
+                  <th className="py-2 text-right font-medium">Poplatek</th>
                   <th className="py-2 text-right font-medium">PnL</th>
-                  <th className="py-2 text-right font-medium">Time</th>
+                  <th className="py-2 text-right font-medium">Čas</th>
                 </tr>
               </thead>
               <tbody>
