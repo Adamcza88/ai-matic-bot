@@ -37,10 +37,25 @@ type KpiRowProps = {
   riskPerTradeUsd?: number;
 };
 
+type MetricLineProps = {
+  label: string;
+  value: string;
+  valueClassName?: string;
+};
+
 function tileClass(priority: "primary" | "secondary") {
   return `rounded-xl border border-border/70 bg-card/96 p-4 dm-surface-elevated lm-kpi-tile ${
     priority === "primary" ? "shadow-[0_10px_16px_-12px_rgba(0,0,0,0.7)]" : ""
   }`;
+}
+
+function MetricLine({ label, value, valueClassName }: MetricLineProps) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`font-semibold tabular-nums text-foreground ${valueClassName ?? ""}`}>{value}</span>
+    </div>
+  );
 }
 
 function formatRange(min?: number, max?: number, formatter: (value?: number) => string = formatMoney) {
@@ -150,26 +165,16 @@ export default function KpiRow({
         <div className={tileClass("secondary")}>
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Positions & Risk</div>
           <div className="mt-3 space-y-2 text-sm">
-            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Pozice / příkazy</span>
-              <span className="font-semibold tabular-nums text-foreground">
-                {openPositions}/{maxOpenPositions} · {openOrders}/{maxOpenOrders}
-              </span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Alokováno</span>
-              <span className="font-semibold tabular-nums text-foreground">{formatMoney(allocated)}</span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Využití limitu</span>
-              <span className="font-semibold tabular-nums text-foreground">{usagePct} %</span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Riziko na obchod</span>
-              <span className="font-semibold tabular-nums text-foreground">
-                {formatPercentRatio(riskPerTradePct)} ≈ {formatMoney(riskPerTradeUsd)}
-              </span>
-            </div>
+            <MetricLine
+              label="Pozice / příkazy"
+              value={`${openPositions}/${maxOpenPositions} · ${openOrders}/${maxOpenOrders}`}
+            />
+            <MetricLine label="Alokováno" value={formatMoney(allocated)} />
+            <MetricLine label="Využití limitu" value={`${usagePct} %`} />
+            <MetricLine
+              label="Riziko na obchod"
+              value={`${formatPercentRatio(riskPerTradePct)} ≈ ${formatMoney(riskPerTradeUsd)}`}
+            />
           </div>
         </div>
 
@@ -177,7 +182,7 @@ export default function KpiRow({
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">PnL přehled</div>
           <div className="mt-3 text-right">
             <div className="text-[11px] text-muted-foreground">Denní PnL</div>
-            <div className={`text-5xl font-semibold tabular-nums leading-none ${pnlTone(dailyPnl)}`}>
+            <div className={`text-[42px] font-semibold tabular-nums leading-none ${pnlTone(dailyPnl)}`}>
               {formatSignedMoney(dailyPnl)}
             </div>
           </div>

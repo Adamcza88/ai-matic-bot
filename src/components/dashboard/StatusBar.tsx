@@ -62,6 +62,8 @@ export default function StatusBar({
 
   return (
     <section
+      role="status"
+      aria-live="polite"
       className={`sticky top-0 z-20 rounded-xl border-2 p-4 shadow-[0_8px_18px_-10px_rgba(0,0,0,0.65)] backdrop-blur ${shellTone}`}
     >
       <div className="grid gap-3 xl:grid-cols-[0.95fr,1.05fr]">
@@ -69,7 +71,7 @@ export default function StatusBar({
           <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2">
             <div className="text-[11px] text-muted-foreground">ENGINE</div>
             <div
-              className={`mt-0.5 text-sm font-semibold tracking-wide ${
+              className={`mt-0.5 text-[19px] font-semibold tracking-wide ${
                 engineStatus === "Running" ? "text-emerald-300" : "text-amber-300"
               }`}
             >
@@ -78,13 +80,13 @@ export default function StatusBar({
           </div>
           <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2">
             <div className="text-[11px] text-muted-foreground">RISK</div>
-            <div className={`mt-0.5 text-sm font-semibold tracking-wide ${riskTone}`}>
+            <div className={`mt-0.5 text-[19px] font-semibold tracking-wide ${riskTone}`}>
               {riskLevel}
             </div>
           </div>
           <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2">
             <div className="text-[11px] text-muted-foreground">DATA HEALTH</div>
-            <div className={`mt-0.5 inline-flex items-center gap-1 text-sm font-semibold tracking-wide ${healthTone}`}>
+            <div className={`mt-0.5 inline-flex items-center gap-1 text-[19px] font-semibold tracking-wide ${healthTone}`}>
               <span
                 className={`inline-block h-2.5 w-2.5 rounded-full ${
                   dataHealthSafe ? "bg-emerald-400" : "bg-red-400"
@@ -100,7 +102,7 @@ export default function StatusBar({
           <div className="text-right">
             <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Denní PnL</div>
             <div
-              className={`mt-1 text-4xl font-semibold tabular-nums leading-none ${
+              className={`mt-1 text-[42px] font-semibold tabular-nums leading-none ${
                 Number(dailyPnl) >= 0 ? "text-emerald-300" : "text-[#A94B4B]"
               }`}
             >
@@ -110,7 +112,7 @@ export default function StatusBar({
           </div>
           <div className="text-right">
             <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Celkový kapitál</div>
-            <div className="mt-1 text-3xl font-semibold tabular-nums leading-none text-foreground">
+            <div className="mt-1 text-[30px] font-semibold tabular-nums leading-none text-foreground">
               {formatMoneyRange(capitalRange) !== "—" ? formatMoneyRange(capitalRange) : formatMoney(totalCapital)}
             </div>
             <div className="mt-2 text-xs text-muted-foreground">

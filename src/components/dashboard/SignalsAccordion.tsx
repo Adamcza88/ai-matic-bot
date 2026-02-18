@@ -217,7 +217,7 @@ export default function SignalsAccordion({
                       </Badge>
                     </td>
                     <td className="px-3 py-2">
-                      <Badge variant="outline" className={summaryClass}>
+                      <Badge variant="outline" className={summaryClass} title={row.reason}>
                         {row.summary.label} · {row.ratio}
                       </Badge>
                     </td>
@@ -234,6 +234,7 @@ export default function SignalsAccordion({
                             size="sm"
                             variant={overrideEnabled ? "secondary" : "outline"}
                             className="h-7 px-2 text-[11px]"
+                            aria-label={`Přepnout override pro ${row.symbol}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               onSelectSymbol(row.symbol);
@@ -247,6 +248,7 @@ export default function SignalsAccordion({
                             size="sm"
                             variant="outline"
                             className="h-7 px-2 text-[11px]"
+                            aria-label="Resetovat gate checklist"
                             onClick={(event) => {
                               event.stopPropagation();
                               resetChecklist();
@@ -311,6 +313,7 @@ export default function SignalsAccordion({
                       size="sm"
                       variant={overrideEnabled ? "secondary" : "outline"}
                       className="h-7 px-2 text-[11px]"
+                      aria-label={`Přepnout override pro ${row.symbol}`}
                       onClick={(event) => {
                         event.stopPropagation();
                         onSelectSymbol(row.symbol);
@@ -324,6 +327,7 @@ export default function SignalsAccordion({
                       size="sm"
                       variant="outline"
                       className="h-7 px-2 text-[11px]"
+                      aria-label="Resetovat gate checklist"
                       onClick={(event) => {
                         event.stopPropagation();
                         resetChecklist();

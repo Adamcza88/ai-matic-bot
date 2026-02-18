@@ -514,6 +514,7 @@ export default function Dashboard({
                 variant={execOverrideEnabled ? "destructive" : "default"}
                 size="sm"
                 onClick={() => setExecOverrideEnabled(true)}
+                aria-pressed={execOverrideEnabled}
                 className="h-11 px-4 text-sm font-semibold"
               >
                 Override ALL HOLD → EXECUTE
@@ -523,6 +524,7 @@ export default function Dashboard({
                 variant="outline"
                 size="sm"
                 onClick={() => setExecOverrideEnabled(false)}
+                aria-pressed={!execOverrideEnabled}
                 className="h-11 px-4 text-sm font-semibold"
               >
                 Disable Override
@@ -545,6 +547,8 @@ export default function Dashboard({
                   size="sm"
                   data-testid="env-demo-button"
                   onClick={() => setUseTestnet(true)}
+                  aria-pressed={useTestnet}
+                  aria-label="Přepnout na demo prostředí"
                   disabled={envAvailability ? !envAvailability.canUseDemo : false}
                   title={
                     envAvailability && !envAvailability.canUseDemo
@@ -560,6 +564,8 @@ export default function Dashboard({
                   size="sm"
                   data-testid="env-mainnet-button"
                   onClick={() => setUseTestnet(false)}
+                  aria-pressed={!useTestnet}
+                  aria-label="Přepnout na mainnet prostředí"
                   disabled={envAvailability ? !envAvailability.canUseMainnet : false}
                   title={
                     envAvailability && !envAvailability.canUseMainnet
@@ -579,6 +585,8 @@ export default function Dashboard({
                     variant={mode === value ? "default" : "ghost"}
                     size="sm"
                     onClick={() => setMode(value)}
+                    aria-pressed={mode === value}
+                    aria-label={`Nastavit režim ${modeLabel(value)}`}
                     className={mode === value ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
                   >
                     {modeLabel(value)}
