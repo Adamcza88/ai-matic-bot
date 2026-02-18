@@ -330,6 +330,193 @@ function buildTp(entry, stop, rr = 2) {
 function clampBps(value, minBps, maxBps) {
     return Math.min(Math.max(value, minBps), maxBps);
 }
+function evaluateTrendPullbackSetup({ symbol, htfTrend, ltfTrend, last, prev }) {
+    if (!ltfTrend.impulse || !ltfTrend.correction)
+        return null;
+    const isBull = htfTrend.trend === "BULL";
+    const isBear = htfTrend.trend === "BEAR";
+    const { impulse, correction } = ltfTrend;
+    const retraceOk = correction.retrace <= RETRACE_MAX;
+    const confirm = (isBull && last.close > prev.high) ||
+        (isBear && last.close < prev.low) ||
+        (isBull && last.close > impulse.end.high) ||
+        (isBear && last.close < impulse.end.low);
+    if (retraceOk && confirm) {
+        const targetNotional = impulse.start.low + (impulse.end.high - impulse.start.low) * 0.55;
+        const entry = isBull
+            ? Math.min(last.close, targetNotional)
+            : Math.max(last.close, targetNotional);
+        const stop = isBull ? correction.end.low : correction.end.high;
+        const tp = buildTp(entry, stop, 2);
+        if (Number.isFinite(tp)) {
+            const signal = {
+                id: `${symbol}-${Date.now()}`,
+                symbol,
+                intent: { side: isBull ? "buy" : "sell", entry, sl: stop, tp },
+                kind: "PULLBACK",
+                entryType: "LIMIT",
+                risk: 0.8,
+                message: `X1 Trend pullback ${htfTrend.trend} | retrace ${(correction.retrace * 100).toFixed(1)}%`,
+                createdAt: new Date().toISOString(),
+            };
+            return { signal };
+        }
+    }
+    return null;
+}
+function evaluateTrendContinuationSetup({ symbol, htfTrend, ltf, ltfSwings, last }) {
+    if (ltfSwings.length < 2)
+        return { acceptanceCloses: 0 };
+    const isBull = htfTrend.trend === "BULL";
+    const level = isBull
+        ? ltfSwings.filter((s) => s.type === "high").slice(-1)[0]?.high
+        : ltfSwings.filter((s) => s.type === "low").slice(-1)[0]?.low;
+    if (!Number.isFinite(level ?? Number.NaN))
+        return { acceptanceCloses: 0 };
+    const closes = ltf
+        .slice(-3)
+        .filter((c) => (isBull ? c.close > level : c.close < level));
+    const acceptanceCloses = closes.length;
+    if (acceptanceCloses >= 1) {
+        const offset = clampBps(BREAK_ACCEPT_BPS, 0.0002, 0.0005);
+        const entry = isBull ? last.close * (1 + offset) : last.close * (1 - offset);
+        const stop = isBull ? level * (1 - TRAIL_OFFSET_BASE) : level * (1 + TRAIL_OFFSET_BASE);
+        const tp = buildTp(entry, stop, 2);
+        if (Number.isFinite(tp)) {
+            const signal = {
+                id: `${symbol}-${Date.now()}`,
+                symbol,
+                intent: { side: isBull ? "buy" : "sell", entry, sl: stop, tp },
+                kind: "BREAKOUT",
+                entryType: "LIMIT",
+                risk: 0.9,
+                message: `X2 Break+Acceptance ${acceptanceCloses} close`,
+                createdAt: new Date().toISOString(),
+            };
+            return { signal, acceptanceCloses };
+        }
+    }
+    return { acceptanceCloses };
+}
+function evaluateRangeBreakFlipSetup({ symbol, rangeInfo, ltf, last, prev }) {
+    if ((last.close > rangeInfo.high && prev.close > rangeInfo.high) ||
+        (last.close < rangeInfo.low && prev.close < rangeInfo.low)) {
+        const bullBreak = last.close > rangeInfo.high;
+        const retestOk = ltf.slice(-5).some((c) => bullBreak ? c.low <= rangeInfo.high && c.close >= rangeInfo.high : c.high >= rangeInfo.low && c.close <= rangeInfo.low);
+        if (retestOk) {
+            const entry = last.close;
+            const stop = bullBreak
+                ? rangeInfo.high * (1 - TRAIL_OFFSET_BASE)
+                : rangeInfo.low * (1 + TRAIL_OFFSET_BASE);
+            const tp = buildTp(entry, stop, 2);
+            if (Number.isFinite(tp)) {
+                const signal = {
+                    id: `${symbol}-${Date.now()}`,
+                    symbol,
+                    intent: { side: bullBreak ? "buy" : "sell", entry, sl: stop, tp },
+                    kind: "BREAKOUT",
+                    entryType: "LIMIT",
+                    risk: 0.8,
+                    message: "X4 Range->Trend break+retest",
+                    createdAt: new Date().toISOString(),
+                };
+                return { signal };
+            }
+        }
+    }
+    return null;
+}
+function evaluateRangeFadeSetup({ symbol, rangeInfo, lowVol, last }) {
+    const nearHigh = Math.abs(rangeInfo.high - last.high) / rangeInfo.high <= SIMILAR_HILO_PCT;
+    const nearLow = Math.abs(last.low - rangeInfo.low) / rangeInfo.low <= SIMILAR_HILO_PCT;
+    const rejectionHigh = nearHigh && last.close < rangeInfo.high;
+    const rejectionLow = nearLow && last.close > rangeInfo.low;
+    if (rejectionHigh || rejectionLow) {
+        const entry = last.close;
+        const stop = rejectionHigh
+            ? rangeInfo.high * (1 + TRAIL_OFFSET_BASE)
+            : rangeInfo.low * (1 - TRAIL_OFFSET_BASE);
+        const midTp = rangeInfo.mid;
+        const edgeTp = rejectionHigh ? rangeInfo.low : rangeInfo.high;
+        const r = Math.abs(entry - stop);
+        const tpCandidate = Math.abs(edgeTp - entry) >= r ? edgeTp : midTp;
+        const signal = {
+            id: `${symbol}-${Date.now()}`,
+            symbol,
+            intent: {
+                side: rejectionHigh ? "sell" : "buy",
+                entry,
+                sl: stop,
+                tp: tpCandidate,
+            },
+            kind: "MEAN_REVERSION",
+            entryType: lowVol ? "LIMIT_MAKER_FIRST" : "LIMIT",
+            risk: 0.5,
+            message: "X3 Range fade",
+            createdAt: new Date().toISOString(),
+        };
+        return { signal };
+    }
+    return null;
+}
+function evaluateReversalSetup({ symbol, ltf, ltfSwings, last }) {
+    const rsi = computeRsi(ltf.map((c) => c.close), 14);
+    const highs = ltfSwings.filter((s) => s.type === "high");
+    const lows = ltfSwings.filter((s) => s.type === "low");
+    const lastHigh = highs[highs.length - 1];
+    const prevHigh = highs[highs.length - 2];
+    const lastLow = lows[lows.length - 1];
+    const prevLow = lows[lows.length - 2];
+    const bearishDiv = lastHigh &&
+        prevHigh &&
+        lastHigh.high > prevHigh.high &&
+        rsi[lastHigh.index] < rsi[prevHigh.index];
+    const bullishDiv = lastLow &&
+        prevLow &&
+        lastLow.low < prevLow.low &&
+        rsi[lastLow.index] > rsi[prevLow.index];
+    const chochBear = lastHigh && last.close < lastHigh.low;
+    const chochBull = lastLow && last.close > lastLow.high;
+    if (bearishDiv && chochBear) {
+        const entry = last.close;
+        const stop = lastHigh.high * (1 + TRAIL_OFFSET_BASE);
+        const tp = buildTp(entry, stop, 0.5);
+        if (Number.isFinite(tp)) {
+            return {
+                signal: {
+                    id: `${symbol}-${Date.now()}`,
+                    symbol,
+                    intent: { side: "sell", entry, sl: stop, tp },
+                    kind: "MEAN_REVERSION",
+                    entryType: "LIMIT",
+                    risk: 0.25,
+                    message: "X5 Reversal bearish divergence",
+                    createdAt: new Date().toISOString(),
+                },
+            };
+        }
+    }
+    if (bullishDiv && chochBull) {
+        const entry = last.close;
+        const stop = lastLow.low * (1 - TRAIL_OFFSET_BASE);
+        const tp = buildTp(entry, stop, 0.5);
+        if (Number.isFinite(tp)) {
+            return {
+                signal: {
+                    id: `${symbol}-${Date.now()}`,
+                    symbol,
+                    intent: { side: "buy", entry, sl: stop, tp },
+                    kind: "MEAN_REVERSION",
+                    entryType: "LIMIT",
+                    risk: 0.25,
+                    message: "X5 Reversal bullish divergence",
+                    createdAt: new Date().toISOString(),
+                },
+            };
+        }
+    }
+    return null;
+}
 export function evaluateAiMaticXStrategyForSymbol(symbol, candles) {
     const ltf = resampleCandles(candles, 5);
     const htf = resampleCandles(candles, 60);
@@ -360,214 +547,67 @@ export function evaluateAiMaticXStrategyForSymbol(symbol, candles) {
     const rangeInfo = resolveRangeInfo(ltf);
     const lowVol = detectLowVol(ltf);
     const strongTrendExpanse = detectStrongTrendExpanse(ltf, ltfSwings, ltfTrend.trend);
-    const riskOff = false;
+    const riskOff = detectRiskOffByStructure(ltf);
     const details = [
         `1h ${htfTrend.trend}`,
         `5m ${ltfTrend.trend}`,
         rangeInfo.ok ? `range ${rangeInfo.lookback}` : "no range",
     ];
-    let signal = null;
+    const context = {
+        symbol,
+        ltf,
+        htf,
+        ltfSwings,
+        htfSwings,
+        htfTrend,
+        ltfTrend,
+        rangeInfo,
+        lowVol,
+        last: ltf[ltf.length - 1],
+        prev: ltf[ltf.length - 2],
+    };
+    let result = null;
     let setup = "NO_TRADE";
     let acceptanceCloses = 0;
-    const last = ltf[ltf.length - 1];
-    const prev = ltf[ltf.length - 2];
     const isBull = htfTrend.trend === "BULL";
     const isBear = htfTrend.trend === "BEAR";
-    if (riskOff) {
-        setup = "NO_TRADE";
-    }
-    else if ((isBull || isBear) && ltfTrend.trend === htfTrend.trend) {
-        if (ltfTrend.impulse && ltfTrend.correction) {
-            const impulse = ltfTrend.impulse;
-            const correction = ltfTrend.correction;
-            const retraceOk = correction.retrace <= RETRACE_MAX;
-            const confirm = (isBull && last.close > prev.high) ||
-                (isBear && last.close < prev.low) ||
-                (isBull && last.close > impulse.end.high) ||
-                (isBear && last.close < impulse.end.low);
-            if (retraceOk && confirm) {
-                const targetNotional = impulse.start.low + (impulse.end.high - impulse.start.low) * 0.55;
-                const entry = isBull
-                    ? Math.min(last.close, targetNotional)
-                    : Math.max(last.close, targetNotional);
-                const stop = isBull ? correction.end.low : correction.end.high;
-                const tp = buildTp(entry, stop, 2);
-                if (Number.isFinite(tp)) {
-                    signal = {
-                        id: `${symbol}-${Date.now()}`,
-                        symbol,
-                        intent: {
-                            side: isBull ? "buy" : "sell",
-                            entry,
-                            sl: stop,
-                            tp,
-                        },
-                        kind: "PULLBACK",
-                        entryType: "LIMIT",
-                        risk: 0.8,
-                        message: `X1 Trend pullback ${htfTrend.trend} | retrace ${(correction.retrace * 100).toFixed(1)}%`,
-                        createdAt: new Date().toISOString(),
-                    };
-                    setup = "TREND_PULLBACK";
+    if (!riskOff) {
+        if ((isBull || isBear) && ltfTrend.trend === htfTrend.trend) {
+            result = evaluateTrendPullbackSetup(context);
+            if (result) {
+                setup = "TREND_PULLBACK";
+            }
+            else {
+                result = evaluateTrendContinuationSetup(context);
+                if (result?.signal) {
+                    setup = "TREND_CONTINUATION";
+                }
+                acceptanceCloses = result?.acceptanceCloses ?? 0;
+            }
+        }
+        else if (htfTrend.trend === "RANGE" && rangeInfo.ok) {
+            result = evaluateRangeBreakFlipSetup(context);
+            if (result) {
+                setup = "RANGE_BREAK_FLIP";
+            }
+            else {
+                result = evaluateRangeFadeSetup(context);
+                if (result) {
+                    setup = "RANGE_FADE";
                 }
             }
         }
-        if (!signal && ltfSwings.length >= 2) {
-            const level = isBull
-                ? ltfSwings.filter((s) => s.type === "high").slice(-1)[0]?.high
-                : ltfSwings.filter((s) => s.type === "low").slice(-1)[0]?.low;
-            if (Number.isFinite(level ?? Number.NaN)) {
-                const closes = ltf
-                    .slice(-3)
-                    .filter((c) => (isBull ? c.close > level : c.close < level));
-                acceptanceCloses = closes.length;
-                if (acceptanceCloses >= 1) {
-                    const offset = clampBps(BREAK_ACCEPT_BPS, 0.0002, 0.0005);
-                    const entry = isBull ? last.close * (1 + offset) : last.close * (1 - offset);
-                    const stop = isBull ? level * (1 - TRAIL_OFFSET_BASE) : level * (1 + TRAIL_OFFSET_BASE);
-                    const tp = buildTp(entry, stop, 2);
-                    if (Number.isFinite(tp)) {
-                        signal = {
-                            id: `${symbol}-${Date.now()}`,
-                            symbol,
-                            intent: {
-                                side: isBull ? "buy" : "sell",
-                                entry,
-                                sl: stop,
-                                tp,
-                            },
-                            kind: "BREAKOUT",
-                            entryType: "LIMIT",
-                            risk: 0.9,
-                            message: `X2 Break+Acceptance ${acceptanceCloses} close`,
-                            createdAt: new Date().toISOString(),
-                        };
-                        setup = "TREND_CONTINUATION";
-                    }
-                }
-            }
-        }
-    }
-    else if (htfTrend.trend === "RANGE" && rangeInfo.ok) {
-        const nearHigh = Math.abs(rangeInfo.high - last.high) / rangeInfo.high <= SIMILAR_HILO_PCT;
-        const nearLow = Math.abs(last.low - rangeInfo.low) / rangeInfo.low <= SIMILAR_HILO_PCT;
-        const rejectionHigh = nearHigh && last.close < rangeInfo.high;
-        const rejectionLow = nearLow && last.close > rangeInfo.low;
-        if ((last.close > rangeInfo.high && prev.close > rangeInfo.high) ||
-            (last.close < rangeInfo.low && prev.close < rangeInfo.low)) {
-            const bullBreak = last.close > rangeInfo.high;
-            const retestOk = ltf.slice(-5).some((c) => bullBreak ? c.low <= rangeInfo.high && c.close >= rangeInfo.high : c.high >= rangeInfo.low && c.close <= rangeInfo.low);
-            if (retestOk) {
-                const entry = last.close;
-                const stop = bullBreak
-                    ? rangeInfo.high * (1 - TRAIL_OFFSET_BASE)
-                    : rangeInfo.low * (1 + TRAIL_OFFSET_BASE);
-                const tp = buildTp(entry, stop, 2);
-                if (Number.isFinite(tp)) {
-                    signal = {
-                        id: `${symbol}-${Date.now()}`,
-                        symbol,
-                        intent: {
-                            side: bullBreak ? "buy" : "sell",
-                            entry,
-                            sl: stop,
-                            tp,
-                        },
-                        kind: "BREAKOUT",
-                        entryType: "LIMIT",
-                        risk: 0.8,
-                        message: "X4 Range->Trend break+retest",
-                        createdAt: new Date().toISOString(),
-                    };
-                    setup = "RANGE_BREAK_FLIP";
-                }
-            }
-        }
-        if (!signal && (rejectionHigh || rejectionLow)) {
-            const entry = last.close;
-            const stop = rejectionHigh
-                ? rangeInfo.high * (1 + TRAIL_OFFSET_BASE)
-                : rangeInfo.low * (1 - TRAIL_OFFSET_BASE);
-            const midTp = rangeInfo.mid;
-            const edgeTp = rejectionHigh ? rangeInfo.low : rangeInfo.high;
-            const r = Math.abs(entry - stop);
-            const tpCandidate = Math.abs(edgeTp - entry) >= r ? edgeTp : midTp;
-            signal = {
-                id: `${symbol}-${Date.now()}`,
-                symbol,
-                intent: {
-                    side: rejectionHigh ? "sell" : "buy",
-                    entry,
-                    sl: stop,
-                    tp: tpCandidate,
-                },
-                kind: "MEAN_REVERSION",
-                entryType: lowVol ? "LIMIT_MAKER_FIRST" : "LIMIT",
-                risk: 0.5,
-                message: "X3 Range fade",
-                createdAt: new Date().toISOString(),
-            };
-            setup = "RANGE_FADE";
-        }
-    }
-    if (!signal) {
-        const rsi = computeRsi(ltf.map((c) => c.close), 14);
-        const highs = ltfSwings.filter((s) => s.type === "high");
-        const lows = ltfSwings.filter((s) => s.type === "low");
-        const lastHigh = highs[highs.length - 1];
-        const prevHigh = highs[highs.length - 2];
-        const lastLow = lows[lows.length - 1];
-        const prevLow = lows[lows.length - 2];
-        const bearishDiv = lastHigh &&
-            prevHigh &&
-            lastHigh.high > prevHigh.high &&
-            rsi[lastHigh.index] < rsi[prevHigh.index];
-        const bullishDiv = lastLow &&
-            prevLow &&
-            lastLow.low < prevLow.low &&
-            rsi[lastLow.index] > rsi[prevLow.index];
-        const chochBear = lastHigh && last.close < lastHigh.low;
-        const chochBull = lastLow && last.close > lastLow.high;
-        if (bearishDiv && chochBear) {
-            const entry = last.close;
-            const stop = lastHigh.high * (1 + TRAIL_OFFSET_BASE);
-            const tp = buildTp(entry, stop, 0.5);
-            if (Number.isFinite(tp)) {
-                signal = {
-                    id: `${symbol}-${Date.now()}`,
-                    symbol,
-                    intent: { side: "sell", entry, sl: stop, tp },
-                    kind: "MEAN_REVERSION",
-                    entryType: "LIMIT",
-                    risk: 0.25,
-                    message: "X5 Reversal bearish divergence",
-                    createdAt: new Date().toISOString(),
-                };
-                setup = "REVERSAL";
-            }
-        }
-        if (!signal && bullishDiv && chochBull) {
-            const entry = last.close;
-            const stop = lastLow.low * (1 - TRAIL_OFFSET_BASE);
-            const tp = buildTp(entry, stop, 0.5);
-            if (Number.isFinite(tp)) {
-                signal = {
-                    id: `${symbol}-${Date.now()}`,
-                    symbol,
-                    intent: { side: "buy", entry, sl: stop, tp },
-                    kind: "MEAN_REVERSION",
-                    entryType: "LIMIT",
-                    risk: 0.25,
-                    message: "X5 Reversal bullish divergence",
-                    createdAt: new Date().toISOString(),
-                };
+        if (!result?.signal) {
+            result = evaluateReversalSetup(context);
+            if (result) {
                 setup = "REVERSAL";
             }
         }
     }
+    const signal = result?.signal ?? null;
     const trend = htfTrend.trend === "BULL" ? Trend.Bull : htfTrend.trend === "BEAR" ? Trend.Bear : Trend.Range;
     const trendH1 = trend;
-    const context = {
+    const xContext = {
         htfTrend: htfTrend.trend,
         ltfTrend: ltfTrend.trend,
         mode: riskOff || htfTrend.trend === "RANGE"
@@ -587,7 +627,7 @@ export function evaluateAiMaticXStrategyForSymbol(symbol, candles) {
         trendAdx: Number.NaN,
         signal,
         halted: false,
-        xContext: context,
+        xContext,
         trailOffsetPct: strongTrendExpanse ? TRAIL_OFFSET_STRONG : TRAIL_OFFSET_BASE,
     };
 }
