@@ -83,8 +83,8 @@ export default function RiskBlockPanel({
     <section
       className={`rounded-xl border-2 px-4 py-3 ${
         critical
-          ? "border-red-500/60 bg-red-500/10"
-          : "border-amber-500/50 bg-amber-500/10"
+          ? "border-[#D32F2F]/70 bg-[#D32F2F]/10"
+          : "border-[#FFB300]/70 bg-[#FFB300]/10"
       }`}
     >
       <div className="flex items-center justify-between gap-3">

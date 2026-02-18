@@ -47,18 +47,18 @@ export default function StatusBar({
 }: StatusBarProps) {
   const riskTone =
     riskLevel === "CRITICAL"
-      ? "text-red-300"
+      ? "text-[#D32F2F]"
       : riskLevel === "ELEVATED"
-        ? "text-amber-300"
-        : "text-emerald-300";
+        ? "text-[#FFB300]"
+        : "text-[#00C853]";
   const healthLabel = dataHealthSafe ? "SAFE" : "UNSAFE";
-  const healthTone = dataHealthSafe ? "text-emerald-300" : "text-red-300";
+  const healthTone = dataHealthSafe ? "text-[#00C853]" : "text-[#D32F2F]";
   const shellTone =
     riskLevel === "CRITICAL"
-      ? "border-red-500/70 bg-red-500/5"
+      ? "border-[#D32F2F]/80 bg-[#D32F2F]/10"
       : riskLevel === "ELEVATED"
-        ? "border-amber-500/70 bg-amber-500/5"
-        : "border-emerald-500/60 bg-emerald-500/5";
+        ? "border-[#FFB300]/80 bg-[#FFB300]/10"
+        : "border-[#00C853]/70 bg-[#00C853]/10";
 
   return (
     <section
@@ -69,27 +69,27 @@ export default function StatusBar({
       <div className="grid gap-3 xl:grid-cols-[0.95fr,1.05fr]">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2">
-            <div className="text-[11px] text-muted-foreground">ENGINE</div>
+            <div className="text-xs text-muted-foreground">ENGINE</div>
             <div
               className={`mt-0.5 text-[19px] font-semibold tracking-wide ${
-                engineStatus === "Running" ? "text-emerald-300" : "text-amber-300"
+                engineStatus === "Running" ? "text-[#00C853]" : "text-[#FFB300]"
               }`}
             >
               {engineStatus.toUpperCase()}
             </div>
           </div>
           <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2">
-            <div className="text-[11px] text-muted-foreground">RISK</div>
+            <div className="text-xs text-muted-foreground">RISK</div>
             <div className={`mt-0.5 text-[19px] font-semibold tracking-wide ${riskTone}`}>
               {riskLevel}
             </div>
           </div>
           <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2">
-            <div className="text-[11px] text-muted-foreground">DATA HEALTH</div>
+            <div className="text-xs text-muted-foreground">DATA HEALTH</div>
             <div className={`mt-0.5 inline-flex items-center gap-1 text-[19px] font-semibold tracking-wide ${healthTone}`}>
               <span
                 className={`inline-block h-2.5 w-2.5 rounded-full ${
-                  dataHealthSafe ? "bg-emerald-400" : "bg-red-400"
+                  dataHealthSafe ? "bg-[#00C853]" : "bg-[#D32F2F]"
                 }`}
                 aria-hidden
               />
@@ -100,10 +100,10 @@ export default function StatusBar({
 
         <div className="grid gap-2 rounded-xl border border-border/70 bg-card/70 p-3 sm:grid-cols-2">
           <div className="text-right">
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Denní PnL</div>
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">Denní PnL</div>
             <div
               className={`mt-1 text-[42px] font-semibold tabular-nums leading-none ${
-                Number(dailyPnl) >= 0 ? "text-emerald-300" : "text-[#A94B4B]"
+                Number(dailyPnl) >= 0 ? "text-[#00C853]" : "text-[#D32F2F]"
               }`}
             >
               {formatSignedMoney(dailyPnl)}
@@ -111,7 +111,7 @@ export default function StatusBar({
             <div className="mt-2 text-xs text-muted-foreground">Realizováno {formatSignedMoney(dailyPnl)}</div>
           </div>
           <div className="text-right">
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Celkový kapitál</div>
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">Celkový kapitál</div>
             <div className="mt-1 text-[30px] font-semibold tabular-nums leading-none text-foreground">
               {formatMoneyRange(capitalRange) !== "—" ? formatMoneyRange(capitalRange) : formatMoney(totalCapital)}
             </div>

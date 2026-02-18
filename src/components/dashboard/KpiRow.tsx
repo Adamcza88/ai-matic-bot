@@ -44,7 +44,7 @@ type MetricLineProps = {
 };
 
 function tileClass(priority: "primary" | "secondary") {
-  return `rounded-xl border border-border/70 bg-card/96 p-4 dm-surface-elevated lm-kpi-tile ${
+  return `rounded-xl border border-border/70 bg-card/96 p-4 lg:p-6 dm-surface-elevated lm-kpi-tile ${
     priority === "primary" ? "shadow-[0_10px_16px_-12px_rgba(0,0,0,0.7)]" : ""
   }`;
 }
@@ -72,16 +72,16 @@ function formatFeedRange(range?: { min: number; max: number }) {
 
 function feedToneClass(value?: number) {
   if (!Number.isFinite(value)) return "bg-border";
-  if ((value as number) < 2_000) return "bg-emerald-500";
-  if ((value as number) <= 10_000) return "bg-amber-500";
-  return "bg-red-500";
+  if ((value as number) < 2_000) return "bg-[#00C853]";
+  if ((value as number) <= 10_000) return "bg-[#FFB300]";
+  return "bg-[#D32F2F]";
 }
 
 function pnlTone(value?: number) {
   if (!Number.isFinite(value)) return "text-muted-foreground";
   return (value as number) >= 0
-    ? "text-emerald-300 dm-pnl-positive"
-    : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative";
+    ? "text-[#00C853] dm-pnl-positive"
+    : "text-[#D32F2F] lm-pnl-negative dm-pnl-negative";
 }
 
 export default function KpiRow({
@@ -110,20 +110,20 @@ export default function KpiRow({
 
   return (
     <section className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_2fr_2fr]">
         <div className={tileClass("secondary")}>
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Health & Latency</div>
           <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-[11px] text-muted-foreground">Data Health</div>
+              <div className="text-xs text-muted-foreground">Data Health</div>
               <div
                 className={`mt-1 inline-flex items-center gap-1 font-semibold ${
-                  dataHealthSafe ? "text-emerald-300" : "text-red-300"
+                  dataHealthSafe ? "text-[#00C853]" : "text-[#D32F2F]"
                 }`}
               >
                 <span
                   className={`inline-block h-2.5 w-2.5 rounded-full ${
-                    dataHealthSafe ? "bg-emerald-400" : "bg-red-400"
+                    dataHealthSafe ? "bg-[#00C853]" : "bg-[#D32F2F]"
                   }`}
                   aria-hidden
                 />
@@ -132,13 +132,13 @@ export default function KpiRow({
             </div>
 
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-[11px] text-muted-foreground">Latency</div>
+              <div className="text-xs text-muted-foreground">Latency</div>
               <div className="mt-1 font-semibold tabular-nums text-foreground">{formatMs(latencyMs)}</div>
             </div>
 
             <div className="col-span-2 rounded-lg border border-border/60 bg-background/40 px-3 py-2">
               <div className="flex items-center justify-between">
-                <div className="text-[11px] text-muted-foreground">Feed age</div>
+                <div className="text-xs text-muted-foreground">Feed age</div>
                 <div className="text-2xl font-semibold tabular-nums text-foreground">{formatFeedRange(feedAgeRangeMs)}</div>
               </div>
               <div className="mt-2 h-1.5 w-full rounded-full bg-background/50">
@@ -147,15 +147,15 @@ export default function KpiRow({
             </div>
 
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-[11px] text-muted-foreground">Gates</div>
+              <div className="text-xs text-muted-foreground">Gates</div>
               <div className="mt-1 font-semibold tabular-nums text-foreground">
                 {gatesPassCount}/{gatesTotal || 0}
               </div>
             </div>
 
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-[11px] text-muted-foreground">Blocked</div>
-              <div className={`mt-1 font-semibold tabular-nums ${blockedSignals > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+              <div className="text-xs text-muted-foreground">Blocked</div>
+              <div className={`mt-1 font-semibold tabular-nums ${blockedSignals > 0 ? "text-[#FFB300]" : "text-[#00C853]"}`}>
                 {blockedSignals}
               </div>
             </div>
@@ -181,7 +181,7 @@ export default function KpiRow({
         <div className={tileClass("primary")}>
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">PnL přehled</div>
           <div className="mt-3 text-right">
-            <div className="text-[11px] text-muted-foreground">Denní PnL</div>
+            <div className="text-xs text-muted-foreground">Denní PnL</div>
             <div className={`text-[42px] font-semibold tabular-nums leading-none ${pnlTone(dailyPnl)}`}>
               {formatSignedMoney(dailyPnl)}
             </div>

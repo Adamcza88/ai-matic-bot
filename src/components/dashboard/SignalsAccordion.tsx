@@ -67,9 +67,9 @@ function gatePassRatio(diag: SymbolDiagnostic | undefined, profileGateNames: str
 
 function feedToneClass(feedAgeMs?: number) {
   if (!Number.isFinite(feedAgeMs)) return "text-muted-foreground";
-  if ((feedAgeMs as number) < FEED_OK_MS) return "text-emerald-300";
-  if ((feedAgeMs as number) <= FEED_WARN_MS) return "text-amber-300";
-  return "text-red-300";
+  if ((feedAgeMs as number) < FEED_OK_MS) return "text-[#00C853]";
+  if ((feedAgeMs as number) <= FEED_WARN_MS) return "text-[#FFB300]";
+  return "text-[#D32F2F]";
 }
 
 function formatFeedAge(feedAgeMs?: number) {
@@ -153,8 +153,8 @@ export default function SignalsAccordion({
             }
             className={
               overrideEnabled
-                ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
-                : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                ? "border-[#FFB300]/60 bg-[#FFB300]/10 text-[#FFB300]"
+                : "border-[#00C853]/60 bg-[#00C853]/10 text-[#00C853]"
             }
           >
             {overrideEnabled ? "Overrides gates" : "No overrides"}
@@ -189,11 +189,11 @@ export default function SignalsAccordion({
               {rows.map((row) => {
                 const summaryClass =
                   row.summary.tone === "blocked"
-                    ? "border-red-500/50 text-red-300 dm-status-sell"
+                    ? "border-[#D32F2F]/60 text-[#D32F2F] dm-status-sell"
                     : row.summary.tone === "hold"
-                      ? "border-amber-500/50 text-amber-300 dm-status-warn"
+                      ? "border-[#FFB300]/60 text-[#FFB300] dm-status-warn"
                       : row.summary.tone === "pass"
-                        ? "border-emerald-500/50 text-emerald-300 dm-status-pass"
+                        ? "border-[#00C853]/60 text-[#00C853] dm-status-pass"
                         : "border-border/60 text-muted-foreground dm-status-muted";
                 return (
                   <tr
@@ -209,7 +209,7 @@ export default function SignalsAccordion({
                         variant="outline"
                         className={
                           row.signalActive
-                            ? "border-emerald-500/50 text-emerald-300 dm-status-pass"
+                            ? "border-[#00C853]/60 text-[#00C853] dm-status-pass"
                             : "border-border/60 text-muted-foreground dm-status-muted"
                         }
                       >
@@ -272,11 +272,11 @@ export default function SignalsAccordion({
               const selected = selectedSymbol === row.symbol;
               const summaryClass =
                 row.summary.tone === "blocked"
-                  ? "border-red-500/50 text-red-400 dm-status-sell"
+                  ? "border-[#D32F2F]/60 text-[#D32F2F] dm-status-sell"
                   : row.summary.tone === "hold"
-                    ? "border-amber-500/50 text-amber-400 dm-status-warn"
+                    ? "border-[#FFB300]/60 text-[#FFB300] dm-status-warn"
                     : row.summary.tone === "pass"
-                      ? "border-emerald-500/50 text-emerald-400 dm-status-pass"
+                      ? "border-[#00C853]/60 text-[#00C853] dm-status-pass"
                       : "border-border/60 text-muted-foreground dm-status-muted";
 
               return (

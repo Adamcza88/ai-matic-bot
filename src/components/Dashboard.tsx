@@ -470,7 +470,7 @@ export default function Dashboard({
   const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";
 
   return (
-    <div className="mx-auto max-w-[1200px] space-y-4 px-4 py-4 lg:px-6">
+    <div className="mx-auto max-w-[1560px] space-y-6 px-4 py-4 lg:px-6">
       <StatusBar
         title={profileMeta.label}
         subtitle={profileMeta.subtitle}
@@ -501,10 +501,10 @@ export default function Dashboard({
                 variant="outline"
                 className={
                   riskLevel === "CRITICAL"
-                    ? "border-red-500/50 bg-red-500/15 px-2 py-1 text-red-300"
+                    ? "border-[#D32F2F]/70 bg-[#D32F2F]/15 px-2 py-1 text-[#D32F2F]"
                     : riskLevel === "ELEVATED"
-                      ? "border-amber-500/50 bg-amber-500/15 px-2 py-1 text-amber-300"
-                      : "border-emerald-500/50 bg-emerald-500/15 px-2 py-1 text-emerald-300"
+                      ? "border-[#FFB300]/70 bg-[#FFB300]/15 px-2 py-1 text-[#FFB300]"
+                      : "border-[#00C853]/70 bg-[#00C853]/15 px-2 py-1 text-[#00C853]"
                 }
               >
                 RISK {riskLevel}
@@ -657,7 +657,7 @@ export default function Dashboard({
                 logEntries={logEntries}
                 logsLoaded={logsLoaded}
               />
-              <div className="grid grid-cols-12 gap-4">
+              <div className="grid grid-cols-12 gap-6">
                 <div className="col-span-12 xl:col-span-8">
                   <OverviewTab
                     allowedSymbols={allowedSymbols}
@@ -698,7 +698,7 @@ export default function Dashboard({
           </TabsContent>
 
           <TabsContent value="execution" className="mt-0">
-            <div className="space-y-4">
+            <div className="space-y-6">
               <PositionsTable
                 positions={positionsLoaded ? activePositions : []}
                 positionsLoaded={positionsLoaded}
@@ -720,7 +720,7 @@ export default function Dashboard({
           </TabsContent>
 
           <TabsContent value="audit" className="mt-0">
-            <div className="grid grid-cols-12 gap-4">
+            <div className="grid grid-cols-12 gap-6">
               <div className="col-span-12 xl:col-span-8 space-y-4">
                 <LogsPanel
                   logEntries={logEntries}
