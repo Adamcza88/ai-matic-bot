@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import type { AssetPnlMap } from "@/lib/pnlHistory";
 import Panel from "@/components/dashboard/Panel";
 import { formatClock, formatSignedMoney } from "@/lib/uiFormat";
-import { UI_COPY } from "@/lib/uiCopy";
 import type { DiagnosticGate, ScanDiagnostics, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
 
 type OverviewTabProps = {
@@ -17,18 +16,10 @@ type OverviewTabProps = {
   selectedSymbol: string | null;
 };
 
-type GateStep = {
-  label: "HARD" | "CHECKLIST" | "ENTRY";
-  pass: boolean;
-  score: string;
-  missing: number;
-  reasons: string[];
-};
-
-function normalizeBlockReason(reason?: string) {
-  if (!reason) return "Chybí důvod blokace.";
-  if (reason === "Exec OFF") return "Exekuce je vypnutá (režim manuál).";
-  if (reason === "čeká na signál") return "Čeká se na aktivní signál.";
+function normalizeReason(reason?: string) {
+  if (!reason) return "Bez aktivní blokace.";
+  if (reason === "Exec OFF") return "Execution je vypnutý (manual).";
+  if (reason === "čeká na signál") return "Čeká na potvrzení signálu.";
   return reason;
 }
 
@@ -36,58 +27,13 @@ function parseRatio(detail?: string) {
   if (!detail) return null;
   const match = detail.match(/(\d+)\s*\/\s*(\d+)/);
   if (!match) return null;
-  return {
-    ok: Number(match[1]),
-    total: Number(match[2]),
-  };
+  return `${Number(match[1])}/${Number(match[2])}`;
 }
 
-function parseNeed(name: string, fallback = 0) {
-  const allMatch = name.match(/all\s+(\d+)/i);
-  if (allMatch) return Number(allMatch[1]);
-  const ofMatch = name.match(/(\d+)\s+of\s+(\d+)/i);
-  if (ofMatch) return Number(ofMatch[1]);
-  return fallback;
-}
-
-function parseStep(
-  diag: SymbolDiagnostic | undefined,
-  label: GateStep["label"],
-  gatePrefix: string
-): GateStep {
-  const gate = (Array.isArray(diag?.gates) ? diag?.gates : []).find((item: DiagnosticGate) =>
-    item.name.toLowerCase().startsWith(gatePrefix.toLowerCase())
+function gateByPrefix(diag: SymbolDiagnostic | undefined, prefix: string) {
+  return (Array.isArray(diag?.gates) ? diag.gates : []).find((gate: DiagnosticGate) =>
+    gate.name.toLowerCase().startsWith(prefix.toLowerCase())
   );
-  const ratio = parseRatio(gate?.detail);
-  const total = ratio?.total ?? 0;
-  const passed = ratio?.ok ?? 0;
-  const need = gate ? parseNeed(gate.name, total) : 0;
-  const missing = Math.max(0, need - passed);
-
-  const reasons: string[] = [];
-  if (label === "ENTRY") {
-    const entryReasons = Array.isArray(diag?.entryBlockReasons) ? diag?.entryBlockReasons : [];
-    entryReasons.forEach((reason) => reasons.push(normalizeBlockReason(reason)));
-  } else if (label === "HARD" && typeof diag?.executionReason === "string") {
-    if (diag.executionReason.toLowerCase().includes("hard")) {
-      reasons.push(normalizeBlockReason(diag.executionReason));
-    }
-  } else if (label === "CHECKLIST" && typeof diag?.executionReason === "string") {
-    if (diag.executionReason.toLowerCase().includes("checklist")) {
-      reasons.push(normalizeBlockReason(diag.executionReason));
-    }
-  }
-  if (!reasons.length && diag?.executionAllowed === false && diag?.executionReason) {
-    reasons.push(normalizeBlockReason(diag.executionReason));
-  }
-
-  return {
-    label,
-    pass: Boolean(gate?.ok),
-    score: ratio ? `${passed}/${total}` : "N/A",
-    missing,
-    reasons: reasons.slice(0, 2),
-  };
 }
 
 export default function OverviewTab({
@@ -107,13 +53,16 @@ export default function OverviewTab({
   }, [allowedSymbols, scanDiagnostics, selectedSymbol]);
 
   const activeDiag = activeSymbol ? scanDiagnostics?.[activeSymbol] : undefined;
-  const gateSteps = useMemo(
-    () => [
-      parseStep(activeDiag, "HARD", "Hard:"),
-      parseStep(activeDiag, "CHECKLIST", "Checklist:"),
-      parseStep(activeDiag, "ENTRY", "Entry:"),
-    ],
-    [activeDiag]
+  const hardGate = gateByPrefix(activeDiag, "Hard:");
+  const checklistGate = gateByPrefix(activeDiag, "Checklist:");
+
+  const hardStatus = hardGate?.ok ? "PASS" : "FAIL";
+  const checklistScore = parseRatio(checklistGate?.detail) ?? (checklistGate?.ok ? "OK" : "N/A");
+  const entryStatus = activeDiag?.executionAllowed ? "READY" : "BLOCKED";
+  const blockReason = normalizeReason(
+    (Array.isArray(activeDiag?.entryBlockReasons) ? activeDiag?.entryBlockReasons[0] : "") ||
+      activeDiag?.executionReason ||
+      activeDiag?.manageReason
   );
 
   const pnlRows = useMemo(() => {
@@ -128,7 +77,6 @@ export default function OverviewTab({
           symbol,
           netPnl: sum,
           latestPnl: latest && Number.isFinite(latest.pnl) ? latest.pnl : Number.NaN,
-          lastTs: latest?.timestamp ?? "",
         };
       })
       .sort((a, b) => a.netPnl - b.netPnl);
@@ -137,46 +85,40 @@ export default function OverviewTab({
   return (
     <div className="space-y-4">
       <Panel
-        title={UI_COPY.dashboard.whyNoTrade}
-        description={`${activeSymbol ? `Trh ${activeSymbol}` : "Není vybraný trh"} · ${UI_COPY.dashboard.lastScan}: ${formatClock(lastScanTs)}`}
-        fileId="GATE DIAGNOSTICS ID: TR-01-G"
+        title="Gate Engine"
+        description={`${activeSymbol ? `Trh ${activeSymbol}` : "Není vybraný trh"} · Poslední sken: ${formatClock(lastScanTs)}`}
+        fileId="GATE ENGINE ID: TR-01-G"
       >
         {!scanLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            Načítám diagnostiku gate…
+            Načítám Gate Engine…
           </div>
         ) : !activeSymbol ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
             Není dostupný žádný trh.
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-            {gateSteps.map((step) => (
-              <div
-                key={step.label}
-                className="rounded-lg border border-border/60 bg-background/30 p-3"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="text-xs text-muted-foreground">{step.label}</div>
-                  <span className={`text-xs font-semibold ${step.pass ? "text-emerald-300" : "text-red-300"}`}>
-                    {step.pass ? "PASS" : "FAIL"}
-                  </span>
-                </div>
-                <div className="mt-1 text-base font-semibold tabular-nums text-foreground">{step.score}</div>
-                <div className="mt-1 text-xs text-muted-foreground">Chybí: {step.missing}</div>
-                <div className="mt-2 space-y-1">
-                  {step.reasons.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">Bez aktivního důvodu.</div>
-                  ) : (
-                    step.reasons.map((reason, idx) => (
-                      <div key={`${step.label}-${idx}`} className="text-xs text-muted-foreground">
-                        {reason}
-                      </div>
-                    ))
-                  )}
-                </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+              <div className="text-xs text-muted-foreground">HARD</div>
+              <div className={`mt-1 text-lg font-semibold ${hardStatus === "PASS" ? "text-[#00C853]" : "text-[#D32F2F]"}`}>
+                {hardStatus}
               </div>
-            ))}
+            </div>
+            <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+              <div className="text-xs text-muted-foreground">CHECKLIST</div>
+              <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{checklistScore}</div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+              <div className="text-xs text-muted-foreground">ENTRY</div>
+              <div className={`mt-1 text-lg font-semibold ${entryStatus === "READY" ? "text-[#00C853]" : "text-[#D32F2F]"}`}>
+                {entryStatus}
+              </div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+              <div className="text-xs text-muted-foreground">BLOCK důvod</div>
+              <div className="mt-1 text-sm text-foreground">{entryStatus === "READY" ? "Bez blokace." : blockReason}</div>
+            </div>
           </div>
         )}
       </Panel>

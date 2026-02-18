@@ -3,7 +3,6 @@ import { TradingMode } from "../types";
 import type { TradingBotApi } from "../hooks/useTradingBot";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import SettingsPanel from "./SettingsPanel";
 import StatusBar from "./dashboard/StatusBar";
 import KpiRow from "./dashboard/KpiRow";
@@ -12,7 +11,6 @@ import PositionsTable from "./dashboard/PositionsTable";
 import OrdersPanel from "./dashboard/OrdersPanel";
 import SignalsAccordion from "./dashboard/SignalsAccordion";
 import LogsPanel from "./dashboard/LogsPanel";
-import SignalDetailPanel from "./dashboard/SignalDetailPanel";
 import StrategyProfileMini from "./dashboard/StrategyProfileMini";
 import RecentEventsPanel from "./dashboard/RecentEventsPanel";
 import RiskBlockPanel from "./dashboard/RiskBlockPanel";
@@ -133,10 +131,7 @@ export default function Dashboard({
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [signalFadePulse, setSignalFadePulse] = useState(false);
   const [riskPulseActive, setRiskPulseActive] = useState(false);
-  const [riskExpandKey, setRiskExpandKey] = useState(0);
   const [resetRippleKey, setResetRippleKey] = useState(0);
-  const [resetVersion, setResetVersion] = useState(0);
-  const [bulkExecutedSymbols, setBulkExecutedSymbols] = useState<string[]>([]);
   const [toast, setToast] = useState<UiToast | null>(null);
   const [pullDistance, setPullDistance] = useState(0);
   const [pullRefreshing, setPullRefreshing] = useState(false);
@@ -395,9 +390,6 @@ export default function Dashboard({
     updateGateOverrides?.(checklistEnabled);
   }, [checklistEnabled, updateGateOverrides]);
 
-  const toggleChecklist = (name: string) => {
-    setChecklistEnabled((p) => ({ ...p, [name]: !(p[name] ?? true) }));
-  };
   const resetChecklist = useCallback(() => {
     setChecklistEnabled(CHECKLIST_DEFAULTS);
   }, [CHECKLIST_DEFAULTS]);
@@ -430,6 +422,22 @@ export default function Dashboard({
     Number.isFinite(totalCapital) && Number.isFinite(riskPerTradePct)
       ? (totalCapital as number) * (riskPerTradePct as number)
       : Number.NaN;
+  const usagePct = maxOpenPositions > 0 ? Math.round((openPositionsCount / maxOpenPositions) * 100) : 0;
+  const maxDailyLossUsd = Number.isFinite(riskPerTradeUsd)
+    ? -2 * (riskPerTradeUsd as number)
+    : Number.NaN;
+  const riskExposureUsd = positionsLoaded
+    ? activePositions.reduce((sum, position) => {
+        const qty = Number(position?.qty ?? position?.size);
+        const entry = Number(position?.entryPrice);
+        const stop = Number(position?.sl);
+        if (!Number.isFinite(qty) || !Number.isFinite(entry) || !Number.isFinite(stop)) return sum;
+        return sum + Math.abs(entry - stop) * Math.abs(qty);
+      }, 0)
+    : Number.NaN;
+  const riskExposureLimitUsd = Number.isFinite(riskPerTradeUsd)
+    ? (riskPerTradeUsd as number) * Math.max(1, maxOpenPositions)
+    : Number.NaN;
   const capitalRange = useMemo(() => {
     if (!Number.isFinite(totalCapital)) return undefined;
     if (!Number.isFinite(openPositionsPnl)) return undefined;
@@ -501,12 +509,30 @@ export default function Dashboard({
     return (feedStats.maxAge as number) < HEALTH_OK_MS && feedStats.ok;
   }, [feedStats.maxAge, feedStats.ok, mode, systemState.bybitStatus]);
 
+  const criticalByLoss = Number.isFinite(dailyPnl) && Number.isFinite(riskPerTradeUsd)
+    ? (dailyPnl as number) <= -2 * (riskPerTradeUsd as number)
+    : false;
+  const criticalByUsage = usagePct > 80;
+
   const riskLevel = useMemo(() => {
+    if (criticalByLoss || criticalByUsage) return "CRITICAL" as const;
     if (execOverrideEnabled) return "CRITICAL" as const;
     if (blockedSignalsCount > 0) return "ELEVATED" as const;
     if (gateStats.total > 0 && gateStats.pass < gateStats.total) return "ELEVATED" as const;
     return "LOW" as const;
-  }, [blockedSignalsCount, execOverrideEnabled, gateStats.pass, gateStats.total]);
+  }, [blockedSignalsCount, criticalByLoss, criticalByUsage, execOverrideEnabled, gateStats.pass, gateStats.total]);
+
+  const killSwitchActive = useMemo(() => {
+    let latestHalt = 0;
+    let latestReset = 0;
+    for (const entry of logEntries ?? []) {
+      const ts = Date.parse(String(entry?.timestamp ?? ""));
+      const at = Number.isFinite(ts) ? ts : 0;
+      if (entry.action === "RISK_HALT" && at > latestHalt) latestHalt = at;
+      if (entry.action === "RESET" && at > latestReset) latestReset = at;
+    }
+    return latestHalt > latestReset;
+  }, [logEntries]);
 
   const holdSymbols = useMemo(() => {
     return allowedSymbols.filter((symbol) => {
@@ -548,10 +574,6 @@ export default function Dashboard({
   useEffect(() => {
     const prevRisk = prevRiskLevelRef.current;
     const elevated = riskLevel === "ELEVATED" || riskLevel === "CRITICAL";
-    const wasElevated = prevRisk === "ELEVATED" || prevRisk === "CRITICAL";
-    if (elevated && !wasElevated) {
-      setRiskExpandKey((value) => value + 1);
-    }
     prevRiskLevelRef.current = riskLevel;
     if (!elevated) {
       setRiskPulseActive(false);
@@ -579,8 +601,6 @@ export default function Dashboard({
   const handleResetAllGates = useCallback(() => {
     resetChecklist();
     setExecOverrideEnabled(false);
-    setBulkExecutedSymbols([]);
-    setResetVersion((value) => value + 1);
     setResetRippleKey((value) => value + 1);
     showToast("All gates reset", "neutral");
   }, [resetChecklist, setExecOverrideEnabled, showToast]);
@@ -589,9 +609,8 @@ export default function Dashboard({
     const affected = holdSymbols.length;
     setShowBulkOverrideDialog(false);
     setExecOverrideEnabled(true);
-    setBulkExecutedSymbols(holdSymbols);
     showToast(`${affected} gates executed`, "success");
-  }, [holdSymbols, setExecOverrideEnabled, showToast]);
+  }, [holdSymbols.length, setExecOverrideEnabled, showToast]);
 
   const handleTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     if (typeof window === "undefined") return;
@@ -674,29 +693,6 @@ export default function Dashboard({
           ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge
-                variant="outline"
-                className={
-                  riskLevel === "CRITICAL"
-                    ? "border-[#D32F2F]/70 bg-[#D32F2F]/15 px-2 py-1 text-[#D32F2F]"
-                    : riskLevel === "ELEVATED"
-                      ? "border-[#FFB300]/70 bg-[#FFB300]/15 px-2 py-1 text-[#FFB300]"
-                      : "border-[#00C853]/70 bg-[#00C853]/15 px-2 py-1 text-[#00C853]"
-                }
-              >
-                <button
-                  type="button"
-                  className={`inline-flex items-center gap-1 ${riskPulseActive ? "tva-risk-pulse" : ""}`}
-                  onClick={() => setRiskPulseActive(false)}
-                >
-                  RISK {riskLevel}
-                </button>
-              </Badge>
-              <div className="relative h-5 min-w-[138px] overflow-hidden text-xs font-medium text-muted-foreground">
-                <span key={mode} className="absolute inset-0 tva-text-swap">
-                  Execution: {mode === TradingMode.AUTO_ON ? "Auto" : "Manual"}
-                </span>
-              </div>
               <Button
                 type="button"
                 variant={execOverrideEnabled ? "destructive" : "default"}
@@ -848,10 +844,16 @@ export default function Dashboard({
                 logEntries={logEntries}
                 logsLoaded={logsLoaded}
                 riskLevel={riskLevel}
-                expandSignal={riskExpandKey}
+                dailyPnl={dailyPnl}
+                maxDailyLossUsd={maxDailyLossUsd}
+                killSwitchActive={killSwitchActive}
+                openPositions={openPositionsCount}
+                maxOpenPositions={maxOpenPositions}
+                riskExposureUsd={riskExposureUsd}
+                riskExposureLimitUsd={riskExposureLimitUsd}
               />
               <div className="grid grid-cols-12 gap-6">
-                <div className="col-span-12 xl:col-span-8">
+                <div className="col-span-12 xl:col-span-6">
                   <OverviewTab
                     allowedSymbols={allowedSymbols}
                     assetPnlHistory={assetPnlHistory}
@@ -864,7 +866,7 @@ export default function Dashboard({
                   />
                 </div>
                 <div
-                  className={`col-span-12 space-y-4 xl:col-span-4 ${
+                  className={`col-span-12 space-y-4 xl:col-span-6 ${
                     mobileDetailsOpen ? "block" : "hidden xl:block"
                   }`}
                 >
@@ -875,34 +877,17 @@ export default function Dashboard({
                     lastScanTs={lastScanTs}
                     scanAgeOffsetMs={feedAgeOffsetMs}
                     overrideEnabled={execOverrideEnabled}
-                    setOverrideEnabled={setExecOverrideEnabled}
                     resetChecklist={handleResetAllGates}
-                    profileGateNames={checklistGateNames}
                     selectedSymbol={selectedSignalSymbol}
                     onSelectSymbol={setSelectedSignalSymbol}
-                    mode={mode}
                     loading={dashboardLoading}
-                    bulkExecutedSymbols={bulkExecutedSymbols}
-                    resetVersion={resetVersion}
-                    onToast={showToast}
-                  />
-                  <SignalDetailPanel
-                    selectedSymbol={selectedSignalSymbol}
-                    scanDiagnostics={scanDiagnostics}
-                    scanLoaded={scanLoaded}
-                    checklistEnabled={checklistEnabled}
-                    toggleChecklist={toggleChecklist}
-                    profileGateNames={checklistGateNames}
-                    resetChecklist={resetChecklist}
                   />
                 </div>
               </div>
-              <div className={mobileDetailsOpen ? "block xl:hidden" : "hidden"}>
-                <RecentEventsPanel
-                  logEntries={logEntries}
-                  logsLoaded={logsLoaded}
-                />
-              </div>
+              <RecentEventsPanel
+                logEntries={logEntries}
+                logsLoaded={logsLoaded}
+              />
             </div>
           </TabsContent>
 
