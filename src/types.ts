@@ -42,6 +42,7 @@ export interface AISettings {
   slippageBufferPct: number;
   perTradeTestnetUsd: number;
   perTradeMainnetUsd: number;
+  emaTrendPeriod?: number;
 }
 
 // ===== API & COMMON TYPES (MIGRATION A1) =====
