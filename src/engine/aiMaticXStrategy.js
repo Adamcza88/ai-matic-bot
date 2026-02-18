@@ -1,29 +1,31 @@
 import { State, Trend, resampleCandles } from "./botEngine.js";
 import { computeRsi } from "./ta.js";
 
-const OVERLAP_BODY_PCT = 0.002;
-const SIMILAR_HILO_PCT = 0.003;
-const IMPULSE_LOOKBACK = 20;
-const IMPULSE_MULT = 1.2;
-const RISK_OFF_OVERLAP = 0.8;
-const RISK_OFF_NO_IMPULSE_MULT = 1.0;
-const RISK_OFF_DUAL_IMPULSE_MULT = 1.4;
-const STRONG_IMPULSE_MULT = 1.5;
-const RETRACE_MAX = 0.6;
-const RANGE_LOOKBACK_BASE = 30;
-const RANGE_LOOKBACK_MIN = 20;
-const RANGE_LOOKBACK_MAX = 50;
-const RANGE_TOUCHES_MIN = 2;
-const TRAIL_OFFSET_BASE = 0.002;
-const TRAIL_OFFSET_STRONG = 0.0025;
-const BREAK_ACCEPT_BPS = 0.0003;
+const strategyConfig = {
+    OVERLAP_BODY_PCT: 0.002,
+    SIMILAR_HILO_PCT: 0.003,
+    IMPULSE_LOOKBACK: 20,
+    IMPULSE_MULT: 1.2,
+    RISK_OFF_OVERLAP: 0.8,
+    RISK_OFF_NO_IMPULSE_MULT: 1.0,
+    RISK_OFF_DUAL_IMPULSE_MULT: 1.4,
+    STRONG_IMPULSE_MULT: 1.5,
+    RETRACE_MAX: 0.6,
+    RANGE_LOOKBACK_BASE: 30,
+    RANGE_LOOKBACK_MIN: 20,
+    RANGE_LOOKBACK_MAX: 50,
+    RANGE_TOUCHES_MIN: 2,
+    TRAIL_OFFSET_BASE: 0.002,
+    TRAIL_OFFSET_STRONG: 0.0025,
+    BREAK_ACCEPT_BPS: 0.0003,
+};
 
 function candleBody(c) {
     const bodyHigh = Math.max(c.open, c.close);
     const bodyLow = Math.min(c.open, c.close);
     return { bodyHigh, bodyLow };
 }
-function isBodyOverlap(close, prevBodyLow, prevBodyHigh, thresholdPct = OVERLAP_BODY_PCT) {
+function isBodyOverlap(close, prevBodyLow, prevBodyHigh, thresholdPct = strategyConfig.OVERLAP_BODY_PCT) {
     if (!Number.isFinite(close))
         return false;
     if (close >= prevBodyLow && close <= prevBodyHigh)
@@ -147,9 +149,9 @@ function resolveHtfTrend(candles, swings) {
     const recentOverlap = seq.length >= 3 &&
         seq.slice(1).filter((s, idx) => {
             const prev = seq[idx];
-            return isBodyOverlap(s.close, prev.bodyLow, prev.bodyHigh, OVERLAP_BODY_PCT);
+            return isBodyOverlap(s.close, prev.bodyLow, prev.bodyHigh, strategyConfig.OVERLAP_BODY_PCT);
         }).length >= 2;
-    const similarHilo = hasSimilarHighLow(candles, 3, 5, SIMILAR_HILO_PCT);
+    const similarHilo = hasSimilarHighLow(candles, 3, 5, strategyConfig.SIMILAR_HILO_PCT);
     if (a.type === "low" && b.type === "high" && c.type === "low" && prevLow && prevHigh) {
         const impulse = b.high - a.low;
         const correction = b.high - c.low;
@@ -196,8 +198,8 @@ function resolveLtfTrend(candles, swings, htfTrend) {
         return { trend: "RANGE", reason: "insufficient_swings", strong: false, swings };
     }
     const [a, b, c] = seq;
-    const avgRange = averageRange(candles, IMPULSE_LOOKBACK);
-    const similarHilo = hasSimilarHighLow(candles, 3, 5, SIMILAR_HILO_PCT);
+    const avgRange = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
+    const similarHilo = hasSimilarHighLow(candles, 3, 5, strategyConfig.SIMILAR_HILO_PCT);
     if (a.type === "low" && b.type === "high" && c.type === "low") {
         const impulse = b.high - a.low;
         const correction = b.high - c.low;
@@ -205,11 +207,11 @@ function resolveLtfTrend(candles, swings, htfTrend) {
         const retrace = impulse > 0 ? correction / impulse : 1;
         const impulseBars = b.index - a.index;
         const impulseOk = Number.isFinite(avgRange) &&
-            impulse >= avgRange * IMPULSE_MULT &&
+            impulse >= avgRange * strategyConfig.IMPULSE_MULT &&
             impulseBars >= 3;
         const hl = c.low > a.low;
         const midOk = c.low > mid;
-        const rangeHit = similarHilo || retrace > RETRACE_MAX || !hl || !midOk;
+        const rangeHit = similarHilo || retrace > strategyConfig.RETRACE_MAX || !hl || !midOk;
         if (impulseOk && !rangeHit && htfTrend !== "RANGE") {
             return {
                 trend: "BULL",
@@ -228,11 +230,11 @@ function resolveLtfTrend(candles, swings, htfTrend) {
         const retrace = impulse > 0 ? correction / impulse : 1;
         const impulseBars = c.index - b.index;
         const impulseOk = Number.isFinite(avgRange) &&
-            impulse >= avgRange * IMPULSE_MULT &&
+            impulse >= avgRange * strategyConfig.IMPULSE_MULT &&
             impulseBars >= 3;
         const lh = c.high < a.high;
         const midOk = c.high < mid;
-        const rangeHit = similarHilo || retrace > RETRACE_MAX || !lh || !midOk;
+        const rangeHit = similarHilo || retrace > strategyConfig.RETRACE_MAX || !lh || !midOk;
         if (impulseOk && !rangeHit && htfTrend !== "RANGE") {
             return {
                 trend: "BEAR",
@@ -249,12 +251,12 @@ function resolveLtfTrend(candles, swings, htfTrend) {
 function resolveRangeInfo(candles) {
     const avgRange10 = averageRange(candles, 10);
     const avgRange20 = averageRange(candles, 20);
-    let lookback = RANGE_LOOKBACK_BASE;
+    let lookback = strategyConfig.RANGE_LOOKBACK_BASE;
     if (Number.isFinite(avgRange10) && Number.isFinite(avgRange20)) {
         if (avgRange10 > avgRange20 * 1.2)
-            lookback = RANGE_LOOKBACK_MIN;
+            lookback = strategyConfig.RANGE_LOOKBACK_MIN;
         else if (avgRange10 < avgRange20 * 0.8)
-            lookback = RANGE_LOOKBACK_MAX;
+            lookback = strategyConfig.RANGE_LOOKBACK_MAX;
     }
     const slice = candles.slice(-lookback);
     if (slice.length < lookback / 2) {
@@ -263,29 +265,29 @@ function resolveRangeInfo(candles) {
     const high = Math.max(...slice.map((c) => c.high));
     const low = Math.min(...slice.map((c) => c.low));
     const mid = (high + low) / 2;
-    const touchesHigh = slice.filter((c) => (high - c.high) / high <= SIMILAR_HILO_PCT).length;
-    const touchesLow = slice.filter((c) => (c.low - low) / low <= SIMILAR_HILO_PCT).length;
-    const ok = touchesHigh >= RANGE_TOUCHES_MIN && touchesLow >= RANGE_TOUCHES_MIN;
+    const touchesHigh = slice.filter((c) => (high - c.high) / high <= strategyConfig.SIMILAR_HILO_PCT).length;
+    const touchesLow = slice.filter((c) => (c.low - low) / low <= strategyConfig.SIMILAR_HILO_PCT).length;
+    const ok = touchesHigh >= strategyConfig.RANGE_TOUCHES_MIN && touchesLow >= strategyConfig.RANGE_TOUCHES_MIN;
     return { ok, high, low, mid, lookback, touchesHigh, touchesLow };
 }
 function detectLowVol(candles) {
-    const avg = averageRange(candles, IMPULSE_LOOKBACK);
-    const med = medianRange(candles, IMPULSE_LOOKBACK);
+    const avg = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
+    const med = medianRange(candles, strategyConfig.IMPULSE_LOOKBACK);
     if (!Number.isFinite(avg) || !Number.isFinite(med) || avg <= 0)
         return false;
     const noImpulse = candles
-        .slice(-IMPULSE_LOOKBACK)
-        .every((c) => c.high - c.low < avg * IMPULSE_MULT);
+        .slice(-strategyConfig.IMPULSE_LOOKBACK)
+        .every((c) => c.high - c.low < avg * strategyConfig.IMPULSE_MULT);
     const stable = med <= avg * 0.9;
     return noImpulse && stable;
 }
 function detectStrongTrendExpanse(candles, swings, dir) {
     if (dir === "RANGE")
         return false;
-    const avgRange = averageRange(candles, IMPULSE_LOOKBACK);
+    const avgRange = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
     const recentImpulse = candles
-        .slice(-IMPULSE_LOOKBACK)
-        .some((c) => c.high - c.low >= avgRange * STRONG_IMPULSE_MULT);
+        .slice(-strategyConfig.IMPULSE_LOOKBACK)
+        .some((c) => c.high - c.low >= avgRange * strategyConfig.STRONG_IMPULSE_MULT);
     const minIndex = Math.max(0, candles.length - 12);
     const dirType = dir === "BULL" ? "high" : "low";
     let bosCount = 0;
@@ -300,25 +302,25 @@ function detectStrongTrendExpanse(candles, swings, dir) {
         }
         lastSwing = swing;
     }
-    const overlap = overlapRatio(candles, 10, OVERLAP_BODY_PCT);
+    const overlap = overlapRatio(candles, 10, strategyConfig.OVERLAP_BODY_PCT);
     return recentImpulse && bosCount >= 2 && overlap <= 0.4;
 }
 function detectRiskOffByStructure(candles) {
-    const overlap = overlapRatio(candles, 10, OVERLAP_BODY_PCT);
-    if (overlap > RISK_OFF_OVERLAP)
+    const overlap = overlapRatio(candles, 10, strategyConfig.OVERLAP_BODY_PCT);
+    if (overlap > strategyConfig.RISK_OFF_OVERLAP)
         return true;
-    const avg = averageRange(candles, IMPULSE_LOOKBACK);
+    const avg = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
     if (Number.isFinite(avg)) {
         const noImpulse = candles
-            .slice(-IMPULSE_LOOKBACK)
-            .every((c) => c.high - c.low < avg * RISK_OFF_NO_IMPULSE_MULT);
+            .slice(-strategyConfig.IMPULSE_LOOKBACK)
+            .every((c) => c.high - c.low < avg * strategyConfig.RISK_OFF_NO_IMPULSE_MULT);
         if (noImpulse)
             return true;
     }
     const recent = candles.slice(-8);
-    const avgRecent = averageRange(candles, IMPULSE_LOOKBACK);
-    const impulseUp = recent.some((c) => c.close > c.open && c.high - c.low >= avgRecent * RISK_OFF_DUAL_IMPULSE_MULT);
-    const impulseDown = recent.some((c) => c.close < c.open && c.high - c.low >= avgRecent * RISK_OFF_DUAL_IMPULSE_MULT);
+    const avgRecent = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
+    const impulseUp = recent.some((c) => c.close > c.open && c.high - c.low >= avgRecent * strategyConfig.RISK_OFF_DUAL_IMPULSE_MULT);
+    const impulseDown = recent.some((c) => c.close < c.open && c.high - c.low >= avgRecent * strategyConfig.RISK_OFF_DUAL_IMPULSE_MULT);
     return impulseUp && impulseDown;
 }
 function buildTp(entry, stop, rr = 2) {
@@ -336,7 +338,7 @@ function evaluateTrendPullbackSetup({ symbol, htfTrend, ltfTrend, last, prev }) 
     const isBull = htfTrend.trend === "BULL";
     const isBear = htfTrend.trend === "BEAR";
     const { impulse, correction } = ltfTrend;
-    const retraceOk = correction.retrace <= RETRACE_MAX;
+    const retraceOk = correction.retrace <= strategyConfig.RETRACE_MAX;
     const confirm = (isBull && last.close > prev.high) ||
         (isBear && last.close < prev.low) ||
         (isBull && last.close > impulse.end.high) ||
@@ -378,9 +380,9 @@ function evaluateTrendContinuationSetup({ symbol, htfTrend, ltf, ltfSwings, last
         .filter((c) => (isBull ? c.close > level : c.close < level));
     const acceptanceCloses = closes.length;
     if (acceptanceCloses >= 1) {
-        const offset = clampBps(BREAK_ACCEPT_BPS, 0.0002, 0.0005);
+        const offset = clampBps(strategyConfig.BREAK_ACCEPT_BPS, 0.0002, 0.0005);
         const entry = isBull ? last.close * (1 + offset) : last.close * (1 - offset);
-        const stop = isBull ? level * (1 - TRAIL_OFFSET_BASE) : level * (1 + TRAIL_OFFSET_BASE);
+        const stop = isBull ? level * (1 - strategyConfig.TRAIL_OFFSET_BASE) : level * (1 + strategyConfig.TRAIL_OFFSET_BASE);
         const tp = buildTp(entry, stop, 2);
         if (Number.isFinite(tp)) {
             const signal = {
@@ -406,8 +408,8 @@ function evaluateRangeBreakFlipSetup({ symbol, rangeInfo, ltf, last, prev }) {
         if (retestOk) {
             const entry = last.close;
             const stop = bullBreak
-                ? rangeInfo.high * (1 - TRAIL_OFFSET_BASE)
-                : rangeInfo.low * (1 + TRAIL_OFFSET_BASE);
+                ? rangeInfo.high * (1 - strategyConfig.TRAIL_OFFSET_BASE)
+                : rangeInfo.low * (1 + strategyConfig.TRAIL_OFFSET_BASE);
             const tp = buildTp(entry, stop, 2);
             if (Number.isFinite(tp)) {
                 const signal = {
@@ -427,15 +429,15 @@ function evaluateRangeBreakFlipSetup({ symbol, rangeInfo, ltf, last, prev }) {
     return null;
 }
 function evaluateRangeFadeSetup({ symbol, rangeInfo, lowVol, last }) {
-    const nearHigh = Math.abs(rangeInfo.high - last.high) / rangeInfo.high <= SIMILAR_HILO_PCT;
-    const nearLow = Math.abs(last.low - rangeInfo.low) / rangeInfo.low <= SIMILAR_HILO_PCT;
+    const nearHigh = Math.abs(rangeInfo.high - last.high) / rangeInfo.high <= strategyConfig.SIMILAR_HILO_PCT;
+    const nearLow = Math.abs(last.low - rangeInfo.low) / rangeInfo.low <= strategyConfig.SIMILAR_HILO_PCT;
     const rejectionHigh = nearHigh && last.close < rangeInfo.high;
     const rejectionLow = nearLow && last.close > rangeInfo.low;
     if (rejectionHigh || rejectionLow) {
         const entry = last.close;
         const stop = rejectionHigh
-            ? rangeInfo.high * (1 + TRAIL_OFFSET_BASE)
-            : rangeInfo.low * (1 - TRAIL_OFFSET_BASE);
+            ? rangeInfo.high * (1 + strategyConfig.TRAIL_OFFSET_BASE)
+            : rangeInfo.low * (1 - strategyConfig.TRAIL_OFFSET_BASE);
         const midTp = rangeInfo.mid;
         const edgeTp = rejectionHigh ? rangeInfo.low : rangeInfo.high;
         const r = Math.abs(entry - stop);
@@ -479,7 +481,7 @@ function evaluateReversalSetup({ symbol, ltf, ltfSwings, last }) {
     const chochBull = lastLow && last.close > lastLow.high;
     if (bearishDiv && chochBear) {
         const entry = last.close;
-        const stop = lastHigh.high * (1 + TRAIL_OFFSET_BASE);
+        const stop = lastHigh.high * (1 + strategyConfig.TRAIL_OFFSET_BASE);
         const tp = buildTp(entry, stop, 0.5);
         if (Number.isFinite(tp)) {
             return {
@@ -498,7 +500,7 @@ function evaluateReversalSetup({ symbol, ltf, ltfSwings, last }) {
     }
     if (bullishDiv && chochBull) {
         const entry = last.close;
-        const stop = lastLow.low * (1 - TRAIL_OFFSET_BASE);
+        const stop = lastLow.low * (1 - strategyConfig.TRAIL_OFFSET_BASE);
         const tp = buildTp(entry, stop, 0.5);
         if (Number.isFinite(tp)) {
             return {
@@ -642,6 +644,6 @@ export function evaluateAiMaticXStrategyForSymbol(symbol, candles) {
         signal,
         halted: false,
         xContext,
-        trailOffsetPct: strongTrendExpanse ? TRAIL_OFFSET_STRONG : TRAIL_OFFSET_BASE,
+        trailOffsetPct: strongTrendExpanse ? strategyConfig.TRAIL_OFFSET_STRONG : strategyConfig.TRAIL_OFFSET_BASE,
     };
 }
