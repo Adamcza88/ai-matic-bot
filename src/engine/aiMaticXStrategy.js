@@ -517,26 +517,29 @@ function evaluateReversalSetup({ symbol, ltf, ltfSwings, last }) {
     }
     return null;
 }
-export function evaluateAiMaticXStrategyForSymbol(symbol, candles) {
+function getStrategyContext(symbol, candles) {
     const ltf = resampleCandles(candles, 5);
     const htf = resampleCandles(candles, 60);
     if (ltf.length < 30 || htf.length < 10) {
         return {
-            state: State.Scan,
-            trend: Trend.Range,
-            trendH1: Trend.Range,
-            trendScore: 0,
-            trendAdx: Number.NaN,
             halted: true,
-            xContext: {
-                htfTrend: "RANGE",
-                ltfTrend: "RANGE",
-                mode: "CHAOS",
-                setup: "NO_TRADE",
-                strongTrendExpanse: false,
-                riskOff: true,
-                acceptanceCloses: 0,
-                details: ["insufficient_data"],
+            result: {
+                state: State.Scan,
+                trend: Trend.Range,
+                trendH1: Trend.Range,
+                trendScore: 0,
+                trendAdx: Number.NaN,
+                halted: true,
+                xContext: {
+                    htfTrend: "RANGE",
+                    ltfTrend: "RANGE",
+                    mode: "CHAOS",
+                    setup: "NO_TRADE",
+                    strongTrendExpanse: false,
+                    riskOff: true,
+                    acceptanceCloses: 0,
+                    details: ["insufficient_data"],
+                },
             },
         };
     }
@@ -553,7 +556,8 @@ export function evaluateAiMaticXStrategyForSymbol(symbol, candles) {
         `5m ${ltfTrend.trend}`,
         rangeInfo.ok ? `range ${rangeInfo.lookback}` : "no range",
     ];
-    const context = {
+    return {
+        halted: false,
         symbol,
         ltf,
         htf,
@@ -563,9 +567,19 @@ export function evaluateAiMaticXStrategyForSymbol(symbol, candles) {
         ltfTrend,
         rangeInfo,
         lowVol,
+        strongTrendExpanse,
+        riskOff,
+        details,
         last: ltf[ltf.length - 1],
         prev: ltf[ltf.length - 2],
     };
+}
+export function evaluateAiMaticXStrategyForSymbol(symbol, candles) {
+    const context = getStrategyContext(symbol, candles);
+    if (context.halted) {
+        return context.result;
+    }
+    const { htfTrend, ltfTrend, rangeInfo, riskOff, strongTrendExpanse, details } = context;
     let result = null;
     let setup = "NO_TRADE";
     let acceptanceCloses = 0;
