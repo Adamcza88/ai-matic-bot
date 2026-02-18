@@ -81,6 +81,10 @@ test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
         patterns: { pinbarBull: true, pinbarBear: false, engulfBull: false, engulfBear: false, insideBar: false, trapBull: false, trapBear: false },
         gapPresent: true,
         obRetest: true,
+        bosUp: true,
+        bosDown: false,
+        chochUp: false,
+        chochDown: false,
         sweepLow: true,
         sweepHigh: false,
         sweepLowWick: Number.NaN,
@@ -122,10 +126,32 @@ test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
         chochUp: false,
       },
     },
+    coreV2: {
+      ltfClose: 106,
+      ltfOpen: 106.1,
+      ltfHigh: 106.2,
+      ltfLow: 105.8,
+      volumeTodRatio: 1.5,
+      atrPct: 0.002,
+    },
+    orderflow: {
+      bestBid: 105.99,
+      bestAsk: 106.01,
+    },
+    trendAdx: 25,
     emaTrend: { consensus: "bull" },
   };
-  const signal = { intent: { side: "buy" } };
-  const ok = evaluateAiMaticGatesCore({ decision, signal, correlationOk: true, dominanceOk: true });
+  const signal = { intent: { side: "buy", entry: 106, sl: 104.8, tp: 108.5 } };
+  const ok = evaluateAiMaticGatesCore({
+    decision,
+    signal,
+    correlationOk: true,
+    dominanceOk: true,
+    symbol: "BTCUSDT",
+    nowTs: Date.UTC(2026, 0, 12, 14, 0, 0),
+    lossStreak: 0,
+    takerFeePct: 0.06,
+  });
   assert.equal(ok.pass, true);
 
   const badDecision = JSON.parse(JSON.stringify(decision));
@@ -134,7 +160,16 @@ test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
   badDecision.aiMatic.ltf.patterns.pinbarBull = false;
   badDecision.aiMatic.ltf.volumeReaction = false;
   badDecision.aiMatic.ltf.ema.crossRecent = true;
-  const bad = evaluateAiMaticGatesCore({ decision: badDecision, signal, correlationOk: true, dominanceOk: true });
+  const bad = evaluateAiMaticGatesCore({
+    decision: badDecision,
+    signal,
+    correlationOk: true,
+    dominanceOk: true,
+    symbol: "BTCUSDT",
+    nowTs: Date.UTC(2026, 0, 12, 14, 0, 0),
+    lossStreak: 0,
+    takerFeePct: 0.06,
+  });
   assert.equal(bad.pass, false);
 });
 

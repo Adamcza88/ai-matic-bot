@@ -206,9 +206,9 @@ export default function Dashboard({
       "Exec allowed": true,
     };
     const aiMatic = {
-      "Hard: 3 of 6": true,
-      "Entry: Any of 5": true,
-      "Checklist: 3 of 7": true,
+      "Hard: ALL 4": true,
+      "Entry: 3 of 4": true,
+      "Checklist: 5 of 8": true,
       "Exec allowed": true,
     };
     return {
@@ -247,6 +247,9 @@ export default function Dashboard({
   const CHECKLIST_ALIASES = useMemo(
     () => ({
       "HTF bias": ["Trend bias", "X setup", "Tree setup", "1h bias"],
+      "Hard: ALL 4": ["Hard: 3 of 6"],
+      "Entry: 3 of 4": ["Entry: Any of 5"],
+      "Checklist: 5 of 8": ["Checklist: 3 of 7"],
       "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.": [
         "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.",
       ],

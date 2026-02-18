@@ -113,14 +113,24 @@ const SCALP_FIB_TOL_PCT = 0.0005;
 const NONSCALP_PARTIAL_TAKE_R = 1.0;
 const NONSCALP_PARTIAL_FRACTION = 0.35;
 const NONSCALP_PARTIAL_COOLDOWN_MS = 60_000;
-const AI_MATIC_HARD_MIN = 3;
-const AI_MATIC_ENTRY_FACTOR_MIN = 1;
-const AI_MATIC_CHECKLIST_MIN = 3;
+const AI_MATIC_HARD_MIN = 4;
+const AI_MATIC_HARD_TOTAL = 4;
+const AI_MATIC_ENTRY_FACTOR_MIN = 3;
+const AI_MATIC_ENTRY_FACTOR_TOTAL = 4;
+const AI_MATIC_CHECKLIST_MIN = 5;
+const AI_MATIC_CHECKLIST_TOTAL = 8;
 const AI_MATIC_EMA_CROSS_LOOKBACK = 6;
 const AI_MATIC_POI_DISTANCE_PCT = 0.0015;
 const AI_MATIC_SL_ATR_BUFFER = 0.3;
 const AI_MATIC_TRAIL_ATR_MULT = 1.5;
-const AI_MATIC_MIN_RR = 1.2;
+const AI_MATIC_MIN_RR = 1.5;
+const AI_MATIC_ENTRY_PULLBACK_MAX_PCT = 0.008;
+const AI_MATIC_ENTRY_RVOL_MIN = 1.3;
+const AI_MATIC_ENTRY_RVOL_MIN_ETH = 1.4;
+const AI_MATIC_ENTRY_WICK_BODY_MIN = 0.5;
+const AI_MATIC_CHECKLIST_ADX_MIN = 22;
+const AI_MATIC_CHECKLIST_SPREAD_MAX_PCT = 0.0002;
+const AI_MATIC_CHECKLIST_FUNDING_ABS_MAX = 0.0002;
 const AI_MATIC_TRAIL_ACTIVATE_PCT = 0.01;
 const AI_MATIC_TRAIL_RETRACE_PCT = 0.006;
 const AI_MATIC_TP1_PCT_MIN = 0.009;
@@ -842,6 +852,12 @@ const maxFinite = (...values) => {
         return Number.NaN;
     return Math.max(...filtered);
 };
+const isAiMaticLondonNySession = (date) => {
+    const hourUtc = date.getUTCHours();
+    const londonHours = hourUtc >= 7 && hourUtc < 16;
+    const nyHours = hourUtc >= 13 && hourUtc < 22;
+    return londonHours || nyHours;
+};
 
 const resolveNearestPoiBoundary = (pois, side, entry) => {
     if (!Number.isFinite(entry) || !pois.length)
@@ -975,6 +991,8 @@ const resolveAiMaticEntryType = (args) => {
 
 const evaluateAiMaticGatesCore = (args) => {
     const aiMatic = args.decision?.aiMatic ?? null;
+    const core = args.decision?.coreV2;
+    const orderflow = args.decision?.orderflow;
     const signal = args.signal ?? null;
     const empty = {
         hardGates: [],
@@ -991,35 +1009,29 @@ const evaluateAiMaticGatesCore = (args) => {
     const dir = sideRaw === "buy" ? "bull" : sideRaw === "sell" ? "bear" : null;
     if (!dir)
         return empty;
+    const symbolUpper = String(args.symbol ?? "").toUpperCase();
+    const nowTs = Number.isFinite(args.nowTs) ? args.nowTs : Date.now();
+    const lossStreak = Number.isFinite(args.lossStreak) ? args.lossStreak : 0;
+    const takerFeePct = Number.isFinite(args.takerFeePct) ? Math.max(0, args.takerFeePct) : 0.06;
+    const takerFeeRate = takerFeePct / 100;
+    const entry = Number(signal.intent?.entry);
+    const stopLoss = Number(signal.intent?.sl);
+    const takeProfit = Number(signal.intent?.tp);
+    const riskDistance = Number.isFinite(entry) && Number.isFinite(stopLoss) ? Math.abs(entry - stopLoss) : Number.NaN;
+    const rewardDistance = Number.isFinite(entry) && Number.isFinite(takeProfit) ? Math.abs(takeProfit - entry) : Number.NaN;
+    const feeDistance = Number.isFinite(entry) && entry > 0 ? entry * takerFeeRate * 2 : Number.NaN;
+    const netRisk = Number.isFinite(riskDistance) && Number.isFinite(feeDistance) ? riskDistance + feeDistance : Number.NaN;
+    const netReward = Number.isFinite(rewardDistance) && Number.isFinite(feeDistance) ? rewardDistance - feeDistance : Number.NaN;
+    const rrAfterFees = Number.isFinite(netReward) && Number.isFinite(netRisk) && netRisk > 0 ? netReward / netRisk : Number.NaN;
     const structureAligned = dir === "bull"
         ? aiMatic.htf.structureTrend === "BULL"
         : aiMatic.htf.structureTrend === "BEAR";
     const htfEmaOk = dir === "bull" ? aiMatic.htf.ema?.bullOk : aiMatic.htf.ema?.bearOk;
     const htfEmaValid = [aiMatic.htf.ema?.ema20, aiMatic.htf.ema?.ema50, aiMatic.htf.ema?.ema200].every(Number.isFinite);
     const htfAligned = htfEmaValid ? Boolean(htfEmaOk) : structureAligned;
-    const mtfEmaOk = dir === "bull" ? aiMatic.mtf.ema?.bullOk : aiMatic.mtf.ema?.bearOk;
-    const mtfEmaValid = [aiMatic.mtf.ema?.ema20, aiMatic.mtf.ema?.ema50, aiMatic.mtf.ema?.ema200].every(Number.isFinite);
-    const mtfAligned = mtfEmaValid ? Boolean(mtfEmaOk) : true;
-    const emaStackOk = dir === "bull" ? Boolean(aiMatic.ltf.ema?.bullOk) : Boolean(aiMatic.ltf.ema?.bearOk);
-    const emaCrossOk = !(aiMatic.ltf.ema?.crossRecent ?? false);
-    const patternOk = dir === "bull"
-        ? aiMatic.ltf.patterns.pinbarBull ||
-            aiMatic.ltf.patterns.engulfBull ||
-            aiMatic.ltf.patterns.trapBull ||
-            aiMatic.ltf.patterns.insideBar
-        : aiMatic.ltf.patterns.pinbarBear ||
-            aiMatic.ltf.patterns.engulfBear ||
-            aiMatic.ltf.patterns.trapBear ||
-            aiMatic.ltf.patterns.insideBar;
-    const mtfPatternOk = dir === "bull"
-        ? aiMatic.mtf.patterns.pinbarBull ||
-            aiMatic.mtf.patterns.engulfBull ||
-            aiMatic.mtf.patterns.trapBull ||
-            aiMatic.mtf.patterns.insideBar
-        : aiMatic.mtf.patterns.pinbarBear ||
-            aiMatic.mtf.patterns.engulfBear ||
-            aiMatic.mtf.patterns.trapBear ||
-            aiMatic.mtf.patterns.insideBar;
+    const mtfStructureOk = dir === "bull"
+        ? aiMatic.mtf.bosUp || aiMatic.mtf.chochUp
+        : aiMatic.mtf.bosDown || aiMatic.mtf.chochDown;
     const sweepOk = dir === "bull"
         ? aiMatic.htf.sweepLow ||
             aiMatic.mtf.sweepLow ||
@@ -1032,37 +1044,83 @@ const evaluateAiMaticGatesCore = (args) => {
     const htfPoiReaction = dir === "bull" ? aiMatic.htf.poiReactionBull : aiMatic.htf.poiReactionBear;
     const mtfPoiReaction = dir === "bull" ? aiMatic.mtf.poiReactionBull : aiMatic.mtf.poiReactionBear;
     const obReactionOk = htfPoiReaction || mtfPoiReaction;
-    const obCloseOk = mtfPoiReaction;
-    const gapPresent = aiMatic.mtf.gapPresent;
-    const obRetestOk = aiMatic.mtf.obRetest;
-    const momentumOk = dir === "bull" ? aiMatic.ltf.momentumLongOk : aiMatic.ltf.momentumShortOk;
-    const volumeOk = aiMatic.ltf.volumeReaction;
+    const gapPresent = Boolean(aiMatic.mtf.gapPresent);
+    const obRetestOk = Boolean(aiMatic.mtf.obRetest);
+    const inPoiZoneOk = obReactionOk || gapPresent || obRetestOk;
+    const rrAfterFeesOk = Number.isFinite(rrAfterFees) && rrAfterFees >= AI_MATIC_MIN_RR;
+    const ltfClose = Number(core?.ltfClose);
+    const ltfEma20 = Number(aiMatic.ltf.ema?.ema20);
+    const pullbackPct = Number.isFinite(ltfClose) && Number.isFinite(ltfEma20) && ltfClose > 0
+        ? Math.abs(ltfClose - ltfEma20) / ltfClose
+        : Number.NaN;
+    const pullbackOk = Number.isFinite(pullbackPct) && pullbackPct <= AI_MATIC_ENTRY_PULLBACK_MAX_PCT;
+    const rvolThreshold = symbolUpper === "ETHUSDT" ? AI_MATIC_ENTRY_RVOL_MIN_ETH : AI_MATIC_ENTRY_RVOL_MIN;
+    const rvol = Number(core?.volumeTodRatio);
+    const rvolOk = Number.isFinite(rvol) ? rvol >= rvolThreshold : Boolean(aiMatic.ltf.volumeReaction);
+    const ltfOpen = Number(core?.ltfOpen);
+    const ltfHigh = Number(core?.ltfHigh);
+    const ltfLow = Number(core?.ltfLow);
+    const ltfBody = Number.isFinite(ltfOpen) && Number.isFinite(ltfClose)
+        ? Math.max(Math.abs(ltfClose - ltfOpen), 1e-8)
+        : Number.NaN;
+    const rejectionWick = Number.isFinite(ltfOpen) &&
+        Number.isFinite(ltfClose) &&
+        Number.isFinite(ltfHigh) &&
+        Number.isFinite(ltfLow)
+        ? dir === "bull"
+            ? Math.min(ltfOpen, ltfClose) - ltfLow
+            : ltfHigh - Math.max(ltfOpen, ltfClose)
+        : Number.NaN;
+    const rejectionRatio = Number.isFinite(rejectionWick) && Number.isFinite(ltfBody) ? rejectionWick / ltfBody : Number.NaN;
+    const rejectionOk = Number.isFinite(rejectionRatio) && rejectionRatio >= AI_MATIC_ENTRY_WICK_BODY_MIN;
+    const adx = Number(args.decision?.trendAdx);
+    const adxOk = Number.isFinite(adx) && adx >= AI_MATIC_CHECKLIST_ADX_MIN;
+    const bid = Number(orderflow?.bestBid);
+    const ask = Number(orderflow?.bestAsk);
+    const spreadPct = Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0 && ask >= bid
+        ? (ask - bid) / ((ask + bid) / 2)
+        : Number.NaN;
+    const spreadOk = !Number.isFinite(spreadPct) ? true : spreadPct <= AI_MATIC_CHECKLIST_SPREAD_MAX_PCT;
+    const fundingRate = Number(args.decision?.fundingRate ?? args.decision?.funding);
+    const fundingNeutralOk = !Number.isFinite(fundingRate)
+        ? true
+        : Math.abs(fundingRate) <= AI_MATIC_CHECKLIST_FUNDING_ABS_MAX;
+    const isMajor = MAJOR_SYMBOLS.has(symbolUpper);
+    const atrFloor = isMajor ? CORE_V2_ATR_MIN_PCT_MAJOR : CORE_V2_ATR_MIN_PCT_ALT;
+    const atrPct = Number(core?.atrPct);
+    const atrOk = Number.isFinite(atrPct) && atrPct >= atrFloor;
+    const noOpposingHtfSupplyOk = dir === "bull"
+        ? aiMatic.htf.structureTrend !== "BEAR" && !aiMatic.htf.chochDown
+        : aiMatic.htf.structureTrend !== "BULL" && !aiMatic.htf.chochUp;
+    const riskBudgetOk = args.correlationOk &&
+        args.dominanceOk &&
+        Number.isFinite(riskDistance) &&
+        riskDistance > 0;
+    const lossStreakOk = lossStreak <= 3;
+    const sessionOk = isAiMaticLondonNySession(new Date(nowTs));
     const hardGates = [
-        { name: "HTF EMA trend", ok: htfAligned },
-        { name: "MTF EMA confirm", ok: mtfAligned },
-        { name: "EMA 20/50/200 stack", ok: emaStackOk },
-        { name: "EMA no-cross", ok: emaCrossOk },
-        { name: "Pattern confirm", ok: patternOk },
-        { name: "Volume confirm", ok: volumeOk },
+        { name: "HTF trend alignment", ok: htfAligned },
+        { name: "15m BOS/CHOCH", ok: mtfStructureOk },
+        { name: "OB/FVG zone", ok: inPoiZoneOk },
+        { name: `RRR >= ${AI_MATIC_MIN_RR} (fees)`, ok: rrAfterFeesOk },
     ];
     const entryFactors = [
-        { name: "Sweep return", ok: sweepOk },
-        { name: "OB reaction", ok: obReactionOk },
-        { name: "OB retrace", ok: obRetestOk },
-        { name: "GAP present", ok: gapPresent },
-        { name: "RSI/MACD", ok: momentumOk },
+        { name: "5m EMA pullback <= 0.8%", ok: pullbackOk },
+        { name: `RVOL >= ${rvolThreshold}`, ok: rvolOk },
+        { name: "Liquidity sweep", ok: sweepOk },
+        { name: "Rejection wick/body >= 0.5", ok: rejectionOk },
     ];
     const checklist = [
-        { name: "HTF EMA trend", ok: htfAligned },
-        { name: "MTF EMA confirm", ok: mtfAligned },
-        { name: "EMA 20/50/200 stack", ok: emaStackOk },
-        { name: "EMA no-cross", ok: emaCrossOk },
-        { name: "Pattern confirm", ok: patternOk },
-        { name: "Volume confirm", ok: volumeOk },
-        { name: "Likvidita (sweep)", ok: sweepOk },
+        { name: "Session London/NY", ok: sessionOk },
+        { name: "ADX >= 22", ok: adxOk },
+        { name: "Spread <= 0.02%", ok: spreadOk },
+        { name: "Funding neutral", ok: fundingNeutralOk },
+        { name: "ATR volatility floor", ok: atrOk },
+        { name: "No HTF supply against", ok: noOpposingHtfSupplyOk },
+        { name: "Risk budget available", ok: riskBudgetOk },
+        { name: "Loss streak <= 3", ok: lossStreakOk },
     ];
-    const hardOkCount = hardGates.filter((g) => g.ok).length;
-    const hardPass = hardOkCount >= AI_MATIC_HARD_MIN;
+    const hardPass = hardGates.every((g) => g.ok);
     const entryFactorsPass = entryFactors.filter((g) => g.ok).length >= AI_MATIC_ENTRY_FACTOR_MIN;
     const checklistPass = checklist.filter((g) => g.ok).length >= AI_MATIC_CHECKLIST_MIN;
     return {
@@ -2899,20 +2957,30 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         return { ok, detail: details.join(" | ") };
     }, [getOpenBiasState, resolveBtcBias, isBtcDecoupling]);
     const evaluateAiMaticGates = useCallback((symbol, decision, signal) => {
-        const correlation = resolveCorrelationGate(symbol, Date.now(), signal);
+        const nowTs = Date.now();
+        const correlation = resolveCorrelationGate(symbol, nowTs, signal);
         const dominanceOk = isBtcDecoupling() || correlation.ok;
+        const symbolClosed = Array.isArray(closedPnlRecords)
+            ? closedPnlRecords.filter((r) => String(r.symbol ?? "") === symbol)
+            : [];
+        const lossStreak = computeLossStreak(symbolClosed, 4);
+        const takerFeePct = toNumber(settingsRef.current.takerFeePct);
         const result = evaluateAiMaticGatesCore({
             decision,
             signal,
             correlationOk: correlation.ok,
             dominanceOk,
+            symbol,
+            nowTs,
+            lossStreak,
+            takerFeePct,
         });
         return {
             ...result,
             correlationDetail: correlation.detail,
             dominanceOk,
         };
-    }, [resolveCorrelationGate, isBtcDecoupling]);
+    }, [closedPnlRecords, resolveCorrelationGate, isBtcDecoupling]);
     const evaluateCoreV2 = useCallback((symbol, decision, signal, feedAgeMs) => {
         const settings = settingsRef.current;
         const core = decision?.coreV2;
@@ -3374,12 +3442,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (isAiMaticProfile) {
             if (aiMaticEval) {
                 const hardOkCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
-                const hardTotal = aiMaticEval.hardGates.length;
-                addGate("Hard: 3 of 6", hardOkCount >= AI_MATIC_HARD_MIN, `${hardOkCount}/${hardTotal}`);
+                addGate("Hard: ALL 4", hardOkCount >= AI_MATIC_HARD_MIN, `${hardOkCount}/${AI_MATIC_HARD_TOTAL}`);
                 const entryOkCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
-                addGate("Entry: Any of 5", entryOkCount >= AI_MATIC_ENTRY_FACTOR_MIN, `${entryOkCount}/5`);
+                addGate("Entry: 3 of 4", entryOkCount >= AI_MATIC_ENTRY_FACTOR_MIN, `${entryOkCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL}`);
                 const checklistOkCount = aiMaticEval.checklist.filter((g) => g.ok).length;
-                addGate("Checklist: 3 of 7", checklistOkCount >= AI_MATIC_CHECKLIST_MIN, `${checklistOkCount}/7`);
+                addGate("Checklist: 5 of 8", checklistOkCount >= AI_MATIC_CHECKLIST_MIN, `${checklistOkCount}/${AI_MATIC_CHECKLIST_TOTAL}`);
             }
         }
         else {
@@ -3437,7 +3504,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             const entryCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
             const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
             executionAllowed = false;
-            executionReason = `AI-MATIC gates hard ${hardCount}/${AI_MATIC_HARD_MIN} · entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN}`;
+            executionReason = `AI-MATIC gates hard ${hardCount}/${AI_MATIC_HARD_TOTAL} · entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL} (need ${AI_MATIC_ENTRY_FACTOR_MIN}) · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_TOTAL} (need ${AI_MATIC_CHECKLIST_MIN})`;
         }
         else if (!checklist.pass) {
             executionAllowed = false;
@@ -4312,7 +4379,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                         id: `ai-matic-gate:${signalId}`,
                         timestamp: new Date(now).toISOString(),
                         action: "RISK_BLOCK",
-                        message: `${symbol} AI-MATIC gate hard ${hardCount}/${AI_MATIC_HARD_MIN} | entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_MIN} | checklist ${checklistCount}/${AI_MATIC_CHECKLIST_MIN} -> NO TRADE${reasons.length ? ` (${reasons.join(" | ")})` : ""}`,
+                        message: `${symbol} AI-MATIC gate hard ${hardCount}/${AI_MATIC_HARD_TOTAL} | entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL} (need ${AI_MATIC_ENTRY_FACTOR_MIN}) | checklist ${checklistCount}/${AI_MATIC_CHECKLIST_TOTAL} (need ${AI_MATIC_CHECKLIST_MIN}) -> NO TRADE${reasons.length ? ` (${reasons.join(" | ")})` : ""}`,
                     },
                 ]);
                 return;

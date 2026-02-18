@@ -245,9 +245,9 @@ const SettingsPanel: React.FC<Props> = ({
     "SL structural",
   ];
   const aiMaticGateNames = [
-    "Hard: 3 of 6",
-    "Entry: Any of 5",
-    "Checklist: 3 of 7",
+    "Hard: ALL 4",
+    "Entry: 3 of 4",
+    "Checklist: 5 of 8",
   ];
   const checklistGatesByProfile: Record<AISettings["riskMode"], string[]> = {
     "ai-matic": aiMaticGateNames,
