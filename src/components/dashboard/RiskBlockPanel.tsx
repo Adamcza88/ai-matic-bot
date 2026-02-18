@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatClock } from "@/lib/uiFormat";
 import type { ScanDiagnostics } from "@/lib/diagnosticsTypes";
@@ -10,6 +10,8 @@ type RiskBlockPanelProps = {
   lastScanTs: number | null;
   logEntries: LogEntry[] | null;
   logsLoaded: boolean;
+  riskLevel: "LOW" | "ELEVATED" | "CRITICAL";
+  expandSignal?: number;
 };
 
 type RiskRow = {
@@ -42,8 +44,16 @@ export default function RiskBlockPanel({
   lastScanTs,
   logEntries,
   logsLoaded,
+  riskLevel,
+  expandSignal,
 }: RiskBlockPanelProps) {
   const [expanded, setExpanded] = useState(true);
+
+  useEffect(() => {
+    if (riskLevel === "ELEVATED" || riskLevel === "CRITICAL") {
+      setExpanded(true);
+    }
+  }, [riskLevel, expandSignal]);
 
   const rows = useMemo(() => {
     const riskLogs: RiskRow[] = (logEntries ?? [])
@@ -77,7 +87,7 @@ export default function RiskBlockPanel({
   }, [allowedSymbols, lastScanTs, logEntries, scanDiagnostics]);
 
   const headerTime = rows[0]?.timestamp ?? lastScanTs;
-  const critical = rows.length > 0;
+  const critical = riskLevel === "CRITICAL" || rows.length > 0;
 
   return (
     <section

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { TradingMode } from "../types";
 import type { TradingBotApi } from "../hooks/useTradingBot";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -36,6 +36,12 @@ function modeLabel(value: TradingMode) {
     ? UI_COPY.statusBar.auto
     : UI_COPY.statusBar.manual;
 }
+
+type UiToast = {
+  id: number;
+  tone: "success" | "neutral" | "danger";
+  message: string;
+};
 
 type DashboardProps = {
   mode: TradingMode;
@@ -122,6 +128,21 @@ export default function Dashboard({
   const pnlLoaded = Boolean(assetPnlHistory);
   const scanLoaded = scanDiagnostics !== null;
   const [activeTab, setActiveTab] = useState("decision");
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const [showBulkOverrideDialog, setShowBulkOverrideDialog] = useState(false);
+  const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
+  const [signalFadePulse, setSignalFadePulse] = useState(false);
+  const [riskPulseActive, setRiskPulseActive] = useState(false);
+  const [riskExpandKey, setRiskExpandKey] = useState(0);
+  const [resetRippleKey, setResetRippleKey] = useState(0);
+  const [resetVersion, setResetVersion] = useState(0);
+  const [bulkExecutedSymbols, setBulkExecutedSymbols] = useState<string[]>([]);
+  const [toast, setToast] = useState<UiToast | null>(null);
+  const [pullDistance, setPullDistance] = useState(0);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const touchStartYRef = useRef<number | null>(null);
+  const modeAtLastRenderRef = useRef(mode);
+  const prevRiskLevelRef = useRef<"LOW" | "ELEVATED" | "CRITICAL">("LOW");
 
   const lastScanTs = useMemo(() => {
     if (!scanDiagnostics) return null;
@@ -131,6 +152,36 @@ export default function Dashboard({
     if (!values.length) return null;
     return Math.max(...(values as number[]));
   }, [scanDiagnostics]);
+
+  const showToast = useCallback(
+    (message: string, tone: UiToast["tone"] = "neutral") => {
+      setToast({
+        id: Date.now(),
+        tone,
+        message,
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setNowTick(Date.now());
+    }, 1_000);
+    return () => {
+      window.clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => {
+      setToast((prev) => (prev?.id === toast.id ? null : prev));
+    }, 2_600);
+    return () => {
+      window.clearTimeout(id);
+    };
+  }, [toast]);
 
   const riskMode = bot.settings?.riskMode ?? "ai-matic";
   const profileMeta = useMemo(() => {
@@ -457,6 +508,62 @@ export default function Dashboard({
     return "LOW" as const;
   }, [blockedSignalsCount, execOverrideEnabled, gateStats.pass, gateStats.total]);
 
+  const holdSymbols = useMemo(() => {
+    return allowedSymbols.filter((symbol) => {
+      const diag = scanDiagnostics?.[symbol];
+      if (!diag) return false;
+      const blocks = Array.isArray(diag.entryBlockReasons) ? diag.entryBlockReasons : [];
+      return diag.executionAllowed === false && blocks.length > 0;
+    });
+  }, [allowedSymbols, scanDiagnostics]);
+
+  const feedAgeOffsetMs = useMemo(() => {
+    if (!Number.isFinite(lastScanTs)) return 0;
+    return Math.max(0, nowTick - (lastScanTs as number));
+  }, [lastScanTs, nowTick]);
+
+  const liveFeedRange = useMemo(() => {
+    if (!Number.isFinite(feedStats.minAge) || !Number.isFinite(feedStats.maxAge)) return undefined;
+    return {
+      min: (feedStats.minAge as number) + feedAgeOffsetMs,
+      max: (feedStats.maxAge as number) + feedAgeOffsetMs,
+    };
+  }, [feedAgeOffsetMs, feedStats.maxAge, feedStats.minAge]);
+
+  const dashboardLoading =
+    !scanLoaded ||
+    !positionsLoaded ||
+    !ordersLoaded ||
+    systemState.bybitStatus === "Connecting..." ||
+    pullRefreshing;
+
+  useEffect(() => {
+    if (modeAtLastRenderRef.current === mode) return;
+    modeAtLastRenderRef.current = mode;
+    setSignalFadePulse(true);
+    const id = window.setTimeout(() => setSignalFadePulse(false), 300);
+    return () => window.clearTimeout(id);
+  }, [mode]);
+
+  useEffect(() => {
+    const prevRisk = prevRiskLevelRef.current;
+    const elevated = riskLevel === "ELEVATED" || riskLevel === "CRITICAL";
+    const wasElevated = prevRisk === "ELEVATED" || prevRisk === "CRITICAL";
+    if (elevated && !wasElevated) {
+      setRiskExpandKey((value) => value + 1);
+    }
+    prevRiskLevelRef.current = riskLevel;
+    if (!elevated) {
+      setRiskPulseActive(false);
+      return;
+    }
+    setRiskPulseActive(true);
+    const id = window.setTimeout(() => {
+      setRiskPulseActive(false);
+    }, 10_000);
+    return () => window.clearTimeout(id);
+  }, [riskLevel]);
+
   const dailyPnlBreakdown = useMemo(
     () => ({
       realized: dailyPnl,
@@ -469,15 +576,79 @@ export default function Dashboard({
   );
   const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";
 
+  const handleResetAllGates = useCallback(() => {
+    resetChecklist();
+    setExecOverrideEnabled(false);
+    setBulkExecutedSymbols([]);
+    setResetVersion((value) => value + 1);
+    setResetRippleKey((value) => value + 1);
+    showToast("All gates reset", "neutral");
+  }, [resetChecklist, setExecOverrideEnabled, showToast]);
+
+  const handleConfirmBulkOverride = useCallback(() => {
+    const affected = holdSymbols.length;
+    setShowBulkOverrideDialog(false);
+    setExecOverrideEnabled(true);
+    setBulkExecutedSymbols(holdSymbols);
+    showToast(`${affected} gates executed`, "success");
+  }, [holdSymbols, setExecOverrideEnabled, showToast]);
+
+  const handleTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    if (typeof window === "undefined") return;
+    if (window.scrollY > 0) {
+      touchStartYRef.current = null;
+      return;
+    }
+    touchStartYRef.current = event.touches[0]?.clientY ?? null;
+  }, []);
+
+  const handleTouchMove = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    if (touchStartYRef.current == null || pullRefreshing) return;
+    const currentY = event.touches[0]?.clientY ?? touchStartYRef.current;
+    const delta = Math.max(0, Math.min(120, currentY - touchStartYRef.current));
+    setPullDistance(delta);
+  }, [pullRefreshing]);
+
+  const handleTouchEnd = useCallback(() => {
+    const shouldRefresh = pullDistance >= 80 && !pullRefreshing;
+    setPullDistance(0);
+    touchStartYRef.current = null;
+    if (!shouldRefresh) return;
+    setPullRefreshing(true);
+    void refreshTestnetOrders();
+    showToast("Data refreshed", "neutral");
+    window.setTimeout(() => setPullRefreshing(false), 1_000);
+  }, [pullDistance, pullRefreshing, refreshTestnetOrders, showToast]);
+
   return (
-    <div className="mx-auto max-w-[1560px] space-y-6 px-4 py-4 lg:px-6">
+    <div
+      className="mx-auto max-w-[1560px] space-y-6 px-4 py-4 lg:px-6"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      {pullDistance > 0 || pullRefreshing ? (
+        <div className="fixed inset-x-0 top-2 z-40 flex justify-center">
+          <div className="rounded-full border border-border/70 bg-card/90 px-3 py-1 text-xs text-muted-foreground shadow-md">
+            {pullRefreshing
+              ? "Refreshing…"
+              : pullDistance >= 80
+                ? "Release to refresh"
+                : "Pull to refresh"}
+          </div>
+        </div>
+      ) : null}
       <StatusBar
         title={profileMeta.label}
         subtitle={profileMeta.subtitle}
         engineStatus={engineStatus}
         lastScanTs={lastScanTs}
         riskLevel={riskLevel}
+        riskPulseActive={riskPulseActive}
+        onRiskBadgeClick={() => setRiskPulseActive(false)}
         dataHealthSafe={dataHealthSafe}
+        loading={dashboardLoading}
+        executionMode={mode}
         dailyPnl={dailyPnl}
         totalCapital={totalCapital}
         openPositionsPnlRange={openPositionsPnlRange}
@@ -494,7 +665,13 @@ export default function Dashboard({
         }}
         className="space-y-3 lm-tabs"
       >
-        <section className="sticky top-[152px] z-10 space-y-3 rounded-xl border border-border/70 bg-card/92 p-3 shadow-[0_8px_16px_-12px_rgba(0,0,0,0.7)] backdrop-blur">
+        <section className="relative sticky top-[152px] z-10 space-y-3 overflow-hidden rounded-xl border border-border/70 bg-card/92 p-3 shadow-[0_8px_16px_-12px_rgba(0,0,0,0.7)] backdrop-blur">
+          {resetRippleKey > 0 ? (
+            <div
+              key={resetRippleKey}
+              className="pointer-events-none absolute left-8 top-8 h-2 w-2 rounded-full bg-foreground/35 tva-ripple-400"
+            />
+          ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <Badge
@@ -507,13 +684,24 @@ export default function Dashboard({
                       : "border-[#00C853]/70 bg-[#00C853]/15 px-2 py-1 text-[#00C853]"
                 }
               >
-                RISK {riskLevel}
+                <button
+                  type="button"
+                  className={`inline-flex items-center gap-1 ${riskPulseActive ? "tva-risk-pulse" : ""}`}
+                  onClick={() => setRiskPulseActive(false)}
+                >
+                  RISK {riskLevel}
+                </button>
               </Badge>
+              <div className="relative h-5 min-w-[138px] overflow-hidden text-xs font-medium text-muted-foreground">
+                <span key={mode} className="absolute inset-0 tva-text-swap">
+                  Execution: {mode === TradingMode.AUTO_ON ? "Auto" : "Manual"}
+                </span>
+              </div>
               <Button
                 type="button"
                 variant={execOverrideEnabled ? "destructive" : "default"}
                 size="sm"
-                onClick={() => setExecOverrideEnabled(true)}
+                onClick={() => setShowBulkOverrideDialog(true)}
                 aria-pressed={execOverrideEnabled}
                 className="h-11 px-4 text-sm font-semibold"
               >
@@ -533,7 +721,7 @@ export default function Dashboard({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={resetChecklist}
+                onClick={handleResetAllGates}
                 className="h-11 px-4 text-sm font-semibold"
               >
                 Reset ALL gates
@@ -602,6 +790,15 @@ export default function Dashboard({
               >
                 {UI_COPY.common.settings}
               </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setMobileDetailsOpen((value) => !value)}
+                className="h-11 px-4 text-sm font-semibold xl:hidden"
+              >
+                {mobileDetailsOpen ? "Hide details" : "Details"}
+              </Button>
             </div>
           </div>
 
@@ -621,14 +818,7 @@ export default function Dashboard({
         <KpiRow
           dataHealthSafe={dataHealthSafe}
           latencyMs={systemState.latency}
-          feedAgeRangeMs={
-            Number.isFinite(feedStats.minAge) && Number.isFinite(feedStats.maxAge)
-              ? {
-                  min: feedStats.minAge as number,
-                  max: feedStats.maxAge as number,
-                }
-              : undefined
-          }
+          feedAgeRangeMs={liveFeedRange}
           gatesPassCount={gateStats.pass}
           gatesTotal={gateStats.total}
           blockedSignals={blockedSignalsCount}
@@ -645,17 +835,20 @@ export default function Dashboard({
           maxOpenOrders={maxOpenOrders}
           riskPerTradePct={riskPerTradePct}
           riskPerTradeUsd={riskPerTradeUsd}
+          loading={dashboardLoading}
         />
 
         <div className="dashboard-tab-viewport lm-tab-viewport">
           <TabsContent value="decision" className="mt-0">
-            <div className="space-y-4">
+            <div className={`space-y-4 transition-opacity duration-300 ease-out ${signalFadePulse ? "opacity-70" : "opacity-100"}`}>
               <RiskBlockPanel
                 allowedSymbols={allowedSymbols}
                 scanDiagnostics={scanDiagnostics}
                 lastScanTs={lastScanTs}
                 logEntries={logEntries}
                 logsLoaded={logsLoaded}
+                riskLevel={riskLevel}
+                expandSignal={riskExpandKey}
               />
               <div className="grid grid-cols-12 gap-6">
                 <div className="col-span-12 xl:col-span-8">
@@ -670,18 +863,28 @@ export default function Dashboard({
                     selectedSymbol={selectedSignalSymbol}
                   />
                 </div>
-                <div className="col-span-12 xl:col-span-4 space-y-4">
+                <div
+                  className={`col-span-12 space-y-4 xl:col-span-4 ${
+                    mobileDetailsOpen ? "block" : "hidden xl:block"
+                  }`}
+                >
                   <SignalsAccordion
                     allowedSymbols={allowedSymbols}
                     scanDiagnostics={scanDiagnostics}
                     scanLoaded={scanLoaded}
                     lastScanTs={lastScanTs}
+                    scanAgeOffsetMs={feedAgeOffsetMs}
                     overrideEnabled={execOverrideEnabled}
                     setOverrideEnabled={setExecOverrideEnabled}
-                    resetChecklist={resetChecklist}
+                    resetChecklist={handleResetAllGates}
                     profileGateNames={checklistGateNames}
                     selectedSymbol={selectedSignalSymbol}
                     onSelectSymbol={setSelectedSignalSymbol}
+                    mode={mode}
+                    loading={dashboardLoading}
+                    bulkExecutedSymbols={bulkExecutedSymbols}
+                    resetVersion={resetVersion}
+                    onToast={showToast}
                   />
                   <SignalDetailPanel
                     selectedSymbol={selectedSignalSymbol}
@@ -693,6 +896,12 @@ export default function Dashboard({
                     resetChecklist={resetChecklist}
                   />
                 </div>
+              </div>
+              <div className={mobileDetailsOpen ? "block xl:hidden" : "hidden"}>
+                <RecentEventsPanel
+                  logEntries={logEntries}
+                  logsLoaded={logsLoaded}
+                />
               </div>
             </div>
           </TabsContent>
@@ -743,6 +952,51 @@ export default function Dashboard({
           </TabsContent>
         </div>
       </Tabs>
+
+      {showBulkOverrideDialog ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-border/70 bg-card p-6 shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
+            <div className="text-lg font-semibold text-foreground">Force execution of all HOLD gates?</div>
+            <div className="mt-2 text-sm text-muted-foreground">
+              Force execution of all HOLD gates? ({holdSymbols.length} gates affected)
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 px-4"
+                onClick={() => setShowBulkOverrideDialog(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="h-10 px-4"
+                onClick={handleConfirmBulkOverride}
+              >
+                Force Execute
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {toast ? (
+        <div className="fixed inset-x-0 bottom-5 z-50 flex justify-center px-4">
+          <div
+            className={`rounded-lg border px-3 py-2 text-sm shadow-lg tva-fade-in-200 ${
+              toast.tone === "success"
+                ? "border-[#00C853]/60 bg-[#00C853]/15 text-[#00C853]"
+                : toast.tone === "danger"
+                  ? "border-[#D32F2F]/60 bg-[#D32F2F]/15 text-[#D32F2F]"
+                  : "border-border/70 bg-card/95 text-foreground"
+            }`}
+          >
+            {toast.message}
+          </div>
+        </div>
+      ) : null}
 
       {showSettings && bot.settings && (
         <SettingsPanel

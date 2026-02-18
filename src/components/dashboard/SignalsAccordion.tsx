@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Panel from "@/components/dashboard/Panel";
+import { TradingMode } from "@/types";
 import { formatClock } from "@/lib/uiFormat";
 import type {
   DiagnosticGate,
@@ -14,9 +15,15 @@ type SignalsAccordionProps = {
   scanDiagnostics: ScanDiagnostics | null;
   scanLoaded: boolean;
   lastScanTs: number | null;
+  scanAgeOffsetMs?: number;
   overrideEnabled: boolean;
   setOverrideEnabled: (value: boolean) => void;
   resetChecklist: () => void;
+  mode: TradingMode;
+  loading?: boolean;
+  bulkExecutedSymbols?: string[];
+  resetVersion?: number;
+  onToast?: (message: string, tone?: "success" | "neutral" | "danger") => void;
   profileGateNames: string[];
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
@@ -74,7 +81,13 @@ function feedToneClass(feedAgeMs?: number) {
 
 function formatFeedAge(feedAgeMs?: number) {
   if (!Number.isFinite(feedAgeMs)) return "N/A";
-  return `${((feedAgeMs as number) / 1000).toFixed(1)} s`;
+  const ms = feedAgeMs as number;
+  if (ms > FEED_WARN_MS) return `${(ms / 1000).toFixed(1)} s · STALE`;
+  if (ms > FEED_OK_MS) {
+    const countdown = Math.max(0, Math.ceil((FEED_WARN_MS - ms) / 1000));
+    return `${(ms / 1000).toFixed(1)} s · T-${countdown}s`;
+  }
+  return `${(ms / 1000).toFixed(1)} s`;
 }
 
 export default function SignalsAccordion({
@@ -82,15 +95,39 @@ export default function SignalsAccordion({
   scanDiagnostics,
   scanLoaded,
   lastScanTs,
+  scanAgeOffsetMs,
   overrideEnabled,
   setOverrideEnabled,
   resetChecklist,
+  mode,
+  loading,
+  bulkExecutedSymbols,
+  resetVersion,
+  onToast,
   profileGateNames,
   selectedSymbol,
   onSelectSymbol,
 }: SignalsAccordionProps) {
   const [viewMode, setViewMode] = useState<"table" | "cards">("table");
+  const [symbolOverrideState, setSymbolOverrideState] = useState<
+    Record<string, "OFF" | "ON" | "EXECUTE">
+  >({});
   const lastScanLabel = formatClock(lastScanTs);
+
+  useEffect(() => {
+    setSymbolOverrideState({});
+  }, [resetVersion]);
+
+  useEffect(() => {
+    if (!bulkExecutedSymbols?.length) return;
+    setSymbolOverrideState((prev) => {
+      const next = { ...prev };
+      bulkExecutedSymbols.forEach((symbol) => {
+        next[symbol] = "EXECUTE";
+      });
+      return next;
+    });
+  }, [bulkExecutedSymbols]);
 
   const rows = useMemo(
     () =>
@@ -102,7 +139,10 @@ export default function SignalsAccordion({
             summary: gateSummary(diag, scanLoaded),
             reason: normalizeReason(diag),
             ratio: gatePassRatio(diag, profileGateNames),
-            feedAgeMs: Number(diag?.feedAgeMs),
+            feedAgeMs:
+              Number.isFinite(Number(diag?.feedAgeMs))
+                ? Number(diag?.feedAgeMs) + Math.max(0, scanAgeOffsetMs ?? 0)
+                : Number.NaN,
             signalActive: Boolean(diag?.signalActive),
           };
         })
@@ -116,7 +156,7 @@ export default function SignalsAccordion({
           }
           return a.symbol.localeCompare(b.symbol);
         }),
-    [allowedSymbols, profileGateNames, scanDiagnostics, scanLoaded]
+    [allowedSymbols, profileGateNames, scanAgeOffsetMs, scanDiagnostics, scanLoaded]
   );
 
   return (
@@ -159,13 +199,25 @@ export default function SignalsAccordion({
           >
             {overrideEnabled ? "Overrides gates" : "No overrides"}
           </Badge>
+          <span key={mode} className="text-xs text-muted-foreground tva-text-swap">
+            Execution: {mode === TradingMode.AUTO_ON ? "Auto" : "Manual"}
+          </span>
           <Button variant="outline" size="sm" onClick={resetChecklist} className="h-8 text-xs">
             Reset gate
           </Button>
         </div>
       }
     >
-      {!scanLoaded ? (
+      {loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div
+              key={`signals-skeleton-${index}`}
+              className="h-9 rounded-md border border-border/60 bg-background/40 tva-skeleton"
+            />
+          ))}
+        </div>
+      ) : !scanLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
           Načítám diagnostiku…
         </div>
@@ -187,19 +239,41 @@ export default function SignalsAccordion({
             </thead>
             <tbody className="text-foreground">
               {rows.map((row) => {
+                const overrideState = symbolOverrideState[row.symbol] ?? "OFF";
+                const manualMode = mode !== TradingMode.AUTO_ON;
+                const summaryLabel =
+                  overrideState === "EXECUTE"
+                    ? `EXECUTE · ${row.ratio}`
+                    : overrideState === "ON"
+                      ? `OVERRIDE · ${row.ratio}`
+                      : `${row.summary.label} · ${row.ratio}`;
                 const summaryClass =
-                  row.summary.tone === "blocked"
-                    ? "border-[#D32F2F]/60 text-[#D32F2F] dm-status-sell"
-                    : row.summary.tone === "hold"
-                      ? "border-[#FFB300]/60 text-[#FFB300] dm-status-warn"
+                  overrideState === "EXECUTE"
+                    ? "border-[#00C853]/60 text-[#00C853] dm-status-pass"
+                    : overrideState === "ON"
+                      ? "border-[#FFB300]/70 text-[#FFB300] dm-status-warn tva-gate-pulse-1200"
+                      : row.summary.tone === "blocked"
+                        ? "border-[#D32F2F]/60 text-[#D32F2F] dm-status-sell"
+                        : row.summary.tone === "hold"
+                          ? "border-[#FFB300]/60 text-[#FFB300] dm-status-warn"
+                          : row.summary.tone === "pass"
+                            ? "border-[#00C853]/60 text-[#00C853] dm-status-pass"
+                            : "border-border/60 text-muted-foreground dm-status-muted";
+                const rowClass =
+                  overrideState === "ON"
+                    ? "tva-gate-pulse-1200 border-[#FFB300]/70"
+                    : overrideState === "EXECUTE"
+                      ? "border-[#00C853]/60"
                       : row.summary.tone === "pass"
-                        ? "border-[#00C853]/60 text-[#00C853] dm-status-pass"
-                        : "border-border/60 text-muted-foreground dm-status-muted";
+                        ? "border-border/40"
+                        : "border-border/40";
                 return (
                   <tr
                     key={row.symbol}
                     onClick={() => onSelectSymbol(row.symbol)}
-                    className={`cursor-pointer border-b border-border/40 hover:bg-background/30 ${
+                    className={`cursor-pointer border-b hover:bg-background/30 ${rowClass} ${
+                      manualMode ? "opacity-70" : ""
+                    } ${
                       selectedSymbol === row.symbol ? "bg-primary/10" : ""
                     }`}
                   >
@@ -218,7 +292,7 @@ export default function SignalsAccordion({
                     </td>
                     <td className="px-3 py-2">
                       <Badge variant="outline" className={summaryClass} title={row.reason}>
-                        {row.summary.label} · {row.ratio}
+                        {summaryLabel}
                       </Badge>
                     </td>
                     <td className={`px-3 py-2 tabular-nums ${feedToneClass(row.feedAgeMs)}`}>
@@ -232,30 +306,87 @@ export default function SignalsAccordion({
                           <Button
                             type="button"
                             size="sm"
-                            variant={overrideEnabled ? "secondary" : "outline"}
+                            variant={
+                              overrideState === "EXECUTE"
+                                ? "secondary"
+                                : overrideState === "ON"
+                                  ? "secondary"
+                                  : "outline"
+                            }
                             className="h-7 px-2 text-[11px]"
                             aria-label={`Přepnout override pro ${row.symbol}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               onSelectSymbol(row.symbol);
-                              setOverrideEnabled(!overrideEnabled);
+                              if (overrideState === "OFF") {
+                                setOverrideEnabled(true);
+                                setSymbolOverrideState((prev) => ({
+                                  ...prev,
+                                  [row.symbol]: "ON",
+                                }));
+                                return;
+                              }
+                              if (overrideState === "EXECUTE") {
+                                setSymbolOverrideState((prev) => ({
+                                  ...prev,
+                                  [row.symbol]: "OFF",
+                                }));
+                              }
                             }}
                           >
-                            Override {overrideEnabled ? "ON" : "OFF"}
+                            {overrideState === "EXECUTE"
+                              ? "Executed"
+                              : `Override ${overrideState === "ON" ? "ON" : "OFF"}`}
                           </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2 text-[11px]"
-                            aria-label="Resetovat gate checklist"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              resetChecklist();
-                            }}
-                          >
-                            Reset
-                          </Button>
+                          {overrideState === "ON" ? (
+                            <>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-[11px]"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setSymbolOverrideState((prev) => ({
+                                    ...prev,
+                                    [row.symbol]: "EXECUTE",
+                                  }));
+                                  onToast?.(`${row.symbol} executed`, "success");
+                                }}
+                              >
+                                Confirm
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-[11px]"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setSymbolOverrideState((prev) => ({
+                                    ...prev,
+                                    [row.symbol]: "OFF",
+                                  }));
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              aria-label="Resetovat gate checklist"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                resetChecklist();
+                              }}
+                            >
+                              Reset
+                            </Button>
+                          )}
                         </div>
                       )}
                     </td>
@@ -270,14 +401,34 @@ export default function SignalsAccordion({
           <div className="space-y-1.5">
             {rows.map((row) => {
               const selected = selectedSymbol === row.symbol;
+              const overrideState = symbolOverrideState[row.symbol] ?? "OFF";
+              const manualMode = mode !== TradingMode.AUTO_ON;
+              const summaryLabel =
+                overrideState === "EXECUTE"
+                  ? `EXECUTE · ${row.ratio}`
+                  : overrideState === "ON"
+                    ? `OVERRIDE · ${row.ratio}`
+                    : `${row.summary.label} · ${row.ratio}`;
               const summaryClass =
-                row.summary.tone === "blocked"
-                  ? "border-[#D32F2F]/60 text-[#D32F2F] dm-status-sell"
-                  : row.summary.tone === "hold"
-                    ? "border-[#FFB300]/60 text-[#FFB300] dm-status-warn"
+                overrideState === "EXECUTE"
+                  ? "border-[#00C853]/60 text-[#00C853] dm-status-pass"
+                  : overrideState === "ON"
+                    ? "border-[#FFB300]/70 text-[#FFB300] dm-status-warn tva-gate-pulse-1200"
+                    : row.summary.tone === "blocked"
+                      ? "border-[#D32F2F]/60 text-[#D32F2F] dm-status-sell"
+                      : row.summary.tone === "hold"
+                        ? "border-[#FFB300]/60 text-[#FFB300] dm-status-warn"
+                        : row.summary.tone === "pass"
+                          ? "border-[#00C853]/60 text-[#00C853] dm-status-pass"
+                          : "border-border/60 text-muted-foreground dm-status-muted";
+              const itemClass =
+                overrideState === "ON"
+                  ? "border-[#FFB300]/80 tva-gate-pulse-1200"
+                  : overrideState === "EXECUTE"
+                    ? "border-[#00C853]/70"
                     : row.summary.tone === "pass"
-                      ? "border-[#00C853]/60 text-[#00C853] dm-status-pass"
-                      : "border-border/60 text-muted-foreground dm-status-muted";
+                      ? "border-border/70"
+                      : "border-border/70";
 
               return (
                 <div
@@ -294,12 +445,14 @@ export default function SignalsAccordion({
                   className={`grid w-full grid-cols-[96px,126px,minmax(0,1fr),72px] items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs ${
                     selected
                       ? "border-primary/60 bg-primary/10"
-                      : "border-border/70 bg-card/90 hover:bg-card"
+                      : `${itemClass} bg-card/90 hover:bg-card`
+                  } ${manualMode ? "opacity-70" : ""} ${
+                    selected && overrideState === "ON" ? "tva-gate-pulse-1200" : ""
                   }`}
                 >
                   <div className="font-mono text-sm text-foreground">{row.symbol}</div>
                   <Badge variant="outline" className={summaryClass}>
-                    {row.summary.label} · {row.ratio}
+                    {summaryLabel}
                   </Badge>
                   <div className="truncate text-muted-foreground" title={row.reason}>
                     {row.reason}
@@ -308,33 +461,96 @@ export default function SignalsAccordion({
                     {formatFeedAge(row.feedAgeMs)}
                   </div>
                   <div className="col-span-4 mt-1 flex items-center justify-end gap-1.5">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={overrideEnabled ? "secondary" : "outline"}
-                      className="h-7 px-2 text-[11px]"
-                      aria-label={`Přepnout override pro ${row.symbol}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onSelectSymbol(row.symbol);
-                        setOverrideEnabled(!overrideEnabled);
-                      }}
-                    >
-                      Override {overrideEnabled ? "ON" : "OFF"}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-[11px]"
-                      aria-label="Resetovat gate checklist"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        resetChecklist();
-                      }}
-                    >
-                      Reset
-                    </Button>
+                    {row.summary.tone === "blocked" ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={
+                            overrideState === "EXECUTE"
+                              ? "secondary"
+                              : overrideState === "ON"
+                                ? "secondary"
+                                : "outline"
+                          }
+                          className="h-7 px-2 text-[11px]"
+                          aria-label={`Přepnout override pro ${row.symbol}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onSelectSymbol(row.symbol);
+                            if (overrideState === "OFF") {
+                              setOverrideEnabled(true);
+                              setSymbolOverrideState((prev) => ({
+                                ...prev,
+                                [row.symbol]: "ON",
+                              }));
+                              return;
+                            }
+                            if (overrideState === "EXECUTE") {
+                              setSymbolOverrideState((prev) => ({
+                                ...prev,
+                                [row.symbol]: "OFF",
+                              }));
+                            }
+                          }}
+                        >
+                          {overrideState === "EXECUTE"
+                            ? "Executed"
+                            : `Override ${overrideState === "ON" ? "ON" : "OFF"}`}
+                        </Button>
+                        {overrideState === "ON" ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSymbolOverrideState((prev) => ({
+                                  ...prev,
+                                  [row.symbol]: "EXECUTE",
+                                }));
+                                onToast?.(`${row.symbol} executed`, "success");
+                              }}
+                            >
+                              Confirm
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSymbolOverrideState((prev) => ({
+                                  ...prev,
+                                  [row.symbol]: "OFF",
+                                }));
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px]"
+                            aria-label="Resetovat gate checklist"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              resetChecklist();
+                            }}
+                          >
+                            Reset
+                          </Button>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               );

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { formatMoney, formatMs, formatPercentRatio, formatSignedMoney } from "@/lib/uiFormat";
 
 type KpiRowProps = {
@@ -35,6 +36,7 @@ type KpiRowProps = {
   maxOpenOrders: number;
   riskPerTradePct?: number;
   riskPerTradeUsd?: number;
+  loading?: boolean;
 };
 
 type MetricLineProps = {
@@ -104,12 +106,64 @@ export default function KpiRow({
   maxOpenOrders,
   riskPerTradePct,
   riskPerTradeUsd,
+  loading,
 }: KpiRowProps) {
+  const previousCountRef = useRef<number | null>(null);
+  const previousPnlRef = useRef<number | null>(null);
+  const [countFxClass, setCountFxClass] = useState("");
+  const [pnlFxClass, setPnlFxClass] = useState("");
   const usagePct = maxOpenPositions > 0 ? Math.round((openPositions / maxOpenPositions) * 100) : 0;
   const feedStripeClass = feedToneClass(feedAgeRangeMs?.max);
+  const combinedCount = openPositions + openOrders;
+  const countdownToDanger = Number.isFinite(feedAgeRangeMs?.max)
+    ? Math.max(0, Math.ceil((10_000 - (feedAgeRangeMs?.max as number)) / 1_000))
+    : 0;
+
+  useEffect(() => {
+    const previous = previousCountRef.current;
+    previousCountRef.current = combinedCount;
+    if (previous == null || previous === combinedCount) return;
+    const positive = combinedCount > previous;
+    setCountFxClass(`tva-bounce-400 ${positive ? "tva-glow-positive" : "tva-glow-negative"}`);
+    const id = window.setTimeout(() => setCountFxClass(""), 400);
+    return () => window.clearTimeout(id);
+  }, [combinedCount]);
+
+  useEffect(() => {
+    const current = Number.isFinite(dailyPnl) ? (dailyPnl as number) : null;
+    const previous = previousPnlRef.current;
+    previousPnlRef.current = current;
+    if (previous == null || current == null || previous === current) return;
+    const crossZero = (previous < 0 && current >= 0) || (previous >= 0 && current < 0);
+    const largeMove = Math.abs(current - previous) > 50;
+    let nextClass = "tva-fade-in-200";
+    if (crossZero) nextClass += " tva-cross-zero-300";
+    if (largeMove) {
+      nextClass += " tva-bounce-400";
+      try {
+        const audioCtx = new (window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext!)();
+        const oscillator = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        oscillator.type = "triangle";
+        oscillator.frequency.value = current >= previous ? 820 : 620;
+        gain.gain.value = 0.0001;
+        oscillator.connect(gain);
+        gain.connect(audioCtx.destination);
+        oscillator.start();
+        gain.gain.exponentialRampToValueAtTime(0.03, audioCtx.currentTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.12);
+        oscillator.stop(audioCtx.currentTime + 0.13);
+      } catch {
+        // Silent fallback when audio is blocked by browser policy.
+      }
+    }
+    setPnlFxClass(nextClass);
+    const id = window.setTimeout(() => setPnlFxClass(""), 420);
+    return () => window.clearTimeout(id);
+  }, [dailyPnl]);
 
   return (
-    <section className="space-y-3">
+    <section className={`space-y-3 ${loading ? "tva-loading-values" : ""}`}>
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_2fr_2fr]">
         <div className={tileClass("secondary")}>
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Health & Latency</div>
@@ -139,10 +193,25 @@ export default function KpiRow({
             <div className="col-span-2 rounded-lg border border-border/60 bg-background/40 px-3 py-2">
               <div className="flex items-center justify-between">
                 <div className="text-xs text-muted-foreground">Feed age</div>
-                <div className="text-2xl font-semibold tabular-nums text-foreground">{formatFeedRange(feedAgeRangeMs)}</div>
+                <div className="text-2xl font-semibold tabular-nums text-foreground tva-loading-text">{formatFeedRange(feedAgeRangeMs)}</div>
               </div>
               <div className="mt-2 h-1.5 w-full rounded-full bg-background/50">
                 <div className={`h-1.5 w-full rounded-full ${feedStripeClass}`} />
+              </div>
+              <div
+                className={`mt-1 text-[11px] ${
+                  Number.isFinite(feedAgeRangeMs?.max) && (feedAgeRangeMs?.max as number) > 10_000
+                    ? "text-[#D32F2F] tva-stale-pulse-1s"
+                    : Number.isFinite(feedAgeRangeMs?.max) && (feedAgeRangeMs?.max as number) > 2_000
+                      ? "text-[#FFB300]"
+                      : "text-[#00C853]"
+                }`}
+              >
+                {Number.isFinite(feedAgeRangeMs?.max) && (feedAgeRangeMs?.max as number) > 10_000
+                  ? "STALE"
+                  : Number.isFinite(feedAgeRangeMs?.max) && (feedAgeRangeMs?.max as number) > 2_000
+                    ? `Danger in ${countdownToDanger}s`
+                    : "Fresh"}
               </div>
             </div>
 
@@ -168,6 +237,7 @@ export default function KpiRow({
             <MetricLine
               label="Pozice / příkazy"
               value={`${openPositions}/${maxOpenPositions} · ${openOrders}/${maxOpenOrders}`}
+              valueClassName={countFxClass}
             />
             <MetricLine label="Alokováno" value={formatMoney(allocated)} />
             <MetricLine label="Využití limitu" value={`${usagePct} %`} />
@@ -182,7 +252,7 @@ export default function KpiRow({
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">PnL přehled</div>
           <div className="mt-3 text-right">
             <div className="text-xs text-muted-foreground">Denní PnL</div>
-            <div className={`text-[42px] font-semibold tabular-nums leading-none ${pnlTone(dailyPnl)}`}>
+            <div className={`text-[42px] font-semibold tabular-nums leading-none tva-loading-text ${pnlTone(dailyPnl)} ${pnlFxClass}`}>
               {formatSignedMoney(dailyPnl)}
             </div>
           </div>

@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+import { TradingMode } from "@/types";
 import { formatClock, formatMoney, formatSignedMoney } from "@/lib/uiFormat";
 
 type StatusBarProps = {
@@ -6,7 +8,11 @@ type StatusBarProps = {
   engineStatus: "Running" | "Paused";
   lastScanTs: number | null;
   riskLevel: "LOW" | "ELEVATED" | "CRITICAL";
+  riskPulseActive?: boolean;
+  onRiskBadgeClick?: () => void;
   dataHealthSafe: boolean;
+  loading?: boolean;
+  executionMode: TradingMode;
   dailyPnl?: number;
   totalCapital?: number;
   openPositionsPnlRange?: {
@@ -39,12 +45,28 @@ export default function StatusBar({
   engineStatus,
   lastScanTs,
   riskLevel,
+  riskPulseActive,
+  onRiskBadgeClick,
   dataHealthSafe,
+  loading,
+  executionMode,
   dailyPnl,
   totalCapital,
   openPositionsPnlRange,
   capitalRange,
 }: StatusBarProps) {
+  const previousHealthRef = useRef<boolean | null>(null);
+  const [healthFxClass, setHealthFxClass] = useState("");
+
+  useEffect(() => {
+    const previous = previousHealthRef.current;
+    previousHealthRef.current = dataHealthSafe;
+    if (previous == null || previous === dataHealthSafe) return;
+    setHealthFxClass(dataHealthSafe ? "tva-health-safe-flash-300" : "tva-health-unsafe-shake-200");
+    const id = window.setTimeout(() => setHealthFxClass(""), dataHealthSafe ? 300 : 200);
+    return () => window.clearTimeout(id);
+  }, [dataHealthSafe]);
+
   const riskTone =
     riskLevel === "CRITICAL"
       ? "text-[#D32F2F]"
@@ -64,14 +86,16 @@ export default function StatusBar({
     <section
       role="status"
       aria-live="polite"
-      className={`sticky top-0 z-20 rounded-xl border-2 p-4 shadow-[0_8px_18px_-10px_rgba(0,0,0,0.65)] backdrop-blur ${shellTone}`}
+      className={`sticky top-0 z-20 rounded-xl border-2 p-4 shadow-[0_8px_18px_-10px_rgba(0,0,0,0.65)] backdrop-blur ${shellTone} ${
+        loading ? "tva-loading-values" : ""
+      }`}
     >
       <div className="grid gap-3 xl:grid-cols-[0.95fr,1.05fr]">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2">
             <div className="text-xs text-muted-foreground">ENGINE</div>
             <div
-              className={`mt-0.5 text-[19px] font-semibold tracking-wide ${
+              className={`mt-0.5 text-[19px] font-semibold tracking-wide tva-loading-text ${
                 engineStatus === "Running" ? "text-[#00C853]" : "text-[#FFB300]"
               }`}
             >
@@ -80,13 +104,21 @@ export default function StatusBar({
           </div>
           <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2">
             <div className="text-xs text-muted-foreground">RISK</div>
-            <div className={`mt-0.5 text-[19px] font-semibold tracking-wide ${riskTone}`}>
-              {riskLevel}
-            </div>
+            <button
+              type="button"
+              className={`mt-0.5 text-[19px] font-semibold tracking-wide ${riskTone} ${
+                riskPulseActive ? "tva-risk-pulse" : ""
+              }`}
+              onClick={onRiskBadgeClick}
+            >
+              <span className="tva-loading-text">{riskLevel}</span>
+            </button>
           </div>
           <div className="rounded-lg border border-border/70 bg-card/70 px-3 py-2">
             <div className="text-xs text-muted-foreground">DATA HEALTH</div>
-            <div className={`mt-0.5 inline-flex items-center gap-1 text-[19px] font-semibold tracking-wide ${healthTone}`}>
+            <div
+              className={`mt-0.5 inline-flex items-center gap-1 text-[19px] font-semibold tracking-wide tva-loading-text ${healthTone} ${healthFxClass}`}
+            >
               <span
                 className={`inline-block h-2.5 w-2.5 rounded-full ${
                   dataHealthSafe ? "bg-[#00C853]" : "bg-[#D32F2F]"
@@ -125,6 +157,10 @@ export default function StatusBar({
       <div className="mt-3 border-t border-border/60 pt-3">
         <div className="text-sm font-semibold leading-tight">{title}</div>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span key={executionMode} className="tva-text-swap">
+            Execution: {executionMode === TradingMode.AUTO_ON ? "Auto" : "Manual"}
+          </span>
+          <span>•</span>
           {subtitle ? <span>{subtitle}</span> : null}
           <span>•</span>
           <span>Poslední sken {formatClock(lastScanTs)}</span>

@@ -1114,6 +1114,156 @@
     overflow-y: auto;
   }
 
+  @keyframes tva-risk-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+
+  .tva-risk-pulse {
+    animation: tva-risk-pulse 1.5s ease-out infinite;
+  }
+
+  @keyframes tva-stale-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+
+  .tva-stale-pulse-1s {
+    animation: tva-stale-pulse 1s ease-out infinite;
+  }
+
+  @keyframes tva-health-unsafe-shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+  }
+
+  .tva-health-unsafe-shake-200 {
+    animation: tva-health-unsafe-shake 200ms ease-out;
+  }
+
+  @keyframes tva-health-safe-flash {
+    0% { transform: scale(1); opacity: 0.82; }
+    50% { transform: scale(1.08); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  .tva-health-safe-flash-300 {
+    animation: tva-health-safe-flash 300ms ease-out;
+  }
+
+  @keyframes tva-fade-in {
+    from { opacity: 0.35; }
+    to { opacity: 1; }
+  }
+
+  .tva-fade-in-200 {
+    animation: tva-fade-in 200ms ease-out;
+  }
+
+  @keyframes tva-bounce {
+    0% { transform: scale(1); }
+    35% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+  }
+
+  .tva-bounce-400 {
+    animation: tva-bounce 400ms ease-out;
+  }
+
+  @keyframes tva-cross-zero {
+    0% { transform: scale(1); }
+    35% { transform: scale(1.15); }
+    100% { transform: scale(1); }
+  }
+
+  .tva-cross-zero-300 {
+    animation: tva-cross-zero 300ms ease-out;
+  }
+
+  .tva-glow-positive {
+    box-shadow: 0 0 0 1px rgba(0, 200, 83, 0.38), 0 0 14px rgba(0, 200, 83, 0.24);
+  }
+
+  .tva-glow-negative {
+    box-shadow: 0 0 0 1px rgba(211, 47, 47, 0.38), 0 0 14px rgba(211, 47, 47, 0.24);
+  }
+
+  @keyframes tva-gate-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 179, 0, 0.42); }
+    50% { box-shadow: 0 0 0 3px rgba(255, 179, 0, 0.18); }
+  }
+
+  .tva-gate-pulse-1200 {
+    animation: tva-gate-pulse 1.2s ease-out infinite;
+  }
+
+  @keyframes tva-ripple {
+    from {
+      transform: scale(1);
+      opacity: 0.5;
+    }
+    to {
+      transform: scale(140);
+      opacity: 0;
+    }
+  }
+
+  .tva-ripple-400 {
+    animation: tva-ripple 400ms ease-out forwards;
+  }
+
+  @keyframes tva-text-swap {
+    from {
+      transform: translateY(6px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  .tva-text-swap {
+    display: inline-flex;
+    align-items: center;
+    animation: tva-text-swap 220ms ease-out;
+  }
+
+  @keyframes tva-shimmer {
+    0% {
+      background-position: -220px 0;
+    }
+    100% {
+      background-position: 220px 0;
+    }
+  }
+
+  .tva-skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(148, 163, 184, 0.2) 0%,
+      rgba(148, 163, 184, 0.34) 50%,
+      rgba(148, 163, 184, 0.2) 100%
+    );
+    background-size: 220px 100%;
+    animation: tva-shimmer 1.2s linear infinite;
+  }
+
+  .tva-loading-values .tva-loading-text,
+  .tva-loading-values .tabular-nums {
+    color: transparent !important;
+    border-radius: 4px;
+    background: linear-gradient(
+      90deg,
+      rgba(148, 163, 184, 0.2) 0%,
+      rgba(148, 163, 184, 0.34) 50%,
+      rgba(148, 163, 184, 0.2) 100%
+    );
+    background-size: 220px 100%;
+    animation: tva-shimmer 1.2s linear infinite;
+  }
+
   @media (max-width: 1279px) {
     .dashboard-right-stack {
       position: static;
