@@ -40,11 +40,9 @@ function formatSignedMoneyRange(range?: { min: number; max: number }) {
 }
 
 function pnlRangeTone(range?: { min: number; max: number }) {
-  if (!range) return "text-muted-foreground";
-  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) return "text-muted-foreground";
-  if (range.min >= 0) return "text-[#00C853]";
-  if (range.max <= 0) return "text-[#D32F2F]";
-  return "text-[#FFB300]";
+  if (!range) return "text-[#D32F2F]";
+  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) return "text-[#D32F2F]";
+  return range.min + range.max >= 0 ? "text-[#00C853]" : "text-[#D32F2F]";
 }
 
 export default function StatusBar({
