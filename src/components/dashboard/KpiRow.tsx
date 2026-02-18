@@ -1,7 +1,20 @@
-import { formatMoney, formatPercentRatio, formatSignedMoney } from "@/lib/uiFormat";
+import { formatMoney, formatMs, formatPercentRatio, formatSignedMoney } from "@/lib/uiFormat";
 
 type KpiRowProps = {
+  dataHealthSafe: boolean;
+  latencyMs?: number;
+  feedAgeRangeMs?: {
+    min: number;
+    max: number;
+  };
+  gatesPassCount: number;
+  gatesTotal: number;
+  blockedSignals: number;
   totalCapital?: number;
+  capitalRange?: {
+    min: number;
+    max: number;
+  };
   allocated?: number;
   dailyPnl?: number;
   dailyPnlBreakdown?: {
@@ -12,6 +25,10 @@ type KpiRowProps = {
     note?: string;
   };
   openPositionsPnl?: number;
+  openPositionsPnlRange?: {
+    min: number;
+    max: number;
+  };
   openPositions: number;
   maxOpenPositions: number;
   openOrders: number;
@@ -26,6 +43,25 @@ function tileClass(priority: "primary" | "secondary") {
   }`;
 }
 
+function formatRange(min?: number, max?: number, formatter: (value?: number) => string = formatMoney) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return "—";
+  if (Math.abs((min as number) - (max as number)) < 0.005) return formatter(min);
+  return `${formatter(min)} – ${formatter(max)}`;
+}
+
+function formatFeedRange(range?: { min: number; max: number }) {
+  if (!range) return "—";
+  const toSec = (value: number) => `${(value / 1000).toFixed(1)} s`;
+  return formatRange(range.min, range.max, toSec);
+}
+
+function feedToneClass(value?: number) {
+  if (!Number.isFinite(value)) return "bg-border";
+  if ((value as number) < 2_000) return "bg-emerald-500";
+  if ((value as number) <= 10_000) return "bg-amber-500";
+  return "bg-red-500";
+}
+
 function pnlTone(value?: number) {
   if (!Number.isFinite(value)) return "text-muted-foreground";
   return (value as number) >= 0
@@ -34,11 +70,19 @@ function pnlTone(value?: number) {
 }
 
 export default function KpiRow({
+  dataHealthSafe,
+  latencyMs,
+  feedAgeRangeMs,
+  gatesPassCount,
+  gatesTotal,
+  blockedSignals,
   totalCapital,
+  capitalRange,
   allocated,
   dailyPnl,
   dailyPnlBreakdown,
   openPositionsPnl,
+  openPositionsPnlRange,
   openPositions,
   maxOpenPositions,
   openOrders,
@@ -46,75 +90,118 @@ export default function KpiRow({
   riskPerTradePct,
   riskPerTradeUsd,
 }: KpiRowProps) {
+  const usagePct = maxOpenPositions > 0 ? Math.round((openPositions / maxOpenPositions) * 100) : 0;
+  const feedStripeClass = feedToneClass(feedAgeRangeMs?.max);
+
   return (
     <section className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <div className={tileClass("primary")}>
-          <div className="text-xs text-muted-foreground lm-kpi-label">Denní PnL</div>
-          <div className={`mt-1 text-2xl font-semibold tabular-nums lm-kpi-value ${pnlTone(dailyPnl)}`}>
-            {formatSignedMoney(dailyPnl)}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Realizováno <span className={`tabular-nums ${pnlTone(dailyPnlBreakdown?.realized)}`}>{formatSignedMoney(dailyPnlBreakdown?.realized)}</span>
-          </div>
-        </div>
-
-        <div className={tileClass("primary")}>
-          <div className="text-xs text-muted-foreground lm-kpi-label">Celkový kapitál</div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value">
-            {formatMoney(totalCapital)}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Otevřené PnL <span className={`tabular-nums ${pnlTone(openPositionsPnl)}`}>{formatSignedMoney(openPositionsPnl)}</span>
-          </div>
-        </div>
-
-        <div className={tileClass("primary")}>
-          <div className="text-xs text-muted-foreground lm-kpi-label">Riziko na obchod</div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums lm-data-primary lm-kpi-value">
-            {formatPercentRatio(riskPerTradePct)}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            ≈ <span className="tabular-nums text-foreground">{formatMoney(riskPerTradeUsd)}</span>
-          </div>
-        </div>
-
-        <div className={tileClass("primary")}>
-          <div className="text-xs text-muted-foreground lm-kpi-label">Realizováno</div>
-          <div className={`mt-1 text-2xl font-semibold tabular-nums lm-kpi-value ${pnlTone(openPositionsPnl)}`}>
-            {formatSignedMoney(openPositionsPnl)}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Aktuální PnL otevřených pozic
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         <div className={tileClass("secondary")}>
-          <div className="text-xs text-muted-foreground lm-kpi-label">Pozice / Příkazy</div>
-          <div className="mt-1 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
-            {openPositions}/{maxOpenPositions}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Příkazy <span className="tabular-nums text-foreground">{openOrders}/{maxOpenOrders}</span>
-          </div>
-        </div>
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Health & Latency</div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <div className="text-[11px] text-muted-foreground">Data Health</div>
+              <div
+                className={`mt-1 inline-flex items-center gap-1 font-semibold ${
+                  dataHealthSafe ? "text-emerald-300" : "text-red-300"
+                }`}
+              >
+                <span
+                  className={`inline-block h-2.5 w-2.5 rounded-full ${
+                    dataHealthSafe ? "bg-emerald-400" : "bg-red-400"
+                  }`}
+                  aria-hidden
+                />
+                {dataHealthSafe ? "SAFE" : "UNSAFE"}
+              </div>
+            </div>
 
-        <div className={tileClass("secondary")}>
-          <div className="text-xs text-muted-foreground lm-kpi-label">Alokováno</div>
-          <div className="mt-1 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
-            {formatMoney(allocated)}
+            <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <div className="text-[11px] text-muted-foreground">Latency</div>
+              <div className="mt-1 font-semibold tabular-nums text-foreground">{formatMs(latencyMs)}</div>
+            </div>
+
+            <div className="col-span-2 rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] text-muted-foreground">Feed age</div>
+                <div className="text-2xl font-semibold tabular-nums text-foreground">{formatFeedRange(feedAgeRangeMs)}</div>
+              </div>
+              <div className="mt-2 h-1.5 w-full rounded-full bg-background/50">
+                <div className={`h-1.5 w-full rounded-full ${feedStripeClass}`} />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <div className="text-[11px] text-muted-foreground">Gates</div>
+              <div className="mt-1 font-semibold tabular-nums text-foreground">
+                {gatesPassCount}/{gatesTotal || 0}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <div className="text-[11px] text-muted-foreground">Blocked</div>
+              <div className={`mt-1 font-semibold tabular-nums ${blockedSignals > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+                {blockedSignals}
+              </div>
+            </div>
           </div>
         </div>
 
         <div className={tileClass("secondary")}>
-          <div className="text-xs text-muted-foreground lm-kpi-label">Limit využití</div>
-          <div className="mt-1 text-lg font-semibold tabular-nums lm-data-primary lm-kpi-value">
-            {maxOpenPositions > 0 ? `${Math.round((openPositions / maxOpenPositions) * 100)} %` : "—"}
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Positions & Risk</div>
+          <div className="mt-3 space-y-2 text-sm">
+            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <span className="text-muted-foreground">Pozice / příkazy</span>
+              <span className="font-semibold tabular-nums text-foreground">
+                {openPositions}/{maxOpenPositions} · {openOrders}/{maxOpenOrders}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <span className="text-muted-foreground">Alokováno</span>
+              <span className="font-semibold tabular-nums text-foreground">{formatMoney(allocated)}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <span className="text-muted-foreground">Využití limitu</span>
+              <span className="font-semibold tabular-nums text-foreground">{usagePct} %</span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <span className="text-muted-foreground">Riziko na obchod</span>
+              <span className="font-semibold tabular-nums text-foreground">
+                {formatPercentRatio(riskPerTradePct)} ≈ {formatMoney(riskPerTradeUsd)}
+              </span>
+            </div>
           </div>
-          <div className="text-xs text-muted-foreground">
-            Příkazy {maxOpenOrders > 0 ? `${Math.round((openOrders / maxOpenOrders) * 100)} %` : "—"}
+        </div>
+
+        <div className={tileClass("primary")}>
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">PnL přehled</div>
+          <div className="mt-3 text-right">
+            <div className="text-[11px] text-muted-foreground">Denní PnL</div>
+            <div className={`text-5xl font-semibold tabular-nums leading-none ${pnlTone(dailyPnl)}`}>
+              {formatSignedMoney(dailyPnl)}
+            </div>
+          </div>
+          <div className="mt-3 space-y-2 text-sm">
+            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <span className="text-muted-foreground">Realizováno</span>
+              <span className={`font-semibold tabular-nums ${pnlTone(dailyPnlBreakdown?.realized)}`}>
+                {formatSignedMoney(dailyPnlBreakdown?.realized)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <span className="text-muted-foreground">Otevřené PnL</span>
+              <span className={`font-semibold tabular-nums ${pnlTone(openPositionsPnl)}`}>
+                {formatRange(openPositionsPnlRange?.min, openPositionsPnlRange?.max, formatSignedMoney)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+              <span className="text-muted-foreground">Celkový kapitál</span>
+              <span className="font-semibold tabular-nums text-foreground">
+                {formatRange(capitalRange?.min, capitalRange?.max, formatMoney) !== "—"
+                  ? formatRange(capitalRange?.min, capitalRange?.max, formatMoney)
+                  : formatMoney(totalCapital)}
+              </span>
+            </div>
           </div>
         </div>
       </div>

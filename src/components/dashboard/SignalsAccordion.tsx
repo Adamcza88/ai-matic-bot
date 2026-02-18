@@ -14,7 +14,8 @@ type SignalsAccordionProps = {
   scanDiagnostics: ScanDiagnostics | null;
   scanLoaded: boolean;
   lastScanTs: number | null;
-  checklistEnabled: Record<string, boolean>;
+  overrideEnabled: boolean;
+  setOverrideEnabled: (value: boolean) => void;
   resetChecklist: () => void;
   profileGateNames: string[];
   selectedSymbol: string | null;
@@ -81,7 +82,8 @@ export default function SignalsAccordion({
   scanDiagnostics,
   scanLoaded,
   lastScanTs,
-  checklistEnabled,
+  overrideEnabled,
+  setOverrideEnabled,
   resetChecklist,
   profileGateNames,
   selectedSymbol,
@@ -89,7 +91,6 @@ export default function SignalsAccordion({
 }: SignalsAccordionProps) {
   const [viewMode, setViewMode] = useState<"table" | "cards">("table");
   const lastScanLabel = formatClock(lastScanTs);
-  const overrideEnabled = checklistEnabled["Exec allowed"] ?? true;
 
   const rows = useMemo(
     () =>
@@ -181,6 +182,7 @@ export default function SignalsAccordion({
                 <th>Stav</th>
                 <th>Gate</th>
                 <th>Feed age</th>
+                <th>Akce</th>
               </tr>
             </thead>
             <tbody className="text-foreground">
@@ -222,6 +224,39 @@ export default function SignalsAccordion({
                     <td className={`px-3 py-2 tabular-nums ${feedToneClass(row.feedAgeMs)}`}>
                       {formatFeedAge(row.feedAgeMs)}
                     </td>
+                    <td className="px-3 py-2">
+                      {row.summary.tone === "blocked" ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={overrideEnabled ? "secondary" : "outline"}
+                            className="h-7 px-2 text-[11px]"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSelectSymbol(row.symbol);
+                              setOverrideEnabled(!overrideEnabled);
+                            }}
+                          >
+                            Override {overrideEnabled ? "ON" : "OFF"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              resetChecklist();
+                            }}
+                          >
+                            Reset
+                          </Button>
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -243,10 +278,17 @@ export default function SignalsAccordion({
                       : "border-border/60 text-muted-foreground dm-status-muted";
 
               return (
-                <button
+                <div
                   key={row.symbol}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => onSelectSymbol(row.symbol)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelectSymbol(row.symbol);
+                    }
+                  }}
                   className={`grid w-full grid-cols-[96px,126px,minmax(0,1fr),72px] items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs ${
                     selected
                       ? "border-primary/60 bg-primary/10"
@@ -263,7 +305,34 @@ export default function SignalsAccordion({
                   <div className={`text-right text-[11px] tabular-nums ${feedToneClass(row.feedAgeMs)}`}>
                     {formatFeedAge(row.feedAgeMs)}
                   </div>
-                </button>
+                  <div className="col-span-4 mt-1 flex items-center justify-end gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={overrideEnabled ? "secondary" : "outline"}
+                      className="h-7 px-2 text-[11px]"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSelectSymbol(row.symbol);
+                        setOverrideEnabled(!overrideEnabled);
+                      }}
+                    >
+                      Override {overrideEnabled ? "ON" : "OFF"}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        resetChecklist();
+                      }}
+                    >
+                      Reset
+                    </Button>
+                  </div>
+                </div>
               );
             })}
           </div>

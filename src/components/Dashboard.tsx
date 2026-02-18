@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { TradingMode } from "../types";
 import type { TradingBotApi } from "../hooks/useTradingBot";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import SettingsPanel from "./SettingsPanel";
 import StatusBar from "./dashboard/StatusBar";
 import KpiRow from "./dashboard/KpiRow";
@@ -13,8 +15,10 @@ import LogsPanel from "./dashboard/LogsPanel";
 import SignalDetailPanel from "./dashboard/SignalDetailPanel";
 import StrategyProfileMini from "./dashboard/StrategyProfileMini";
 import RecentEventsPanel from "./dashboard/RecentEventsPanel";
+import RiskBlockPanel from "./dashboard/RiskBlockPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
 import type { DiagnosticGate, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
+import { UI_COPY } from "@/lib/uiCopy";
 
 const RISK_PCT_BY_MODE = {
   "ai-matic": 0.004,
@@ -25,6 +29,13 @@ const RISK_PCT_BY_MODE = {
 } as const;
 
 const HEALTH_OK_MS = 2_000;
+const MODE_OPTIONS: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
+
+function modeLabel(value: TradingMode) {
+  return value === TradingMode.AUTO_ON
+    ? UI_COPY.statusBar.auto
+    : UI_COPY.statusBar.manual;
+}
 
 type DashboardProps = {
   mode: TradingMode;
@@ -92,6 +103,18 @@ export default function Dashboard({
         const pnl = Number(position?.unrealizedPnl);
         return Number.isFinite(pnl) ? sum + pnl : sum;
       }, 0)
+    : undefined;
+  const openPositionsPnlRange = positionsLoaded
+    ? (() => {
+        const values = activePositions
+          .map((position) => Number(position?.unrealizedPnl))
+          .filter((value) => Number.isFinite(value)) as number[];
+        if (!values.length) return undefined;
+        return {
+          min: Math.min(...values),
+          max: Math.max(...values),
+        };
+      })()
     : undefined;
   const ordersLoaded = Array.isArray(testnetOrders);
   const tradesLoaded = Array.isArray(testnetTrades);
@@ -356,6 +379,16 @@ export default function Dashboard({
     Number.isFinite(totalCapital) && Number.isFinite(riskPerTradePct)
       ? (totalCapital as number) * (riskPerTradePct as number)
       : Number.NaN;
+  const capitalRange = useMemo(() => {
+    if (!Number.isFinite(totalCapital)) return undefined;
+    if (!Number.isFinite(openPositionsPnl)) return undefined;
+    if (!openPositionsPnlRange) return undefined;
+    const realizedBase = (totalCapital as number) - (openPositionsPnl as number);
+    return {
+      min: realizedBase + openPositionsPnlRange.min,
+      max: realizedBase + openPositionsPnlRange.max,
+    };
+  }, [openPositionsPnl, openPositionsPnlRange, totalCapital]);
 
   const blockedSignalsCount = useMemo(() => {
     if (!scanDiagnostics) return 0;
@@ -396,12 +429,20 @@ export default function Dashboard({
       if (diag?.feedAgeOk === false) ok = false;
     });
     return {
+      minAge: ages.length ? Math.min(...ages) : undefined,
       maxAge: ages.length ? Math.max(...ages) : undefined,
       ok,
     };
   }, [allowedSymbols, scanDiagnostics]);
 
   const execOverrideEnabled = checklistEnabled["Exec allowed"] ?? true;
+  const setExecOverrideEnabled = useCallback((enabled: boolean) => {
+    setChecklistEnabled((prev) => ({
+      ...prev,
+      "Exec allowed": enabled,
+    }));
+  }, []);
+
   const dataHealthSafe = useMemo(() => {
     if (mode !== TradingMode.AUTO_ON) return false;
     if (systemState.bybitStatus !== "Connected") return false;
@@ -433,37 +474,14 @@ export default function Dashboard({
       <StatusBar
         title={profileMeta.label}
         subtitle={profileMeta.subtitle}
-        mode={mode}
-        setMode={setMode}
-        useTestnet={useTestnet}
-        setUseTestnet={setUseTestnet}
-        systemState={systemState}
         engineStatus={engineStatus}
         lastScanTs={lastScanTs}
-        envAvailability={envAvailability}
-        blockedSignals={blockedSignalsCount}
-        gatesPassCount={gateStats.pass}
-        gatesTotal={gateStats.total}
-        feedAgeMs={feedStats.maxAge}
-        feedOk={feedStats.ok}
         riskLevel={riskLevel}
         dataHealthSafe={dataHealthSafe}
-        overrideEnabled={execOverrideEnabled}
-        onOpenSettings={() => setShowSettings(true)}
-      />
-
-      <KpiRow
-        totalCapital={totalCapital}
-        allocated={allocated}
         dailyPnl={dailyPnl}
-        dailyPnlBreakdown={dailyPnlBreakdown}
-        openPositionsPnl={openPositionsPnl}
-        openPositions={openPositionsCount}
-        maxOpenPositions={maxOpenPositions}
-        openOrders={openOrdersCount}
-        maxOpenOrders={maxOpenOrders}
-        riskPerTradePct={riskPerTradePct}
-        riskPerTradeUsd={riskPerTradeUsd}
+        totalCapital={totalCapital}
+        openPositionsPnlRange={openPositionsPnlRange}
+        capitalRange={capitalRange}
       />
 
       <Tabs
@@ -476,54 +494,197 @@ export default function Dashboard({
         }}
         className="space-y-3 lm-tabs"
       >
-        <TabsList className="h-12 w-full justify-start gap-2 rounded-xl border border-border/60 bg-card/80 p-1 lm-tabs-shell">
-          <TabsTrigger value="decision" className="h-10 px-3 text-sm lm-tabs-trigger">
-            Rozhodování
-          </TabsTrigger>
-          <TabsTrigger value="execution" className="h-10 px-3 text-sm lm-tabs-trigger">
-            Exekuce ({openPositionsCount + openOrdersCount})
-          </TabsTrigger>
-          <TabsTrigger value="audit" className="h-10 px-3 text-sm lm-tabs-trigger">
-            Audit
-          </TabsTrigger>
-        </TabsList>
+        <section className="sticky top-[152px] z-10 space-y-3 rounded-xl border border-border/70 bg-card/92 p-3 shadow-[0_8px_16px_-12px_rgba(0,0,0,0.7)] backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge
+                variant="outline"
+                className={
+                  riskLevel === "CRITICAL"
+                    ? "border-red-500/50 bg-red-500/15 px-2 py-1 text-red-300"
+                    : riskLevel === "ELEVATED"
+                      ? "border-amber-500/50 bg-amber-500/15 px-2 py-1 text-amber-300"
+                      : "border-emerald-500/50 bg-emerald-500/15 px-2 py-1 text-emerald-300"
+                }
+              >
+                RISK {riskLevel}
+              </Badge>
+              <Button
+                type="button"
+                variant={execOverrideEnabled ? "destructive" : "default"}
+                size="sm"
+                onClick={() => setExecOverrideEnabled(true)}
+                className="h-11 px-4 text-sm font-semibold"
+              >
+                Override ALL HOLD → EXECUTE
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setExecOverrideEnabled(false)}
+                className="h-11 px-4 text-sm font-semibold"
+              >
+                Disable Override
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={resetChecklist}
+                className="h-11 px-4 text-sm font-semibold"
+              >
+                Reset ALL gates
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
+                <Button
+                  variant={useTestnet ? "default" : "ghost"}
+                  size="sm"
+                  data-testid="env-demo-button"
+                  onClick={() => setUseTestnet(true)}
+                  disabled={envAvailability ? !envAvailability.canUseDemo : false}
+                  title={
+                    envAvailability && !envAvailability.canUseDemo
+                      ? envAvailability.demoReason ?? "Demo prostředí není dostupné"
+                      : "Použít demo prostředí"
+                  }
+                  className={useTestnet ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
+                >
+                  {UI_COPY.statusBar.demo}
+                </Button>
+                <Button
+                  variant={!useTestnet ? "default" : "ghost"}
+                  size="sm"
+                  data-testid="env-mainnet-button"
+                  onClick={() => setUseTestnet(false)}
+                  disabled={envAvailability ? !envAvailability.canUseMainnet : false}
+                  title={
+                    envAvailability && !envAvailability.canUseMainnet
+                      ? envAvailability.mainnetReason ?? "Mainnet prostředí není dostupné"
+                      : "Použít mainnet prostředí"
+                  }
+                  className={!useTestnet ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
+                >
+                  {UI_COPY.statusBar.mainnet}
+                </Button>
+              </div>
+
+              <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
+                {MODE_OPTIONS.map((value) => (
+                  <Button
+                    key={value}
+                    variant={mode === value ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setMode(value)}
+                    className={mode === value ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
+                  >
+                    {modeLabel(value)}
+                  </Button>
+                ))}
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowSettings(true)}
+                className="h-11 px-4 text-sm font-semibold"
+              >
+                {UI_COPY.common.settings}
+              </Button>
+            </div>
+          </div>
+
+          <TabsList className="h-12 w-full justify-start gap-2 rounded-xl border border-border/60 bg-card/80 p-1 lm-tabs-shell">
+            <TabsTrigger value="decision" className="h-10 px-3 text-sm lm-tabs-trigger">
+              Rozhodování
+            </TabsTrigger>
+            <TabsTrigger value="execution" className="h-10 px-3 text-sm lm-tabs-trigger">
+              Exekuce ({openPositionsCount + openOrdersCount})
+            </TabsTrigger>
+            <TabsTrigger value="audit" className="h-10 px-3 text-sm lm-tabs-trigger">
+              Audit
+            </TabsTrigger>
+          </TabsList>
+        </section>
+
+        <KpiRow
+          dataHealthSafe={dataHealthSafe}
+          latencyMs={systemState.latency}
+          feedAgeRangeMs={
+            Number.isFinite(feedStats.minAge) && Number.isFinite(feedStats.maxAge)
+              ? {
+                  min: feedStats.minAge as number,
+                  max: feedStats.maxAge as number,
+                }
+              : undefined
+          }
+          gatesPassCount={gateStats.pass}
+          gatesTotal={gateStats.total}
+          blockedSignals={blockedSignalsCount}
+          totalCapital={totalCapital}
+          capitalRange={capitalRange}
+          allocated={allocated}
+          dailyPnl={dailyPnl}
+          dailyPnlBreakdown={dailyPnlBreakdown}
+          openPositionsPnl={openPositionsPnl}
+          openPositionsPnlRange={openPositionsPnlRange}
+          openPositions={openPositionsCount}
+          maxOpenPositions={maxOpenPositions}
+          openOrders={openOrdersCount}
+          maxOpenOrders={maxOpenOrders}
+          riskPerTradePct={riskPerTradePct}
+          riskPerTradeUsd={riskPerTradeUsd}
+        />
 
         <div className="dashboard-tab-viewport lm-tab-viewport">
           <TabsContent value="decision" className="mt-0">
-            <div className="grid grid-cols-12 gap-4">
-              <div className="col-span-12 xl:col-span-8">
-                <OverviewTab
-                  allowedSymbols={allowedSymbols}
-                  assetPnlHistory={assetPnlHistory}
-                  pnlLoaded={pnlLoaded}
-                  resetPnlHistory={resetPnlHistory}
-                  scanDiagnostics={scanDiagnostics}
-                  scanLoaded={scanLoaded}
-                  lastScanTs={lastScanTs}
-                  selectedSymbol={selectedSignalSymbol}
-                />
-              </div>
-              <div className="col-span-12 xl:col-span-4 space-y-4">
-                <SignalsAccordion
-                  allowedSymbols={allowedSymbols}
-                  scanDiagnostics={scanDiagnostics}
-                  scanLoaded={scanLoaded}
-                  lastScanTs={lastScanTs}
-                  checklistEnabled={checklistEnabled}
-                  resetChecklist={resetChecklist}
-                  profileGateNames={checklistGateNames}
-                  selectedSymbol={selectedSignalSymbol}
-                  onSelectSymbol={setSelectedSignalSymbol}
-                />
-                <SignalDetailPanel
-                  selectedSymbol={selectedSignalSymbol}
-                  scanDiagnostics={scanDiagnostics}
-                  scanLoaded={scanLoaded}
-                  checklistEnabled={checklistEnabled}
-                  toggleChecklist={toggleChecklist}
-                  profileGateNames={checklistGateNames}
-                  resetChecklist={resetChecklist}
-                />
+            <div className="space-y-4">
+              <RiskBlockPanel
+                allowedSymbols={allowedSymbols}
+                scanDiagnostics={scanDiagnostics}
+                lastScanTs={lastScanTs}
+                logEntries={logEntries}
+                logsLoaded={logsLoaded}
+              />
+              <div className="grid grid-cols-12 gap-4">
+                <div className="col-span-12 xl:col-span-8">
+                  <OverviewTab
+                    allowedSymbols={allowedSymbols}
+                    assetPnlHistory={assetPnlHistory}
+                    pnlLoaded={pnlLoaded}
+                    resetPnlHistory={resetPnlHistory}
+                    scanDiagnostics={scanDiagnostics}
+                    scanLoaded={scanLoaded}
+                    lastScanTs={lastScanTs}
+                    selectedSymbol={selectedSignalSymbol}
+                  />
+                </div>
+                <div className="col-span-12 xl:col-span-4 space-y-4">
+                  <SignalsAccordion
+                    allowedSymbols={allowedSymbols}
+                    scanDiagnostics={scanDiagnostics}
+                    scanLoaded={scanLoaded}
+                    lastScanTs={lastScanTs}
+                    overrideEnabled={execOverrideEnabled}
+                    setOverrideEnabled={setExecOverrideEnabled}
+                    resetChecklist={resetChecklist}
+                    profileGateNames={checklistGateNames}
+                    selectedSymbol={selectedSignalSymbol}
+                    onSelectSymbol={setSelectedSignalSymbol}
+                  />
+                  <SignalDetailPanel
+                    selectedSymbol={selectedSignalSymbol}
+                    scanDiagnostics={scanDiagnostics}
+                    scanLoaded={scanLoaded}
+                    checklistEnabled={checklistEnabled}
+                    toggleChecklist={toggleChecklist}
+                    profileGateNames={checklistGateNames}
+                    resetChecklist={resetChecklist}
+                  />
+                </div>
               </div>
             </div>
           </TabsContent>
