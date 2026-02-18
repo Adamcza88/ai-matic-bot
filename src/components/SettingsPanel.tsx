@@ -313,6 +313,7 @@ const SettingsPanel: React.FC<Props> = ({
     slippageBufferPct: 0.02,
     perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
     perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
+    emaTrendPeriod: 200,
   };
 
   const AI_MATIC_X_PRESET_UI: AISettings = {
@@ -344,6 +345,7 @@ const SettingsPanel: React.FC<Props> = ({
     slippageBufferPct: 0.02,
     perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
     perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
+    emaTrendPeriod: 200,
   };
 
   const AI_MATIC_SCALP_PRESET_UI: AISettings = {
@@ -375,6 +377,7 @@ const SettingsPanel: React.FC<Props> = ({
     slippageBufferPct: 0.02,
     perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
     perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
+    emaTrendPeriod: 200,
   };
 
   const AI_MATIC_TREE_PRESET_UI: AISettings = {
@@ -406,6 +409,7 @@ const SettingsPanel: React.FC<Props> = ({
     slippageBufferPct: 0.005,
     perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
     perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
+    emaTrendPeriod: 200,
   };
 
   const AI_MATIC_PRO_PRESET_UI: AISettings = {
@@ -437,6 +441,7 @@ const SettingsPanel: React.FC<Props> = ({
     slippageBufferPct: 0.02,
     perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
     perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
+    emaTrendPeriod: 200,
   };
 
   const presets: Record<AISettings["riskMode"], AISettings> = {
@@ -495,6 +500,9 @@ const SettingsPanel: React.FC<Props> = ({
     }
     if (!Number.isFinite(merged.slippageBufferPct) || merged.slippageBufferPct < 0) {
       merged.slippageBufferPct = preset.slippageBufferPct;
+    }
+    if (!Number.isFinite(merged.emaTrendPeriod) || merged.emaTrendPeriod! <= 0) {
+      merged.emaTrendPeriod = preset.emaTrendPeriod;
     }
     merged.perTradeTestnetUsd = clampPerTradeUsd(
       merged.perTradeTestnetUsd,
@@ -837,6 +845,36 @@ const SettingsPanel: React.FC<Props> = ({
                 <div className="text-xs text-secondary-foreground/70">
                   Filtr směru trendu z HTF 1h. Adaptive přepíná Follow/Reverse podle síly trendu.
                 </div>
+              </div>
+            </div>
+          ) : null}
+
+          {local.riskMode !== "ai-matic-pro" ? (
+            <div className="grid gap-2">
+              <label className="text-sm font-medium leading-none">
+                EMA Trend Perioda
+              </label>
+              <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
+                <input
+                  type="number"
+                  min={10}
+                  max={1000}
+                  step={10}
+                  value={local.emaTrendPeriod ?? 200}
+                  onChange={(event) => {
+                    const next = event.currentTarget.valueAsNumber;
+                    setLocal({
+                      ...local,
+                      emaTrendPeriod: Number.isFinite(next)
+                        ? Math.max(10, Math.round(next))
+                        : 200,
+                    });
+                  }}
+                  className="w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
+                />
+                <span className="text-xs text-secondary-foreground/70">
+                  Perioda EMA pro určení hlavního trendu (HTF).
+                </span>
               </div>
             </div>
           ) : null}

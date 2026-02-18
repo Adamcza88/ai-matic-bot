@@ -303,7 +303,7 @@ export const defaultConfig: BotConfig = {
   pullbackRsiPeriod: 14,
   pullbackRsiMin: 35,
   pullbackRsiMax: 65,
-  emaTrendPeriod: 150,
+  emaTrendPeriod: 200,
   emaTrendConfirmBars: 2,
   emaTrendTouchLookback: 2,
 };
@@ -880,16 +880,9 @@ export class TradingBot {
       });
       return out;
     };
-    const ema50 = ema(closes, 50);
     const ema200 = ema(closes, 200);
     const price = closes[closes.length - 1];
-    const e50 = ema50[ema50.length - 1];
     const e200 = ema200[ema200.length - 1];
-    const ePrev = ema50[Math.max(0, ema50.length - 6)];
-    const slope = e50 - ePrev;
-    const atrArr = computeATR(highs, lows, closes, this.config.atrPeriod);
-    const atrNow = atrArr[atrArr.length - 1] || 0;
-    const slopeThreshold = Math.max(e50 * 0.0003, atrNow * 0.15);
 
     const swingWindow = 2;
     const swingHighs: number[] = [];
@@ -923,12 +916,8 @@ export class TradingBot {
 
     let bullScore = 0;
     let bearScore = 0;
-    if (price > e50) bullScore += 1;
-    else bearScore += 1;
-    if (e50 > e200) bullScore += 1;
-    else if (e50 < e200) bearScore += 1;
-    if (slope > slopeThreshold) bullScore += 1;
-    else if (slope < -slopeThreshold) bearScore += 1;
+    if (price > e200) bullScore += 3;
+    else bearScore += 3;
     if (structureBull) bullScore += 1;
     if (structureBear) bearScore += 1;
 
@@ -1844,7 +1833,7 @@ export class TradingBot {
       return null; // Too volatile, skip
     }
 
-    const emaTrendPeriod = this.config.emaTrendPeriod ?? 50;
+    const emaTrendPeriod = this.config.emaTrendPeriod ?? 200;
     const emaTrendTouchLookback = Math.max(
       1,
       this.config.emaTrendTouchLookback ?? 2
