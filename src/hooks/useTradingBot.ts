@@ -249,6 +249,11 @@ const AI_MATIC_SWING_BE_MIN_R = 0.9;
 const AI_MATIC_SWING_COOLDOWN_BARS_5M = 15;
 const AI_MATIC_SWING_COOLDOWN_BARS_15M = 8;
 const AI_MATIC_SWING_MIN_NOTIONAL = 150;
+const AI_MATIC_EMA200_MODULE_BREAKOUT_LOOKBACK = 8;
+const AI_MATIC_EMA200_MODULE_VOL_SMA_PERIOD = 20;
+const AI_MATIC_EMA200_MODULE_SL_ATR_MULT = 1.5;
+const AI_MATIC_EMA200_MODULE_AOI_TOUCH_ATR = 0.2;
+const AI_MATIC_EMA200_MODULE_MICRO_VOL_SMA_PERIOD = 20;
 
 type AiMaticAdaptiveRiskParams = {
   hardCapPct: number;
@@ -574,6 +579,30 @@ type AiMaticSwingModule = {
   sell?: AiMaticSwingSideSetup;
 };
 
+type AiMaticEma200ScalpSideSetup = {
+  enabled: boolean;
+  mode: "BREAKOUT_PULLBACK_LIMIT" | "AOI_REVERSAL_MARKET";
+  entryType: "LIMIT_MAKER_FIRST" | "MARKET";
+  entry: number;
+  sl: number;
+  tp: number;
+  sourceTfMin: 1 | 3 | 5;
+};
+
+type AiMaticEma200ScalpModule = {
+  active: boolean;
+  reason: string;
+  baseTfMin: 5;
+  htfTfMin: 60;
+  microTfMin: 1 | 3;
+  ema200: number;
+  atr14: number;
+  nearestSupport: number;
+  nearestResistance: number;
+  buy?: AiMaticEma200ScalpSideSetup;
+  sell?: AiMaticEma200ScalpSideSetup;
+};
+
 type AiMaticContext = {
   htf: {
     direction: "bull" | "bear" | "none";
@@ -667,6 +696,7 @@ type AiMaticContext = {
     lastLowType: "HL" | "LL" | "NONE";
   };
   swing?: AiMaticSwingModule;
+  ema200Scalp?: AiMaticEma200ScalpModule;
 };
 
 const toAnalyzerCandles = (candles: Candle[]) =>
@@ -1279,6 +1309,251 @@ const resolveAiMaticSwingModule = (candles: Candle[]): AiMaticSwingModule => {
   };
 };
 
+const resolveSmaValue = (values: number[], period: number, index: number) => {
+  if (!values.length) return Number.NaN;
+  const window = Math.max(1, Math.round(period));
+  if (index < window - 1) return Number.NaN;
+  const start = index - window + 1;
+  const slice = values.slice(start, index + 1);
+  if (!slice.length) return Number.NaN;
+  const sum = slice.reduce((acc, value) => acc + value, 0);
+  return sum / slice.length;
+};
+
+const resolveNearestH1AoiLevels = (h1: Candle[], reference: number) => {
+  const highs = findPivotsHigh(h1, 2, 2).map((p) => p.price);
+  const lows = findPivotsLow(h1, 2, 2).map((p) => p.price);
+  const sourceHighs = highs.length ? highs : h1.slice(-72).map((c) => c.high);
+  const sourceLows = lows.length ? lows : h1.slice(-72).map((c) => c.low);
+  const supportCandidates = sourceLows.filter(
+    (value) => Number.isFinite(value) && value < reference
+  );
+  const resistanceCandidates = sourceHighs.filter(
+    (value) => Number.isFinite(value) && value > reference
+  );
+  const nearestSupport = supportCandidates.length
+    ? Math.max(...supportCandidates)
+    : Number.NaN;
+  const nearestResistance = resistanceCandidates.length
+    ? Math.min(...resistanceCandidates)
+    : Number.NaN;
+  return { nearestSupport, nearestResistance };
+};
+
+const resolveAiMaticEma200ScalpModule = (
+  candles: Candle[],
+  opts?: { resample?: ResampleFn }
+): AiMaticEma200ScalpModule => {
+  const resample = opts?.resample ?? ((tf: number) => resampleCandles(candles, tf));
+  const m5 = resample(5);
+  const h1 = resample(60);
+  const micro1 = resample(1);
+  const micro3 = resample(3);
+  const microTfMin: 1 | 3 = micro1.length >= 120 ? 1 : 3;
+  const micro = microTfMin === 1 ? micro1 : micro3;
+  const inactive: AiMaticEma200ScalpModule = {
+    active: false,
+    reason: "insufficient_data",
+    baseTfMin: 5,
+    htfTfMin: 60,
+    microTfMin,
+    ema200: Number.NaN,
+    atr14: Number.NaN,
+    nearestSupport: Number.NaN,
+    nearestResistance: Number.NaN,
+  };
+  if (m5.length < 220 || h1.length < 20) {
+    return inactive;
+  }
+
+  const closes5 = m5.map((c) => c.close);
+  const highs5 = m5.map((c) => c.high);
+  const lows5 = m5.map((c) => c.low);
+  const volumes5 = m5.map((c) => c.volume ?? 0);
+  const ema200Arr = computeEma(closes5, 200);
+  const atrArr = computeATR(highs5, lows5, closes5, 14);
+  const ema200 = ema200Arr[ema200Arr.length - 1] ?? Number.NaN;
+  const atr14 = atrArr[atrArr.length - 1] ?? Number.NaN;
+  if (!Number.isFinite(ema200) || !Number.isFinite(atr14) || atr14 <= 0) {
+    return inactive;
+  }
+
+  const { nearestSupport, nearestResistance } = resolveNearestH1AoiLevels(h1, ema200);
+  const last5 = m5[m5.length - 1];
+  if (!last5) {
+    return inactive;
+  }
+  const macd5 = resolveMacdState(closes5);
+  const startIdx = Math.max(
+    1,
+    m5.length - AI_MATIC_EMA200_MODULE_BREAKOUT_LOOKBACK
+  );
+  let breakoutLong = false;
+  let breakoutShort = false;
+  for (let i = startIdx; i < m5.length; i++) {
+    const prev = m5[i - 1];
+    const curr = m5[i];
+    const emaPrev = ema200Arr[i - 1];
+    const emaNow = ema200Arr[i];
+    if (!prev || !curr || !Number.isFinite(emaPrev) || !Number.isFinite(emaNow)) {
+      continue;
+    }
+    const volSma = resolveSmaValue(
+      volumes5,
+      AI_MATIC_EMA200_MODULE_VOL_SMA_PERIOD,
+      i
+    );
+    const volOk =
+      Number.isFinite(volSma) &&
+      Number(curr.volume) > (volSma as number);
+    if (!volOk) continue;
+    if (prev.close <= emaPrev && curr.close > emaNow) {
+      breakoutLong = true;
+    }
+    if (prev.close >= emaPrev && curr.close < emaNow) {
+      breakoutShort = true;
+    }
+  }
+
+  const buyBreakoutSetup: AiMaticEma200ScalpSideSetup | undefined =
+    breakoutLong &&
+    Number.isFinite(nearestResistance) &&
+    nearestResistance > ema200 &&
+    last5.close >= ema200 &&
+    macd5.macdHist > 0
+      ? {
+          enabled: true,
+          mode: "BREAKOUT_PULLBACK_LIMIT",
+          entryType: "LIMIT_MAKER_FIRST",
+          entry: ema200,
+          sl: ema200 - AI_MATIC_EMA200_MODULE_SL_ATR_MULT * atr14,
+          tp: nearestResistance,
+          sourceTfMin: 5,
+        }
+      : undefined;
+  const sellBreakoutSetup: AiMaticEma200ScalpSideSetup | undefined =
+    breakoutShort &&
+    Number.isFinite(nearestSupport) &&
+    nearestSupport < ema200 &&
+    last5.close <= ema200 &&
+    macd5.macdHist < 0
+      ? {
+          enabled: true,
+          mode: "BREAKOUT_PULLBACK_LIMIT",
+          entryType: "LIMIT_MAKER_FIRST",
+          entry: ema200,
+          sl: ema200 + AI_MATIC_EMA200_MODULE_SL_ATR_MULT * atr14,
+          tp: nearestSupport,
+          sourceTfMin: 5,
+        }
+      : undefined;
+
+  let buy = buyBreakoutSetup;
+  let sell = sellBreakoutSetup;
+  if (micro.length >= 40) {
+    const microCloses = micro.map((c) => c.close);
+    const microVolumes = micro.map((c) => c.volume ?? 0);
+    const microMacd = resolveMacdState(microCloses);
+    const microLast = micro[micro.length - 1];
+    if (microLast) {
+      const microVolSma = resolveSmaValue(
+        microVolumes,
+        AI_MATIC_EMA200_MODULE_MICRO_VOL_SMA_PERIOD,
+        microVolumes.length - 1
+      );
+      const microVolumeUp =
+        Number.isFinite(microVolSma) &&
+        microLast.volume > (microVolSma as number);
+      const supportTouched =
+        Number.isFinite(nearestSupport) &&
+        ((last5.low <= nearestSupport && last5.high >= nearestSupport) ||
+          Math.abs(last5.close - nearestSupport) <=
+            AI_MATIC_EMA200_MODULE_AOI_TOUCH_ATR * atr14);
+      const resistanceTouched =
+        Number.isFinite(nearestResistance) &&
+        ((last5.low <= nearestResistance && last5.high >= nearestResistance) ||
+          Math.abs(last5.close - nearestResistance) <=
+            AI_MATIC_EMA200_MODULE_AOI_TOUCH_ATR * atr14);
+      const bullishMicroClose = microLast.close > microLast.open;
+      const bearishMicroClose = microLast.close < microLast.open;
+      const reversalLong =
+        supportTouched &&
+        microMacd.macdCrossUp &&
+        bullishMicroClose &&
+        microVolumeUp &&
+        ema200 > microLast.close;
+      const reversalShort =
+        resistanceTouched &&
+        microMacd.macdCrossDown &&
+        bearishMicroClose &&
+        microVolumeUp &&
+        ema200 < microLast.close;
+      if (reversalLong) {
+        buy = {
+          enabled: true,
+          mode: "AOI_REVERSAL_MARKET",
+          entryType: "MARKET",
+          entry: microLast.close,
+          sl:
+            (nearestSupport as number) -
+            AI_MATIC_EMA200_MODULE_SL_ATR_MULT * atr14,
+          tp: ema200,
+          sourceTfMin: microTfMin,
+        };
+      }
+      if (reversalShort) {
+        sell = {
+          enabled: true,
+          mode: "AOI_REVERSAL_MARKET",
+          entryType: "MARKET",
+          entry: microLast.close,
+          sl:
+            (nearestResistance as number) +
+            AI_MATIC_EMA200_MODULE_SL_ATR_MULT * atr14,
+          tp: ema200,
+          sourceTfMin: microTfMin,
+        };
+      }
+    }
+  }
+
+  const buyEnabled =
+    Boolean(buy?.enabled) &&
+    Number.isFinite(buy?.entry) &&
+    Number.isFinite(buy?.sl) &&
+    Number.isFinite(buy?.tp) &&
+    (buy?.sl as number) < (buy?.entry as number) &&
+    (buy?.tp as number) > (buy?.entry as number);
+  const sellEnabled =
+    Boolean(sell?.enabled) &&
+    Number.isFinite(sell?.entry) &&
+    Number.isFinite(sell?.sl) &&
+    Number.isFinite(sell?.tp) &&
+    (sell?.sl as number) > (sell?.entry as number) &&
+    (sell?.tp as number) < (sell?.entry as number);
+  const active = buyEnabled || sellEnabled;
+  const reason =
+    buy?.mode === "AOI_REVERSAL_MARKET" || sell?.mode === "AOI_REVERSAL_MARKET"
+      ? "aoi_reversal"
+      : active
+        ? "ema200_pullback"
+        : "no_valid_signal";
+
+  return {
+    active,
+    reason,
+    baseTfMin: 5,
+    htfTfMin: 60,
+    microTfMin,
+    ema200,
+    atr14,
+    nearestSupport,
+    nearestResistance,
+    buy: buyEnabled ? buy : undefined,
+    sell: sellEnabled ? sell : undefined,
+  };
+};
+
 const resolveAiMaticPhase = (args: {
   trend: string;
   adx: number;
@@ -1439,6 +1714,7 @@ const buildAiMaticContext = (
     volumeSpike: Boolean(core?.volumeSpike),
   });
   const swingModule = resolveAiMaticSwingModule(candles);
+  const ema200ScalpModule = resolveAiMaticEma200ScalpModule(candles, { resample });
 
   return {
     htf: {
@@ -1533,6 +1809,7 @@ const buildAiMaticContext = (
       lastLowType: ltfStructure.lastLowType,
     },
     swing: swingModule,
+    ema200Scalp: ema200ScalpModule,
   };
 };
 
@@ -1995,6 +2272,7 @@ export const __aiMaticTest = {
   resolveLiquiditySweep,
   resolveStructureState,
   resolveAiMaticSwingModule,
+  resolveAiMaticEma200ScalpModule,
   resolveAiMaticStopLoss,
   resolveAiMaticTargets,
   evaluateAiMaticGatesCore,
@@ -8460,6 +8738,7 @@ export function useTradingBot(
       let aiMaticMarketAllowed = false;
       let aiMaticTriggerOverride: number | undefined;
       let aiMaticSwingSetup: AiMaticSwingSideSetup | null = null;
+      let aiMaticEma200Setup: AiMaticEma200ScalpSideSetup | null = null;
       let aiMaticSwingTfMin: 5 | 15 | undefined;
       if (isAiMaticProfile && aiMaticEval?.pass) {
         const aiMatic = (decision as any)?.aiMatic as AiMaticContext | null;
@@ -8474,9 +8753,32 @@ export function useTradingBot(
           if (Number.isFinite(resolved.triggerPrice)) {
             aiMaticTriggerOverride = resolved.triggerPrice;
           }
+          const applyEma200Setup = (
+            setup: AiMaticEma200ScalpSideSetup
+          ) => {
+            aiMaticEma200Setup = setup;
+            entry = setup.entry;
+            entryType = setup.entryType;
+            aiMaticMarketAllowed = setup.entryType === "MARKET";
+            aiMaticTriggerOverride = undefined;
+            addLogEntries([
+              {
+                id: `ai-matic:ema200:${symbol}:${signalId}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} ema200 ${aiMatic.ema200Scalp?.reason ?? "module"} ${setup.mode} ${side} ${entryType} @ ${formatNumber(entry, 6)}`,
+              },
+            ]);
+          };
+          const ema200Setup =
+            side === "Buy" ? aiMatic.ema200Scalp?.buy : aiMatic.ema200Scalp?.sell;
           const swingSetup =
             side === "Buy" ? aiMatic.swing?.buy : aiMatic.swing?.sell;
-          if (aiMatic.swing?.active && swingSetup?.enabled) {
+          const preferEma200Reversal =
+            ema200Setup?.mode === "AOI_REVERSAL_MARKET";
+          if (preferEma200Reversal && ema200Setup?.enabled) {
+            applyEma200Setup(ema200Setup);
+          } else if (aiMatic.swing?.active && swingSetup?.enabled) {
             aiMaticSwingSetup = swingSetup;
             aiMaticSwingTfMin = aiMatic.swing.activeTfMin;
             if (Number.isFinite(swingSetup.entry) && swingSetup.entry > 0) {
@@ -8498,6 +8800,8 @@ export function useTradingBot(
                 message: `${symbol} swing ${aiMatic.swing.reason} ${side} ${entryType} @ ${formatNumber(entry, 6)}`,
               },
             ]);
+          } else if (ema200Setup?.enabled) {
+            applyEma200Setup(ema200Setup);
           }
         }
       }
@@ -8710,6 +9014,17 @@ export function useTradingBot(
               aiMaticSwingSetup.tp1 > 0
             ) {
               resolvedTp = aiMaticSwingSetup.tp1;
+            }
+          } else if (aiMaticEma200Setup) {
+            if (Number.isFinite(aiMaticEma200Setup.sl) && aiMaticEma200Setup.sl > 0) {
+              resolvedSl = aiMaticEma200Setup.sl;
+            }
+            aiMaticTargets = {
+              tp1: aiMaticEma200Setup.tp,
+              tp2: aiMaticEma200Setup.tp,
+            };
+            if (Number.isFinite(aiMaticEma200Setup.tp) && aiMaticEma200Setup.tp > 0) {
+              resolvedTp = aiMaticEma200Setup.tp;
             }
           } else {
             const riskParams = resolveAiMaticAdaptiveRiskParams({
