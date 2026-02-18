@@ -650,8 +650,8 @@ export default function Dashboard({
         loading={dashboardLoading}
         executionMode={mode}
         dailyPnl={dailyPnl}
+        openPositionsPnl={openPositionsPnl}
         totalCapital={totalCapital}
-        openPositionsPnlRange={openPositionsPnlRange}
         capitalRange={capitalRange}
       />
 

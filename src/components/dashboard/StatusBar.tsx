@@ -14,11 +14,8 @@ type StatusBarProps = {
   loading?: boolean;
   executionMode: TradingMode;
   dailyPnl?: number;
+  openPositionsPnl?: number;
   totalCapital?: number;
-  openPositionsPnlRange?: {
-    min: number;
-    max: number;
-  };
   capitalRange?: {
     min: number;
     max: number;
@@ -32,17 +29,9 @@ function formatMoneyRange(range?: { min: number; max: number }) {
   return `${formatMoney(range.min)} – ${formatMoney(range.max)}`;
 }
 
-function formatSignedMoneyRange(range?: { min: number; max: number }) {
-  if (!range) return "—";
-  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) return "—";
-  if (Math.abs(range.min - range.max) < 0.005) return formatSignedMoney(range.min);
-  return `${formatSignedMoney(range.min)} – ${formatSignedMoney(range.max)}`;
-}
-
-function pnlRangeTone(range?: { min: number; max: number }) {
-  if (!range) return "text-[#D32F2F]";
-  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) return "text-[#D32F2F]";
-  return range.min + range.max >= 0 ? "text-[#00C853]" : "text-[#D32F2F]";
+function pnlTone(value?: number) {
+  if (!Number.isFinite(value)) return "text-[#D32F2F]";
+  return (value as number) >= 0 ? "text-[#00C853]" : "text-[#D32F2F]";
 }
 
 export default function StatusBar({
@@ -57,8 +46,8 @@ export default function StatusBar({
   loading,
   executionMode,
   dailyPnl,
+  openPositionsPnl,
   totalCapital,
-  openPositionsPnlRange,
   capitalRange,
 }: StatusBarProps) {
   const previousHealthRef = useRef<boolean | null>(null);
@@ -139,8 +128,8 @@ export default function StatusBar({
         <div className="grid gap-2 rounded-xl border border-border/70 bg-card/70 p-3 sm:grid-cols-3">
           <div className="text-right sm:text-left">
             <div className="text-xs uppercase tracking-wide text-muted-foreground">Aktuální PnL otevřených pozic</div>
-            <div className={`mt-1 text-[30px] font-semibold tabular-nums leading-none ${pnlRangeTone(openPositionsPnlRange)}`}>
-              {formatSignedMoneyRange(openPositionsPnlRange)}
+            <div className={`mt-1 text-[30px] font-semibold tabular-nums leading-none ${pnlTone(openPositionsPnl)}`}>
+              {formatSignedMoney(openPositionsPnl)}
             </div>
             <div className="mt-2 text-xs text-muted-foreground">Neuzavřené pozice</div>
           </div>
