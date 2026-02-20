@@ -36,9 +36,9 @@ function reason(diag: SymbolDiagnostic | undefined) {
   const skipCode = String(diag?.skipCode ?? "").trim();
   const value =
     (skipReason && skipCode ? `[${skipCode}] ${skipReason}` : skipReason) ||
-    entryBlockReasons[0] ??
-    diag?.executionReason ??
-    diag?.manageReason ??
+    entryBlockReasons[0] ||
+    diag?.executionReason ||
+    diag?.manageReason ||
     "";
   if (!value) return "Bez aktivního důvodu.";
   if (value === "Exec OFF") return "Execution je vypnutý (manual).";

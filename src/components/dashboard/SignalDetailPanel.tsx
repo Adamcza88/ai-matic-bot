@@ -146,9 +146,9 @@ export default function SignalDetailPanel({
       : skipReasonRaw;
   const reason =
     skipReason ||
-    entryBlocks[0] ??
-    diag?.executionReason ??
-    diag?.manageReason ??
+    entryBlocks[0] ||
+    diag?.executionReason ||
+    diag?.manageReason ||
     "Bez aktivního důvodu exekuce.";
 
   const statusTone =

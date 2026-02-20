@@ -4031,6 +4031,23 @@ function resolveAiMaticAdaptiveRiskParams(args: {
 const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
 const MIN_PROTECTION_ATR_FACTOR = 0.05;
 const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
+const TREE_TRAIL_PCT_MIN = 0.006;
+const TREE_TRAIL_K_ATR = 1.2;
+const TREE_TRAIL_MIN_TICKS = 5;
+const FALLBACK_TICK_SIZE_BY_SYMBOL: Partial<Record<Symbol, number>> = {
+  BTCUSDT: 0.1,
+  ETHUSDT: 0.01,
+  SOLUSDT: 0.001,
+  ADAUSDT: 0.0001,
+  XRPUSDT: 0.0001,
+  SUIUSDT: 0.0001,
+  DOGEUSDT: 0.00001,
+  LINKUSDT: 0.001,
+  ZILUSDT: 0.000001,
+  AVAXUSDT: 0.001,
+  HYPEUSDT: 0.0001,
+  OPUSDT: 0.0001,
+};
 
 function resolveMinProtectionDistance(entry: number, atr?: number) {
   const pctDistance = entry * MIN_PROTECTION_DISTANCE_PCT;
@@ -4083,6 +4100,20 @@ function computeRMultiple(
   return move / risk;
 }
 
+function resolveFallbackTickSize(symbol: Symbol) {
+  const tick = FALLBACK_TICK_SIZE_BY_SYMBOL[symbol];
+  return Number.isFinite(tick) && (tick as number) > 0 ? (tick as number) : 0;
+}
+
+function buildPositionWatermarkKey(
+  symbol: string,
+  side: string,
+  positionIdx?: number
+) {
+  const idx = Number.isFinite(positionIdx) ? Math.round(positionIdx as number) : 0;
+  return `${String(symbol ?? "").toUpperCase()}:${String(side ?? "").toUpperCase()}:${idx}`;
+}
+
 const TRAIL_PROFILE_BY_RISK_MODE: Record<
   AISettings["riskMode"],
   {
@@ -4103,9 +4134,9 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
   "ai-matic-tree": {
     activateR: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
     lockR: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
-    retracementRate: 0.004,
-    activateAtrMult: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
-    lockAtrMult: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
+    retracementRate: TREE_TRAIL_PCT_MIN,
+    activateAtrMult: TREE_TRAIL_K_ATR,
+    lockAtrMult: TREE_TRAIL_K_ATR,
   },
   "ai-matic-pro": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
 };
@@ -4283,6 +4314,9 @@ export function useTradingBot(
   const positionStateSignatureRef = useRef("");
   const limitSnapshotIdRef = useRef(0);
   const positionSyncRef = useRef({ lastEventAt: 0, lastReconcileAt: 0 });
+  const trailWatermarkRef = useRef<
+    Map<string, { high: number; low: number; updatedAt: number }>
+  >(new Map());
   const ordersRef = useRef<TestnetOrder[]>([]);
   const cancelingOrdersRef = useRef<Set<string>>(new Set());
   const autoCloseCooldownRef = useRef<Map<string, number>>(new Map());
@@ -4947,7 +4981,14 @@ export function useTradingBot(
   );
 
   const computeTrailingPlan = useCallback(
-    (entry: number, sl: number, side: "Buy" | "Sell", symbol: Symbol, atr?: number) => {
+    (
+      entry: number,
+      sl: number,
+      side: "Buy" | "Sell",
+      symbol: Symbol,
+      atr?: number,
+      marketPrice?: number
+    ) => {
       const settings = settingsRef.current;
       const isScalpProfile = settings.riskMode === "ai-matic-scalp";
       if (isScalpProfile) {
@@ -4973,10 +5014,11 @@ export function useTradingBot(
       const lockR = profile.lockR;
       const overrideRate = trailOffsetRef.current.get(symbol);
       const isAiMaticCoreProfile = settings.riskMode === "ai-matic";
+      const isTreeProfile = settings.riskMode === "ai-matic-tree";
       const usePercentActivation =
         isScalpProfile ||
         isAiMaticCoreProfile ||
-        (settings.riskMode === "ai-matic-tree" &&
+        (isTreeProfile &&
           Number.isFinite(overrideRate) &&
           (overrideRate as number) > 0);
       const effectiveRate =
@@ -4986,13 +5028,18 @@ export function useTradingBot(
       const minDistance = resolveMinProtectionDistance(entry, atr);
       const atrValue =
         Number.isFinite(atr) && (atr as number) > 0 ? (atr as number) : Number.NaN;
-      const useAtrTrail =
-        settings.riskMode === "ai-matic-tree" &&
-        Number.isFinite(atrValue) &&
-        Number.isFinite(profile.activateAtrMult) &&
-        Number.isFinite(profile.lockAtrMult);
-      const rawDistance = useAtrTrail
-        ? (profile.lockAtrMult as number) * atrValue
+      const treeTickSize = resolveFallbackTickSize(symbol);
+      const treeTickDistance =
+        treeTickSize > 0 ? treeTickSize * TREE_TRAIL_MIN_TICKS : Number.NaN;
+      const distanceBasePrice =
+        Number.isFinite(marketPrice) && (marketPrice as number) > 0
+          ? (marketPrice as number)
+          : entry;
+      const treePctDistance = distanceBasePrice * TREE_TRAIL_PCT_MIN;
+      const treeAtrDistance =
+        Number.isFinite(atrValue) && atrValue > 0 ? atrValue * TREE_TRAIL_K_ATR : Number.NaN;
+      const rawDistance = isTreeProfile
+        ? maxFinite(treePctDistance, treeAtrDistance, treeTickDistance)
         : Number.isFinite(effectiveRate)
           ? entry * (effectiveRate as number)
           : Math.abs(activateR - lockR) * r;
@@ -5003,15 +5050,11 @@ export function useTradingBot(
         entry * AI_MATIC_TRAIL_ACTIVATE_PCT,
         minDistance
       );
+      const treeActivationMove = Math.max(treePctDistance, minDistance);
       const activePrice = isAiMaticCoreProfile
         ? entry + dir * aiMaticActivationMove
-        : useAtrTrail
-          ? entry +
-            dir *
-              Math.max(
-                (profile.activateAtrMult as number) * atrValue,
-                minDistance
-              )
+        : isTreeProfile
+          ? entry + dir * treeActivationMove
           : usePercentActivation
             ? entry + dir * distance
             : entry +
@@ -5615,7 +5658,62 @@ export function useTradingBot(
           }
         }
         if (Number.isFinite(currentTrail) && currentTrail > 0) {
-          trailingSyncRef.current.delete(symbol);
+          const isTreeProfile = settingsRef.current.riskMode === "ai-matic-tree";
+          const price = toNumber(pos.markPrice);
+          if (isTreeProfile && Number.isFinite(price) && price > 0) {
+            const decisionAtr = toNumber(
+              (decisionRef.current[symbol]?.decision as any)?.coreV2?.atr14
+            );
+            const adaptivePlan = computeTrailingPlan(
+              entry,
+              sl,
+              side,
+              symbol as Symbol,
+              decisionAtr,
+              price
+            );
+            const canWidenTrail =
+              adaptivePlan &&
+              Number.isFinite(adaptivePlan.trailingStop) &&
+              adaptivePlan.trailingStop > (currentTrail as number) * 1.02;
+            const lastAttempt = trailingSyncRef.current.get(symbol);
+            if (
+              canWidenTrail &&
+              (!lastAttempt || now - lastAttempt >= TS_VERIFY_INTERVAL_MS)
+            ) {
+              trailingSyncRef.current.set(symbol, now);
+              try {
+                await postJson("/protection", {
+                  symbol,
+                  trailingStop: adaptivePlan.trailingStop,
+                  trailingActivePrice: adaptivePlan.trailingActivePrice,
+                  positionIdx: Number.isFinite(pos.positionIdx)
+                    ? pos.positionIdx
+                    : 0,
+                });
+                addLogEntries([
+                  {
+                    id: `trail:widen:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "STATUS",
+                    message: `${symbol} TREE trailing widen ${formatNumber(
+                      currentTrail,
+                      6
+                    )} -> ${formatNumber(adaptivePlan.trailingStop, 6)}`,
+                  },
+                ]);
+              } catch (err) {
+                addLogEntries([
+                  {
+                    id: `trail:widen:error:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "ERROR",
+                    message: `${symbol} TREE trail widen failed: ${asErrorMessage(err)}`,
+                  },
+                ]);
+              }
+            }
+          }
           continue;
         }
         const decisionAtr = toNumber(
@@ -5626,7 +5724,8 @@ export function useTradingBot(
           sl,
           side,
           symbol as Symbol,
-          decisionAtr
+          decisionAtr,
+          toNumber(pos.markPrice)
         );
         if (!plan) continue;
 
@@ -7117,6 +7216,7 @@ export function useTradingBot(
       });
       const prevPositions = positionSnapshotRef.current;
       const nextPositions = new Map<string, { size: number; side: string }>();
+      const nextWatermarkKeys = new Set<string>();
       const next = list
         .map((p: any) => {
           const size = toNumber(p?.size ?? p?.qty);
@@ -7181,12 +7281,62 @@ export function useTradingBot(
                   sl,
                   side === "Sell" ? "Sell" : "Buy",
                   symbol as Symbol,
-                  toNumber((decisionRef.current[symbol]?.decision as any)?.coreV2?.atr14)
+                  toNumber((decisionRef.current[symbol]?.decision as any)?.coreV2?.atr14),
+                  markPrice
                 )
               : null;
           const trailingActivePrice = Number.isFinite(trailingActiveRaw)
             ? trailingActiveRaw
             : trailPlan?.trailingActivePrice;
+          const watermarkKey = buildPositionWatermarkKey(
+            symbol,
+            side,
+            positionIdx
+          );
+          const prevWatermark = trailWatermarkRef.current.get(watermarkKey);
+          const seedPriceRaw = Number.isFinite(markPrice) && markPrice > 0
+            ? markPrice
+            : resolvedEntry;
+          const seedPrice = Number.isFinite(seedPriceRaw) && seedPriceRaw > 0
+            ? seedPriceRaw
+            : Number.NaN;
+          const highWatermark = Number.isFinite(seedPrice)
+            ? Math.max(
+                Number.isFinite(prevWatermark?.high)
+                  ? (prevWatermark?.high as number)
+                  : seedPrice,
+                seedPrice
+              )
+            : Number.NaN;
+          const lowWatermark = Number.isFinite(seedPrice)
+            ? Math.min(
+                Number.isFinite(prevWatermark?.low)
+                  ? (prevWatermark?.low as number)
+                  : seedPrice,
+                seedPrice
+              )
+            : Number.NaN;
+          if (Number.isFinite(highWatermark) && Number.isFinite(lowWatermark)) {
+            trailWatermarkRef.current.set(watermarkKey, {
+              high: highWatermark,
+              low: lowWatermark,
+              updatedAt: now,
+            });
+            nextWatermarkKeys.add(watermarkKey);
+          }
+          const trailingDistance =
+            Number.isFinite(trailingStop) && trailingStop > 0
+              ? trailingStop
+              : undefined;
+          const trailStopPrice =
+            Number.isFinite(trailingDistance) &&
+            (trailingDistance as number) > 0 &&
+            Number.isFinite(highWatermark) &&
+            Number.isFinite(lowWatermark)
+              ? side === "Buy"
+                ? highWatermark - (trailingDistance as number)
+                : lowWatermark + (trailingDistance as number)
+              : undefined;
           const rrr =
             Number.isFinite(resolvedEntry) &&
             Number.isFinite(sl) &&
@@ -7221,6 +7371,26 @@ export function useTradingBot(
               ? trailingActivePrice
               : undefined,
             markPrice: Number.isFinite(markPrice) ? markPrice : undefined,
+            trailingDistance,
+            trailStopPrice:
+              Number.isFinite(trailStopPrice) && (trailStopPrice as number) > 0
+                ? (trailStopPrice as number)
+                : undefined,
+            trailingIsActive:
+              Number.isFinite(trailingActivePrice) &&
+              trailingActivePrice > 0 &&
+              Number.isFinite(markPrice) &&
+              (side === "Buy"
+                ? markPrice >= trailingActivePrice
+                : markPrice <= trailingActivePrice),
+            highWatermark:
+              Number.isFinite(highWatermark) && highWatermark > 0
+                ? highWatermark
+                : undefined,
+            lowWatermark:
+              Number.isFinite(lowWatermark) && lowWatermark > 0
+                ? lowWatermark
+                : undefined,
             currentTrailingStop:
               Number.isFinite(trailingStop) && trailingStop > 0
                 ? trailingStop
@@ -7239,6 +7409,11 @@ export function useTradingBot(
           } satisfies ActivePosition;
         })
         .filter((p: ActivePosition | null): p is ActivePosition => Boolean(p));
+      for (const key of Array.from(trailWatermarkRef.current.keys())) {
+        if (!nextWatermarkKeys.has(key)) {
+          trailWatermarkRef.current.delete(key);
+        }
+      }
       const nextPositionSignature = Array.from(nextPositions.entries())
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([symbol, state]) => `${symbol}:${state.side}:${formatNumber(state.size, 8)}`)
@@ -10055,6 +10230,7 @@ export function useTradingBot(
     positionStateSignatureRef.current = "";
     positionSnapshotIdRef.current = 0;
     positionSyncRef.current = { lastEventAt: 0, lastReconcileAt: 0 };
+    trailWatermarkRef.current.clear();
     decisionRef.current = {};
     portfolioRegimeRef.current = {
       dominanceHistory: [],

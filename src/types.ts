@@ -125,6 +125,11 @@ export type ActivePosition = {
   tp?: number;
   trailingStop?: number;
   currentTrailingStop?: number; // Legacy?
+  trailingDistance?: number;
+  trailStopPrice?: number;
+  trailingIsActive?: boolean;
+  highWatermark?: number;
+  lowWatermark?: number;
   trailingActivePrice?: number;
   markPrice?: number;
   trailPlanned?: boolean;

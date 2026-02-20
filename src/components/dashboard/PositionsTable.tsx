@@ -47,16 +47,12 @@ export default function PositionsTable({
       const size = Number(p.size ?? p.qty);
       const sideLower = String(p.side ?? "").toLowerCase();
       const isBuy = sideLower === "buy";
-      const trail = Number(p.currentTrailingStop);
+      const trail = Number(p.trailingDistance ?? p.currentTrailingStop ?? p.trailingStop);
+      const trailStopPrice = Number(p.trailStopPrice);
       const trailingActivePrice = Number(p.trailingActivePrice);
       const markPrice = Number(p.markPrice);
       const slValue = Number(p.sl);
-      const sl =
-        Number.isFinite(trail) && trail > 0
-          ? trail
-          : Number.isFinite(slValue)
-            ? slValue
-            : undefined;
+      const sl = Number.isFinite(slValue) ? slValue : undefined;
       const tpValue = Number(p.tp);
       const tp = Number.isFinite(tpValue) ? tpValue : undefined;
       const upnl = Number(p.unrealizedPnl ?? p.pnl ?? p.pnlValue);
@@ -101,6 +97,8 @@ export default function PositionsTable({
         raw: p,
         size,
         isBuy,
+        trail,
+        trailStopPrice,
         sl,
         tp,
         upnl,
@@ -252,11 +250,17 @@ export default function PositionsTable({
                         >
                           <div className="flex flex-wrap gap-4">
                             <span>
-                              Trailing:{" "}
+                              Trailing dist:{" "}
                               <span className="font-mono text-foreground">
-                                {formatNumber(
-                                  row.raw.trailingStop ?? row.raw.currentTrailingStop
-                                )}
+                                {Number.isFinite(row.trail) ? formatNumber(row.trail) : "—"}
+                              </span>
+                            </span>
+                            <span>
+                              Trail stop:{" "}
+                              <span className="font-mono text-foreground">
+                                {Number.isFinite(row.trailStopPrice)
+                                  ? formatNumber(row.trailStopPrice)
+                                  : "—"}
                               </span>
                             </span>
                             <span>
