@@ -144,6 +144,8 @@ const AI_MATIC_LTF_TIMEFRAMES_MIN = [5];
 const SCALP_LTF_TIMEFRAMES_MIN = [5];
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const EMA_TREND_PERIOD = 200;
+const MIN_EMA_TREND_PERIOD = 10;
+const MAX_EMA_TREND_PERIOD = 500;
 const EMA_TREND_CONFIRM_BARS = 2;
 const EMA_TREND_TOUCH_LOOKBACK = 8;
 const EMA_TREND_TIMEFRAMES_MIN = [5];
@@ -302,6 +304,7 @@ const DEFAULT_SETTINGS: AISettings = {
   slippageBufferPct: 0.02,
   perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
   perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
+  emaTrendPeriod: EMA_TREND_PERIOD,
 };
 
 function loadStoredSettings(): AISettings | null {
@@ -311,7 +314,9 @@ function loadStoredSettings(): AISettings | null {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
     const merged = { ...DEFAULT_SETTINGS, ...parsed } as AISettings;
-    merged.trendGateMode = "follow";
+    if (merged.trendGateMode !== "follow" && merged.trendGateMode !== "adaptive") {
+      merged.trendGateMode = DEFAULT_SETTINGS.trendGateMode;
+    }
     if (typeof merged.autoRefreshEnabled !== "boolean") {
       merged.autoRefreshEnabled = DEFAULT_SETTINGS.autoRefreshEnabled;
     }
@@ -356,6 +361,10 @@ function loadStoredSettings(): AISettings | null {
       merged.perTradeMainnetUsd,
       DEFAULT_SETTINGS.perTradeMainnetUsd
     );
+    merged.emaTrendPeriod = clampEmaTrendPeriod(
+      merged.emaTrendPeriod,
+      DEFAULT_SETTINGS.emaTrendPeriod ?? EMA_TREND_PERIOD
+    );
     const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
     merged.selectedSymbols =
       selectedSymbols.length > 0
@@ -387,6 +396,12 @@ function clampPerTradeUsd(value: unknown, fallback: number) {
     MAX_POSITION_NOTIONAL_USD,
     Math.max(MIN_POSITION_NOTIONAL_USD, n)
   );
+}
+
+function clampEmaTrendPeriod(value: unknown, fallback: number) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(MAX_EMA_TREND_PERIOD, Math.max(MIN_EMA_TREND_PERIOD, Math.round(n)));
 }
 
 type Ema200BreakoutState = {
@@ -801,9 +816,12 @@ const resolveRecentCross = (
   return false;
 };
 
-const resolveAiMaticEmaFlags = (candles: Candle[]): AiMaticEmaFlags => {
+const resolveAiMaticEmaFlags = (
+  candles: Candle[],
+  emaPeriod = EMA_TREND_PERIOD
+): AiMaticEmaFlags => {
   const breakout = resolveEma200BreakoutState(candles, {
-    emaPeriod: 200,
+    emaPeriod,
     breakoutLookback: EMA_TREND_TOUCH_LOOKBACK,
     confirmBars: EMA_TREND_CONFIRM_BARS,
   });
@@ -1671,9 +1689,13 @@ const buildAiMaticContext = (
   candles: Candle[],
   decision: PriceFeedDecision | null | undefined,
   core?: CoreV2Metrics,
-  opts?: { resample?: ResampleFn }
+  opts?: { resample?: ResampleFn; emaTrendPeriod?: number }
 ): AiMaticContext | null => {
   const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
+  const emaTrendPeriod = clampEmaTrendPeriod(
+    opts?.emaTrendPeriod,
+    EMA_TREND_PERIOD
+  );
   const htf = resample(60);
   const mtf = resample(15);
   const ltf = resample(5);
@@ -1685,9 +1707,9 @@ const buildAiMaticContext = (
   const htfStructure = resolveStructureState(htf);
   const mtfStructure = resolveStructureState(mtf);
   const ltfStructure = resolveStructureState(ltf);
-  const htfEma = resolveAiMaticEmaFlags(htf);
-  const mtfEma = resolveAiMaticEmaFlags(mtf);
-  const emaFlags = resolveAiMaticEmaFlags(ltf);
+  const htfEma = resolveAiMaticEmaFlags(htf, emaTrendPeriod);
+  const mtfEma = resolveAiMaticEmaFlags(mtf, emaTrendPeriod);
+  const emaFlags = resolveAiMaticEmaFlags(ltf, emaTrendPeriod);
   const patterns = resolveAiMaticPatterns(ltf);
   const mtfPatterns = resolveAiMaticPatterns(mtf);
   const htfSweep = resolveLiquiditySweep(htf);
@@ -2856,10 +2878,14 @@ const resolveScalpConfirmation = (args: {
 const computeCoreV2Metrics = (
   candles: Candle[],
   riskMode: AISettings["riskMode"],
-  opts?: { resample?: ResampleFn }
+  opts?: { resample?: ResampleFn; emaTrendPeriod?: number }
 ): CoreV2Metrics => {
   const ltfTimeframeMin = resolveEntryTfMin(riskMode);
   const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
+  const emaTrendPeriod = clampEmaTrendPeriod(
+    opts?.emaTrendPeriod,
+    EMA_TREND_PERIOD
+  );
   const ltf = resample(ltfTimeframeMin);
   const ltfLast = ltf.length ? ltf[ltf.length - 1] : undefined;
   const ltfPrev = ltf.length > 1 ? ltf[ltf.length - 2] : undefined;
@@ -2881,7 +2907,7 @@ const computeCoreV2Metrics = (
   const ema21Arr = computeEma(ltfCloses, 21);
   const ema26Arr = computeEma(ltfCloses, 26);
   const ema50Arr = computeEma(ltfCloses, 50);
-  const ema200Arr = computeEma(ltfCloses, 200);
+  const ema200Arr = computeEma(ltfCloses, emaTrendPeriod);
   const ema8 = ema8Arr[ema8Arr.length - 1] ?? Number.NaN;
   const ema12 = ema12Arr[ema12Arr.length - 1] ?? Number.NaN;
   const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
@@ -2889,7 +2915,7 @@ const computeCoreV2Metrics = (
   const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
   const ema200 = ema200Arr[ema200Arr.length - 1] ?? Number.NaN;
   const ema200BreakoutState = resolveEma200BreakoutState(ltf, {
-    emaPeriod: 200,
+    emaPeriod: emaTrendPeriod,
     breakoutLookback: EMA_TREND_TOUCH_LOOKBACK,
     confirmBars: EMA_TREND_CONFIRM_BARS,
   });
@@ -3102,7 +3128,7 @@ const computeCoreV2Metrics = (
   const htfLows = htf.map((c) => c.low);
   const htfClose = htf.length ? htf[htf.length - 1].close : Number.NaN;
   const htfEma200State = resolveEma200BreakoutState(htf, {
-    emaPeriod: 200,
+    emaPeriod: emaTrendPeriod,
     breakoutLookback: EMA_TREND_TOUCH_LOOKBACK,
     confirmBars: EMA_TREND_CONFIRM_BARS,
   });
@@ -4080,7 +4106,11 @@ export function useTradingBot(
     return ["BTCUSDT", ...activeSymbols];
   }, [activeSymbols]);
   const engineConfig = useMemo<Partial<BotConfig>>(() => {
-    const baseConfig: Partial<BotConfig> = {};
+    const emaTrendPeriod = clampEmaTrendPeriod(
+      settings.emaTrendPeriod,
+      EMA_TREND_PERIOD
+    );
+    const baseConfig: Partial<BotConfig> = { emaTrendPeriod };
     const strictness =
       settings.entryStrictness === "base"
         ? "ultra"
@@ -4151,7 +4181,7 @@ export function useTradingBot(
       };
     }
     return baseConfig;
-  }, [settings.entryStrictness, settings.riskMode]);
+  }, [settings.emaTrendPeriod, settings.entryStrictness, settings.riskMode]);
 
   const [positions, setPositions] = useState<ActivePosition[] | null>(null);
   const [orders, setOrders] = useState<TestnetOrder[] | null>(null);
@@ -9767,7 +9797,14 @@ export function useTradingBot(
           ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
           : evaluateStrategyForSymbol(symbol, candles, config);
       const resample = createResampleCache(candles);
-      const coreV2 = computeCoreV2Metrics(candles, riskMode, { resample });
+      const emaTrendPeriod = clampEmaTrendPeriod(
+        settingsRef.current.emaTrendPeriod,
+        EMA_TREND_PERIOD
+      );
+      const coreV2 = computeCoreV2Metrics(candles, riskMode, {
+        resample,
+        emaTrendPeriod,
+      });
       if (isPro) {
         return { ...baseDecision, coreV2 };
       }
@@ -9791,10 +9828,14 @@ export function useTradingBot(
         : null;
       const emaTrend = evaluateEmaMultiTrend(candles, {
         timeframesMin: EMA_TREND_TIMEFRAMES_MIN,
+        emaPeriod: emaTrendPeriod,
       });
       const scalpContext = isScalp ? buildScalpContext(candles) : undefined;
       const aiMaticContext = isAiMaticCore
-        ? buildAiMaticContext(candles, baseDecision, coreV2, { resample })
+        ? buildAiMaticContext(candles, baseDecision, coreV2, {
+            resample,
+            emaTrendPeriod,
+          })
         : null;
       const aiMaticOrderflow = isAiMaticCore
         ? getOrderFlowSnapshot(symbol)

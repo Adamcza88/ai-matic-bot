@@ -1834,7 +1834,10 @@ export class TradingBot {
 
     const trendFrame = resampleCandles(lt, 5);
     const trendCandles = trendFrame.length ? trendFrame : lt;
-    const emaTrendPeriod = 200;
+    const emaTrendPeriod = Math.max(
+      10,
+      Math.round(this.config.emaTrendPeriod ?? defaultConfig.emaTrendPeriod ?? 200)
+    );
     const emaTrendTouchLookback = Math.max(
       2,
       this.config.emaTrendTouchLookback ?? 8

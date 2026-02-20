@@ -37,6 +37,8 @@ const MIN_AUTO_REFRESH_MINUTES = 1;
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const MIN_PER_TRADE_USD = 5;
 const MAX_PER_TRADE_USD = 50000;
+const MIN_EMA_TREND_PERIOD = 10;
+const MAX_EMA_TREND_PERIOD = 500;
 const DEFAULT_TESTNET_PER_TRADE_USD = 50;
 const DEFAULT_MAINNET_PER_TRADE_USD = 20;
 const ORDER_VALUE_NOTE =
@@ -124,6 +126,12 @@ function clampPerTradeUsd(value: unknown, fallback: number) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(MAX_PER_TRADE_USD, Math.max(MIN_PER_TRADE_USD, n));
+}
+
+function clampEmaTrendPeriod(value: unknown, fallback: number) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(MAX_EMA_TREND_PERIOD, Math.max(MIN_EMA_TREND_PERIOD, Math.round(n)));
 }
 
 const SettingsPanel: React.FC<Props> = ({
@@ -468,7 +476,9 @@ const SettingsPanel: React.FC<Props> = ({
     const saved = profileSettingsRef.current[mode];
     if (!saved) return preset;
     const merged: AISettings = { ...preset, ...saved, riskMode: mode };
-    merged.trendGateMode = "follow";
+    if (merged.trendGateMode !== "follow" && merged.trendGateMode !== "adaptive") {
+      merged.trendGateMode = preset.trendGateMode;
+    }
     if (!Number.isFinite(merged.maxOpenPositions)) {
       merged.maxOpenPositions = preset.maxOpenPositions;
     } else {
@@ -502,9 +512,10 @@ const SettingsPanel: React.FC<Props> = ({
     if (!Number.isFinite(merged.slippageBufferPct) || merged.slippageBufferPct < 0) {
       merged.slippageBufferPct = preset.slippageBufferPct;
     }
-    if (!Number.isFinite(merged.emaTrendPeriod) || merged.emaTrendPeriod! <= 0) {
-      merged.emaTrendPeriod = preset.emaTrendPeriod;
-    }
+    merged.emaTrendPeriod = clampEmaTrendPeriod(
+      merged.emaTrendPeriod,
+      preset.emaTrendPeriod ?? 200
+    );
     merged.perTradeTestnetUsd = clampPerTradeUsd(
       merged.perTradeTestnetUsd,
       preset.perTradeTestnetUsd
@@ -830,14 +841,22 @@ const SettingsPanel: React.FC<Props> = ({
               </label>
               <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
                 <select
-                  value="follow"
-                  disabled
+                  value={local.trendGateMode}
+                  onChange={(e) =>
+                    setLocal({
+                      ...local,
+                      trendGateMode: e.target.value as AISettings["trendGateMode"],
+                    })
+                  }
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
                 >
                   <option value="follow">Follow</option>
+                  <option value="adaptive">Follow trend Adaptive</option>
                 </select>
                 <div className="text-xs text-secondary-foreground/70">
-                  Fixní režim: EMA200 na 5m, průraz a potvrzení trendu.
+                  {local.trendGateMode === "adaptive"
+                    ? "Adaptive režim: přepíná gate podle síly trendu."
+                    : "Follow režim: EMA trend na 5m, průraz a potvrzení směru."}
                 </div>
               </div>
             </div>
@@ -851,13 +870,21 @@ const SettingsPanel: React.FC<Props> = ({
               <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
                 <input
                   type="number"
-                  value={200}
-                  disabled
-                  readOnly
+                  min={MIN_EMA_TREND_PERIOD}
+                  max={MAX_EMA_TREND_PERIOD}
+                  step={1}
+                  value={local.emaTrendPeriod ?? 200}
+                  onChange={(event) => {
+                    const next = event.currentTarget.valueAsNumber;
+                    setLocal({
+                      ...local,
+                      emaTrendPeriod: clampEmaTrendPeriod(next, 200),
+                    });
+                  }}
                   className="w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
                 />
                 <span className="text-xs text-secondary-foreground/70">
-                  Fixní EMA200 na TF 5m s průrazem a potvrzením trendu.
+                  EMA trend na TF 5m s průrazem a potvrzením trendu.
                 </span>
               </div>
             </div>
