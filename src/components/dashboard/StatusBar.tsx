@@ -81,7 +81,7 @@ export default function StatusBar({
     <section
       role="status"
       aria-live="polite"
-      className={`sticky top-0 z-20 rounded-xl border-2 p-4 shadow-[0_8px_18px_-10px_rgba(0,0,0,0.65)] backdrop-blur ${shellTone} ${
+      className={`rounded-xl border-2 p-4 shadow-[0_8px_18px_-10px_rgba(0,0,0,0.65)] ${shellTone} ${
         loading ? "tva-loading-values" : ""
       }`}
     >

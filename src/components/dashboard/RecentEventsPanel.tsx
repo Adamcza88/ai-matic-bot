@@ -207,7 +207,7 @@ export default function RecentEventsPanel({
               {pageRows.map((entry) => (
                 <div
                   key={entry.id}
-                  className="grid h-8 grid-cols-[54px,106px,126px,1fr] items-center gap-2 bg-card/80 px-2 text-xs"
+                  className="grid h-8 grid-cols-[54px_106px_126px_minmax(0,1fr)] items-center gap-2 bg-card/80 px-2 text-xs"
                   title={entry.message}
                 >
                   <div className="tabular-nums leading-6 text-muted-foreground">
@@ -219,11 +219,11 @@ export default function RecentEventsPanel({
                   >
                     {entry.action}
                   </Badge>
-                  <div className="font-mono text-foreground leading-6 truncate">
+                  <div className="min-w-0 font-mono text-foreground leading-6 truncate">
                     {entry.symbol} · {entry.verdict}
                     {entry.count > 1 ? ` ×${entry.count}` : ""}
                   </div>
-                  <div className="text-muted-foreground leading-6 truncate">
+                  <div className="min-w-0 text-muted-foreground leading-6 truncate">
                     {entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT"
                       ? `(${entry.message})`
                       : entry.message}

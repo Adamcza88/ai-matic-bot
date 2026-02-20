@@ -1098,8 +1098,8 @@
   }
 
   .dashboard-right-stack {
-    position: sticky;
-    top: 24px;
+    position: static;
+    top: auto;
   }
 
   .dashboard-detail-panel {
