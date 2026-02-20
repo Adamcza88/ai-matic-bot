@@ -22,7 +22,7 @@ export type EntryType =
 export type Profile =
   | "AI-MATIC"
   | "AI-MATIC-X"
-  | "AI-MATIC-SCALP"
+  | "AI-MATIC-OLIkella"
   | "AI-MATIC-TREE"
   | "AI-MATIC-PRO";
 

@@ -17,11 +17,19 @@ import RiskBlockPanel from "./dashboard/RiskBlockPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
 import type { DiagnosticGate, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
 import { UI_COPY } from "@/lib/uiCopy";
+import {
+  OLIKELLA_CHECKLIST_DEFAULTS,
+  OLIKELLA_GATE_NAMES,
+  OLIKELLA_LEGACY_RISK_MODE,
+  OLIKELLA_PROFILE_LABEL,
+  OLIKELLA_RISK_MODE,
+  OLIKELLA_RISK_PER_TRADE,
+} from "@/lib/oliKellaProfile";
 
 const RISK_PCT_BY_MODE = {
   "ai-matic": 0.004,
   "ai-matic-x": 0.003,
-  "ai-matic-scalp": 0.0025,
+  "ai-matic-olikella": OLIKELLA_RISK_PER_TRADE,
   "ai-matic-tree": 0.003,
   "ai-matic-pro": 0.003,
 } as const;
@@ -180,17 +188,18 @@ export default function Dashboard({
 
   const riskMode = bot.settings?.riskMode ?? "ai-matic";
   const profileMeta = useMemo(() => {
-    if (riskMode === "ai-matic-scalp") {
+    if (riskMode === OLIKELLA_RISK_MODE) {
       return {
-        label: "AI-MATIC-SCALP",
-        subtitle: "Scalp Core · 15m trend / 1m entry",
+        label: OLIKELLA_PROFILE_LABEL,
+        subtitle: "Oliver Kell 4h adaptation · long/short",
         symbols: SUPPORTED_SYMBOLS,
-        timeframes: "15m trend · 1m entry",
+        timeframes: "4h logic · 15m feed",
         session: "24/7",
-        risk: "Risk 0.25% equity/trade · notional cap ~1% equity",
-        riskPct: RISK_PCT_BY_MODE["ai-matic-scalp"],
-        entry: "Fibo retrace + 1 potvrzení (OB/GAP/VP/EMA TL)",
-        execution: "TP Fibo extension (dynamic) · ATR trailing 2.5x",
+        risk: "Risk 1.5% equity/trade · max positions 5 · max orders 20",
+        riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
+        entry: "Priority: Wedge Pop -> Base 'n Break -> EMA Crossback",
+        execution:
+          "Exhaustion #1 partial 60% · #2 full exit · opposite crossback / wedge drop hard exit",
       };
     }
     if (riskMode === "ai-matic-x") {
@@ -295,12 +304,7 @@ export default function Dashboard({
         "VA edge": true,
         "Exec allowed": true,
       },
-      "ai-matic-scalp": {
-        "Primary Timeframe: 15m for trend, 1m for entry.": true,
-        "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.": true,
-        "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).": true,
-        "Exec allowed": true,
-      },
+      "ai-matic-olikella": OLIKELLA_CHECKLIST_DEFAULTS,
     };
   }, []);
   const CHECKLIST_DEFAULTS = useMemo(() => {
@@ -321,8 +325,14 @@ export default function Dashboard({
       "Hard: ALL 4": ["Hard: 3 of 6"],
       "Entry: 3 of 4": ["Entry: Any of 5"],
       "Checklist: 5 of 8": ["Checklist: 3 of 7"],
-      "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.": [
-        "Entry Logic: EMA Cross + RSI Divergence + Volume Spike.",
+      [OLIKELLA_GATE_NAMES[0]]: [
+        "Primary Timeframe: 15m for trend, 1m for entry.",
+      ],
+      [OLIKELLA_GATE_NAMES[1]]: [
+        "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.",
+      ],
+      [OLIKELLA_GATE_NAMES[2]]: [
+        "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
       ],
     }),
     []
@@ -342,8 +352,18 @@ export default function Dashboard({
       return;
     }
     try {
-      const legacy = localStorage.getItem("ai-matic-checklist-enabled");
-      const raw = localStorage.getItem(gateStorageKey) ?? legacy;
+      const legacyGlobal = localStorage.getItem("ai-matic-checklist-enabled");
+      const legacyProfile =
+        riskMode === OLIKELLA_RISK_MODE
+          ? localStorage.getItem(
+              `ai-matic-checklist-enabled:${OLIKELLA_LEGACY_RISK_MODE}`
+            )
+          : null;
+      const existing = localStorage.getItem(gateStorageKey);
+      if (!existing && legacyProfile) {
+        localStorage.setItem(gateStorageKey, legacyProfile);
+      }
+      const raw = existing ?? legacyProfile ?? legacyGlobal;
       if (!raw) {
         setChecklistEnabled(CHECKLIST_DEFAULTS);
         return;

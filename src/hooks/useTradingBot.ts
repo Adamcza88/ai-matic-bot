@@ -17,6 +17,10 @@ import {
   evaluateAiMaticXStrategyForSymbol,
   type AiMaticXContext,
 } from "../engine/aiMaticXStrategy";
+import {
+  evaluateAiMaticOliKellaStrategyForSymbol,
+  type AiMaticOliKellaContext,
+} from "../engine/aiMaticOliKellaStrategy";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { computeEma, computeRsi, findPivotsHigh, findPivotsLow, computeATR } from "../engine/ta";
 import { CandlestickAnalyzer } from "../engine/universal-candlestick-analyzer";
@@ -45,6 +49,15 @@ import type {
   TestnetTrade,
 } from "../types";
 import {
+  OLIKELLA_GATE_ENTRY_CONDITIONS,
+  OLIKELLA_GATE_EXIT_CONDITIONS,
+  OLIKELLA_GATE_RISK_RULES,
+  OLIKELLA_GATE_SIGNAL_CHECKLIST,
+  OLIKELLA_PROFILE_LABEL,
+  OLIKELLA_RISK_PER_TRADE,
+  migrateRiskMode,
+} from "../lib/oliKellaProfile";
+import {
   loadPnlHistory,
   mergePnlRecords,
   resetPnlHistoryMap,
@@ -64,21 +77,21 @@ const MAJOR_SYMBOLS = new Set<Symbol>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
   "ai-matic": 0.12,
   "ai-matic-x": 0.003,
-  "ai-matic-scalp": 0.0025,
+  "ai-matic-olikella": OLIKELLA_RISK_PER_TRADE,
   "ai-matic-tree": 0.003,
   "ai-matic-pro": 0.003,
 };
 const CORE_V2_COOLDOWN_MS: Record<AISettings["riskMode"], number> = {
   "ai-matic": 0,
   "ai-matic-x": 0,
-  "ai-matic-scalp": 0,
+  "ai-matic-olikella": 0,
   "ai-matic-tree": 0,
   "ai-matic-pro": 0,
 };
 const CORE_V2_VOLUME_PCTL: Record<AISettings["riskMode"], number> = {
   "ai-matic": 60,
   "ai-matic-x": 70,
-  "ai-matic-scalp": 50,
+  "ai-matic-olikella": 50,
   "ai-matic-tree": 65,
   "ai-matic-pro": 65,
 };
@@ -90,7 +103,7 @@ const CORE_V2_SCORE_GATE: Record<
 > = {
   "ai-matic": { major: 11, alt: 12 },
   "ai-matic-x": { major: 12, alt: 13 },
-  "ai-matic-scalp": { major: 10, alt: 99 },
+  "ai-matic-olikella": { major: 10, alt: 99 },
   "ai-matic-tree": { major: 11, alt: 13 },
   "ai-matic-pro": { major: 10, alt: 10 },
 };
@@ -127,15 +140,12 @@ const CORE_V2_BBO_AGE_BY_SYMBOL: Partial<Record<Symbol, number>> = {
   SOLUSDT: 700,
 };
 const CORE_V2_BBO_AGE_DEFAULT_MS = 1000;
-const SCALP_PRIMARY_GATE =
-  "Primary Timeframe: 15m for trend, 1m for entry.";
-const SCALP_ENTRY_GATE =
-  "Entry Logic: Fibo retracement + 1 confirmation (OB/GAP/VP/EMA TL).";
-const SCALP_EXIT_GATE =
-  "Exit Logic: Fibo extension TP (dynamic) or ATR trailing (2.5x).";
-const SCALP_DRIFT_GATE = "HTF Drift Guard (15m)";
-const SCALP_FAKE_MOMENTUM_GATE = "Fake Momentum Filter (1m)";
-const SCALP_PROTECTED_ENTRY_GATE = "Protected Entry Mode";
+const SCALP_PRIMARY_GATE = OLIKELLA_GATE_SIGNAL_CHECKLIST;
+const SCALP_ENTRY_GATE = OLIKELLA_GATE_ENTRY_CONDITIONS;
+const SCALP_EXIT_GATE = OLIKELLA_GATE_EXIT_CONDITIONS;
+const SCALP_DRIFT_GATE = "OLIkella Trend Stability";
+const SCALP_FAKE_MOMENTUM_GATE = "OLIkella False Momentum";
+const SCALP_PROTECTED_ENTRY_GATE = OLIKELLA_GATE_RISK_RULES;
 const SKIP_STATUS_SUPPRESSED_CODES = new Set([
   "MAX_POS",
   "MAX_ORDERS",
@@ -155,7 +165,7 @@ const TREND_GATE_REVERSE_SCORE = 1;
 const HTF_TIMEFRAMES_MIN = [5];
 const AI_MATIC_HTF_TIMEFRAMES_MIN = [5];
 const AI_MATIC_LTF_TIMEFRAMES_MIN = [5];
-const SCALP_LTF_TIMEFRAMES_MIN = [5];
+const SCALP_LTF_TIMEFRAMES_MIN = [15];
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const EMA_TREND_PERIOD = 200;
 const MIN_EMA_TREND_PERIOD = 10;
@@ -328,6 +338,7 @@ function loadStoredSettings(): AISettings | null {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
     const merged = { ...DEFAULT_SETTINGS, ...parsed } as AISettings;
+    merged.riskMode = migrateRiskMode((parsed as any)?.riskMode);
     if (merged.trendGateMode !== "follow" && merged.trendGateMode !== "adaptive") {
       merged.trendGateMode = DEFAULT_SETTINGS.trendGateMode;
     }
@@ -2816,7 +2827,7 @@ const percentile = (values: number[], p: number) => {
 };
 
 const resolveEntryTfMin = (riskMode: AISettings["riskMode"]) =>
-  riskMode === "ai-matic-scalp" ? 1 : 5;
+  riskMode === "ai-matic-olikella" ? 15 : 5;
 
 const resolveBboAgeLimit = (symbol: Symbol) =>
   CORE_V2_BBO_AGE_BY_SYMBOL[symbol] ?? CORE_V2_BBO_AGE_DEFAULT_MS;
@@ -3525,7 +3536,7 @@ const computeCoreV2Metrics = (
 
   let scalpFib: ScalpFibData | undefined;
   let scalpConfirm: ScalpConfirm | undefined;
-  if (riskMode === "ai-matic-scalp") {
+  if (riskMode === "ai-matic-olikella") {
     const direction =
       m15TrendLongOk ? "BULL" : m15TrendShortOk ? "BEAR" : "NONE";
     if (direction !== "NONE") {
@@ -4205,7 +4216,7 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
     retracementRate: AI_MATIC_TRAIL_RETRACE_PCT,
   },
   "ai-matic-x": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
-  "ai-matic-scalp": { activateR: 0.6, lockR: 0.3 },
+  "ai-matic-olikella": { activateR: 0.6, lockR: 0.3 },
   "ai-matic-tree": {
     activateR: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
     lockR: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
@@ -4224,7 +4235,7 @@ const TRAIL_SYMBOL_MODE: Partial<Record<Symbol, "on" | "off">> = {
 const PROFILE_BY_RISK_MODE: Record<AISettings["riskMode"], Profile> = {
   "ai-matic": "AI-MATIC",
   "ai-matic-x": "AI-MATIC-X",
-  "ai-matic-scalp": "AI-MATIC-SCALP",
+  "ai-matic-olikella": OLIKELLA_PROFILE_LABEL,
   "ai-matic-tree": "AI-MATIC-TREE",
   "ai-matic-pro": "AI-MATIC-PRO",
 };
@@ -4289,16 +4300,16 @@ export function useTradingBot(
         cooldownBars: 0,
       };
     }
-    if (settings.riskMode === "ai-matic-scalp") {
+    if (settings.riskMode === "ai-matic-olikella") {
       const strictness =
         settings.entryStrictness === "base"
           ? "ultra"
           : settings.entryStrictness;
       return {
         ...baseConfig,
-        strategyProfile: "ai-matic-scalp",
-        baseTimeframe: "15m",
-        signalTimeframe: "1m",
+        strategyProfile: "ai-matic-olikella",
+        baseTimeframe: "4h",
+        signalTimeframe: "15m",
         entryStrictness: strictness,
         cooldownBars: 0,
       };
@@ -4476,6 +4487,9 @@ export function useTradingBot(
   const scalpActionCooldownRef = useRef<Map<string, number>>(new Map());
   const scalpPartialCooldownRef = useRef<Map<string, number>>(new Map());
   const scalpTrailCooldownRef = useRef<Map<string, number>>(new Map());
+  const oliExtensionCountRef = useRef<Map<string, number>>(new Map());
+  const oliTrendLegRef = useRef<Map<string, string>>(new Map());
+  const oliScaleInUsedRef = useRef<Map<string, boolean>>(new Map());
   const settingsRef = useRef<AISettings>(settings);
   const walletRef = useRef<typeof walletSnapshot | null>(walletSnapshot);
   const handleDecisionRef = useRef<
@@ -5074,7 +5088,7 @@ export function useTradingBot(
       marketPrice?: number
     ) => {
       const settings = settingsRef.current;
-      const isScalpProfile = settings.riskMode === "ai-matic-scalp";
+      const isScalpProfile = settings.riskMode === "ai-matic-olikella";
       if (isScalpProfile) {
         return null;
       }
@@ -5232,6 +5246,9 @@ export function useTradingBot(
           scalpActionCooldownRef.current.delete(symbol);
           scalpPartialCooldownRef.current.delete(symbol);
           scalpTrailCooldownRef.current.delete(symbol);
+          oliExtensionCountRef.current.delete(symbol);
+          oliTrendLegRef.current.delete(symbol);
+          oliScaleInUsedRef.current.delete(symbol);
         }
       }
       const activePositionKeys = new Set(
@@ -5261,7 +5278,7 @@ export function useTradingBot(
         const symbol = String(pos.symbol ?? "");
         if (!symbol) continue;
         const settings = settingsRef.current;
-        const isScalpProfile = settings.riskMode === "ai-matic-scalp";
+        const isScalpProfile = settings.riskMode === "ai-matic-olikella";
         const isProProfile = settings.riskMode === "ai-matic-pro";
         const isAiMaticProfile = settings.riskMode === "ai-matic";
         const positionKey = String(
@@ -6979,18 +6996,23 @@ export function useTradingBot(
       };
 
       const correlation = resolveCorrelationGate(symbol, now, signal);
-      if (symbol !== "BTCUSDT" && !isAiMaticProfile) {
+      if (
+        symbol !== "BTCUSDT" &&
+        !isAiMaticProfile &&
+        context.settings.riskMode !== "ai-matic-olikella"
+      ) {
         addGate("BTC Correlation", correlation.ok, correlation.detail);
-      };
+      }
 
       const isProProfile = context.settings.riskMode === "ai-matic-pro";
       const coreEval = isProProfile
         ? evaluateProGates(decision, signal)
         : evaluateCoreV2(symbol as Symbol, decision, signal, feedAgeMs);
       const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
-      const scalpPrimary = computeScalpPrimaryChecklist(core);
-      const isScalpProfile = context.settings.riskMode === "ai-matic-scalp";
-      const scalpGuards = isScalpProfile ? evaluateScalpGuards(core) : null;
+      const isScalpProfile = context.settings.riskMode === "ai-matic-olikella";
+      const oliContext = (decision as any)?.oliKella as
+        | AiMaticOliKellaContext
+        | undefined;
       const hasEntryOrder = ordersRef.current.some(
         (order) =>
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
@@ -7158,85 +7180,53 @@ export function useTradingBot(
             `${checklistOkCount}/${AI_MATIC_CHECKLIST_TOTAL}`
           );
         }
+      } else if (isScalpProfile) {
+        addGate(
+          OLIKELLA_GATE_SIGNAL_CHECKLIST,
+          Boolean(oliContext?.gates.signalChecklistOk),
+          oliContext?.gates.signalChecklistDetail ?? "no valid OLIkella setup"
+        );
+        addGate(
+          OLIKELLA_GATE_ENTRY_CONDITIONS,
+          Boolean(oliContext?.gates.entryConditionsOk),
+          oliContext?.gates.entryConditionsDetail ?? "entry conditions missing"
+        );
+        addGate(
+          OLIKELLA_GATE_EXIT_CONDITIONS,
+          Boolean(oliContext?.gates.exitConditionsOk),
+          oliContext?.gates.exitConditionsDetail ?? "exit lifecycle unavailable"
+        );
+        addGate(
+          OLIKELLA_GATE_RISK_RULES,
+          Boolean(oliContext?.gates.riskRulesOk),
+          oliContext?.gates.riskRulesDetail ?? "risk 1.5% | max positions 5 | max orders 20"
+        );
       } else {
         coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
-      }
-      if (isScalpProfile) {
-        addGate(
-          SCALP_PRIMARY_GATE,
-          scalpPrimary.primaryOk,
-          `15m ${
-            scalpPrimary.trendLongOk
-              ? "LONG"
-              : scalpPrimary.trendShortOk
-                ? "SHORT"
-                : "NONE"
-          } | spread ${
-            Number.isFinite(core?.m15EmaSpreadPct)
-              ? formatNumber(core!.m15EmaSpreadPct, 4)
-              : "—"
-          } | LTF ${core?.ltfTimeframeMin ?? "—"}m`
-        );
-        addGate(
-          SCALP_ENTRY_GATE,
-          scalpPrimary.entryOk,
-          `${
-            core?.scalpFib
-              ? `FIB ${core.scalpFib.hitLevel ?? "—"} | 5m ${
-                  core.scalpFib.m5InZone ? "OK" : "no"
-                } | 1m ${core.scalpFib.ltfInZone ? "OK" : "no"}`
-              : "FIB —"
-          } | ${
-            core?.scalpConfirm
-              ? `OB ${core.scalpConfirm.obTouch ? "OK" : "no"} · GAP ${
-                  core.scalpConfirm.gapTouch ? "OK" : "no"
-                } · VP ${core.scalpConfirm.vpConfirm ? "OK" : "no"} · TL ${
-                  core.scalpConfirm.tlPullback ? "OK" : "no"
-                }`
-              : "Confirm —"
-          }`
-        );
-        addGate(
-          SCALP_EXIT_GATE,
-          scalpPrimary.exitOk,
-          Number.isFinite(core?.atr14)
-            ? `ATR ${formatNumber(core!.atr14, 4)} | TP fib ext`
-            : "ATR missing"
-        );
-        if (scalpGuards) {
-          addGate(
-            SCALP_DRIFT_GATE,
-            !scalpGuards.driftBlocked,
-            scalpGuards.driftReasons.length
-              ? scalpGuards.driftReasons.join(", ")
-              : "OK"
-          );
-          addGate(
-            SCALP_FAKE_MOMENTUM_GATE,
-            !scalpGuards.fakeBlocked,
-            scalpGuards.fakeReasons.length
-              ? scalpGuards.fakeReasons.join(", ")
-              : "OK"
-          );
-          if (scalpGuards.protectedEntry) {
-            addGate(
-              SCALP_PROTECTED_ENTRY_GATE,
-              true,
-              scalpGuards.protectedReasons.join(", ") || "active"
-            );
-          }
-        }
       }
 
       const hardEnabled = isAiMaticProfile ? true : false;
       const softEnabled = isAiMaticProfile
         ? false
+        : isScalpProfile
+          ? false
         : context.settings.enableSoftGates !== false;
       const hardReasons: string[] = [];
       const hardBlocked =
         isAiMaticProfile && aiMaticEval ? !aiMaticEval.hardPass : false;
       const execEnabled = isGateEnabled("Exec allowed");
       const softBlocked = softEnabled && quality.pass === false;
+      const oliChecklist = isScalpProfile
+        ? (() => {
+            const eligible = gates.filter((gate) => isGateEnabled(gate.name));
+            const passed = eligible.filter((gate) => gate.ok).length;
+            return {
+              eligibleCount: eligible.length,
+              passedCount: passed,
+              pass: eligible.length > 0 ? passed === eligible.length : false,
+            };
+          })()
+        : null;
       const checklist = isAiMaticProfile && aiMaticEval
         ? {
             eligibleCount: aiMaticEval.checklist.length,
@@ -7249,8 +7239,12 @@ export function useTradingBot(
               passedCount: coreEval.score,
               pass: coreEval.scorePass !== false,
             }
-        : evaluateChecklistPass(gates);
-      const signalActive = Boolean(signal) || checklist.pass;
+          : isScalpProfile && oliChecklist
+            ? oliChecklist
+            : evaluateChecklistPass(gates);
+      const signalActive = isScalpProfile
+        ? Boolean(signal)
+        : Boolean(signal) || checklist.pass;
       let executionAllowed: boolean | null = null;
       let executionReason: string | undefined;
       if (!execEnabled) {
@@ -7270,7 +7264,9 @@ export function useTradingBot(
         executionReason = `AI-MATIC gates hard ${hardCount}/${AI_MATIC_HARD_TOTAL} · entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL} (need ${AI_MATIC_ENTRY_FACTOR_MIN}) · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_TOTAL} (need ${AI_MATIC_CHECKLIST_MIN})`;
       } else if (!checklist.pass) {
         executionAllowed = false;
-        executionReason = isProProfile
+        executionReason = isScalpProfile
+          ? `OLIkella gates ${checklist.passedCount}/${checklist.eligibleCount}`
+          : isProProfile
           ? `Checklist ${checklist.passedCount}/${checklist.eligibleCount}`
           : `Checklist ${checklist.passedCount}/${MIN_CHECKLIST_PASS}`;
       } else if (softBlocked) {
@@ -7643,6 +7639,9 @@ export function useTradingBot(
           scalpActionCooldownRef.current.delete(symbol);
           scalpPartialCooldownRef.current.delete(symbol);
           scalpTrailCooldownRef.current.delete(symbol);
+          oliExtensionCountRef.current.delete(symbol);
+          oliTrendLegRef.current.delete(symbol);
+          oliScaleInUsedRef.current.delete(symbol);
           newLogs.push({
             id: `pos-close:${symbol}:${now}`,
             timestamp: new Date(now).toISOString(),
@@ -8541,6 +8540,241 @@ export function useTradingBot(
     ]
   );
 
+  const handleOliKellaInTrade = useCallback(
+    async (symbol: string, decision: PriceFeedDecision, now: number) => {
+      const pos = positionsRef.current.find((item) => item.symbol === symbol);
+      if (!pos) return;
+      const context = (decision as any)?.oliKella as AiMaticOliKellaContext | undefined;
+      if (!context) return;
+      const sizeRaw = Math.abs(toNumber(pos.size ?? pos.qty));
+      if (!Number.isFinite(sizeRaw) || sizeRaw <= 0) return;
+      const side = pos.side === "Sell" ? "Sell" : "Buy";
+      const entry = toNumber(pos.entryPrice);
+      const sl = toNumber(pos.sl);
+      const price = toNumber(pos.markPrice);
+      if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(price)) {
+        return;
+      }
+      const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      const atr = Number.isFinite(context.atr14)
+        ? context.atr14
+        : toNumber(core?.atr14);
+      const ema10 =
+        Number.isFinite(context.ema10) && context.ema10 > 0
+          ? context.ema10
+          : Number.NaN;
+      const rMultiple = computeRMultiple(entry, sl, price, side);
+      const legId = String(context.trendLegId ?? "NONE");
+      const prevLegId = oliTrendLegRef.current.get(symbol);
+      if (legId !== "NONE" && prevLegId !== legId) {
+        oliTrendLegRef.current.set(symbol, legId);
+        oliExtensionCountRef.current.set(symbol, 0);
+        oliScaleInUsedRef.current.set(symbol, false);
+      } else if (!prevLegId && legId !== "NONE") {
+        oliTrendLegRef.current.set(symbol, legId);
+      }
+
+      const allowAction = (key: string, cooldownMs: number) => {
+        const storageKey = `${symbol}:${key}`;
+        const last = scalpActionCooldownRef.current.get(storageKey) ?? 0;
+        if (now - last < cooldownMs) return false;
+        scalpActionCooldownRef.current.set(storageKey, now);
+        return true;
+      };
+
+      const oppositeCross =
+        side === "Buy" ? context.oppositeCrossbackLong : context.oppositeCrossbackShort;
+      const wedgeDrop =
+        side === "Buy" ? context.wedgeDrop.againstLong : context.wedgeDrop.againstShort;
+      if ((oppositeCross || wedgeDrop) && allowAction("olikella-hard-exit", 15_000)) {
+        try {
+          await submitReduceOnlyOrder(pos, sizeRaw);
+          addLogEntries([
+            {
+              id: `olikella:hard-exit:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} OLIkella hard exit: ${
+                wedgeDrop ? "Wedge Drop" : "Opposite EMA Crossback"
+              }`,
+            },
+          ]);
+        } catch (err) {
+          addLogEntries([
+            {
+              id: `olikella:hard-exit:error:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "ERROR",
+              message: `${symbol} OLIkella hard exit failed: ${asErrorMessage(err)}`,
+            },
+          ]);
+        }
+        return;
+      }
+
+      const exhaustionDirection = context.exhaustion.direction;
+      const exhaustionMatches =
+        context.exhaustion.active &&
+        ((side === "Buy" && exhaustionDirection === "BUY") ||
+          (side === "Sell" && exhaustionDirection === "SELL"));
+      if (exhaustionMatches && allowAction("olikella-exhaustion", 20_000)) {
+        const extensionCount = oliExtensionCountRef.current.get(symbol) ?? 0;
+        try {
+          if (extensionCount <= 0) {
+            await submitReduceOnlyOrder(pos, sizeRaw * 0.6);
+            oliExtensionCountRef.current.set(symbol, 1);
+            addLogEntries([
+              {
+                id: `olikella:exhaustion:partial:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} OLIkella exhaustion #1 -> partial 60%`,
+              },
+            ]);
+          } else {
+            await submitReduceOnlyOrder(pos, sizeRaw);
+            oliExtensionCountRef.current.set(symbol, extensionCount + 1);
+            addLogEntries([
+              {
+                id: `olikella:exhaustion:full:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} OLIkella exhaustion #2 -> full exit`,
+              },
+            ]);
+          }
+        } catch (err) {
+          addLogEntries([
+            {
+              id: `olikella:exhaustion:error:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "ERROR",
+              message: `${symbol} OLIkella exhaustion handling failed: ${asErrorMessage(err)}`,
+            },
+          ]);
+        }
+      }
+
+      if (Number.isFinite(rMultiple) && rMultiple >= 1 && allowAction("olikella-be", 20_000)) {
+        const minDistance = resolveMinProtectionDistance(entry, atr);
+        const beSl = side === "Buy" ? entry - minDistance : entry + minDistance;
+        const shouldMove = side === "Buy" ? sl < beSl : sl > beSl;
+        if (shouldMove && Number.isFinite(beSl) && beSl > 0) {
+          try {
+            await updateProtection({
+              symbol,
+              sl: beSl,
+              positionIdx: Number.isFinite(pos.positionIdx)
+                ? pos.positionIdx
+                : undefined,
+            });
+            addLogEntries([
+              {
+                id: `olikella:be:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} OLIkella BE move @ >=1R`,
+              },
+            ]);
+          } catch (err) {
+            addLogEntries([
+              {
+                id: `olikella:be:error:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "ERROR",
+                message: `${symbol} OLIkella BE move failed: ${asErrorMessage(err)}`,
+              },
+            ]);
+          }
+        }
+      }
+
+      if (
+        Number.isFinite(ema10) &&
+        Number.isFinite(atr) &&
+        atr > 0 &&
+        allowAction("olikella-ema10-trail", 20_000)
+      ) {
+        const targetSl = side === "Buy" ? ema10 - atr * 0.2 : ema10 + atr * 0.2;
+        const tighten = side === "Buy" ? targetSl > sl : targetSl < sl;
+        const valid = side === "Buy" ? targetSl < price : targetSl > price;
+        if (tighten && valid && Number.isFinite(targetSl) && targetSl > 0) {
+          try {
+            await updateProtection({
+              symbol,
+              sl: targetSl,
+              positionIdx: Number.isFinite(pos.positionIdx)
+                ? pos.positionIdx
+                : undefined,
+            });
+            addLogEntries([
+              {
+                id: `olikella:trail:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} OLIkella EMA10 trail with ATR0.2`,
+              },
+            ]);
+          } catch (err) {
+            addLogEntries([
+              {
+                id: `olikella:trail:error:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "ERROR",
+                message: `${symbol} OLIkella trail update failed: ${asErrorMessage(err)}`,
+              },
+            ]);
+          }
+        }
+      }
+
+      const scaleInUsed = oliScaleInUsedRef.current.get(symbol) ?? false;
+      const sameSideSignal =
+        (decision as any)?.signal?.intent?.side === (side === "Buy" ? "buy" : "sell");
+      if (
+        context.canScaleIn &&
+        sameSideSignal &&
+        !scaleInUsed &&
+        Number.isFinite(rMultiple) &&
+        rMultiple >= 1 &&
+        allowAction("olikella-scale-in", 30_000)
+      ) {
+        try {
+          await postJson("/order", {
+            symbol,
+            side,
+            qty: sizeRaw * 0.25,
+            orderType: "Market",
+            reduceOnly: false,
+            timeInForce: "IOC",
+            positionIdx: Number.isFinite(pos.positionIdx)
+              ? pos.positionIdx
+              : undefined,
+          });
+          oliScaleInUsedRef.current.set(symbol, true);
+          addLogEntries([
+            {
+              id: `olikella:scale-in:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} OLIkella scale-in executed (+25%)`,
+            },
+          ]);
+        } catch (err) {
+          addLogEntries([
+            {
+              id: `olikella:scale-in:error:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "ERROR",
+              message: `${symbol} OLIkella scale-in failed: ${asErrorMessage(err)}`,
+            },
+          ]);
+        }
+      }
+    },
+    [addLogEntries, postJson, submitReduceOnlyOrder, updateProtection]
+  );
+
   const refreshSlow = useCallback(async () => {
     if (slowPollRef.current) return;
     slowPollRef.current = true;
@@ -8910,7 +9144,7 @@ export function useTradingBot(
     (symbol: string, decision: PriceFeedDecision) => {
       const now = Date.now();
       const isSelected = activeSymbols.includes(symbol as Symbol);
-      const scalpActive = settingsRef.current.riskMode === "ai-matic-scalp";
+      const scalpActive = settingsRef.current.riskMode === "ai-matic-olikella";
       const isProProfile = settingsRef.current.riskMode === "ai-matic-pro";
       const isAiMaticProfile = settingsRef.current.riskMode === "ai-matic";
       const relayPaused = relayPauseRef.current.paused;
@@ -8948,7 +9182,7 @@ export function useTradingBot(
       if (paused) {
         void maybeRunAiMaticRetestFallback(symbol, decision, now);
         if (hasPosition && scalpActive) {
-          void handleScalpInTrade(symbol, decision, now);
+          void handleOliKellaInTrade(symbol, decision, now);
         }
         if (hasPosition || hasEntryOrder || hasPendingIntent) {
           return;
@@ -8998,7 +9232,7 @@ export function useTradingBot(
       void maybeRunAiMaticRetestFallback(symbol, decision, now);
       if (hasPosition || hasEntryOrder) {
         if (hasPosition && scalpActive) {
-          void handleScalpInTrade(symbol, decision, now);
+          void handleOliKellaInTrade(symbol, decision, now);
         }
         if (hasPosition && isProProfile) {
           const orderflow = (decision as any)?.orderflow as
@@ -9188,7 +9422,7 @@ export function useTradingBot(
         : evaluateCoreV2(symbol as Symbol, decision, rawSignal, feedAgeMs);
       const checklistBase = evaluateChecklistPass(coreEval.gates);
       let signal = rawSignal;
-      if (!signal && checklistBase.pass && !isProProfile) {
+      if (!signal && checklistBase.pass && !isProProfile && !scalpActive) {
         signal = buildChecklistSignal(symbol as Symbol, decision, now);
       }
       if (!signal) return;
@@ -9357,8 +9591,11 @@ export function useTradingBot(
 
       const context = getSymbolContext(symbol, decision);
       const isAiMaticX = context.settings.riskMode === "ai-matic-x";
-      const isScalpProfile = context.settings.riskMode === "ai-matic-scalp";
+      const isScalpProfile = context.settings.riskMode === "ai-matic-olikella";
       const xContext = (decision as any)?.xContext as AiMaticXContext | undefined;
+      const oliContext = (decision as any)?.oliKella as
+        | AiMaticOliKellaContext
+        | undefined;
       const hasSymbolPosition = context.hasPosition;
       const hasSymbolEntryOrder = ordersRef.current.some(
         (order) =>
@@ -9511,23 +9748,25 @@ export function useTradingBot(
         return;
       }
       entryBlockFingerprintRef.current.delete(symbol);
-      const trendCore = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
-      const trendGate = resolveH1M15TrendGate(trendCore, signal);
-      appendTrace("Trend1h15m", {
-        ok: trendGate.ok,
-        code: trendGate.ok ? "OK" : "TREND_GATE",
-        reason: trendGate.detail,
-      });
-      if (!trendGate.ok) {
-        addLogEntries([
-          {
-            id: `signal:trend-gate:${signalId}`,
-            timestamp: new Date(now).toISOString(),
-            action: "RISK_BLOCK",
-            message: `${symbol} trend gate 1h/15m [TREND_GATE]: ${trendGate.detail}`,
-          },
-        ]);
-        return;
+      if (!isScalpProfile) {
+        const trendCore = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+        const trendGate = resolveH1M15TrendGate(trendCore, signal);
+        appendTrace("Trend1h15m", {
+          ok: trendGate.ok,
+          code: trendGate.ok ? "OK" : "TREND_GATE",
+          reason: trendGate.detail,
+        });
+        if (!trendGate.ok) {
+          addLogEntries([
+            {
+              id: `signal:trend-gate:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} trend gate 1h/15m [TREND_GATE]: ${trendGate.detail}`,
+            },
+          ]);
+          return;
+        }
       }
       let riskOff = false;
       const riskReasons: string[] = [];
@@ -9545,7 +9784,7 @@ export function useTradingBot(
         const equity = getEquityValue();
         const riskBudget =
           Number.isFinite(equity) && equity > 0
-            ? equity * (CORE_V2_RISK_PCT["ai-matic-scalp"] ?? 0)
+            ? equity * (CORE_V2_RISK_PCT["ai-matic-olikella"] ?? 0)
             : Number.NaN;
         const dayAgo = now - 24 * 60 * 60_000;
         const dailyPnlUsd = Array.isArray(closedPnlRecords)
@@ -9587,62 +9826,48 @@ export function useTradingBot(
 
       // reuse feedAgeMs + coreEval computed above
       const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
-      const scalpPrimary = computeScalpPrimaryChecklist(core);
-      const scalpGuards = isScalpProfile ? evaluateScalpGuards(core) : null;
-      if (isScalpProfile && scalpGuards) {
-        const guardReasons: string[] = [];
-        if (isGateEnabled(SCALP_DRIFT_GATE)) {
-          if (scalpGuards.driftBlocked) {
-            guardReasons.push(...scalpGuards.driftReasons);
-          }
-        }
-        if (isGateEnabled(SCALP_FAKE_MOMENTUM_GATE)) {
-          if (scalpGuards.fakeBlocked) {
-            guardReasons.push(...scalpGuards.fakeReasons);
-          }
-        }
-        if (guardReasons.length > 0) {
-          const guardKey = `scalp-guard:${symbol}:${guardReasons.join("|")}`;
-          const last = skipLogThrottleRef.current.get(guardKey) ?? 0;
-          if (now - last >= SKIP_LOG_THROTTLE_MS) {
-            skipLogThrottleRef.current.set(guardKey, now);
-            addLogEntries([
-              {
-                id: `signal:scalp-guard:${signalId}`,
-                timestamp: new Date(now).toISOString(),
-                action: "RISK_BLOCK",
-                message: `${symbol} scalp no-trade: ${guardReasons.join(", ")}`,
-              },
-            ]);
-          }
-          return;
-        }
-      }
-      const protectedEntry =
-        isScalpProfile &&
-        isGateEnabled(SCALP_PROTECTED_ENTRY_GATE) &&
-        Boolean(scalpGuards?.protectedEntry);
+      const protectedEntry = false;
       if (isScalpProfile) {
-        const primaryBlocked =
-          isGateEnabled(SCALP_PRIMARY_GATE) && !scalpPrimary.primaryOk;
-        const entryBlocked =
-          isGateEnabled(SCALP_ENTRY_GATE) && !scalpPrimary.entryOk;
-        if (primaryBlocked || entryBlocked) {
+        const gateFails: string[] = [];
+        if (
+          isGateEnabled(OLIKELLA_GATE_SIGNAL_CHECKLIST) &&
+          !oliContext?.gates.signalChecklistOk
+        ) {
+          gateFails.push(OLIKELLA_GATE_SIGNAL_CHECKLIST);
+        }
+        if (
+          isGateEnabled(OLIKELLA_GATE_ENTRY_CONDITIONS) &&
+          !oliContext?.gates.entryConditionsOk
+        ) {
+          gateFails.push(OLIKELLA_GATE_ENTRY_CONDITIONS);
+        }
+        if (
+          isGateEnabled(OLIKELLA_GATE_EXIT_CONDITIONS) &&
+          !oliContext?.gates.exitConditionsOk
+        ) {
+          gateFails.push(OLIKELLA_GATE_EXIT_CONDITIONS);
+        }
+        if (
+          isGateEnabled(OLIKELLA_GATE_RISK_RULES) &&
+          !oliContext?.gates.riskRulesOk
+        ) {
+          gateFails.push(OLIKELLA_GATE_RISK_RULES);
+        }
+        if (gateFails.length > 0) {
           addLogEntries([
             {
-              id: `signal:scalp-gate:${signalId}`,
+              id: `signal:olikella-gate:${signalId}`,
               timestamp: new Date(now).toISOString(),
               action: "RISK_BLOCK",
-              message: `${symbol} scalp gate: ${
-                primaryBlocked ? "trend" : "entry"
-              } -> NO TRADE`,
+              message: `${symbol} OLIkella gate failed: ${gateFails.join(", ")} -> NO TRADE`,
             },
           ]);
           return;
         }
       }
       const hardEnabled = false;
-      const softEnabled = context.settings.enableSoftGates !== false;
+      const softEnabled =
+        !isScalpProfile && context.settings.enableSoftGates !== false;
       const hardBlockReasons: string[] = [];
       if (hardEnabled) {
         if (!isScalpProfile) {
@@ -9653,11 +9878,17 @@ export function useTradingBot(
           });
         }
         if (isScalpProfile) {
-          if (!scalpPrimary.primaryOk && isGateEnabled(SCALP_PRIMARY_GATE)) {
-            hardBlockReasons.push(SCALP_PRIMARY_GATE);
+          if (
+            isGateEnabled(OLIKELLA_GATE_SIGNAL_CHECKLIST) &&
+            !oliContext?.gates.signalChecklistOk
+          ) {
+            hardBlockReasons.push(OLIKELLA_GATE_SIGNAL_CHECKLIST);
           }
-          if (!scalpPrimary.entryOk && isGateEnabled(SCALP_ENTRY_GATE)) {
-            hardBlockReasons.push(SCALP_ENTRY_GATE);
+          if (
+            isGateEnabled(OLIKELLA_GATE_ENTRY_CONDITIONS) &&
+            !oliContext?.gates.entryConditionsOk
+          ) {
+            hardBlockReasons.push(OLIKELLA_GATE_ENTRY_CONDITIONS);
           }
         }
       }
@@ -9673,7 +9904,12 @@ export function useTradingBot(
         ]);
         return;
       }
-      if (softEnabled && coreEval.scorePass === false && !isAiMaticProfile) {
+      if (
+        softEnabled &&
+        coreEval.scorePass === false &&
+        !isAiMaticProfile &&
+        !isScalpProfile
+      ) {
         addLogEntries([
           {
             id: `signal:score:${signalId}`,
@@ -9765,48 +10001,29 @@ export function useTradingBot(
         aiMaticMarketAllowed = false;
         aiMaticTriggerOverride = undefined;
       }
-      const checklistGates = [...coreEval.gates];
+      const checklistGates = isScalpProfile ? [] : [...coreEval.gates];
       if (isScalpProfile) {
         checklistGates.push({
-          name: SCALP_PRIMARY_GATE,
-          ok: scalpPrimary.primaryOk,
-          detail: `15m ${
-            scalpPrimary.trendLongOk
-              ? "LONG"
-              : scalpPrimary.trendShortOk
-                ? "SHORT"
-                : "NONE"
-          } | spread ${
-            Number.isFinite(core?.m15EmaSpreadPct)
-              ? formatNumber(core!.m15EmaSpreadPct, 4)
-              : "—"
-          } | LTF ${core?.ltfTimeframeMin ?? "—"}m`,
+          name: OLIKELLA_GATE_SIGNAL_CHECKLIST,
+          ok: Boolean(oliContext?.gates.signalChecklistOk),
+          detail: oliContext?.gates.signalChecklistDetail ?? "no valid OLIkella setup",
         });
         checklistGates.push({
-          name: SCALP_ENTRY_GATE,
-          ok: scalpPrimary.entryOk,
-          detail: `${
-            core?.scalpFib
-              ? `FIB ${core.scalpFib.hitLevel ?? "—"} | 5m ${
-                  core.scalpFib.m5InZone ? "OK" : "no"
-                } | 1m ${core.scalpFib.ltfInZone ? "OK" : "no"}`
-              : "FIB —"
-          } | ${
-            core?.scalpConfirm
-              ? `OB ${core.scalpConfirm.obTouch ? "OK" : "no"} · GAP ${
-                  core.scalpConfirm.gapTouch ? "OK" : "no"
-                } · VP ${core.scalpConfirm.vpConfirm ? "OK" : "no"} · TL ${
-                  core.scalpConfirm.tlPullback ? "OK" : "no"
-                }`
-              : "Confirm —"
-          }`,
+          name: OLIKELLA_GATE_ENTRY_CONDITIONS,
+          ok: Boolean(oliContext?.gates.entryConditionsOk),
+          detail: oliContext?.gates.entryConditionsDetail ?? "entry conditions missing",
         });
         checklistGates.push({
-          name: SCALP_EXIT_GATE,
-          ok: scalpPrimary.exitOk,
-          detail: Number.isFinite(core?.atr14)
-            ? `ATR ${formatNumber(core!.atr14, 4)} | TP fib ext`
-            : "ATR missing",
+          name: OLIKELLA_GATE_EXIT_CONDITIONS,
+          ok: Boolean(oliContext?.gates.exitConditionsOk),
+          detail: oliContext?.gates.exitConditionsDetail ?? "exit lifecycle unavailable",
+        });
+        checklistGates.push({
+          name: OLIKELLA_GATE_RISK_RULES,
+          ok: Boolean(oliContext?.gates.riskRulesOk),
+          detail:
+            oliContext?.gates.riskRulesDetail ??
+            "risk 1.5% | max positions 5 | max orders 20",
         });
       }
       const checklistExec = isProProfile
@@ -9821,10 +10038,24 @@ export function useTradingBot(
               passedCount: AI_MATIC_CHECKLIST_MIN,
               pass: true,
             }
+          : isScalpProfile
+            ? (() => {
+                const eligible = checklistGates.filter((gate) =>
+                  isGateEnabled(gate.name)
+                );
+                const passed = eligible.filter((gate) => gate.ok).length;
+                return {
+                  eligibleCount: eligible.length,
+                  passedCount: passed,
+                  pass: eligible.length > 0 ? passed === eligible.length : false,
+                };
+              })()
           : evaluateChecklistPass(checklistGates);
       if (!checklistExec.pass) {
         const checklistThreshold = isProProfile
           ? checklistExec.eligibleCount
+          : isScalpProfile
+            ? checklistExec.eligibleCount
           : MIN_CHECKLIST_PASS;
         addLogEntries([
           {
@@ -9876,63 +10107,28 @@ export function useTradingBot(
       let resolvedSl = sl;
       let resolvedTp = tp;
       let aiMaticTargets: AiMaticTargetPlan | null = null;
-      if (
-        isScalpProfile &&
-        Number.isFinite(entry) &&
-        entry > 0 &&
-        Number.isFinite(core?.atr14) &&
-        core!.atr14 > 0
-      ) {
-        const atr = core!.atr14;
-        const structure =
-          side === "Buy"
-            ? core.lastPivotLow ?? core.pivotLow
-            : core.lastPivotHigh ?? core.pivotHigh;
-        const atrStop =
-          side === "Buy"
-            ? entry - SCALP_ATR_MULT_INITIAL * atr
-            : entry + SCALP_ATR_MULT_INITIAL * atr;
-        let baseStop = Number.isFinite(structure) ? (structure as number) : atrStop;
-        if (Number.isFinite(structure)) {
-          baseStop =
+      if (isScalpProfile && Number.isFinite(entry) && entry > 0) {
+        if (
+          (!Number.isFinite(resolvedSl) || resolvedSl <= 0) &&
+          Number.isFinite(signal?.intent?.sl)
+        ) {
+          resolvedSl = toNumber(signal.intent.sl);
+        }
+        if (
+          (!Number.isFinite(resolvedTp) || resolvedTp <= 0) &&
+          Number.isFinite(signal?.intent?.tp)
+        ) {
+          resolvedTp = toNumber(signal.intent.tp);
+        }
+        if (
+          (!Number.isFinite(resolvedSl) || resolvedSl <= 0) &&
+          Number.isFinite(core?.atr14) &&
+          core!.atr14 > 0
+        ) {
+          resolvedSl =
             side === "Buy"
-              ? Math.min(structure as number, atrStop)
-              : Math.max(structure as number, atrStop);
-        }
-        const bufferedStop =
-          side === "Buy"
-            ? baseStop - atr * SCALP_SL_ATR_BUFFER
-            : baseStop + atr * SCALP_SL_ATR_BUFFER;
-        const fibOk = Boolean(
-          core?.scalpFib?.m5InZone && core?.scalpFib?.ltfInZone
-        );
-        let usedFibSl = false;
-        if (fibOk) {
-          const fibStop = resolveScalpFibStop(
-            entry,
-            side,
-            core?.scalpFib,
-            atr,
-            structure
-          );
-          if (Number.isFinite(fibStop) && fibStop > 0) {
-            resolvedSl = fibStop;
-            usedFibSl = true;
-          }
-          const fibTp = resolveScalpFibTarget(entry, side, core?.scalpFib, core);
-          if (Number.isFinite(fibTp) && fibTp > 0) {
-            resolvedTp = fibTp;
-          }
-        }
-        if (!usedFibSl) {
-          if (
-            !Number.isFinite(resolvedSl) ||
-            resolvedSl <= 0 ||
-            (side === "Buy" && bufferedStop < resolvedSl) ||
-            (side === "Sell" && bufferedStop > resolvedSl)
-          ) {
-            resolvedSl = bufferedStop;
-          }
+              ? entry - core!.atr14 * 1.5
+              : entry + core!.atr14 * 1.5;
         }
         if (
           (!Number.isFinite(resolvedTp) || resolvedTp <= 0) &&
@@ -9941,10 +10137,7 @@ export function useTradingBot(
         ) {
           const risk = Math.abs(entry - resolvedSl);
           if (Number.isFinite(risk) && risk > 0) {
-            resolvedTp =
-              side === "Buy"
-                ? entry + 1.5 * risk
-                : entry - 1.5 * risk;
+            resolvedTp = side === "Buy" ? entry + 2 * risk : entry - 2 * risk;
           }
         }
       }
@@ -10124,16 +10317,6 @@ export function useTradingBot(
 
       let scalpExitMode: "TRAIL" | "TP" | null = null;
       let scalpExitReason: string | null = null;
-      if (isScalpProfile) {
-        const exitPref = resolveScalpExitMode(
-          symbol as Symbol,
-          decision,
-          side,
-          entry
-        );
-        scalpExitMode = exitPref.mode;
-        scalpExitReason = exitPref.reason;
-      }
 
       const fixedSizing = computeFixedSizing(symbol as Symbol, entry, resolvedSl);
       const sizing =
@@ -10509,7 +10692,7 @@ export function useTradingBot(
       evaluateProGates,
       getEquityValue,
       getSymbolContext,
-      handleScalpInTrade,
+      handleOliKellaInTrade,
       isActiveEntryOrder,
       isGateEnabled,
       isEntryOrder,
@@ -10520,7 +10703,6 @@ export function useTradingBot(
       resolvePortfolioRiskScale,
       resolveH1M15TrendGate,
       resolveSymbolLeverage,
-      resolveScalpExitMode,
       shouldEmitBlockLog,
       submitReduceOnlyOrder,
       useTestnet,
@@ -10547,6 +10729,9 @@ export function useTradingBot(
     scalpActionCooldownRef.current.clear();
     scalpPartialCooldownRef.current.clear();
     scalpTrailCooldownRef.current.clear();
+    oliExtensionCountRef.current.clear();
+    oliTrendLegRef.current.clear();
+    oliScaleInUsedRef.current.clear();
     aiMaticTp1Ref.current.clear();
     aiMaticSwingStateRef.current.clear();
     aiMaticTrailCooldownRef.current.clear();
@@ -10575,7 +10760,7 @@ export function useTradingBot(
     const isAiMaticX = riskMode === "ai-matic-x";
     const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
     const isAiMaticCore = riskMode === "ai-matic";
-    const isScalp = riskMode === "ai-matic-scalp";
+    const isScalp = riskMode === "ai-matic-olikella";
     const isPro = riskMode === "ai-matic-pro";
     const decisionFn = (
       symbol: string,
@@ -10586,7 +10771,9 @@ export function useTradingBot(
         ? evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin: 5 })
         : isAiMaticX
           ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
-          : evaluateStrategyForSymbol(symbol, candles, config);
+          : isScalp
+            ? evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles)
+            : evaluateStrategyForSymbol(symbol, candles, config);
       const resample = createResampleCache(candles);
       const emaTrendPeriod = clampEmaTrendPeriod(
         settingsRef.current.emaTrendPeriod,
@@ -10621,7 +10808,7 @@ export function useTradingBot(
         timeframesMin: EMA_TREND_TIMEFRAMES_MIN,
         emaPeriod: emaTrendPeriod,
       });
-      const scalpContext = isScalp ? buildScalpContext(candles) : undefined;
+      const scalpContext = isScalp ? undefined : buildScalpContext(candles);
       const aiMaticContext = isAiMaticCore
         ? buildAiMaticContext(candles, baseDecision, coreV2, {
             resample,
@@ -10642,11 +10829,19 @@ export function useTradingBot(
         ...(aiMaticOrderflow ? { orderflow: aiMaticOrderflow } : {}),
       };
     };
-    const maxCandles = isAiMaticX || isAiMatic || isPro ? 5000 : undefined;
+    const maxCandles =
+      isScalp ? 7000 : isAiMaticX || isAiMatic || isPro ? 5000 : undefined;
     const backfill = isAiMaticX
       ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
       : isAiMatic
         ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
+        : isScalp
+          ? {
+              enabled: true,
+              interval: "15",
+              lookbackMinutes: 60 * 24 * 60,
+              limit: 1000,
+            }
         : isPro
           ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
         : undefined;
@@ -10657,7 +10852,7 @@ export function useTradingBot(
       },
       {
         useTestnet,
-        timeframe: "1",
+        timeframe: isScalp ? "15" : "1",
         configOverrides: engineConfig,
         decisionFn,
         maxCandles,

@@ -57,11 +57,22 @@ export default function OverviewTab({
   }, [allowedSymbols, scanDiagnostics, selectedSymbol]);
 
   const activeDiag = activeSymbol ? scanDiagnostics?.[activeSymbol] : undefined;
-  const hardGate = gateByPrefix(activeDiag, "Hard:");
-  const checklistGate = gateByPrefix(activeDiag, "Checklist:");
-
-  const hardStatus = hardGate?.ok ? "PASS" : "FAIL";
-  const checklistScore = parseRatio(checklistGate?.detail) ?? (checklistGate?.ok ? "OK" : "N/A");
+  const activeGates = Array.isArray(activeDiag?.gates)
+    ? (activeDiag?.gates as DiagnosticGate[])
+    : [];
+  const hardGate =
+    gateByPrefix(activeDiag, "Hard:") ??
+    gateByPrefix(activeDiag, "Signal Checklist") ??
+    activeGates[0];
+  const checklistGate =
+    gateByPrefix(activeDiag, "Checklist:") ??
+    gateByPrefix(activeDiag, "Signal Checklist");
+  const passedGateCount = activeGates.filter((gate) => gate.ok).length;
+  const hardStatus =
+    activeGates.length === 0 ? "N/A" : activeGates.every((gate) => gate.ok) ? "PASS" : "FAIL";
+  const checklistScore =
+    parseRatio(checklistGate?.detail) ??
+    (activeGates.length > 0 ? `${passedGateCount}/${activeGates.length}` : "N/A");
   const entryStatus = activeDiag?.relayState === "PAUSED"
     ? "PAUSED"
     : activeDiag?.executionAllowed

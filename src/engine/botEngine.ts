@@ -153,7 +153,7 @@ export interface BotConfig {
   strategyProfile:
     | "ai-matic"
     | "ai-matic-x"
-    | "ai-matic-scalp"
+    | "ai-matic-olikella"
     | "ai-matic-tree"
     | "ai-matic-pro";
   entryStrictness: "base" | "relaxed" | "ultra" | "test";
@@ -227,15 +227,15 @@ export type EntrySignal = {
 };
 
 function applyProfileOverrides(cfg: BotConfig): BotConfig {
-  if (cfg.strategyProfile !== "ai-matic-scalp") {
+  if (cfg.strategyProfile !== "ai-matic-olikella") {
     return { ...cfg, maxOpenPositions: Math.min(cfg.maxOpenPositions, 3) };
   }
-  const scalpRisk = Math.min(Math.max(cfg.riskPerTrade, 0.01), 0.02);
+  const oliRisk = Math.min(Math.max(cfg.riskPerTrade, 0.015), 0.015);
   const base = {
     ...cfg,
-    riskPerTrade: scalpRisk,
-    maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.02),
-    maxOpenPositions: 3,
+    riskPerTrade: oliRisk,
+    maxRiskPerTradeCap: Math.min(cfg.maxRiskPerTradeCap, 0.015),
+    maxOpenPositions: 5,
     trailingActivationR: 0.6,
     trailingActivationAtrMultiplier: cfg.trailingActivationAtrMultiplier,
     trailingRetraceAtrMultiplier: cfg.trailingRetraceAtrMultiplier,
@@ -248,7 +248,7 @@ function applyProfileOverrides(cfg: BotConfig): BotConfig {
       { triggerR: 2, stopToR: 1 },
     ],
   };
-  return { ...base, maxOpenPositions: Math.min(base.maxOpenPositions, 3) };
+  return { ...base, maxOpenPositions: Math.min(base.maxOpenPositions, 5) };
 }
 
 /**
@@ -809,8 +809,8 @@ export class TradingBot {
     else if (trend === Trend.Bear && bearRsiOk) score += 15;
     else if (trend === Trend.Range) score += 5;
 
-    // AI-MATIC-SCALP Specific Adjustments
-    if (this.config.strategyProfile === "ai-matic-scalp") {
+    // AI-MATIC-OLIkella Specific Adjustments
+    if (this.config.strategyProfile === "ai-matic-olikella") {
       if (volExpansion) score += 10;
       if (adx > 20 && adx <= 25) score += 5;
     }
@@ -1257,8 +1257,8 @@ export class TradingBot {
     const profileRisk =
       this.config.strategyProfile === "ai-matic"
         ? 0.03  //0.05
-        : this.config.strategyProfile === "ai-matic-scalp"
-          ? 0.03  //0.05
+        : this.config.strategyProfile === "ai-matic-olikella"
+          ? 0.015
           : this.config.strategyProfile === "ai-matic-x"
             ? 0.03
             : 0.05;
@@ -1280,7 +1280,7 @@ export class TradingBot {
       "ai-matic": 1.8,  //2.2
       "ai-matic-tree": 1.6, //2.2
       "ai-matic-x": 1.6,
-      "ai-matic-scalp": 1.2,  //1.5
+      "ai-matic-olikella": 1.2,  //1.5
       "ai-matic-pro": 1.4,
     };
     const fallbackTpDistance = rrMap[this.config.strategyProfile] * slDistance;
@@ -1934,7 +1934,7 @@ export class TradingBot {
     const conf = this.computeConfluence(ht, lt, trend);
     const strictness =
       this.config.entryStrictness ??
-      (this.config.strategyProfile === "ai-matic-scalp"
+      (this.config.strategyProfile === "ai-matic-olikella"
         ? "relaxed"
         : this.config.strategyProfile === "ai-matic-x"
           ? "ultra"

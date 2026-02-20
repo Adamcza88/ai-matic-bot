@@ -12,7 +12,7 @@ export interface AISettings {
   riskMode:
     | "ai-matic"
     | "ai-matic-x"
-    | "ai-matic-scalp"
+    | "ai-matic-olikella"
     | "ai-matic-tree"
     | "ai-matic-pro";
   trendGateMode: "adaptive" | "follow" | "reverse";

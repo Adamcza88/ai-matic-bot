@@ -2,6 +2,15 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Symbol } from "../api/types";
 import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../constants/symbols";
 import { AISettings } from "../types";
+import {
+  OLIKELLA_GATE_NAMES,
+  OLIKELLA_LEGACY_RISK_MODE,
+  OLIKELLA_MAX_ORDERS_DEFAULT,
+  OLIKELLA_MAX_POSITIONS_DEFAULT,
+  OLIKELLA_PROFILE_LABEL,
+  OLIKELLA_RISK_MODE,
+  migrateRiskMode,
+} from "../lib/oliKellaProfile";
 import ApiKeysManager from "./ApiKeysManager";
 
 interface Props {
@@ -53,7 +62,44 @@ function loadProfileSettingsMap(): ProfileSettingsMap {
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return {};
-    return parsed as ProfileSettingsMap;
+    const source = parsed as Record<string, AISettings>;
+    const next: Record<string, AISettings> = { ...source };
+    let touched = false;
+    if (
+      next[OLIKELLA_LEGACY_RISK_MODE] &&
+      !next[OLIKELLA_RISK_MODE]
+    ) {
+      next[OLIKELLA_RISK_MODE] = {
+        ...next[OLIKELLA_LEGACY_RISK_MODE],
+        riskMode: OLIKELLA_RISK_MODE,
+      };
+      touched = true;
+    }
+    if (next[OLIKELLA_LEGACY_RISK_MODE]) {
+      delete next[OLIKELLA_LEGACY_RISK_MODE];
+      touched = true;
+    }
+    Object.entries(next).forEach(([key, value]) => {
+      const migratedMode = migrateRiskMode(key as AISettings["riskMode"]);
+      if (migratedMode !== key) {
+        next[migratedMode] = {
+          ...value,
+          riskMode: migratedMode,
+        };
+        delete next[key];
+        touched = true;
+      } else if (value?.riskMode !== migratedMode) {
+        next[key] = {
+          ...value,
+          riskMode: migratedMode,
+        };
+        touched = true;
+      }
+    });
+    if (touched) {
+      localStorage.setItem(PROFILE_SETTINGS_STORAGE_KEY, JSON.stringify(next));
+    }
+    return next as ProfileSettingsMap;
   } catch {
     return {};
   }
@@ -191,15 +237,33 @@ const SettingsPanel: React.FC<Props> = ({
         "BTC bias: směrový soulad; při decouplingu zvýšená opatrnost.",
       ],
     },
-    "ai-matic-scalp": {
-      title: "AI-MATIC-SCALP Core",
-      summary: "15m trend · 1m entry · Fibo retrace + confirmation",
-      description: "Rychlé scalp vstupy s trend filtrem a přísným řízením rizika.",
+    "ai-matic-olikella": {
+      title: `${OLIKELLA_PROFILE_LABEL} Core`,
+      summary: "4h cycle logic · 15m feed · long/short symmetry",
+      description:
+        "Oliver Kell cycle adaptace: Wedge Pop -> Base 'n Break -> EMA Crossback -> Exhaustion -> Wedge Drop.",
       notes: [
         ORDER_VALUE_NOTE,
-        "15m swing definuje Fibo, 5m/1m musí být v retrace zóně.",
-        "Entry: Fibo retracement + potvrzení OB/GAP/VP nebo EMA TL.",
-        "TP: Fibo extension (dynamic), SL: další Fibo nebo swing + ATR buffer.",
+        "SIGNAL CHECKLIST",
+        "Priorita setupu: Wedge Pop -> Base 'n Break -> EMA Crossback.",
+        "Trend gate: 4h EMA10/EMA20 alignment + slope (long i short symetricky).",
+        "Base 'n Break: base 4-12 svíček, breakout 0.4%, volume >=1.3x SMA20.",
+        "Wedge Pop: narrowing range u EMA10/20 + breakout volume >=1.3x.",
+        "EMA Crossback: pullback 2-8 svíček do EMA10/20 + rejection candle.",
+        "ENTRY CONDITIONS",
+        "Vstup jen na pattern signál z OLIkella evaluátoru, bez generic checklist auto-signálu.",
+        "Feed: 15m, pattern logika resamplovaná do 4h adaptace.",
+        "Směr: long + short, mirror pravidla.",
+        "EXIT CONDITIONS",
+        "Exhaustion Extension: distance od EMA10 >=9% + volume >=1.5x.",
+        "První exhaustion: partial 60%. Druhý exhaustion: full exit.",
+        "Protective exit: opposite EMA Crossback.",
+        "Hard exit: Wedge Drop po extension.",
+        "Trail: EMA10 s ATR bufferem 0.2. BE move při >=1R.",
+        "RISK RULES",
+        "Risk na trade: 1.5% equity.",
+        "Scale-in: max 1 add-on při >=1R unrealized a fresh setupu.",
+        "Default limits: max pozic 5, max příkazů 20.",
       ],
     },
     "ai-matic-tree": {
@@ -261,10 +325,8 @@ const SettingsPanel: React.FC<Props> = ({
     "ai-matic": aiMaticGateNames,
     "ai-matic-x": coreV2GateNames,
     "ai-matic-tree": coreV2GateNames,
-    "ai-matic-scalp": [
-      "Primary Timeframe: 15m for trend, 1m for entry.",
-      "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.",
-      "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
+    "ai-matic-olikella": [
+      ...OLIKELLA_GATE_NAMES,
     ],
     "ai-matic-pro": [
       "Hurst < 0.45",
@@ -285,6 +347,8 @@ const SettingsPanel: React.FC<Props> = ({
       value:
         local.riskMode === "ai-matic-pro"
           ? "Off (PRO)"
+          : local.riskMode === OLIKELLA_RISK_MODE
+            ? "4h EMA10/20 cycle"
           : local.trendGateMode,
     },
     { label: "Max pozic", value: String(local.maxOpenPositions) },
@@ -356,8 +420,8 @@ const SettingsPanel: React.FC<Props> = ({
     emaTrendPeriod: 200,
   };
 
-  const AI_MATIC_SCALP_PRESET_UI: AISettings = {
-    riskMode: "ai-matic-scalp",
+  const AI_MATIC_OLIKELLA_PRESET_UI: AISettings = {
+    riskMode: "ai-matic-olikella",
     trendGateMode: "follow",
     pauseOnHighVolatility: false,
     avoidLowLiquidity: false,
@@ -366,8 +430,8 @@ const SettingsPanel: React.FC<Props> = ({
     useLiquiditySweeps: false,
     enableHardGates: true,
     enableSoftGates: true,
-    maxOpenPositions: 3,
-    maxOpenOrders: 12,
+    maxOpenPositions: OLIKELLA_MAX_POSITIONS_DEFAULT,
+    maxOpenOrders: OLIKELLA_MAX_ORDERS_DEFAULT,
     selectedSymbols: [...SUPPORTED_SYMBOLS],
     entryStrictness: "ultra",
     useDynamicPositionSizing: true,
@@ -455,7 +519,7 @@ const SettingsPanel: React.FC<Props> = ({
   const presets: Record<AISettings["riskMode"], AISettings> = {
     "ai-matic": AI_MATIC_PRESET_UI,
     "ai-matic-x": AI_MATIC_X_PRESET_UI,
-    "ai-matic-scalp": AI_MATIC_SCALP_PRESET_UI,
+    "ai-matic-olikella": AI_MATIC_OLIKELLA_PRESET_UI,
     "ai-matic-tree": AI_MATIC_TREE_PRESET_UI,
     "ai-matic-pro": AI_MATIC_PRO_PRESET_UI,
   };
@@ -722,14 +786,14 @@ const SettingsPanel: React.FC<Props> = ({
                 AI-Matic-X
               </button>
               <button
-                onClick={() => applyPreset("ai-matic-scalp")}
+                onClick={() => applyPreset("ai-matic-olikella")}
                 className={`rounded-md border border-input px-3 py-2 text-sm ${
-                  local.riskMode === "ai-matic-scalp"
+                  local.riskMode === "ai-matic-olikella"
                     ? "bg-emerald-600 text-white"
                     : "bg-slate-800 text-secondary-foreground"
                 }`}
               >
-                AI-Matic-Scalp
+                AI-Matic-OLIkella
               </button>
               <button
                 onClick={() => applyPreset("ai-matic-tree")}
@@ -768,55 +832,63 @@ const SettingsPanel: React.FC<Props> = ({
               Riziko a gate
             </label>
             <div className="grid gap-2">
-              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-                <div>
-                  <div className="font-medium">Hard</div>
-                  <div className="text-xs text-secondary-foreground/70 mt-1">
-                    Přísné blokace vstupu (spread hard, impulse, stale BBO).
+              {local.riskMode !== OLIKELLA_RISK_MODE ? (
+                <>
+                  <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
+                    <div>
+                      <div className="font-medium">Hard</div>
+                      <div className="text-xs text-secondary-foreground/70 mt-1">
+                        Přísné blokace vstupu (spread hard, impulse, stale BBO).
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setLocal({
+                          ...local,
+                          enableHardGates: !local.enableHardGates,
+                        })
+                      }
+                      className={`rounded-md border px-3 py-1 text-sm ${
+                        local.enableHardGates
+                          ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                          : "border-slate-700 bg-slate-900/40 text-slate-200"
+                      }`}
+                    >
+                      {local.enableHardGates ? "Zapnuto" : "Vypnuto"}
+                    </button>
                   </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setLocal({
-                      ...local,
-                      enableHardGates: !local.enableHardGates,
-                    })
-                  }
-                  className={`rounded-md border px-3 py-1 text-sm ${
-                    local.enableHardGates
-                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                      : "border-slate-700 bg-slate-900/40 text-slate-200"
-                  }`}
-                >
-                  {local.enableHardGates ? "Zapnuto" : "Vypnuto"}
-                </button>
-              </div>
 
-              <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
-                <div>
-                  <div className="font-medium">Soft</div>
-                  <div className="text-xs text-secondary-foreground/70 mt-1">
-                    Jemné snížení risku podle quality score.
+                  <div className="flex items-center justify-between rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm">
+                    <div>
+                      <div className="font-medium">Soft</div>
+                      <div className="text-xs text-secondary-foreground/70 mt-1">
+                        Jemné snížení risku podle quality score.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setLocal({
+                          ...local,
+                          enableSoftGates: !local.enableSoftGates,
+                        })
+                      }
+                      className={`rounded-md border px-3 py-1 text-sm ${
+                        local.enableSoftGates
+                          ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                          : "border-slate-700 bg-slate-900/40 text-slate-200"
+                      }`}
+                    >
+                      {local.enableSoftGates ? "Zapnuto" : "Vypnuto"}
+                    </button>
                   </div>
+                </>
+              ) : (
+                <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-xs text-secondary-foreground/80">
+                  OLIkella používá vlastní pattern gates. Vstup je povolen jen přes OLIkella signál.
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setLocal({
-                      ...local,
-                      enableSoftGates: !local.enableSoftGates,
-                    })
-                  }
-                  className={`rounded-md border px-3 py-1 text-sm ${
-                    local.enableSoftGates
-                      ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
-                      : "border-slate-700 bg-slate-900/40 text-slate-200"
-                  }`}
-                >
-                  {local.enableSoftGates ? "Zapnuto" : "Vypnuto"}
-                </button>
-              </div>
+              )}
               <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
                 <div className="text-xs text-secondary-foreground/70">Checklist</div>
                 <div className="mt-2 grid grid-cols-2 gap-1.5">
@@ -833,7 +905,7 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           </div>
 
-          {local.riskMode !== "ai-matic-scalp" &&
+          {local.riskMode !== OLIKELLA_RISK_MODE &&
           local.riskMode !== "ai-matic-pro" ? (
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
@@ -862,7 +934,8 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           ) : null}
 
-          {local.riskMode !== "ai-matic-pro" ? (
+          {local.riskMode !== "ai-matic-pro" &&
+          local.riskMode !== OLIKELLA_RISK_MODE ? (
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none">
                 Trend filtr
@@ -890,30 +963,32 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           ) : null}
 
-          <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Přísnost vstupu
-            </label>
-            <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
-              <select
-                value={local.entryStrictness ?? "base"}
-                onChange={(e) =>
-                  setLocal({
-                    ...local,
-                    entryStrictness: e.target.value as AISettings["entryStrictness"],
-                  })
-                }
-                className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
-              >
-                <option value="base">Base (Standard)</option>
-                <option value="strict">Strict (High Precision)</option>
-                <option value="ultra">Ultra (Sniper)</option>
-              </select>
-              <div className="text-xs text-secondary-foreground/70">
-                Citlivost filtrů. Base = balanced, Strict = precision, Ultra = sniper.
+          {local.riskMode !== OLIKELLA_RISK_MODE ? (
+            <div className="grid gap-2">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Přísnost vstupu
+              </label>
+              <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
+                <select
+                  value={local.entryStrictness ?? "base"}
+                  onChange={(e) =>
+                    setLocal({
+                      ...local,
+                      entryStrictness: e.target.value as AISettings["entryStrictness"],
+                    })
+                  }
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
+                >
+                  <option value="base">Base (Standard)</option>
+                  <option value="strict">Strict (High Precision)</option>
+                  <option value="ultra">Ultra (Sniper)</option>
+                </select>
+                <div className="text-xs text-secondary-foreground/70">
+                  Citlivost filtrů. Base = balanced, Strict = precision, Ultra = sniper.
+                </div>
               </div>
             </div>
-          </div>
+          ) : null}
 
           <div className="grid gap-1">
             <div className="text-sm font-medium">Limity</div>
