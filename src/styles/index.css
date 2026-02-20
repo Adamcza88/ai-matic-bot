@@ -1092,9 +1092,9 @@
   }
 
   .dashboard-tab-viewport {
-    max-height: 560px;
-    overflow-y: auto;
-    padding-right: 4px;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .dashboard-right-stack {

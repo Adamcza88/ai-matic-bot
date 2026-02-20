@@ -5935,6 +5935,33 @@ export function useTradingBot(
     (trigger: CapacityPauseTrigger) => {
       const relay = relayPauseRef.current;
       if (!relay.paused) return false;
+      const pendingIntents = intentPendingRef.current.size;
+      const openPositionsTotal =
+        positionsRef.current.length + (useTestnet ? 0 : pendingIntents);
+      const openOrdersTotal =
+        ordersRef.current.length + (useTestnet ? 0 : pendingIntents);
+      const maxPos = normalizeCapacityLimit(
+        toNumber(settingsRef.current.maxOpenPositions)
+      );
+      const maxOrders = normalizeCapacityLimit(
+        toNumber(settingsRef.current.maxOpenOrders)
+      );
+      const currentStatus = getCapacityStatus({
+        openPositionsTotal,
+        maxPos,
+        openOrdersTotal,
+        maxOrders,
+      });
+      const currentFingerprint = buildCapacityFingerprint({
+        openPositionsTotal,
+        maxPos,
+        openOrdersTotal,
+        maxOrders,
+      });
+      if (trigger !== "TTL_RECHECK") {
+        if (currentFingerprint === relay.lastCapacityFingerprint) return false;
+        if (currentStatus.reason !== "OK") return false;
+      }
       const symbols = activeSymbols.filter((symbol) => Boolean(symbol));
       if (!symbols.length) return false;
       let added = false;
@@ -5956,12 +5983,12 @@ export function useTradingBot(
           id: `signal-relay:recheck:${trigger}:${now}`,
           timestamp: new Date(now).toISOString(),
           action: "STATUS",
-          message: `SIGNAL_RELAY_RECHECK ${trigger} | reason ${relay.pausedReason ?? "UNKNOWN"}`,
+          message: `SIGNAL_RELAY_RECHECK ${trigger} | reason ${relay.pausedReason ?? "UNKNOWN"} | fp ${currentFingerprint}`,
         },
       ]);
       return true;
     },
-    [activeSymbols, addLogEntries]
+    [activeSymbols, addLogEntries, useTestnet]
   );
 
   const resolveTrendGate = useCallback(
@@ -8886,11 +8913,16 @@ export function useTradingBot(
       const scalpActive = settingsRef.current.riskMode === "ai-matic-scalp";
       const isProProfile = settingsRef.current.riskMode === "ai-matic-pro";
       const isAiMaticProfile = settingsRef.current.riskMode === "ai-matic";
+      const relayPaused = relayPauseRef.current.paused;
+      const relayForceScan = relayPauseRef.current.forceScanSymbols.has(symbol);
+      const skipDiagWhilePaused = relayPaused && !relayForceScan;
       feedLastTickRef.current = now;
       symbolTickRef.current.set(symbol, now);
-      decisionRef.current[symbol] = { decision, ts: now };
+      if (!skipDiagWhilePaused) {
+        decisionRef.current[symbol] = { decision, ts: now };
+      }
       const portfolioRegime = resolvePortfolioRegime(now);
-      if (isSelected) {
+      if (isSelected && !skipDiagWhilePaused) {
         setScanDiagnostics((prev) => ({
           ...(prev ?? {}),
           [symbol]: buildScanDiagnostics(symbol, decision, now),
@@ -9039,6 +9071,16 @@ export function useTradingBot(
         }
         return;
       }
+      const relayPauseState = relayPauseRef.current;
+      if (relayPauseState.paused && !relayPauseState.forceScanSymbols.has(symbol)) {
+        if (
+          relayPauseState.forceScanSymbols.size === 0 &&
+          now - relayPauseState.lastTtlRecheckAt >= CAPACITY_RECHECK_MS
+        ) {
+          queueCapacityRecheck("TTL_RECHECK");
+        }
+        return;
+      }
       const capacityContext = getSymbolContext(symbol, decision);
       const capacityStatus = getCapacityStatus({
         openPositionsTotal: capacityContext.openPositionsCount,
@@ -9076,6 +9118,12 @@ export function useTradingBot(
               message: `SIGNAL_RELAY_PAUSED [${capacityStatus.reason}] pos ${capacityContext.openPositionsCount}/${capacityContext.maxPositions} | orders ${capacityContext.openOrdersCount}/${capacityContext.maxOrders}`,
             },
           ]);
+          if (isSelected) {
+            setScanDiagnostics((prev) => ({
+              ...(prev ?? {}),
+              [symbol]: buildScanDiagnostics(symbol, decision, now),
+            }));
+          }
         }
         if (
           canSkipForCapacityPause &&
