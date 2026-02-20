@@ -8,7 +8,7 @@
     "build": "tsc && vite build --config vite.config.cjs",
     "lint": "tsc --noEmit",
     "eslint": "eslint . --ext .ts,.tsx",
-    "test:coach": "node --test tests/coachStrategy.test.js",
+    "test:coach": "node --test tests/coachStrategy.test.ts",
     "test:ema50": "node --test tests/ema50Pullback.test.js",
     "preview": "vite preview --config vite.config.cjs",
     "start": "npm run dev"
