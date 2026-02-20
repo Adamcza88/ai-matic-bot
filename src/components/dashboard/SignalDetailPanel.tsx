@@ -145,6 +145,7 @@ export default function SignalDetailPanel({
       ? `[${skipCodeRaw}] ${skipReasonRaw}`
       : skipReasonRaw;
   const reason =
+    diag?.relayReason ||
     skipReason ||
     entryBlocks[0] ||
     diag?.executionReason ||
@@ -152,13 +153,17 @@ export default function SignalDetailPanel({
     "Bez aktivního důvodu exekuce.";
 
   const statusTone =
-    diag?.executionAllowed === true
+    diag?.relayState === "PAUSED"
+      ? "border-amber-500/50 text-amber-300"
+      : diag?.executionAllowed === true
       ? "border-emerald-500/50 text-emerald-400"
       : diag?.executionAllowed === false
         ? "border-amber-500/50 text-amber-400"
         : "border-border/60 text-muted-foreground";
   const statusLabel =
-    diag?.executionAllowed === true
+    diag?.relayState === "PAUSED"
+      ? "PAUSED"
+      : diag?.executionAllowed === true
       ? "PASS"
       : diag?.executionAllowed === false
         ? "HOLD"

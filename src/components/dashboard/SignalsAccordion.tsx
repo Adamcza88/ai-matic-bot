@@ -23,6 +23,7 @@ const FEED_WARN_MS = 10_000;
 
 function summary(diag: SymbolDiagnostic | undefined, scanLoaded: boolean) {
   if (!scanLoaded || !diag) return "IDLE";
+  if (diag.relayState === "PAUSED") return "PAUSED";
   if (diag.executionAllowed === true) return "READY";
   if (diag.executionAllowed === false) return "BLOCKED";
   return "WAITING";
@@ -35,6 +36,7 @@ function reason(diag: SymbolDiagnostic | undefined) {
   const skipReason = String(diag?.skipReason ?? "").trim();
   const skipCode = String(diag?.skipCode ?? "").trim();
   const value =
+    diag?.relayReason ||
     (skipReason && skipCode ? `[${skipCode}] ${skipReason}` : skipReason) ||
     entryBlockReasons[0] ||
     diag?.executionReason ||
@@ -92,6 +94,8 @@ export default function SignalsAccordion({
           const bAge = Number.isFinite(b.feedAgeMs) ? b.feedAgeMs : -1;
           if (bAge !== aAge) return bAge - aAge;
           if (a.state !== b.state) {
+            if (a.state === "PAUSED") return -1;
+            if (b.state === "PAUSED") return 1;
             if (a.state === "BLOCKED") return -1;
             if (b.state === "BLOCKED") return 1;
           }
@@ -166,6 +170,8 @@ export default function SignalsAccordion({
                         className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${
                           row.state === "READY"
                             ? "border-[#00C853]/60 text-[#00C853]"
+                            : row.state === "PAUSED"
+                              ? "border-[#FFB300]/60 text-[#FFB300]"
                             : row.state === "BLOCKED"
                               ? "border-[#D32F2F]/60 text-[#D32F2F]"
                               : "border-[#FFB300]/60 text-[#FFB300]"

@@ -98,8 +98,10 @@ const MIN_CHECKLIST_PASS = 8;
 const REENTRY_COOLDOWN_MS = 15_000;
 const SIGNAL_LOG_THROTTLE_MS = 10_000;
 const SKIP_LOG_THROTTLE_MS = 10_000;
-const POSITION_GATE_TTL_MS = 30_000;
-const MAX_POS_GATE_TTL_MS = 45_000;
+const POSITION_GATE_TTL_MS = 60_000;
+const MAX_POS_GATE_TTL_MS = 30_000;
+const MAX_ORDERS_GATE_TTL_MS = 30_000;
+const CAPACITY_RECHECK_MS = 30_000;
 const POSITION_RECONCILE_INTERVAL_MS = 5_000;
 const INTENT_COOLDOWN_MS = 8_000;
 const ENTRY_ORDER_LOCK_MS = 20_000;
@@ -2224,6 +2226,62 @@ type DecisionTraceEntry = {
   gate: string;
   result: GateResult;
 };
+type CapacityReason = "OK" | "MAX_POS" | "MAX_ORDERS" | "MAX_POS+MAX_ORDERS";
+type CapacityStatus = {
+  posFull: boolean;
+  ordFull: boolean;
+  reason: CapacityReason;
+};
+type CapacityPauseTrigger =
+  | "POSITION_CLOSED"
+  | "ORDER_CANCELED"
+  | "ORDER_FILLED"
+  | "RECONCILED"
+  | "TTL_RECHECK";
+type RelayPauseState = {
+  paused: boolean;
+  pausedReason: CapacityReason | null;
+  pausedAt: number;
+  lastCapacityFingerprint: string;
+  forceScanSymbols: Set<string>;
+  forceScanReason: CapacityPauseTrigger | null;
+  lastTtlRecheckAt: number;
+};
+
+function normalizeCapacityLimit(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+}
+
+function getCapacityStatus(args: {
+  openPositionsTotal: number;
+  maxPos: number;
+  openOrdersTotal: number;
+  maxOrders: number;
+}): CapacityStatus {
+  const maxPos = normalizeCapacityLimit(args.maxPos);
+  const maxOrders = normalizeCapacityLimit(args.maxOrders);
+  const posFull = maxPos <= 0 || args.openPositionsTotal >= maxPos;
+  const ordFull = maxOrders <= 0 || args.openOrdersTotal >= maxOrders;
+  const reason: CapacityReason = posFull && ordFull
+    ? "MAX_POS+MAX_ORDERS"
+    : posFull
+      ? "MAX_POS"
+      : ordFull
+        ? "MAX_ORDERS"
+        : "OK";
+  return { posFull, ordFull, reason };
+}
+
+function buildCapacityFingerprint(args: {
+  openPositionsTotal: number;
+  maxPos: number;
+  openOrdersTotal: number;
+  maxOrders: number;
+}): string {
+  const maxPos = normalizeCapacityLimit(args.maxPos);
+  const maxOrders = normalizeCapacityLimit(args.maxOrders);
+  return `${args.openPositionsTotal}/${maxPos}|${args.openOrdersTotal}/${maxOrders}`;
+}
 
 function positionCapacityGate(args: {
   hasSymbolPosition: boolean;
@@ -4362,6 +4420,15 @@ export function useTradingBot(
   const signalSeenRef = useRef<Set<string>>(new Set());
   const intentPendingRef = useRef<Set<string>>(new Set());
   const feedPauseRef = useRef<Set<string>>(new Set());
+  const relayPauseRef = useRef<RelayPauseState>({
+    paused: false,
+    pausedReason: null,
+    pausedAt: 0,
+    lastCapacityFingerprint: "",
+    forceScanSymbols: new Set<string>(),
+    forceScanReason: null,
+    lastTtlRecheckAt: 0,
+  });
   const trailingSyncRef = useRef<Map<string, number>>(new Map());
   const trailOffsetRef = useRef<Map<string, number>>(new Map());
   const aiMaticTp1Ref = useRef<
@@ -5779,14 +5846,13 @@ export function useTradingBot(
       const now = new Date();
       const sessionOk = isSessionAllowed(now, settings);
       const maxPositions = toNumber(settings.maxOpenPositions);
+      const normalizedMaxPositions = normalizeCapacityLimit(maxPositions);
       const pendingIntents = intentPendingRef.current.size;
       const openPositionsCount =
         positionsRef.current.length + (useTestnet ? 0 : pendingIntents);
-      const maxPositionsOk = !Number.isFinite(maxPositions)
-        ? true
-        : maxPositions > 0
-          ? openPositionsCount < maxPositions
-          : false;
+      const maxPositionsOk = normalizedMaxPositions > 0
+        ? openPositionsCount < normalizedMaxPositions
+        : false;
       const hasPosition = positionsRef.current.some((p) => {
         if (p.symbol !== symbol) return false;
         const size = toNumber(p.size ?? p.qty);
@@ -5795,26 +5861,24 @@ export function useTradingBot(
       const openOrdersCount =
         ordersRef.current.length + (useTestnet ? 0 : pendingIntents);
       const maxOrders = toNumber(settings.maxOpenOrders);
-      const ordersClearOk = !Number.isFinite(maxOrders)
-        ? true
-        : maxOrders > 0
-          ? openOrdersCount < maxOrders
-          : false;
+      const normalizedMaxOrders = normalizeCapacityLimit(maxOrders);
+      const ordersClearOk = normalizedMaxOrders > 0
+        ? openOrdersCount < normalizedMaxOrders
+        : false;
       const engineOk = !(decision?.halted ?? false);
-      const capacityStateFingerprint = [
-        positionSnapshotIdRef.current,
-        limitSnapshotIdRef.current,
-        openPositionsCount,
-        maxPositions,
-        hasPosition ? 1 : 0,
-      ].join(":");
+      const capacityStateFingerprint = buildCapacityFingerprint({
+        openPositionsTotal: openPositionsCount,
+        maxPos: normalizedMaxPositions,
+        openOrdersTotal: openOrdersCount,
+        maxOrders: normalizedMaxOrders,
+      });
       return {
         settings,
         now,
         sessionOk,
         maxPositionsOk,
-        maxPositions,
-        maxOrders,
+        maxPositions: normalizedMaxPositions,
+        maxOrders: normalizedMaxOrders,
         openPositionsCount,
         hasPosition,
         openOrdersCount,
@@ -5848,6 +5912,39 @@ export function useTradingBot(
       return true;
     },
     []
+  );
+
+  const queueCapacityRecheck = useCallback(
+    (trigger: CapacityPauseTrigger) => {
+      const relay = relayPauseRef.current;
+      if (!relay.paused) return false;
+      const symbols = activeSymbols.filter((symbol) => Boolean(symbol));
+      if (!symbols.length) return false;
+      let added = false;
+      for (const symbol of symbols) {
+        if (relay.forceScanSymbols.has(symbol)) continue;
+        relay.forceScanSymbols.add(symbol);
+        added = true;
+      }
+      if (!added && relay.forceScanReason === trigger) {
+        return false;
+      }
+      relay.forceScanReason = trigger;
+      if (trigger === "TTL_RECHECK") {
+        relay.lastTtlRecheckAt = Date.now();
+      }
+      const now = Date.now();
+      addLogEntries([
+        {
+          id: `signal-relay:recheck:${trigger}:${now}`,
+          timestamp: new Date(now).toISOString(),
+          action: "STATUS",
+          message: `SIGNAL_RELAY_RECHECK ${trigger} | reason ${relay.pausedReason ?? "UNKNOWN"}`,
+        },
+      ]);
+      return true;
+    },
+    [activeSymbols, addLogEntries]
   );
 
   const resolveTrendGate = useCallback(
@@ -6776,6 +6873,35 @@ export function useTradingBot(
         lastTick > 0 ? Math.max(0, Date.now() - lastTick) : null;
       const feedAgeOk =
         feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
+      const capacityStatus = getCapacityStatus({
+        openPositionsTotal: context.openPositionsCount,
+        maxPos: context.maxPositions,
+        openOrdersTotal: context.openOrdersCount,
+        maxOrders: context.maxOrders,
+      });
+      const relayPaused = capacityStatus.reason !== "OK";
+      if (relayPaused) {
+        return {
+          symbolState,
+          manageReason: capacityStatus.reason,
+          entryBlockReasons: [capacityStatus.reason],
+          skipCode: capacityStatus.reason,
+          skipReason: capacityStatus.reason,
+          decisionTrace: [],
+          signalActive: false,
+          executionAllowed: false,
+          executionReason: `Relay paused (${capacityStatus.reason})`,
+          relayState: "PAUSED",
+          relayReason: capacityStatus.reason,
+          gates: [],
+          qualityScore: null,
+          qualityThreshold: null,
+          qualityPass: false,
+          lastScanTs,
+          feedAgeMs,
+          feedAgeOk,
+        };
+      }
       const signal = decision?.signal ?? null;
       const isAiMaticProfile = context.settings.riskMode === "ai-matic";
       const aiMaticContext = (decision as any)?.aiMatic as
@@ -6934,7 +7060,7 @@ export function useTradingBot(
           ok: false,
           code: "MAX_ORDERS",
           reason: "max orderů",
-          ttlMs: POSITION_GATE_TTL_MS,
+          ttlMs: MAX_ORDERS_GATE_TTL_MS,
         });
       }
       if (
@@ -6949,7 +7075,7 @@ export function useTradingBot(
           ttlMs: POSITION_GATE_TTL_MS,
         });
       }
-      if (!capacityGate.ok) {
+      if (!capacityGate.ok && capacityStatus.reason === "OK") {
         const ttlMs = capacityGate.ttlMs ?? SKIP_LOG_THROTTLE_MS;
         const fingerprint = `${context.capacityStateFingerprint}:${capacityGate.code}`;
         if (shouldEmitBlockLog(symbol, capacityGate.code, fingerprint, ttlMs, now)) {
@@ -7109,6 +7235,12 @@ export function useTradingBot(
       } else {
         executionAllowed = true;
       }
+      const relayState =
+        executionAllowed === true
+          ? "READY"
+          : executionAllowed === false
+            ? "BLOCKED"
+            : "WAITING";
 
       return {
         symbolState,
@@ -7127,6 +7259,8 @@ export function useTradingBot(
         hardBlock: hardBlocked ? hardReasons.join(" · ") : undefined,
         executionAllowed,
         executionReason,
+        relayState,
+        relayReason: undefined,
         gates,
         qualityScore: quality.score,
         qualityThreshold: quality.threshold,
@@ -7192,6 +7326,9 @@ export function useTradingBot(
 
     let sawError = false;
     const newLogs: LogEntry[] = [];
+    let sawPositionClosed = false;
+    let sawOrderCanceled = false;
+    let sawOrderFilled = false;
     const [positionsRes, ordersRes, executionsRes] = results;
     const entryFallbackByKey =
       ordersRes.status === "fulfilled"
@@ -7456,6 +7593,7 @@ export function useTradingBot(
       }
       for (const [symbol, prevPos] of prevPositions.entries()) {
         if (!nextPositions.has(symbol)) {
+          sawPositionClosed = true;
           lastCloseBySymbolRef.current.set(symbol, now);
           scalpExitStateRef.current.delete(symbol);
           scalpActionCooldownRef.current.delete(symbol);
@@ -7682,6 +7820,13 @@ export function useTradingBot(
           continue;
         }
         if (prev.status !== nextOrder.status) {
+          const nextStatus = String(nextOrder.status ?? "").toLowerCase();
+          if (nextStatus.includes("cancel")) {
+            sawOrderCanceled = true;
+          }
+          if (nextStatus.includes("filled")) {
+            sawOrderFilled = true;
+          }
           newLogs.push({
             id: `order-status:${orderId}:${now}`,
             timestamp: new Date(now).toISOString(),
@@ -7692,6 +7837,13 @@ export function useTradingBot(
       }
       for (const [orderId, prevOrder] of prevOrders.entries()) {
         if (!nextOrders.has(orderId)) {
+          const prevStatus = String(prevOrder.status ?? "").toLowerCase();
+          if (prevStatus.includes("cancel")) {
+            sawOrderCanceled = true;
+          }
+          if (prevStatus.includes("filled")) {
+            sawOrderFilled = true;
+          }
           newLogs.push({
             id: `order-closed:${orderId}:${now}`,
             timestamp: new Date(now).toISOString(),
@@ -7801,6 +7953,7 @@ export function useTradingBot(
         .filter((entry: LogEntry | null): entry is LogEntry => Boolean(entry));
       if (tradeLogs.length > 0) {
         positionSyncRef.current.lastEventAt = now;
+        sawOrderFilled = true;
       }
       if (tradeLogs.length) {
         addLogEntries(tradeLogs);
@@ -7830,6 +7983,16 @@ export function useTradingBot(
 
     refreshDiagnosticsFromDecisions();
 
+    if (sawPositionClosed) {
+      queueCapacityRecheck("POSITION_CLOSED");
+    }
+    if (sawOrderCanceled) {
+      queueCapacityRecheck("ORDER_CANCELED");
+    }
+    if (sawOrderFilled) {
+      queueCapacityRecheck("ORDER_FILLED");
+    }
+
     fastOkRef.current = !sawError;
     if (!sawError && slowOkRef.current) {
       setSystemError(null);
@@ -7842,6 +8005,7 @@ export function useTradingBot(
     authToken,
     enforceBtcBiasAlignment,
     fetchJson,
+    queueCapacityRecheck,
     refreshDiagnosticsFromDecisions,
     syncTrailingProtection,
     useTestnet,
@@ -8426,6 +8590,9 @@ export function useTradingBot(
       positionSyncRef.current.lastReconcileAt = now;
       const payload = reconcileRes.value ?? {};
       const reconDiffs = payload?.diffs ?? [];
+      if (Array.isArray(reconDiffs) && reconDiffs.length > 0) {
+        queueCapacityRecheck("RECONCILED");
+      }
       for (const diff of reconDiffs) {
         const sym = String(diff?.symbol ?? "");
         const label = String(diff?.message ?? diff?.field ?? diff?.type ?? "");
@@ -8458,7 +8625,7 @@ export function useTradingBot(
     }
 
     slowPollRef.current = false;
-  }, [addLogEntries, fetchJson]);
+  }, [addLogEntries, fetchJson, queueCapacityRecheck]);
 
   useEffect(() => {
     if (!authToken) {
@@ -8855,6 +9022,82 @@ export function useTradingBot(
         }
         return;
       }
+      const capacityContext = getSymbolContext(symbol, decision);
+      const capacityStatus = getCapacityStatus({
+        openPositionsTotal: capacityContext.openPositionsCount,
+        maxPos: capacityContext.maxPositions,
+        openOrdersTotal: capacityContext.openOrdersCount,
+        maxOrders: capacityContext.maxOrders,
+      });
+      const capacityFingerprint = buildCapacityFingerprint({
+        openPositionsTotal: capacityContext.openPositionsCount,
+        maxPos: capacityContext.maxPositions,
+        openOrdersTotal: capacityContext.openOrdersCount,
+        maxOrders: capacityContext.maxOrders,
+      });
+      const relayPause = relayPauseRef.current;
+      const canSkipForCapacityPause =
+        !hasPosition && !hasEntryOrder;
+      if (capacityStatus.reason !== "OK") {
+        const shouldLogPause =
+          !relayPause.paused ||
+          relayPause.pausedReason !== capacityStatus.reason ||
+          relayPause.lastCapacityFingerprint !== capacityFingerprint;
+        if (shouldLogPause) {
+          relayPause.paused = true;
+          relayPause.pausedReason = capacityStatus.reason;
+          relayPause.pausedAt = now;
+          relayPause.lastCapacityFingerprint = capacityFingerprint;
+          relayPause.lastTtlRecheckAt = now;
+          relayPause.forceScanSymbols.clear();
+          relayPause.forceScanReason = null;
+          addLogEntries([
+            {
+              id: `signal-relay:paused:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `SIGNAL_RELAY_PAUSED [${capacityStatus.reason}] pos ${capacityContext.openPositionsCount}/${capacityContext.maxPositions} | orders ${capacityContext.openOrdersCount}/${capacityContext.maxOrders}`,
+            },
+          ]);
+        }
+        if (
+          canSkipForCapacityPause &&
+          relayPause.forceScanSymbols.size === 0 &&
+          now - relayPause.lastTtlRecheckAt >= CAPACITY_RECHECK_MS
+        ) {
+          queueCapacityRecheck("TTL_RECHECK");
+        }
+        if (!canSkipForCapacityPause) {
+          relayPause.forceScanSymbols.delete(symbol);
+        } else {
+          const forceScan = relayPause.forceScanSymbols.has(symbol);
+          if (!forceScan) return;
+          relayPause.forceScanSymbols.delete(symbol);
+          if (relayPause.forceScanSymbols.size === 0) {
+            relayPause.forceScanReason = null;
+          }
+        }
+      } else if (relayPause.paused) {
+        const pausedReason = relayPause.pausedReason ?? "UNKNOWN";
+        const afterMs =
+          relayPause.pausedAt > 0 ? Math.max(0, now - relayPause.pausedAt) : 0;
+        const resumeTrigger = relayPause.forceScanReason ?? "CAPACITY_CHANGED";
+        relayPause.paused = false;
+        relayPause.pausedReason = null;
+        relayPause.pausedAt = 0;
+        relayPause.lastCapacityFingerprint = capacityFingerprint;
+        relayPause.forceScanSymbols.clear();
+        relayPause.forceScanReason = null;
+        relayPause.lastTtlRecheckAt = 0;
+        addLogEntries([
+          {
+            id: `signal-relay:resumed:${now}`,
+            timestamp: new Date(now).toISOString(),
+            action: "STATUS",
+            message: `SIGNAL_RELAY_RESUMED [${pausedReason}] after ${afterMs}ms | trigger ${resumeTrigger}`,
+          },
+        ]);
+      }
 
       const nextState = String(decision?.state ?? "").toUpperCase();
       if (nextState) {
@@ -9149,7 +9392,7 @@ export function useTradingBot(
           ok: false,
           code: "MAX_ORDERS",
           reason: "max orders",
-          ttlMs: POSITION_GATE_TTL_MS,
+          ttlMs: MAX_ORDERS_GATE_TTL_MS,
         });
       }
       if (entryBlockReasons.length > 0) {
@@ -10191,6 +10434,7 @@ export function useTradingBot(
       isEntryOrder,
       maybeRunAiMaticRetestFallback,
       postJson,
+      queueCapacityRecheck,
       resolvePortfolioRegime,
       resolvePortfolioRiskScale,
       resolveH1M15TrendGate,
@@ -10211,6 +10455,13 @@ export function useTradingBot(
 
     signalSeenRef.current.clear();
     intentPendingRef.current.clear();
+    relayPauseRef.current.paused = false;
+    relayPauseRef.current.pausedReason = null;
+    relayPauseRef.current.pausedAt = 0;
+    relayPauseRef.current.lastCapacityFingerprint = "";
+    relayPauseRef.current.forceScanSymbols.clear();
+    relayPauseRef.current.forceScanReason = null;
+    relayPauseRef.current.lastTtlRecheckAt = 0;
     scalpExitStateRef.current.clear();
     scalpActionCooldownRef.current.clear();
     scalpPartialCooldownRef.current.clear();

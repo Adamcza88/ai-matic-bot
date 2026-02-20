@@ -6,6 +6,8 @@ export type DiagnosticGate = {
 
 export type SymbolDiagnostic = {
   executionAllowed?: boolean;
+  relayState?: "READY" | "BLOCKED" | "PAUSED" | "WAITING" | "IDLE";
+  relayReason?: string;
   symbolState?: string;
   trendBias?: string;
   signalActive?: boolean;

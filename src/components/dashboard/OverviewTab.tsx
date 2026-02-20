@@ -48,6 +48,8 @@ export default function OverviewTab({
 }: OverviewTabProps) {
   const activeSymbol = useMemo(() => {
     if (selectedSymbol && allowedSymbols.includes(selectedSymbol)) return selectedSymbol;
+    const paused = allowedSymbols.find((symbol) => scanDiagnostics?.[symbol]?.relayState === "PAUSED");
+    if (paused) return paused;
     const blocked = allowedSymbols.find((symbol) => scanDiagnostics?.[symbol]?.executionAllowed === false);
     return blocked ?? allowedSymbols[0] ?? null;
   }, [allowedSymbols, scanDiagnostics, selectedSymbol]);
@@ -58,7 +60,11 @@ export default function OverviewTab({
 
   const hardStatus = hardGate?.ok ? "PASS" : "FAIL";
   const checklistScore = parseRatio(checklistGate?.detail) ?? (checklistGate?.ok ? "OK" : "N/A");
-  const entryStatus = activeDiag?.executionAllowed ? "READY" : "BLOCKED";
+  const entryStatus = activeDiag?.relayState === "PAUSED"
+    ? "PAUSED"
+    : activeDiag?.executionAllowed
+      ? "READY"
+      : "BLOCKED";
   const skipReasonRaw = String(activeDiag?.skipReason ?? "").trim();
   const skipCodeRaw = String(activeDiag?.skipCode ?? "").trim();
   const skipReason =
@@ -66,6 +72,7 @@ export default function OverviewTab({
       ? `[${skipCodeRaw}] ${skipReasonRaw}`
       : skipReasonRaw;
   const blockReason = normalizeReason(
+    activeDiag?.relayReason ||
     skipReason ||
     (Array.isArray(activeDiag?.entryBlockReasons) ? activeDiag?.entryBlockReasons[0] : "") ||
       activeDiag?.executionReason ||
@@ -118,7 +125,13 @@ export default function OverviewTab({
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
               <div className="text-xs text-muted-foreground">ENTRY</div>
-              <div className={`mt-1 text-lg font-semibold ${entryStatus === "READY" ? "text-[#00C853]" : "text-[#D32F2F]"}`}>
+              <div className={`mt-1 text-lg font-semibold ${
+                entryStatus === "READY"
+                  ? "text-[#00C853]"
+                  : entryStatus === "PAUSED"
+                    ? "text-[#FFB300]"
+                    : "text-[#D32F2F]"
+              }`}>
                 {entryStatus}
               </div>
             </div>
