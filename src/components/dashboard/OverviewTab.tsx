@@ -59,7 +59,14 @@ export default function OverviewTab({
   const hardStatus = hardGate?.ok ? "PASS" : "FAIL";
   const checklistScore = parseRatio(checklistGate?.detail) ?? (checklistGate?.ok ? "OK" : "N/A");
   const entryStatus = activeDiag?.executionAllowed ? "READY" : "BLOCKED";
+  const skipReasonRaw = String(activeDiag?.skipReason ?? "").trim();
+  const skipCodeRaw = String(activeDiag?.skipCode ?? "").trim();
+  const skipReason =
+    skipReasonRaw && skipCodeRaw
+      ? `[${skipCodeRaw}] ${skipReasonRaw}`
+      : skipReasonRaw;
   const blockReason = normalizeReason(
+    skipReason ||
     (Array.isArray(activeDiag?.entryBlockReasons) ? activeDiag?.entryBlockReasons[0] : "") ||
       activeDiag?.executionReason ||
       activeDiag?.manageReason

@@ -32,7 +32,14 @@ function reason(diag: SymbolDiagnostic | undefined) {
   const entryBlockReasons = Array.isArray(diag?.entryBlockReasons)
     ? diag?.entryBlockReasons
     : [];
-  const value = entryBlockReasons[0] ?? diag?.executionReason ?? diag?.manageReason ?? "";
+  const skipReason = String(diag?.skipReason ?? "").trim();
+  const skipCode = String(diag?.skipCode ?? "").trim();
+  const value =
+    (skipReason && skipCode ? `[${skipCode}] ${skipReason}` : skipReason) ||
+    entryBlockReasons[0] ??
+    diag?.executionReason ??
+    diag?.manageReason ??
+    "";
   if (!value) return "Bez aktivního důvodu.";
   if (value === "Exec OFF") return "Execution je vypnutý (manual).";
   if (value === "čeká na signál") return "Čeká na potvrzení signálu.";

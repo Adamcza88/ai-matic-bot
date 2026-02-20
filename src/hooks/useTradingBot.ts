@@ -98,6 +98,9 @@ const MIN_CHECKLIST_PASS = 8;
 const REENTRY_COOLDOWN_MS = 15_000;
 const SIGNAL_LOG_THROTTLE_MS = 10_000;
 const SKIP_LOG_THROTTLE_MS = 10_000;
+const POSITION_GATE_TTL_MS = 30_000;
+const MAX_POS_GATE_TTL_MS = 45_000;
+const POSITION_RECONCILE_INTERVAL_MS = 5_000;
 const INTENT_COOLDOWN_MS = 8_000;
 const ENTRY_ORDER_LOCK_MS = 20_000;
 const CORE_V2_EMA_SEP1_MIN = 0.18;
@@ -2216,6 +2219,41 @@ type AiMaticGateEval = {
   pass: boolean;
 };
 
+type GateResult = { ok: boolean; code: string; reason: string; ttlMs?: number };
+type DecisionTraceEntry = {
+  gate: string;
+  result: GateResult;
+};
+
+function positionCapacityGate(args: {
+  hasSymbolPosition: boolean;
+  openPositionsTotal: number;
+  maxPos: number;
+  positionReason?: string;
+  maxPosReasonPrefix?: string;
+}): GateResult {
+  const positionReason = args.positionReason ?? "open position";
+  const maxPosReasonPrefix = args.maxPosReasonPrefix ?? "max positions";
+  if (args.hasSymbolPosition) {
+    return {
+      ok: false,
+      code: "OPEN_POSITION",
+      reason: positionReason,
+      ttlMs: POSITION_GATE_TTL_MS,
+    };
+  }
+  const maxPos = Number.isFinite(args.maxPos) ? Math.max(0, Math.round(args.maxPos)) : 0;
+  if (maxPos <= 0 || args.openPositionsTotal >= maxPos) {
+    return {
+      ok: false,
+      code: "MAX_POS",
+      reason: `${maxPosReasonPrefix} ${args.openPositionsTotal}/${maxPos}`,
+      ttlMs: MAX_POS_GATE_TTL_MS,
+    };
+  }
+  return { ok: true, code: "OK", reason: "capacity" };
+}
+
 const evaluateAiMaticGatesCore = (args: {
   decision: PriceFeedDecision | null | undefined;
   signal: PriceFeedDecision["signal"] | null | undefined;
@@ -4233,10 +4271,18 @@ export function useTradingBot(
   const entryOrderLockRef = useRef<Map<string, number>>(new Map());
   const signalLogThrottleRef = useRef<Map<string, number>>(new Map());
   const skipLogThrottleRef = useRef<Map<string, number>>(new Map());
+  const blockDecisionCooldownRef = useRef<
+    Map<string, { fingerprint: string; expiresAt: number }>
+  >(new Map());
+  const entryBlockFingerprintRef = useRef<Map<string, string>>(new Map());
   const fastOkRef = useRef(false);
   const slowOkRef = useRef(false);
   const modeRef = useRef<TradingMode | undefined>(mode);
   const positionsRef = useRef<ActivePosition[]>([]);
+  const positionSnapshotIdRef = useRef(0);
+  const positionStateSignatureRef = useRef("");
+  const limitSnapshotIdRef = useRef(0);
+  const positionSyncRef = useRef({ lastEventAt: 0, lastReconcileAt: 0 });
   const ordersRef = useRef<TestnetOrder[]>([]);
   const cancelingOrdersRef = useRef<Set<string>>(new Set());
   const autoCloseCooldownRef = useRef<Map<string, number>>(new Map());
@@ -4334,6 +4380,11 @@ export function useTradingBot(
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  useEffect(() => {
+    limitSnapshotIdRef.current += 1;
+    entryBlockFingerprintRef.current.clear();
+  }, [settings.maxOpenOrders, settings.maxOpenPositions]);
 
   useEffect(() => {
     walletRef.current = walletSnapshot;
@@ -5651,6 +5702,13 @@ export function useTradingBot(
           ? openOrdersCount < maxOrders
           : false;
       const engineOk = !(decision?.halted ?? false);
+      const capacityStateFingerprint = [
+        positionSnapshotIdRef.current,
+        limitSnapshotIdRef.current,
+        openPositionsCount,
+        maxPositions,
+        hasPosition ? 1 : 0,
+      ].join(":");
       return {
         settings,
         now,
@@ -5663,9 +5721,34 @@ export function useTradingBot(
         openOrdersCount,
         ordersClearOk,
         engineOk,
+        capacityStateFingerprint,
       };
     },
     [isSessionAllowed, useTestnet]
+  );
+
+  const shouldEmitBlockLog = useCallback(
+    (
+      symbol: string,
+      code: string,
+      fingerprint: string,
+      ttlMs: number,
+      now: number
+    ) => {
+      const key = `${symbol}:${code}`;
+      const cache = blockDecisionCooldownRef.current;
+      const prev = cache.get(key);
+      if (
+        prev &&
+        prev.fingerprint === fingerprint &&
+        prev.expiresAt > now
+      ) {
+        return false;
+      }
+      cache.set(key, { fingerprint, expiresAt: now + ttlMs });
+      return true;
+    },
+    []
   );
 
   const resolveTrendGate = useCallback(
@@ -6644,9 +6727,13 @@ export function useTradingBot(
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
       );
       const hasPendingIntent = intentPendingRef.current.has(symbol);
+      const decisionTrace: DecisionTraceEntry[] = [];
       const entryBlockReasons: string[] = [];
       const addBlockReason = (label: string) => {
         entryBlockReasons.push(label);
+      };
+      const appendTrace = (gate: string, result: GateResult) => {
+        decisionTrace.push({ gate, result });
       };
       const entryLockTs = entryOrderLockRef.current.get(symbol) ?? 0;
       const lastIntentTs = lastIntentBySymbolRef.current.get(symbol) ?? 0;
@@ -6656,52 +6743,127 @@ export function useTradingBot(
       const closeCooldownMs = isScalpProfile
         ? SCALP_COOLDOWN_MS
         : REENTRY_COOLDOWN_MS;
-      if (context.hasPosition) addBlockReason("pozice");
-      if (hasEntryOrder) addBlockReason("order");
-      if (hasPendingIntent) addBlockReason("intent");
+      const capacityGate = positionCapacityGate({
+        hasSymbolPosition: context.hasPosition,
+        openPositionsTotal: context.openPositionsCount,
+        maxPos: context.maxPositions,
+        positionReason: "pozice",
+        maxPosReasonPrefix: "max pozic",
+      });
+      appendTrace("PositionCapacity", capacityGate);
+      if (!capacityGate.ok) addBlockReason(capacityGate.reason);
+      if (hasEntryOrder) {
+        addBlockReason("order");
+        appendTrace("OpenOrder", {
+          ok: false,
+          code: "OPEN_ORDER",
+          reason: "order",
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
+      }
+      if (hasPendingIntent) {
+        addBlockReason("intent");
+        appendTrace("IntentPending", {
+          ok: false,
+          code: "PENDING_INTENT",
+          reason: "intent",
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
+      }
       if (entryLockTs && now - entryLockTs < ENTRY_ORDER_LOCK_MS) {
         const remainingMs = Math.max(0, ENTRY_ORDER_LOCK_MS - (now - entryLockTs));
-        addBlockReason(`lock ${Math.ceil(remainingMs / 1000)}s`);
+        const reason = `lock ${Math.ceil(remainingMs / 1000)}s`;
+        addBlockReason(reason);
+        appendTrace("EntryLock", {
+          ok: false,
+          code: "ENTRY_LOCK",
+          reason,
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
       }
       if (lastIntentTs && now - lastIntentTs < INTENT_COOLDOWN_MS) {
         const remainingMs = Math.max(0, INTENT_COOLDOWN_MS - (now - lastIntentTs));
-        addBlockReason(`intent ${Math.ceil(remainingMs / 1000)}s`);
+        const reason = `intent ${Math.ceil(remainingMs / 1000)}s`;
+        addBlockReason(reason);
+        appendTrace("IntentCooldown", {
+          ok: false,
+          code: "RECENT_INTENT",
+          reason,
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
       }
       if (lastCloseTs && now - lastCloseTs < closeCooldownMs) {
         const remainingMs = Math.max(0, closeCooldownMs - (now - lastCloseTs));
-        addBlockReason(`re-entry ${Math.ceil(remainingMs / 1000)}s`);
+        const reason = `re-entry ${Math.ceil(remainingMs / 1000)}s`;
+        addBlockReason(reason);
+        appendTrace("ReentryCooldown", {
+          ok: false,
+          code: "RECENT_CLOSE",
+          reason,
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
       }
       if (lastLossTs && now - lastLossTs < cooldownMs) {
         const remainingMs = Math.max(0, cooldownMs - (now - lastLossTs));
-        addBlockReason(`cooldown ${Math.ceil(remainingMs / 60_000)}m`);
+        const reason = `cooldown ${Math.ceil(remainingMs / 60_000)}m`;
+        addBlockReason(reason);
+        appendTrace("LossCooldown", {
+          ok: false,
+          code: "LOSS_COOLDOWN",
+          reason,
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
       }
       if (isAiMaticProfile) {
         const swingState = aiMaticSwingStateRef.current.get(symbol);
         const cooldownUntil = toNumber(swingState?.cooldownUntil);
         if (Number.isFinite(cooldownUntil) && cooldownUntil > now) {
           const remainingMs = Math.max(0, cooldownUntil - now);
-          addBlockReason(`swing ${Math.ceil(remainingMs / 60_000)}m`);
+          const reason = `swing ${Math.ceil(remainingMs / 60_000)}m`;
+          addBlockReason(reason);
+          appendTrace("SwingCooldown", {
+            ok: false,
+            code: "SWING_COOLDOWN",
+            reason,
+            ttlMs: POSITION_GATE_TTL_MS,
+          });
         }
       }
-      if (!context.maxPositionsOk) addBlockReason("max pozic");
-      if (!context.ordersClearOk) addBlockReason("max orderů");
+      if (!context.ordersClearOk) {
+        addBlockReason("max orderů");
+        appendTrace("OrderCapacity", {
+          ok: false,
+          code: "MAX_ORDERS",
+          reason: "max orderů",
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
+      }
       if (
         context.settings.riskMode === "ai-matic-x" &&
         (decision as any)?.xContext?.riskOff
       ) {
         addBlockReason("risk off");
+        appendTrace("RiskOff", {
+          ok: false,
+          code: "RISK_OFF",
+          reason: "risk off",
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
       }
-      // Hard guard: otevřená pozice nebo order → žádná nová intent ani po přepnutí Exec ON
-      if (entryBlockReasons.includes("pozice") || entryBlockReasons.includes("order")) {
-        const logId = `entry-block:${symbol}:${now}`;
-        addLogEntries([
-          {
-            id: logId,
-            timestamp: new Date(now).toISOString(),
-            action: "RISK_BLOCK",
-            message: `${symbol} blokováno (open pos/order): ${entryBlockReasons.join(", ")}`,
-          },
-        ]);
+      if (!capacityGate.ok) {
+        const ttlMs = capacityGate.ttlMs ?? SKIP_LOG_THROTTLE_MS;
+        const fingerprint = `${context.capacityStateFingerprint}:${capacityGate.code}`;
+        if (shouldEmitBlockLog(symbol, capacityGate.code, fingerprint, ttlMs, now)) {
+          const logId = `entry-block:${symbol}:${now}`;
+          addLogEntries([
+            {
+              id: logId,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} ENTRY BLOCKED [${capacityGate.code}] ${capacityGate.reason}`,
+            },
+          ]);
+        }
       }
       const manageReason =
         entryBlockReasons.length > 0 ? entryBlockReasons.join(" • ") : null;
@@ -6853,6 +7015,9 @@ export function useTradingBot(
         symbolState,
         manageReason,
         entryBlockReasons,
+        skipCode: decisionTrace.find((entry) => !entry.result.ok)?.result.code,
+        skipReason: decisionTrace.find((entry) => !entry.result.ok)?.result.reason,
+        decisionTrace,
         hasPosition: context.hasPosition,
         hasEntryOrder,
         hasPendingIntent,
@@ -6886,6 +7051,7 @@ export function useTradingBot(
       isGateEnabled,
       resolveQualityScore,
       resolveSymbolState,
+      shouldEmitBlockLog,
     ]
   );
 
@@ -7073,6 +7239,15 @@ export function useTradingBot(
           } satisfies ActivePosition;
         })
         .filter((p: ActivePosition | null): p is ActivePosition => Boolean(p));
+      const nextPositionSignature = Array.from(nextPositions.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([symbol, state]) => `${symbol}:${state.side}:${formatNumber(state.size, 8)}`)
+        .join("|");
+      if (nextPositionSignature !== positionStateSignatureRef.current) {
+        positionStateSignatureRef.current = nextPositionSignature;
+        positionSnapshotIdRef.current += 1;
+        entryBlockFingerprintRef.current.clear();
+      }
       setPositions(next);
       positionsRef.current = next;
       setLastSuccessAt(now);
@@ -7449,6 +7624,9 @@ export function useTradingBot(
           } as LogEntry;
         })
         .filter((entry: LogEntry | null): entry is LogEntry => Boolean(entry));
+      if (tradeLogs.length > 0) {
+        positionSyncRef.current.lastEventAt = now;
+      }
       if (tradeLogs.length) {
         addLogEntries(tradeLogs);
       } else {
@@ -7463,6 +7641,16 @@ export function useTradingBot(
     }
     if (newLogs.length) {
       addLogEntries(newLogs);
+    }
+
+    const syncState = positionSyncRef.current;
+    if (
+      syncState.lastEventAt > 0 &&
+      syncState.lastEventAt >= syncState.lastReconcileAt &&
+      now - syncState.lastReconcileAt >= POSITION_RECONCILE_INTERVAL_MS
+    ) {
+      syncState.lastReconcileAt = now;
+      void fetchJson("/reconcile").catch(() => null);
     }
 
     refreshDiagnosticsFromDecisions();
@@ -8060,6 +8248,7 @@ export function useTradingBot(
     }
 
     if (reconcileRes.status === "fulfilled") {
+      positionSyncRef.current.lastReconcileAt = now;
       const payload = reconcileRes.value ?? {};
       const reconDiffs = payload?.diffs ?? [];
       for (const diff of reconDiffs) {
@@ -8669,20 +8858,6 @@ export function useTradingBot(
         return;
       }
 
-      const trendCore = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
-      const trendGate = resolveH1M15TrendGate(trendCore, signal);
-      if (!trendGate.ok) {
-        addLogEntries([
-          {
-            id: `signal:trend-gate:${signalId}`,
-            timestamp: new Date(now).toISOString(),
-            action: "RISK_BLOCK",
-            message: `${symbol} trend gate 1h/15m: ${trendGate.detail}`,
-          },
-        ]);
-        return;
-      }
-
       const context = getSymbolContext(symbol, decision);
       const isAiMaticX = context.settings.riskMode === "ai-matic-x";
       const isScalpProfile = context.settings.riskMode === "ai-matic-scalp";
@@ -8692,24 +8867,64 @@ export function useTradingBot(
         (order) =>
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
       );
+      const decisionTrace: DecisionTraceEntry[] = [];
+      const appendTrace = (gate: string, result: GateResult) => {
+        decisionTrace.push({ gate, result });
+      };
       const cooldownMs = CORE_V2_COOLDOWN_MS[context.settings.riskMode];
       const lastLossTs = lastLossBySymbolRef.current.get(symbol) ?? 0;
       const lastCloseTs = lastCloseBySymbolRef.current.get(symbol) ?? 0;
       const lastIntentTs = lastIntentBySymbolRef.current.get(symbol) ?? 0;
       const entryLockTs = entryOrderLockRef.current.get(symbol) ?? 0;
       const entryBlockReasons: string[] = [];
-      if (hasSymbolPosition) entryBlockReasons.push("open position");
-      if (hasSymbolEntryOrder) entryBlockReasons.push("open order");
-      if (hasPendingIntent) entryBlockReasons.push("pending intent");
+      const capacityGate = positionCapacityGate({
+        hasSymbolPosition,
+        openPositionsTotal: context.openPositionsCount,
+        maxPos: context.maxPositions,
+      });
+      appendTrace("PositionCapacity", capacityGate);
+      if (!capacityGate.ok) entryBlockReasons.push(capacityGate.reason);
+      if (hasSymbolEntryOrder) {
+        entryBlockReasons.push("open order");
+        appendTrace("OpenOrder", {
+          ok: false,
+          code: "OPEN_ORDER",
+          reason: "open order",
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
+      }
+      if (hasPendingIntent) {
+        entryBlockReasons.push("pending intent");
+        appendTrace("IntentPending", {
+          ok: false,
+          code: "PENDING_INTENT",
+          reason: "pending intent",
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
+      }
       if (entryLockTs && now - entryLockTs < ENTRY_ORDER_LOCK_MS) {
         const remainingMs = Math.max(0, ENTRY_ORDER_LOCK_MS - (now - entryLockTs));
         const remainingSec = Math.ceil(remainingMs / 1000);
-        entryBlockReasons.push(`entry lock ${remainingSec}s`);
+        const reason = `entry lock ${remainingSec}s`;
+        entryBlockReasons.push(reason);
+        appendTrace("EntryLock", {
+          ok: false,
+          code: "ENTRY_LOCK",
+          reason,
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
       }
       if (lastIntentTs && now - lastIntentTs < INTENT_COOLDOWN_MS) {
         const remainingMs = Math.max(0, INTENT_COOLDOWN_MS - (now - lastIntentTs));
         const remainingSec = Math.ceil(remainingMs / 1000);
-        entryBlockReasons.push(`recent intent ${remainingSec}s`);
+        const reason = `recent intent ${remainingSec}s`;
+        entryBlockReasons.push(reason);
+        appendTrace("IntentCooldown", {
+          ok: false,
+          code: "RECENT_INTENT",
+          reason,
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
       }
       const closeCooldownMs = isScalpProfile
         ? SCALP_COOLDOWN_MS
@@ -8717,41 +8932,102 @@ export function useTradingBot(
       if (lastCloseTs && now - lastCloseTs < closeCooldownMs) {
         const remainingMs = Math.max(0, closeCooldownMs - (now - lastCloseTs));
         const remainingSec = Math.ceil(remainingMs / 1000);
-        entryBlockReasons.push(`recent close ${remainingSec}s`);
+        const reason = `recent close ${remainingSec}s`;
+        entryBlockReasons.push(reason);
+        appendTrace("ReentryCooldown", {
+          ok: false,
+          code: "RECENT_CLOSE",
+          reason,
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
       }
       if (lastLossTs && now - lastLossTs < cooldownMs) {
         const remainingMs = Math.max(0, cooldownMs - (now - lastLossTs));
         const remainingMin = Math.ceil(remainingMs / 60_000);
-        entryBlockReasons.push(`cooldown ${remainingMin}m`);
+        const reason = `cooldown ${remainingMin}m`;
+        entryBlockReasons.push(reason);
+        appendTrace("LossCooldown", {
+          ok: false,
+          code: "LOSS_COOLDOWN",
+          reason,
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
       }
       if (isAiMaticProfile) {
         const swingState = aiMaticSwingStateRef.current.get(symbol);
         const cooldownUntil = toNumber(swingState?.cooldownUntil);
         if (Number.isFinite(cooldownUntil) && cooldownUntil > now) {
           const remainingMin = Math.ceil((cooldownUntil - now) / 60_000);
-          entryBlockReasons.push(`swing cooldown ${remainingMin}m`);
+          const reason = `swing cooldown ${remainingMin}m`;
+          entryBlockReasons.push(reason);
+          appendTrace("SwingCooldown", {
+            ok: false,
+            code: "SWING_COOLDOWN",
+            reason,
+            ttlMs: POSITION_GATE_TTL_MS,
+          });
         }
       }
-      if (!context.maxPositionsOk) entryBlockReasons.push("max positions");
-      if (!context.ordersClearOk) entryBlockReasons.push("max orders");
+      if (!context.ordersClearOk) {
+        entryBlockReasons.push("max orders");
+        appendTrace("OrderCapacity", {
+          ok: false,
+          code: "MAX_ORDERS",
+          reason: "max orders",
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
+      }
       if (entryBlockReasons.length > 0) {
         const profileLabel =
           PROFILE_BY_RISK_MODE[context.settings.riskMode] ?? "AI-MATIC";
-        const skipKey = `${symbol}:${entryBlockReasons.join(",")}`;
-        const lastSkipLog = skipLogThrottleRef.current.get(skipKey) ?? 0;
-        if (now - lastSkipLog >= SKIP_LOG_THROTTLE_MS) {
-          skipLogThrottleRef.current.set(skipKey, now);
+        const skipCode = decisionTrace.find((entry) => !entry.result.ok)?.result.code ?? "ENTRY_BLOCKED";
+        const skipReason =
+          decisionTrace.find((entry) => !entry.result.ok)?.result.reason ??
+          entryBlockReasons[0] ??
+          "entry blocked";
+        const stateFingerprint = [
+          context.capacityStateFingerprint,
+          entryBlockReasons.join("|"),
+          String(signal?.intent?.side ?? ""),
+          String(signal?.kind ?? ""),
+        ].join("::");
+        const prevFingerprint = entryBlockFingerprintRef.current.get(symbol);
+        if (prevFingerprint === stateFingerprint) {
+          return;
+        }
+        entryBlockFingerprintRef.current.set(symbol, stateFingerprint);
+        const ttlMs =
+          decisionTrace.find((entry) => !entry.result.ok)?.result.ttlMs ??
+          SKIP_LOG_THROTTLE_MS;
+        if (shouldEmitBlockLog(symbol, skipCode, stateFingerprint, ttlMs, now)) {
           addLogEntries([
             {
               id: `signal:max-pos:${signalId}`,
               timestamp: new Date(now).toISOString(),
               action: "STATUS",
-              message: `${symbol} ${profileLabel} gate: ${entryBlockReasons.join(
-                ", "
-              )} -> skip entry`,
+              message: `${symbol} ${profileLabel} gate [${skipCode}]: ${skipReason} -> skip entry`,
             },
           ]);
         }
+        return;
+      }
+      entryBlockFingerprintRef.current.delete(symbol);
+      const trendCore = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      const trendGate = resolveH1M15TrendGate(trendCore, signal);
+      appendTrace("Trend1h15m", {
+        ok: trendGate.ok,
+        code: trendGate.ok ? "OK" : "TREND_GATE",
+        reason: trendGate.detail,
+      });
+      if (!trendGate.ok) {
+        addLogEntries([
+          {
+            id: `signal:trend-gate:${signalId}`,
+            timestamp: new Date(now).toISOString(),
+            action: "RISK_BLOCK",
+            message: `${symbol} trend gate 1h/15m [TREND_GATE]: ${trendGate.detail}`,
+          },
+        ]);
         return;
       }
       let riskOff = false;
@@ -9742,8 +10018,10 @@ export function useTradingBot(
       postJson,
       resolvePortfolioRegime,
       resolvePortfolioRiskScale,
+      resolveH1M15TrendGate,
       resolveSymbolLeverage,
       resolveScalpExitMode,
+      shouldEmitBlockLog,
       submitReduceOnlyOrder,
       useTestnet,
     ]
@@ -9772,6 +10050,11 @@ export function useTradingBot(
     proTargetsRef.current.clear();
     proPartialRef.current.clear();
     leverageBySymbolRef.current.clear();
+    blockDecisionCooldownRef.current.clear();
+    entryBlockFingerprintRef.current.clear();
+    positionStateSignatureRef.current = "";
+    positionSnapshotIdRef.current = 0;
+    positionSyncRef.current = { lastEventAt: 0, lastReconcileAt: 0 };
     decisionRef.current = {};
     portfolioRegimeRef.current = {
       dominanceHistory: [],

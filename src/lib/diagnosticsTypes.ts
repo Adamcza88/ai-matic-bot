@@ -13,11 +13,21 @@ export type SymbolDiagnostic = {
   feedAgeOk?: boolean;
   qualityScore?: number | null;
   entryBlockReasons?: string[];
+  skipCode?: string;
+  skipReason?: string;
   executionReason?: string;
   manageReason?: string;
   lastScanTs?: number;
   gates?: DiagnosticGate[];
+  decisionTrace?: Array<{
+    gate: string;
+    result: {
+      ok: boolean;
+      code: string;
+      reason: string;
+      ttlMs?: number;
+    };
+  }>;
 };
 
 export type ScanDiagnostics = Record<string, SymbolDiagnostic>;
-

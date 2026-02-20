@@ -138,7 +138,14 @@ export default function SignalDetailPanel({
   const entryBlocks = Array.isArray(diag?.entryBlockReasons)
     ? diag.entryBlockReasons
     : [];
+  const skipReasonRaw = String(diag?.skipReason ?? "").trim();
+  const skipCodeRaw = String(diag?.skipCode ?? "").trim();
+  const skipReason =
+    skipReasonRaw && skipCodeRaw
+      ? `[${skipCodeRaw}] ${skipReasonRaw}`
+      : skipReasonRaw;
   const reason =
+    skipReason ||
     entryBlocks[0] ??
     diag?.executionReason ??
     diag?.manageReason ??

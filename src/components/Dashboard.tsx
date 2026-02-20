@@ -435,8 +435,10 @@ export default function Dashboard({
         return sum + Math.abs(entry - stop) * Math.abs(qty);
       }, 0)
     : Number.NaN;
-  const riskExposureLimitUsd = Number.isFinite(riskPerTradeUsd)
-    ? (riskPerTradeUsd as number) * Math.max(1, maxOpenPositions)
+  const riskExposureLimitUsd = Number.isFinite(maxDailyLossUsd)
+    ? Math.abs(maxDailyLossUsd as number)
+    : Number.isFinite(riskPerTradeUsd)
+      ? (riskPerTradeUsd as number) * Math.max(1, maxOpenPositions)
     : Number.NaN;
   const capitalRange = useMemo(() => {
     if (!Number.isFinite(totalCapital)) return undefined;
