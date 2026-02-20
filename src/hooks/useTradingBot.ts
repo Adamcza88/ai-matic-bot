@@ -4459,6 +4459,7 @@ export function useTradingBot(
   const signalSeenRef = useRef<Set<string>>(new Set());
   const intentPendingRef = useRef<Set<string>>(new Set());
   const feedPauseRef = useRef<Set<string>>(new Set());
+  const symbolOpenPositionPauseRef = useRef<Set<string>>(new Set());
   const relayPauseRef = useRef<RelayPauseState>({
     paused: false,
     pausedReason: null,
@@ -6923,6 +6924,7 @@ export function useTradingBot(
   );
 
   const resolveSymbolState = useCallback((symbol: string) => {
+    if (symbolOpenPositionPauseRef.current.has(symbol)) return "HOLD";
     const hasPosition = positionsRef.current.some((p) => {
       if (p.symbol !== symbol) return false;
       const size = toNumber(p.size ?? p.qty);
@@ -6965,6 +6967,29 @@ export function useTradingBot(
           executionReason: `Relay paused (${capacityStatus.reason})`,
           relayState: "PAUSED",
           relayReason: capacityStatus.reason,
+          gates: [],
+          qualityScore: null,
+          qualityThreshold: null,
+          qualityPass: false,
+          lastScanTs,
+          feedAgeMs,
+          feedAgeOk,
+        };
+      }
+      const openPositionPaused = symbolOpenPositionPauseRef.current.has(symbol);
+      if (openPositionPaused) {
+        return {
+          symbolState: "HOLD",
+          manageReason: "OPEN_POSITION",
+          entryBlockReasons: ["OPEN_POSITION"],
+          skipCode: "OPEN_POSITION",
+          skipReason: "OPEN_POSITION",
+          decisionTrace: [],
+          signalActive: false,
+          executionAllowed: false,
+          executionReason: "Relay paused (OPEN_POSITION)",
+          relayState: "PAUSED",
+          relayReason: "OPEN_POSITION",
           gates: [],
           qualityScore: null,
           qualityThreshold: null,
@@ -7152,7 +7177,11 @@ export function useTradingBot(
           ttlMs: POSITION_GATE_TTL_MS,
         });
       }
-      if (!capacityGate.ok && capacityStatus.reason === "OK") {
+      if (
+        !capacityGate.ok &&
+        capacityStatus.reason === "OK" &&
+        capacityGate.code !== "OPEN_POSITION"
+      ) {
         const ttlMs = capacityGate.ttlMs ?? SKIP_LOG_THROTTLE_MS;
         const fingerprint = `${context.capacityStateFingerprint}:${capacityGate.code}`;
         if (shouldEmitBlockLog(symbol, capacityGate.code, fingerprint, ttlMs, now)) {
@@ -7611,6 +7640,20 @@ export function useTradingBot(
       positionsRef.current = next;
       setLastSuccessAt(now);
       void syncTrailingProtection(next);
+      const pausedByOpenPosition = symbolOpenPositionPauseRef.current;
+      for (const symbol of nextPositions.keys()) {
+        pausedByOpenPosition.add(symbol);
+      }
+      for (const symbol of Array.from(pausedByOpenPosition)) {
+        if (nextPositions.has(symbol)) continue;
+        pausedByOpenPosition.delete(symbol);
+        newLogs.push({
+          id: `position-flat:${symbol}:${now}`,
+          timestamp: new Date(now).toISOString(),
+          action: "STATUS",
+          message: `${symbol} POSITION_FLAT -> relay resume`,
+        });
+      }
 
       for (const [symbol, nextPos] of nextPositions.entries()) {
         const prev = prevPositions.get(symbol);
@@ -9198,6 +9241,23 @@ export function useTradingBot(
         }
         feedPauseRef.current.delete(symbol);
       }
+      const symbolPausedByPosition = symbolOpenPositionPauseRef.current.has(symbol);
+      if (symbolPausedByPosition && !hasPosition) {
+        const pauseKey = `symbol-open-position-pause:${symbol}`;
+        const lastPauseLog = skipLogThrottleRef.current.get(pauseKey) ?? 0;
+        if (now - lastPauseLog >= POSITION_GATE_TTL_MS) {
+          skipLogThrottleRef.current.set(pauseKey, now);
+          addLogEntries([
+            {
+              id: `symbol-open-position-pause:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} OPEN_POSITION pause active -> skip decision`,
+            },
+          ]);
+        }
+        return;
+      }
       if (isProProfile) {
         const proRegime = (decision as any)?.proRegime as { shock?: boolean } | undefined;
         if (proRegime?.shock) {
@@ -10782,6 +10842,7 @@ export function useTradingBot(
 
     signalSeenRef.current.clear();
     intentPendingRef.current.clear();
+    symbolOpenPositionPauseRef.current.clear();
     relayPauseRef.current.paused = false;
     relayPauseRef.current.pausedReason = null;
     relayPauseRef.current.pausedAt = 0;
