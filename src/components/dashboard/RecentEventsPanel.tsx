@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Panel from "@/components/dashboard/Panel";
@@ -21,6 +21,7 @@ type EventRow = {
   message: string;
   count: number;
 };
+const EVENT_TRACE_PAGE_SIZE = 10;
 
 function isRiskLikeStatus(entry: LogEntry) {
   if (entry.action !== "STATUS") return false;
@@ -79,6 +80,7 @@ export default function RecentEventsPanel({
   logsLoaded,
 }: RecentEventsPanelProps) {
   const [eventFilter, setEventFilter] = useState<EventFilter>("all");
+  const [page, setPage] = useState(0);
   const filtered = useMemo(() => {
     const list = (logEntries ?? []).slice(0, 200);
     const scoped = eventFilter === "all" ? list : list.filter((entry) => eventGroup(entry) === eventFilter);
@@ -127,6 +129,26 @@ export default function RecentEventsPanel({
 
     return rows;
   }, [eventFilter, logEntries]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / EVENT_TRACE_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = useMemo(() => {
+    const start = safePage * EVENT_TRACE_PAGE_SIZE;
+    return filtered.slice(start, start + EVENT_TRACE_PAGE_SIZE);
+  }, [filtered, safePage]);
+  const canPrev = safePage > 0;
+  const canNext = safePage < totalPages - 1;
+
+  useEffect(() => {
+    setPage(0);
+  }, [filtered.length]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [eventFilter]);
+
+  useEffect(() => {
+    setPage((prev) => Math.min(prev, totalPages - 1));
+  }, [totalPages]);
 
   return (
     <Panel
@@ -179,29 +201,60 @@ export default function RecentEventsPanel({
           Pro tento filtr nejsou události.
         </div>
       ) : (
-        <div className="max-h-[240px] overflow-y-auto pr-1">
-          <div className="space-y-1.5">
-            {filtered.map((entry) => (
-              <div
-                key={entry.id}
-                className="grid grid-cols-[54px,118px,126px,1fr] items-start gap-2 rounded-lg border border-border/60 bg-card/80 px-2.5 py-2 text-xs"
-                title={entry.message}
-              >
-                <div className="tabular-nums text-muted-foreground">{formatClock(entry.timestamp)}</div>
-                <Badge variant="outline" className="justify-center border-border/60 text-[10px]">
-                  {entry.action}
-                </Badge>
-                <div className="font-mono text-foreground">
-                  {entry.symbol} · {entry.verdict}
-                  {entry.count > 1 ? ` ×${entry.count}` : ""}
+        <div className="space-y-2">
+          <div className="h-[320px] overflow-hidden rounded-lg border border-border/60">
+            <div className="divide-y divide-border/60">
+              {pageRows.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="grid h-8 grid-cols-[54px,106px,126px,1fr] items-center gap-2 bg-card/80 px-2 text-xs"
+                  title={entry.message}
+                >
+                  <div className="tabular-nums leading-6 text-muted-foreground">
+                    {formatClock(entry.timestamp)}
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className="h-5 justify-center border-border/60 px-1.5 text-[10px] leading-4"
+                  >
+                    {entry.action}
+                  </Badge>
+                  <div className="font-mono text-foreground leading-6 truncate">
+                    {entry.symbol} · {entry.verdict}
+                    {entry.count > 1 ? ` ×${entry.count}` : ""}
+                  </div>
+                  <div className="text-muted-foreground leading-6 truncate">
+                    {entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT"
+                      ? `(${entry.message})`
+                      : entry.message}
+                  </div>
                 </div>
-                <div className="text-muted-foreground">
-                  {entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT"
-                    ? `(${entry.message})`
-                    : entry.message}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between border-t border-border/60 px-1 pt-2 text-xs">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2"
+              disabled={!canPrev}
+              onClick={() => setPage((prev) => Math.max(0, prev - 1))}
+            >
+              Prev
+            </Button>
+            <div className="tabular-nums text-muted-foreground">
+              {safePage + 1} / {totalPages}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2"
+              disabled={!canNext}
+              onClick={() => setPage((prev) => Math.min(totalPages - 1, prev + 1))}
+            >
+              Next
+            </Button>
           </div>
         </div>
       )}

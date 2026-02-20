@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { AssetPnlMap } from "@/lib/pnlHistory";
 import Panel from "@/components/dashboard/Panel";
@@ -14,6 +14,8 @@ type OverviewTabProps = {
   scanLoaded: boolean;
   selectedSymbol: string | null;
 };
+
+const PNL_HISTORY_PAGE_SIZE = 12;
 
 function normalizeReason(reason?: string) {
   if (!reason) return "Bez aktivní blokace.";
@@ -44,6 +46,8 @@ export default function OverviewTab({
   scanLoaded,
   selectedSymbol,
 }: OverviewTabProps) {
+  const [page, setPage] = useState(0);
+
   const activeSymbol = useMemo(() => {
     if (selectedSymbol && allowedSymbols.includes(selectedSymbol)) return selectedSymbol;
     const paused = allowedSymbols.find((symbol) => scanDiagnostics?.[symbol]?.relayState === "PAUSED");
@@ -65,10 +69,7 @@ export default function OverviewTab({
       : "BLOCKED";
   const skipReasonRaw = String(activeDiag?.skipReason ?? "").trim();
   const skipCodeRaw = String(activeDiag?.skipCode ?? "").trim();
-  const skipReason =
-    skipReasonRaw && skipCodeRaw
-      ? `[${skipCodeRaw}] ${skipReasonRaw}`
-      : skipReasonRaw;
+  const skipReason = skipReasonRaw && skipCodeRaw ? `[${skipCodeRaw}] ${skipReasonRaw}` : skipReasonRaw;
   const blockReason = normalizeReason(
     activeDiag?.relayReason ||
     skipReason ||
@@ -93,6 +94,23 @@ export default function OverviewTab({
       })
       .sort((a, b) => a.netPnl - b.netPnl);
   }, [assetPnlHistory]);
+
+  const totalPages = Math.max(1, Math.ceil(pnlRows.length / PNL_HISTORY_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = useMemo(() => {
+    const start = safePage * PNL_HISTORY_PAGE_SIZE;
+    return pnlRows.slice(start, start + PNL_HISTORY_PAGE_SIZE);
+  }, [pnlRows, safePage]);
+  const canPrev = safePage > 0;
+  const canNext = safePage < totalPages - 1;
+
+  useEffect(() => {
+    setPage(0);
+  }, [pnlRows.length]);
+
+  useEffect(() => {
+    setPage((prev) => Math.min(prev, totalPages - 1));
+  }, [totalPages]);
 
   return (
     <div className="space-y-4">
@@ -123,13 +141,15 @@ export default function OverviewTab({
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
               <div className="text-xs text-muted-foreground">ENTRY</div>
-              <div className={`mt-1 text-lg font-semibold ${
-                entryStatus === "READY"
-                  ? "text-[#00C853]"
-                  : entryStatus === "PAUSED"
-                    ? "text-[#FFB300]"
-                    : "text-[#D32F2F]"
-              }`}>
+              <div
+                className={`mt-1 text-lg font-semibold ${
+                  entryStatus === "READY"
+                    ? "text-[#00C853]"
+                    : entryStatus === "PAUSED"
+                      ? "text-[#FFB300]"
+                      : "text-[#D32F2F]"
+                }`}
+              >
                 {entryStatus}
               </div>
             </div>
@@ -164,41 +184,67 @@ export default function OverviewTab({
             Zatím bez historie PnL.
           </div>
         ) : (
-          <div className="max-h-64 overflow-auto">
-            <table className="w-full min-w-[520px] text-sm">
-              <thead className="text-xs text-muted-foreground">
-                <tr className="[&>th]:py-2 [&>th]:px-3 [&>th]:text-left border-b border-border/60">
-                  <th>Trh</th>
-                  <th className="text-right">Čisté PnL</th>
-                  <th className="text-right">Poslední</th>
-                </tr>
-              </thead>
-              <tbody className="text-foreground">
-                {pnlRows.map((row) => (
-                  <tr key={row.symbol} className="border-b border-border/40 hover:bg-background/30">
-                    <td className="py-2 px-3 font-mono">{row.symbol}</td>
-                    <td
-                      className={`py-2 px-3 text-right tabular-nums ${
-                        row.netPnl >= 0
-                          ? "text-emerald-300 dm-pnl-positive"
-                          : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
-                      }`}
-                    >
-                      {formatSignedMoney(row.netPnl)}
-                    </td>
-                    <td
-                      className={`py-2 px-3 text-right tabular-nums ${
-                        row.latestPnl >= 0
-                          ? "text-emerald-300 dm-pnl-positive"
-                          : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
-                      }`}
-                    >
-                      {formatSignedMoney(row.latestPnl)}
-                    </td>
+          <div className="space-y-2">
+            <div className="h-[320px] overflow-hidden rounded-lg border border-border/60">
+              <table className="w-full text-sm">
+                <thead className="text-xs text-muted-foreground">
+                  <tr className="[&>th]:h-8 [&>th]:px-3 [&>th]:text-left border-b border-border/60">
+                    <th>Trh</th>
+                    <th className="text-right">Čisté PnL</th>
+                    <th className="text-right">Poslední</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="text-foreground">
+                  {pageRows.map((row) => (
+                    <tr key={row.symbol} className="h-6 border-b border-border/40 hover:bg-background/30">
+                      <td className="px-3 font-mono leading-6 truncate">{row.symbol}</td>
+                      <td
+                        className={`px-3 text-right tabular-nums leading-6 ${
+                          row.netPnl >= 0
+                            ? "text-emerald-300 dm-pnl-positive"
+                            : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
+                        }`}
+                      >
+                        {formatSignedMoney(row.netPnl)}
+                      </td>
+                      <td
+                        className={`px-3 text-right tabular-nums leading-6 ${
+                          row.latestPnl >= 0
+                            ? "text-emerald-300 dm-pnl-positive"
+                            : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
+                        }`}
+                      >
+                        {formatSignedMoney(row.latestPnl)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-border/60 px-1 pt-2 text-xs">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2"
+                disabled={!canPrev}
+                onClick={() => setPage((prev) => Math.max(0, prev - 1))}
+              >
+                Prev
+              </Button>
+              <div className="tabular-nums text-muted-foreground">
+                {safePage + 1} / {totalPages}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2"
+                disabled={!canNext}
+                onClick={() => setPage((prev) => Math.min(totalPages - 1, prev + 1))}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         )}
       </Panel>
