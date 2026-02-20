@@ -963,6 +963,43 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           ) : null}
 
+          {local.riskMode === "ai-matic-tree" ? (
+            <div className="grid gap-2">
+              <label className="text-sm font-medium leading-none">
+                TREE sizing mode
+              </label>
+              <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs text-secondary-foreground/70">
+                    Risk-based sizing podle equity*riskPct a vzdálenosti SL.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLocal({
+                        ...local,
+                        useDynamicPositionSizing:
+                          !local.useDynamicPositionSizing,
+                      })
+                    }
+                    className={`rounded-md border px-3 py-1 text-sm ${
+                      local.useDynamicPositionSizing
+                        ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
+                        : "border-slate-700 bg-slate-900/40 text-slate-200"
+                    }`}
+                  >
+                    {local.useDynamicPositionSizing
+                      ? "Dynamic ON"
+                      : "Dynamic OFF"}
+                  </button>
+                </div>
+                <div className="text-xs text-secondary-foreground/70">
+                  Dynamic OFF zachová fixed testnet notional sizing.
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {local.riskMode !== OLIKELLA_RISK_MODE ? (
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">

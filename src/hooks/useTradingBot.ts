@@ -58,6 +58,12 @@ import {
   migrateRiskMode,
 } from "../lib/oliKellaProfile";
 import {
+  resolveOrderPriceFields,
+  resolveTrailingFields,
+  stopValidityGate,
+  treeTrendGate5m,
+} from "./tradingGuards";
+import {
   loadPnlHistory,
   mergePnlRecords,
   resetPnlHistoryMap,
@@ -2762,6 +2768,8 @@ type CoreV2Metrics = {
   ltfRangeExpVolume: boolean;
   ltfSweepBackInside: boolean;
   ltfRsi: number;
+  ltfMacdHist: number;
+  ltfMacdSignal: number;
   ltfRsiNeutral: boolean;
   ltfNoNewHigh: boolean;
   ltfNoNewLow: boolean;
@@ -3447,6 +3455,7 @@ const computeCoreV2Metrics = (
   const pivotsHigh = findPivotsHigh(ltf, 2, 2);
   const pivotsLow = findPivotsLow(ltf, 2, 2);
   const rsiArr = computeRsi(ltfCloses, 14);
+  const ltfMacdState = resolveMacdState(ltfCloses);
   const lastLow = pivotsLow[pivotsLow.length - 1];
   const lastHigh = pivotsHigh[pivotsHigh.length - 1];
   const prevHigh =
@@ -3642,6 +3651,8 @@ const computeCoreV2Metrics = (
     ltfRangeExpVolume,
     ltfSweepBackInside,
     ltfRsi,
+    ltfMacdHist: ltfMacdState.macdHist,
+    ltfMacdSignal: ltfMacdState.macdSignal,
     ltfRsiNeutral,
     ltfNoNewHigh,
     ltfNoNewLow,
@@ -7431,12 +7442,10 @@ export function useTradingBot(
           const markPrice = toNumber(
             p?.markPrice ?? p?.lastPrice ?? p?.indexPrice
           );
-          const trailingStop = toNumber(
-            p?.trailingStop ??
-              p?.trailingStopDistance ??
-              p?.trailingStopPrice ??
-              p?.trailPrice
-          );
+          const trailingStop = toNumber(p?.trailingStop);
+          const trailingStopDistance = toNumber(p?.trailingStopDistance);
+          const trailingStopPrice = toNumber(p?.trailingStopPrice);
+          const trailPrice = toNumber(p?.trailPrice);
           const fallback =
             entryFallbackByKey.get(`${symbol}:${side}`) ?? null;
           const triggerPrice = Number.isFinite(triggerFromPos)
@@ -7501,19 +7510,17 @@ export function useTradingBot(
             });
             nextWatermarkKeys.add(watermarkKey);
           }
-          const trailingDistance =
-            Number.isFinite(trailingStop) && trailingStop > 0
-              ? trailingStop
-              : undefined;
-          const trailStopPrice =
-            Number.isFinite(trailingDistance) &&
-            (trailingDistance as number) > 0 &&
-            Number.isFinite(highWatermark) &&
-            Number.isFinite(lowWatermark)
-              ? side === "Buy"
-                ? highWatermark - (trailingDistance as number)
-                : lowWatermark + (trailingDistance as number)
-              : undefined;
+          const trailingFields = resolveTrailingFields({
+            side,
+            trailingStop,
+            trailingStopDistance,
+            trailingStopPrice,
+            trailPrice,
+            highWatermark,
+            lowWatermark,
+          });
+          const trailingDistance = trailingFields.trailingDistance;
+          const trailStopPrice = trailingFields.trailStopPrice;
           const rrr =
             Number.isFinite(resolvedEntry) &&
             Number.isFinite(sl) &&
@@ -7569,8 +7576,8 @@ export function useTradingBot(
                 ? lowWatermark
                 : undefined,
             currentTrailingStop:
-              Number.isFinite(trailingStop) && trailingStop > 0
-                ? trailingStop
+              Number.isFinite(trailingDistance) && trailingDistance > 0
+                ? trailingDistance
                 : undefined,
             trailPlanned: Boolean(trailPlan),
             unrealizedPnl: Number.isFinite(unrealized)
@@ -7673,8 +7680,9 @@ export function useTradingBot(
       const mapped = list
         .map((o: any) => {
           const qty = toNumber(o?.qty ?? o?.orderQty ?? o?.leavesQty);
-          const price = toNumber(o?.price);
-          const triggerPrice = toNumber(o?.triggerPrice ?? o?.trigger_price);
+          const priceRaw = toNumber(o?.price);
+          const triggerPriceRaw = toNumber(o?.triggerPrice ?? o?.trigger_price);
+          const priceFields = resolveOrderPriceFields(priceRaw, triggerPriceRaw);
           const orderId = String(o?.orderId ?? o?.orderID ?? o?.id ?? "");
           const orderLinkId = String(
             o?.orderLinkId ?? o?.order_link_id ?? o?.orderLinkID ?? ""
@@ -7692,8 +7700,9 @@ export function useTradingBot(
             symbol,
             side: side as "Buy" | "Sell",
             qty: Number.isFinite(qty) ? qty : Number.NaN,
-            price: Number.isFinite(price) ? price : null,
-            triggerPrice: Number.isFinite(triggerPrice) ? triggerPrice : null,
+            price: priceFields.price,
+            triggerPrice: priceFields.triggerPrice,
+            shownPrice: priceFields.shownPrice,
             orderType: orderType || undefined,
             stopOrderType: stopOrderType || undefined,
             orderFilter: orderFilter || undefined,
@@ -7705,7 +7714,7 @@ export function useTradingBot(
             nextOrders.set(orderId || orderLinkId, {
               status,
               qty: Number.isFinite(qty) ? qty : Number.NaN,
-              price: Number.isFinite(price) ? price : null,
+              price: priceFields.shownPrice,
               side,
               symbol,
               orderLinkId: orderLinkId || undefined,
@@ -9734,7 +9743,15 @@ export function useTradingBot(
           decisionTrace.find((entry) => !entry.result.ok)?.result.ttlMs ??
           SKIP_LOG_THROTTLE_MS;
         const normalizedSkipCode = String(skipCode ?? "").toUpperCase();
-        const shouldEmitSkipStatus = !SKIP_STATUS_SUPPRESSED_CODES.has(normalizedSkipCode);
+        const relayPausedReason = relayPauseRef.current.pausedReason;
+        const relayCapacityPaused =
+          relayPauseRef.current.paused &&
+          (relayPausedReason === "MAX_POS" ||
+            relayPausedReason === "MAX_ORDERS" ||
+            relayPausedReason === "MAX_POS+MAX_ORDERS");
+        const shouldEmitSkipStatus =
+          !relayCapacityPaused &&
+          !SKIP_STATUS_SUPPRESSED_CODES.has(normalizedSkipCode);
         if (shouldEmitSkipStatus && shouldEmitBlockLog(symbol, skipCode, stateFingerprint, ttlMs, now)) {
           addLogEntries([
             {
@@ -9763,6 +9780,28 @@ export function useTradingBot(
               timestamp: new Date(now).toISOString(),
               action: "RISK_BLOCK",
               message: `${symbol} trend gate 1h/15m [TREND_GATE]: ${trendGate.detail}`,
+            },
+          ]);
+          return;
+        }
+      }
+      if (isTreeProfile) {
+        const trendCore = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+        const treeGate = treeTrendGate5m({
+          side,
+          price: toNumber(trendCore?.ltfClose),
+          ema200_5m: toNumber(trendCore?.ema200),
+          macdHist_5m: toNumber(trendCore?.ltfMacdHist),
+          rsi14_5m: toNumber(trendCore?.ltfRsi),
+        });
+        appendTrace("TreeTrend5m", treeGate);
+        if (!treeGate.ok) {
+          addLogEntries([
+            {
+              id: `signal:tree-trend-gate:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} TREE 5m gate [${treeGate.code}]: ${treeGate.reason}`,
             },
           ]);
           return;
@@ -10168,7 +10207,7 @@ export function useTradingBot(
         }
       }
 
-        if (isAiMaticProfile) {
+      if (isAiMaticProfile) {
           const aiMatic = (decision as any)?.aiMatic as AiMaticContext | null;
           if (aiMaticSwingSetup) {
             if (Number.isFinite(aiMaticSwingSetup.sl) && aiMaticSwingSetup.sl > 0) {
@@ -10227,6 +10266,23 @@ export function useTradingBot(
               resolvedTp = aiMaticTargets.tp1;
             }
           }
+      }
+
+      if (isTreeProfile) {
+        const minStopDistance = resolveMinProtectionDistance(entry, core?.atr14);
+        const slGate = stopValidityGate(entry, resolvedSl, side, minStopDistance);
+        appendTrace("TreeStopValidity", slGate);
+        if (!slGate.ok) {
+          addLogEntries([
+            {
+              id: `signal:tree-stop-gate:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} TREE stop gate [${slGate.code}]: ${slGate.reason}`,
+            },
+          ]);
+          return;
+        }
       }
 
       const normalized = normalizeProtectionLevels(
@@ -10319,8 +10375,14 @@ export function useTradingBot(
       let scalpExitReason: string | null = null;
 
       const fixedSizing = computeFixedSizing(symbol as Symbol, entry, resolvedSl);
-      const sizing =
-        fixedSizing ?? computeNotionalForSignal(symbol as Symbol, entry, resolvedSl);
+      const treeUseDynamicSizing =
+        !isTreeProfile || settingsRef.current.useDynamicPositionSizing !== false;
+      const sizing = isTreeProfile
+        ? treeUseDynamicSizing
+          ? computeNotionalForSignal(symbol as Symbol, entry, resolvedSl)
+          : fixedSizing ??
+            computeNotionalForSignal(symbol as Symbol, entry, resolvedSl)
+        : fixedSizing ?? computeNotionalForSignal(symbol as Symbol, entry, resolvedSl);
       if (!sizing.ok) {
         addLogEntries([
           {
@@ -10344,7 +10406,9 @@ export function useTradingBot(
         riskOffMultiplier,
         portfolioScale.scale
       );
-      const useFixedQty = fixedSizing?.ok === true;
+      const useFixedQty = isTreeProfile
+        ? !treeUseDynamicSizing && fixedSizing?.ok === true
+        : fixedSizing?.ok === true;
       const qtyMode = useFixedQty ? "BASE_QTY" : "USDT_NOTIONAL";
       const baseQty = sizing.qty;
       const baseNotional = sizing.notional;

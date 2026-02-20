@@ -322,7 +322,7 @@ export default function OrdersPanel({
                       {formatQty(order.qty)}
                     </td>
                     <td className="py-3 text-right font-mono tabular-nums">
-                      {formatPrice(order.price)}
+                      {formatPrice(order.shownPrice ?? order.price)}
                     </td>
                     <td className="py-3 text-right font-mono tabular-nums">
                       {formatPrice(order.triggerPrice)}

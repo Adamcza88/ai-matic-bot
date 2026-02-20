@@ -243,6 +243,7 @@ export interface TestnetOrder {
   side: "Buy" | "Sell";
   qty: number;
   price: number | null;
+  shownPrice?: number | null;
   triggerPrice?: number | null;
   orderType?: string;
   stopOrderType?: string;
