@@ -47,8 +47,14 @@ export default function KpiRow({
   riskPerTradeUsd,
   loading,
 }: KpiRowProps) {
-  const usagePct = maxOpenPositions > 0 ? Math.round((openPositions / maxOpenPositions) * 100) : 0;
-  const usageBarPct = Math.max(0, Math.min(100, usagePct));
+  const positionUsagePct = maxOpenPositions > 0
+    ? Math.round((openPositions / maxOpenPositions) * 100)
+    : 0;
+  const orderUsagePct = maxOpenOrders > 0
+    ? Math.round((openOrders / maxOpenOrders) * 100)
+    : 0;
+  const capacityUsagePct = Math.max(positionUsagePct, orderUsagePct);
+  const usageBarPct = Math.max(0, Math.min(100, capacityUsagePct));
 
   return (
     <section className={`${loading ? "tva-loading-values" : ""}`}>
@@ -66,14 +72,14 @@ export default function KpiRow({
             </div>
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Využití limitu</span>
-                <span className={`font-semibold tabular-nums ${usagePct > 80 ? "text-[#D32F2F]" : usagePct > 60 ? "text-[#FFB300]" : "text-[#00C853]"}`}>
-                  {usagePct} %
+                <span className="text-muted-foreground">Využití kapacity (max pozice/příkazy)</span>
+                <span className={`font-semibold tabular-nums ${capacityUsagePct > 80 ? "text-[#D32F2F]" : capacityUsagePct > 60 ? "text-[#FFB300]" : "text-[#00C853]"}`}>
+                  {capacityUsagePct} %
                 </span>
               </div>
               <div className="mt-2 h-1.5 w-full rounded-full bg-background/60">
                 <div
-                  className={`h-1.5 rounded-full ${usagePct > 80 ? "bg-[#D32F2F]" : usagePct > 60 ? "bg-[#FFB300]" : "bg-[#00C853]"}`}
+                  className={`h-1.5 rounded-full ${capacityUsagePct > 80 ? "bg-[#D32F2F]" : capacityUsagePct > 60 ? "bg-[#FFB300]" : "bg-[#00C853]"}`}
                   style={{ width: `${usageBarPct}%` }}
                 />
               </div>

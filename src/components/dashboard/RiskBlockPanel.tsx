@@ -1,20 +1,17 @@
 import { useMemo } from "react";
-import { formatClock, formatMoney, formatSignedMoney } from "@/lib/uiFormat";
+import { formatMoney, formatSignedMoney } from "@/lib/uiFormat";
 import type { ScanDiagnostics } from "@/lib/diagnosticsTypes";
 import type { LogEntry } from "@/types";
 
 type RiskBlockPanelProps = {
   allowedSymbols: string[];
   scanDiagnostics: ScanDiagnostics | null;
-  lastScanTs: number | null;
   logEntries: LogEntry[] | null;
   logsLoaded: boolean;
   riskLevel: "LOW" | "ELEVATED" | "CRITICAL";
   dailyPnl?: number;
   maxDailyLossUsd?: number;
   killSwitchActive?: boolean;
-  openPositions: number;
-  maxOpenPositions: number;
   riskExposureUsd?: number;
   riskExposureLimitUsd?: number;
 };
@@ -42,15 +39,12 @@ function normalizeRiskReason(message: string) {
 export default function RiskBlockPanel({
   allowedSymbols,
   scanDiagnostics,
-  lastScanTs,
   logEntries,
   logsLoaded,
   riskLevel,
   dailyPnl,
   maxDailyLossUsd,
   killSwitchActive,
-  openPositions,
-  maxOpenPositions,
   riskExposureUsd,
   riskExposureLimitUsd,
 }: RiskBlockPanelProps) {
@@ -104,11 +98,11 @@ export default function RiskBlockPanel({
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-foreground">Risk Control</div>
-          <div className="text-xs text-muted-foreground">Aktualizace {formatClock(lastScanTs)}</div>
+          <div className="text-xs text-muted-foreground">Agregace blokací z posledních 200 událostí.</div>
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-2 text-sm md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-3 grid grid-cols-1 gap-2 text-sm md:grid-cols-2 xl:grid-cols-3">
         <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
           <div className="text-xs text-muted-foreground">Max denní ztráta</div>
           <div className={`mt-1 font-semibold tabular-nums ${maxDailyLossBreach ? "text-[#D32F2F]" : "text-foreground"}`}>
@@ -126,16 +120,6 @@ export default function RiskBlockPanel({
           </div>
           <div className="text-[11px] text-muted-foreground">
             {killSwitchActive ? "Trading halted" : "Monitoring only"}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-          <div className="text-xs text-muted-foreground">Aktivní pozice</div>
-          <div className="mt-1 font-semibold tabular-nums text-foreground">
-            {openPositions}/{maxOpenPositions}
-          </div>
-          <div className={`text-[11px] ${openPositions >= maxOpenPositions ? "text-[#D32F2F]" : "text-muted-foreground"}`}>
-            Capacity {maxOpenPositions > 0 ? Math.round((openPositions / maxOpenPositions) * 100) : 0}%
           </div>
         </div>
 

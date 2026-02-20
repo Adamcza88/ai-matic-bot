@@ -22,8 +22,19 @@ type EventRow = {
   count: number;
 };
 
+function isRiskLikeStatus(entry: LogEntry) {
+  if (entry.action !== "STATUS") return false;
+  const text = String(entry.message ?? "").toLowerCase();
+  return (
+    text.includes("skip entry") ||
+    text.includes("entry blocked") ||
+    text.includes("signal_relay_paused") ||
+    text.includes("gate [max_")
+  );
+}
+
 function eventGroup(entry: LogEntry): EventFilter {
-  if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT") return "risk";
+  if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT" || isRiskLikeStatus(entry)) return "risk";
   if (entry.action === "OPEN" || entry.action === "CLOSE" || entry.action === "AUTO_CLOSE") {
     return "orders";
   }
@@ -36,7 +47,7 @@ function extractSymbol(message: string) {
 }
 
 function verdictFor(entry: LogEntry) {
-  if (entry.action === "RISK_BLOCK") return "NO TRADE";
+  if (entry.action === "RISK_BLOCK" || isRiskLikeStatus(entry)) return "NO TRADE";
   if (entry.action === "RISK_HALT") return "HALTED";
   if (entry.action === "OPEN") return "OPENED";
   if (entry.action === "CLOSE" || entry.action === "AUTO_CLOSE") return "CLOSED";
@@ -52,6 +63,10 @@ function compactMessage(message: string, max = 120) {
 
 function riskReason(message: string) {
   const text = String(message ?? "").toLowerCase();
+  const gateMatch = message.match(/gate\s+\[([A-Z_+]+)\]:\s*(.+?)\s*->\s*skip entry/i);
+  if (gateMatch) return `${gateMatch[1]} ${compactMessage(gateMatch[2], 50)}`;
+  if (text.includes("max_pos") || text.includes("max pozic")) return "max positions reached";
+  if (text.includes("max_orders") || text.includes("max order")) return "max orders reached";
   if (text.includes("open pos/order") || text.includes("open position") || text.includes("pozice")) {
     return "open position";
   }
@@ -75,10 +90,11 @@ export default function RecentEventsPanel({
       const symbol = extractSymbol(entry.message);
       const verdict = verdictFor(entry);
       const normalized = compactMessage(entry.message);
+      const riskLike = entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT" || isRiskLikeStatus(entry);
 
-      if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT") {
+      if (riskLike) {
         const reason = riskReason(entry.message);
-        const key = `${entry.action}|${symbol}|${reason}`;
+        const key = `${symbol}|${reason}`;
         const existing = byKey.get(key);
         if (existing) {
           existing.count += 1;
@@ -87,7 +103,7 @@ export default function RecentEventsPanel({
         const row: EventRow = {
           id: key,
           timestamp: entry.timestamp,
-          action: entry.action,
+          action: "RISK_BLOCK",
           symbol,
           verdict,
           message: reason,

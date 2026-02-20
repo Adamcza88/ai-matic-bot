@@ -97,6 +97,9 @@ const CORE_V2_SCORE_GATE: Record<
 const MIN_CHECKLIST_PASS = 8;
 const REENTRY_COOLDOWN_MS = 15_000;
 const SIGNAL_LOG_THROTTLE_MS = 10_000;
+const SIGNAL_LOG_SIMILAR_THROTTLE_MS = 6_000;
+const SIGNAL_LOG_PRICE_BUCKET_RATIO = 0.0002;
+const SIGNAL_LOG_MIN_PRICE_BUCKET = 0.0005;
 const SKIP_LOG_THROTTLE_MS = 10_000;
 const POSITION_GATE_TTL_MS = 60_000;
 const MAX_POS_GATE_TTL_MS = 30_000;
@@ -133,6 +136,12 @@ const SCALP_EXIT_GATE =
 const SCALP_DRIFT_GATE = "HTF Drift Guard (15m)";
 const SCALP_FAKE_MOMENTUM_GATE = "Fake Momentum Filter (1m)";
 const SCALP_PROTECTED_ENTRY_GATE = "Protected Entry Mode";
+const SKIP_STATUS_SUPPRESSED_CODES = new Set([
+  "MAX_POS",
+  "MAX_ORDERS",
+  "MAX_POS+MAX_ORDERS",
+  "OPEN_POSITION",
+]);
 const MAX_OPEN_POSITIONS_CAP = 50000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -392,6 +401,14 @@ function persistSettings(settings: AISettings) {
 function toNumber(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? n : Number.NaN;
+}
+
+function signalPriceBucket(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "na";
+  const step = Math.max(value * SIGNAL_LOG_PRICE_BUCKET_RATIO, SIGNAL_LOG_MIN_PRICE_BUCKET);
+  const bucket = Math.round(value / step) * step;
+  const digits = bucket >= 1_000 ? 2 : bucket >= 100 ? 3 : bucket >= 1 ? 4 : 6;
+  return bucket.toFixed(digits);
 }
 
 function clampPerTradeUsd(value: unknown, fallback: number) {
@@ -9248,11 +9265,25 @@ export function useTradingBot(
       const isChecklistSignal =
         signal.message === "Checklist auto-signál" ||
         signal.message === "Checklist auto-signal";
-      const signalKey = `${symbol}:${side}`;
+      const signalKey = [
+        symbol,
+        side,
+        String(signal.kind ?? "OTHER"),
+        signalPriceBucket(entry),
+        signalPriceBucket(sl),
+        signalPriceBucket(tp),
+      ].join("|");
+      const signalThrottleMs = isChecklistSignal
+        ? SIGNAL_LOG_THROTTLE_MS
+        : SIGNAL_LOG_SIMILAR_THROTTLE_MS;
       const lastSignalLog = signalLogThrottleRef.current.get(signalKey) ?? 0;
-      const shouldLogSignal =
-        !isChecklistSignal || now - lastSignalLog >= SIGNAL_LOG_THROTTLE_MS;
+      const shouldLogSignal = now - lastSignalLog >= signalThrottleMs;
       if (shouldLogSignal) {
+        if (signalLogThrottleRef.current.size > 500) {
+          for (const [key, ts] of signalLogThrottleRef.current.entries()) {
+            if (now - ts > 60_000) signalLogThrottleRef.current.delete(key);
+          }
+        }
         signalLogThrottleRef.current.set(signalKey, now);
         addLogEntries([
           {
@@ -9417,7 +9448,9 @@ export function useTradingBot(
         const ttlMs =
           decisionTrace.find((entry) => !entry.result.ok)?.result.ttlMs ??
           SKIP_LOG_THROTTLE_MS;
-        if (shouldEmitBlockLog(symbol, skipCode, stateFingerprint, ttlMs, now)) {
+        const normalizedSkipCode = String(skipCode ?? "").toUpperCase();
+        const shouldEmitSkipStatus = !SKIP_STATUS_SUPPRESSED_CODES.has(normalizedSkipCode);
+        if (shouldEmitSkipStatus && shouldEmitBlockLog(symbol, skipCode, stateFingerprint, ttlMs, now)) {
           addLogEntries([
             {
               id: `signal:max-pos:${signalId}`,

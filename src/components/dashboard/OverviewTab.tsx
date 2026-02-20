@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import type { AssetPnlMap } from "@/lib/pnlHistory";
 import Panel from "@/components/dashboard/Panel";
-import { formatClock, formatSignedMoney } from "@/lib/uiFormat";
+import { formatSignedMoney } from "@/lib/uiFormat";
 import type { DiagnosticGate, ScanDiagnostics, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
 
 type OverviewTabProps = {
@@ -12,7 +12,6 @@ type OverviewTabProps = {
   resetPnlHistory: () => void;
   scanDiagnostics: ScanDiagnostics | null;
   scanLoaded: boolean;
-  lastScanTs: number | null;
   selectedSymbol: string | null;
 };
 
@@ -43,7 +42,6 @@ export default function OverviewTab({
   resetPnlHistory,
   scanDiagnostics,
   scanLoaded,
-  lastScanTs,
   selectedSymbol,
 }: OverviewTabProps) {
   const activeSymbol = useMemo(() => {
@@ -100,7 +98,7 @@ export default function OverviewTab({
     <div className="space-y-4">
       <Panel
         title="Gate Engine"
-        description={`${activeSymbol ? `Trh ${activeSymbol}` : "Není vybraný trh"} · Poslední sken: ${formatClock(lastScanTs)}`}
+        description={activeSymbol ? `Trh ${activeSymbol}` : "Není vybraný trh"}
         fileId="GATE ENGINE ID: TR-01-G"
       >
         {!scanLoaded ? (

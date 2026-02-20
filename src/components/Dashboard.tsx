@@ -703,7 +703,7 @@ export default function Dashboard({
                 aria-pressed={execOverrideEnabled}
                 className="h-11 px-4 text-sm font-semibold"
               >
-                Override ALL HOLD → EXECUTE
+                Override ALL HOLD → EXECUTE (global)
               </Button>
               <Button
                 type="button"
@@ -713,7 +713,7 @@ export default function Dashboard({
                 aria-pressed={!execOverrideEnabled}
                 className="h-11 px-4 text-sm font-semibold"
               >
-                Disable Override
+                Disable Override (global)
               </Button>
               <Button
                 type="button"
@@ -722,7 +722,7 @@ export default function Dashboard({
                 onClick={handleResetAllGates}
                 className="h-11 px-4 text-sm font-semibold"
               >
-                Reset ALL gates
+                Reset ALL gates (global)
               </Button>
             </div>
 
@@ -842,15 +842,12 @@ export default function Dashboard({
               <RiskBlockPanel
                 allowedSymbols={allowedSymbols}
                 scanDiagnostics={scanDiagnostics}
-                lastScanTs={lastScanTs}
                 logEntries={logEntries}
                 logsLoaded={logsLoaded}
                 riskLevel={riskLevel}
                 dailyPnl={dailyPnl}
                 maxDailyLossUsd={maxDailyLossUsd}
                 killSwitchActive={killSwitchActive}
-                openPositions={openPositionsCount}
-                maxOpenPositions={maxOpenPositions}
                 riskExposureUsd={riskExposureUsd}
                 riskExposureLimitUsd={riskExposureLimitUsd}
               />
@@ -863,7 +860,6 @@ export default function Dashboard({
                     resetPnlHistory={resetPnlHistory}
                     scanDiagnostics={scanDiagnostics}
                     scanLoaded={scanLoaded}
-                    lastScanTs={lastScanTs}
                     selectedSymbol={selectedSignalSymbol}
                   />
                 </div>
@@ -876,10 +872,7 @@ export default function Dashboard({
                     allowedSymbols={allowedSymbols}
                     scanDiagnostics={scanDiagnostics}
                     scanLoaded={scanLoaded}
-                    lastScanTs={lastScanTs}
                     scanAgeOffsetMs={feedAgeOffsetMs}
-                    overrideEnabled={execOverrideEnabled}
-                    resetChecklist={handleResetAllGates}
                     selectedSymbol={selectedSignalSymbol}
                     onSelectSymbol={setSelectedSignalSymbol}
                     loading={dashboardLoading}

@@ -1,18 +1,12 @@
 import { useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import Panel from "@/components/dashboard/Panel";
-import { formatClock } from "@/lib/uiFormat";
 import type { ScanDiagnostics, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
 
 type SignalsAccordionProps = {
   allowedSymbols: string[];
   scanDiagnostics: ScanDiagnostics | null;
   scanLoaded: boolean;
-  lastScanTs: number | null;
   scanAgeOffsetMs?: number;
-  overrideEnabled: boolean;
-  resetChecklist: () => void;
   loading?: boolean;
   selectedSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
@@ -27,25 +21,6 @@ function summary(diag: SymbolDiagnostic | undefined, scanLoaded: boolean) {
   if (diag.executionAllowed === true) return "READY";
   if (diag.executionAllowed === false) return "BLOCKED";
   return "WAITING";
-}
-
-function reason(diag: SymbolDiagnostic | undefined) {
-  const entryBlockReasons = Array.isArray(diag?.entryBlockReasons)
-    ? diag?.entryBlockReasons
-    : [];
-  const skipReason = String(diag?.skipReason ?? "").trim();
-  const skipCode = String(diag?.skipCode ?? "").trim();
-  const value =
-    diag?.relayReason ||
-    (skipReason && skipCode ? `[${skipCode}] ${skipReason}` : skipReason) ||
-    entryBlockReasons[0] ||
-    diag?.executionReason ||
-    diag?.manageReason ||
-    "";
-  if (!value) return "Bez aktivního důvodu.";
-  if (value === "Exec OFF") return "Execution je vypnutý (manual).";
-  if (value === "čeká na signál") return "Čeká na potvrzení signálu.";
-  return value;
 }
 
 function feedToneClass(feedAgeMs?: number) {
@@ -66,10 +41,7 @@ export default function SignalsAccordion({
   allowedSymbols,
   scanDiagnostics,
   scanLoaded,
-  lastScanTs,
   scanAgeOffsetMs,
-  overrideEnabled,
-  resetChecklist,
   loading,
   selectedSymbol,
   onSelectSymbol,
@@ -82,7 +54,6 @@ export default function SignalsAccordion({
           return {
             symbol,
             state: summary(diag, scanLoaded),
-            reason: reason(diag),
             feedAgeMs:
               Number.isFinite(Number(diag?.feedAgeMs))
                 ? Number(diag?.feedAgeMs) + Math.max(0, scanAgeOffsetMs ?? 0)
@@ -107,25 +78,8 @@ export default function SignalsAccordion({
   return (
     <Panel
       title="Signal Relay"
-      description={`Poslední sken: ${formatClock(lastScanTs)}`}
+      description="Stav relaye podle trhu. Důvod blokace je pouze v Gate Engine."
       fileId="SIGNAL RELAY ID: TR-09-S"
-      action={
-        <div className="flex items-center gap-2">
-          <Badge
-            variant="outline"
-            className={
-              overrideEnabled
-                ? "border-[#FFB300]/60 bg-[#FFB300]/10 text-[#FFB300]"
-                : "border-[#00C853]/60 bg-[#00C853]/10 text-[#00C853]"
-            }
-          >
-            {overrideEnabled ? "Override ON" : "Override OFF"}
-          </Badge>
-          <Button variant="outline" size="sm" onClick={resetChecklist} className="h-8 text-xs">
-            Reset gate
-          </Button>
-        </div>
-      }
     >
       {loading ? (
         <div className="space-y-2">
@@ -151,7 +105,6 @@ export default function SignalsAccordion({
               <tr className="[&>th]:py-2 [&>th]:px-3 [&>th]:text-left border-b border-border/60">
                 <th>Trh</th>
                 <th>Stav</th>
-                <th>Důvod</th>
                 <th>Feed age</th>
               </tr>
             </thead>
@@ -180,7 +133,6 @@ export default function SignalsAccordion({
                         {row.state}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{row.reason}</td>
                     <td className={`px-3 py-2 text-xs tabular-nums ${feedToneClass(row.feedAgeMs)}`}>
                       {formatFeedAge(row.feedAgeMs)}
                     </td>

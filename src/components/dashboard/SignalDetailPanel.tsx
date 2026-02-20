@@ -1,5 +1,3 @@
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import Panel from "@/components/dashboard/Panel";
 import type {
   DiagnosticGate,
@@ -13,7 +11,6 @@ type SignalDetailPanelProps = {
   checklistEnabled: Record<string, boolean>;
   toggleChecklist: (name: string) => void;
   profileGateNames: string[];
-  resetChecklist: () => void;
 };
 
 const FEED_OK_MS = 2_000;
@@ -126,7 +123,6 @@ export default function SignalDetailPanel({
   checklistEnabled,
   toggleChecklist,
   profileGateNames,
-  resetChecklist,
 }: SignalDetailPanelProps) {
   const diag = selectedSymbol ? scanDiagnostics?.[selectedSymbol] : null;
   const rawGates = Array.isArray(diag?.gates) ? diag.gates : [];
@@ -152,14 +148,6 @@ export default function SignalDetailPanel({
     diag?.manageReason ||
     "Bez aktivního důvodu exekuce.";
 
-  const statusTone =
-    diag?.relayState === "PAUSED"
-      ? "border-amber-500/50 text-amber-300"
-      : diag?.executionAllowed === true
-      ? "border-emerald-500/50 text-emerald-400"
-      : diag?.executionAllowed === false
-        ? "border-amber-500/50 text-amber-400"
-        : "border-border/60 text-muted-foreground";
   const statusLabel =
     diag?.relayState === "PAUSED"
       ? "PAUSED"
@@ -168,7 +156,6 @@ export default function SignalDetailPanel({
       : diag?.executionAllowed === false
         ? "HOLD"
         : "IDLE";
-  const overrideEnabled = checklistEnabled["Exec allowed"] ?? true;
 
   return (
     <Panel
@@ -176,31 +163,6 @@ export default function SignalDetailPanel({
       description={selectedSymbol ? `Trh: ${selectedSymbol}` : "Není vybraný trh."}
       fileId="SIGNAL DETAIL ID: TR-12-D"
       className="dashboard-detail-panel"
-      action={
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge
-            variant="outline"
-            className={
-              overrideEnabled
-                ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
-                : "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
-            }
-          >
-            {overrideEnabled ? "Override ON" : "Override OFF"}
-          </Badge>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={() => toggleChecklist("Exec allowed")}
-          >
-            Přepnout override
-          </Button>
-          <Button variant="outline" size="sm" className="h-8 text-xs" onClick={resetChecklist}>
-            Reset gate
-          </Button>
-        </div>
-      }
     >
       {!scanLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
@@ -222,9 +184,9 @@ export default function SignalDetailPanel({
             <div className="rounded-lg border border-border/60 bg-card/70 p-2">
               <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Exekuce</div>
               <div className="mt-1">
-                <Badge variant="outline" className={statusTone}>
+                <span className="inline-flex rounded-md border border-border/60 px-2 py-0.5 text-[11px] font-semibold text-foreground">
                   {statusLabel}
-                </Badge>
+                </span>
               </div>
             </div>
           </div>
