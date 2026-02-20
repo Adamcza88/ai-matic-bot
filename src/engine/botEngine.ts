@@ -305,7 +305,7 @@ export const defaultConfig: BotConfig = {
   pullbackRsiMax: 65,
   emaTrendPeriod: 200,
   emaTrendConfirmBars: 2,
-  emaTrendTouchLookback: 2,
+  emaTrendTouchLookback: 8,
 };
 
 export type RegimeRsiContext = {
@@ -862,7 +862,7 @@ export class TradingBot {
     score: number;
     adx: number;
   } {
-    if (df.length < 20) {
+    if (df.length < 205) {
       return { trend: Trend.Range, score: 0, adx: Number.NaN };
     }
     const closes = df.map((c) => c.close);
@@ -870,63 +870,59 @@ export class TradingBot {
     const lows = df.map((c) => c.low);
     const adxArray = computeADX(highs, lows, closes, this.config.adxPeriod);
     const currentAdx = adxArray[adxArray.length - 1];
-
-    const ema = (series: number[], period: number): number[] => {
-      const out: number[] = [];
-      const k = 2 / (period + 1);
-      series.forEach((p, i) => {
-        if (i === 0) out.push(p);
-        else out.push(out[i - 1] + k * (p - out[i - 1]));
-      });
-      return out;
-    };
-    const ema200 = ema(closes, 200);
-    const price = closes[closes.length - 1];
-    const e200 = ema200[ema200.length - 1];
-
-    const swingWindow = 2;
-    const swingHighs: number[] = [];
-    const swingLows: number[] = [];
-    for (let i = swingWindow; i < highs.length - swingWindow; i++) {
-      const h = highs[i];
-      const l = lows[i];
-      let isHigh = true;
-      let isLow = true;
-      for (let j = i - swingWindow; j <= i + swingWindow; j++) {
-        if (j === i) continue;
-        if (highs[j] > h) isHigh = false;
-        if (lows[j] < l) isLow = false;
-        if (!isHigh && !isLow) break;
-      }
-      if (isHigh) swingHighs.push(h);
-      if (isLow) swingLows.push(l);
+    const ema200Arr = computeEma(closes, 200);
+    const confirmBars = Math.max(1, this.config.emaTrendConfirmBars ?? 2);
+    const breakoutLookback = Math.max(
+      confirmBars + 1,
+      this.config.emaTrendTouchLookback ?? 8
+    );
+    let bullBreakoutIdx = -1;
+    let bearBreakoutIdx = -1;
+    const start = Math.max(1, closes.length - breakoutLookback);
+    for (let i = start; i < closes.length; i++) {
+      const prevClose = closes[i - 1];
+      const prevEma = ema200Arr[i - 1];
+      const close = closes[i];
+      const ema = ema200Arr[i];
+      if (!Number.isFinite(prevClose) || !Number.isFinite(prevEma)) continue;
+      if (!Number.isFinite(close) || !Number.isFinite(ema)) continue;
+      if (prevClose <= prevEma && close > ema) bullBreakoutIdx = i;
+      if (prevClose >= prevEma && close < ema) bearBreakoutIdx = i;
     }
-    const lastHighs = swingHighs.slice(-2);
-    const lastLows = swingLows.slice(-2);
-    const structureBull =
-      lastHighs.length === 2 &&
-      lastLows.length === 2 &&
-      lastHighs[1] > lastHighs[0] &&
-      lastLows[1] > lastLows[0];
-    const structureBear =
-      lastHighs.length === 2 &&
-      lastLows.length === 2 &&
-      lastHighs[1] < lastHighs[0] &&
-      lastLows[1] < lastLows[0];
-
-    let bullScore = 0;
-    let bearScore = 0;
-    if (price > e200) bullScore += 3;
-    else bearScore += 3;
-    if (structureBull) bullScore += 1;
-    if (structureBear) bearScore += 1;
-
-    const score = Math.max(bullScore, bearScore);
+    const lastIdx = closes.length - 1;
+    const confirmedBull =
+      bullBreakoutIdx >= 0 &&
+      lastIdx - bullBreakoutIdx + 1 >= confirmBars &&
+      (() => {
+        for (
+          let i = Math.max(bullBreakoutIdx, closes.length - confirmBars);
+          i < closes.length;
+          i++
+        ) {
+          if (closes[i] <= ema200Arr[i]) return false;
+        }
+        return true;
+      })();
+    const confirmedBear =
+      bearBreakoutIdx >= 0 &&
+      lastIdx - bearBreakoutIdx + 1 >= confirmBars &&
+      (() => {
+        for (
+          let i = Math.max(bearBreakoutIdx, closes.length - confirmBars);
+          i < closes.length;
+          i++
+        ) {
+          if (closes[i] >= ema200Arr[i]) return false;
+        }
+        return true;
+      })();
     let trend = Trend.Range;
-    if (bullScore >= 3 && bullScore > bearScore) trend = Trend.Bull;
-    else if (bearScore >= 3 && bearScore > bullScore) trend = Trend.Bear;
-    else if (currentAdx < this.config.adxThreshold) trend = Trend.Range;
-
+    if (confirmedBull && !confirmedBear) trend = Trend.Bull;
+    else if (confirmedBear && !confirmedBull) trend = Trend.Bear;
+    else if (confirmedBull && confirmedBear) {
+      trend = bullBreakoutIdx >= bearBreakoutIdx ? Trend.Bull : Trend.Bear;
+    }
+    const score = trend === Trend.Range ? 0 : 3;
     return { trend, score, adx: currentAdx };
   }
 
@@ -1543,7 +1539,8 @@ export class TradingBot {
     if (this.position.side === "long" && currentPrice <= this.position.takeProfit) return;
     if (this.position.side === "short" && currentPrice >= this.position.takeProfit) return;
     // Determine trend on higher timeframe
-    const trend = this.determineTrend(ht);
+    const trendFrame = resampleCandles(lt, 5);
+    const trend = this.determineTrend(trendFrame.length ? trendFrame : lt);
     if (trend === Trend.Range) return;
     const adxVal = computeADX(
       ht.map((c) => c.high),
@@ -1771,8 +1768,10 @@ export class TradingBot {
     if (this.cooldownUntil && new Date() < this.cooldownUntil) return null;
     if (!ht.length || !mid.length || !lt.length || !exec.length) return null;
 
-    const htfTrend = this.determineTrend(ht);
-    const midTrend = this.determineTrend(mid);
+    const trendFrame = resampleCandles(lt, 5);
+    const trendRef = trendFrame.length ? trendFrame : lt;
+    const htfTrend = this.determineTrend(trendRef);
+    const midTrend = htfTrend;
     const candidate = this.scanForEntryFromFrames(ht, lt);
     if (!candidate) return null;
     if (!Number.isFinite(candidate.stopLoss)) return null;
@@ -1833,43 +1832,55 @@ export class TradingBot {
       return null; // Too volatile, skip
     }
 
-    const emaTrendPeriod = this.config.emaTrendPeriod ?? 200;
+    const trendFrame = resampleCandles(lt, 5);
+    const trendCandles = trendFrame.length ? trendFrame : lt;
+    const emaTrendPeriod = 200;
     const emaTrendTouchLookback = Math.max(
-      1,
-      this.config.emaTrendTouchLookback ?? 2
+      2,
+      this.config.emaTrendTouchLookback ?? 8
     );
     const emaTrendConfirmBars = Math.max(
       1,
       this.config.emaTrendConfirmBars ?? 2
     );
-    const htCloses = ht.map((c) => c.close);
-    const emaTrendArr = computeEma(htCloses, emaTrendPeriod);
+    const trendCloses = trendCandles.map((c) => c.close);
+    const emaTrendArr = computeEma(trendCloses, emaTrendPeriod);
     const emaTrendNow = emaTrendArr[emaTrendArr.length - 1];
-    const htLast = ht[ht.length - 1];
+    const trendLast = trendCandles[trendCandles.length - 1];
     const emaTrendBias =
-      Number.isFinite(emaTrendNow) && Number.isFinite(htLast?.close)
-        ? htLast.close > emaTrendNow
+      Number.isFinite(emaTrendNow) && Number.isFinite(trendLast?.close)
+        ? trendLast.close > emaTrendNow
           ? "long"
-          : htLast.close < emaTrendNow
+          : trendLast.close < emaTrendNow
             ? "short"
             : null
         : null;
     if (!emaTrendBias) return null;
-    let emaTouched = false;
-    const touchStart = Math.max(0, ht.length - emaTrendTouchLookback);
-    for (let i = touchStart; i < ht.length; i++) {
-      const candle = ht[i];
+    let emaBreakout = false;
+    const touchStart = Math.max(1, trendCandles.length - emaTrendTouchLookback);
+    for (let i = touchStart; i < trendCandles.length; i++) {
+      const prevClose = trendCloses[i - 1];
+      const prevEma = emaTrendArr[i - 1];
+      const close = trendCloses[i];
       const emaAt = emaTrendArr[i];
-      if (!candle || !Number.isFinite(emaAt)) continue;
-      if (candle.low <= emaAt && candle.high >= emaAt) {
-        emaTouched = true;
+      if (!Number.isFinite(prevClose) || !Number.isFinite(prevEma)) continue;
+      if (!Number.isFinite(close) || !Number.isFinite(emaAt)) continue;
+      if (
+        (emaTrendBias === "long" && prevClose <= prevEma && close > emaAt) ||
+        (emaTrendBias === "short" && prevClose >= prevEma && close < emaAt)
+      ) {
+        emaBreakout = true;
         break;
       }
     }
-    if (emaTouched) {
-      const confirmStart = Math.max(0, ht.length - emaTrendConfirmBars);
-      for (let i = confirmStart; i < ht.length; i++) {
-        const candle = ht[i];
+    if (!emaBreakout) return null;
+    {
+      const confirmStart = Math.max(
+        0,
+        trendCandles.length - emaTrendConfirmBars
+      );
+      for (let i = confirmStart; i < trendCandles.length; i++) {
+        const candle = trendCandles[i];
         const emaAt = emaTrendArr[i];
         if (!candle || !Number.isFinite(emaAt)) return null;
         if (emaTrendBias === "long" && candle.close <= emaAt) return null;
@@ -1883,7 +1894,7 @@ export class TradingBot {
     const rsiArr = computeRsi(lt.map(c=>c.close), this.config.pullbackRsiPeriod ?? 14);
     const rsiNow = rsiArr[rsiArr.length - 1] || 50;
 
-    let trend = this.determineTrend(ht);
+    let trend = this.determineTrend(trendCandles);
     const regimeAwareRsi = resolveRegimeAwareRsiBounds({
       baseOversold: this.config.pullbackRsiMin ?? 35,
       baseOverbought: this.config.pullbackRsiMax ?? 70,
@@ -1931,7 +1942,7 @@ export class TradingBot {
       if (!candidate) return null;
       candidate.entryAtr = latestATR;
       if (candidate.side !== emaTrendBias) return null;
-      if (emaTouched && candidate.kind !== "PULLBACK") return null;
+      if (!emaBreakout) return null;
       
       // Compute SOS Score
       const score = this.computeSosScore(
@@ -2374,8 +2385,8 @@ export function evaluateStrategyForSymbol(
     bot.stepWithFrames(ht, lt);
   }
 
-
-  const trendMetrics = bot.getTrendMetrics(ht);
+  const trendFrame = resampleCandles(candles, 5);
+  const trendMetrics = bot.getTrendMetrics(trendFrame.length ? trendFrame : ht);
 
   const trend = trendMetrics.trend;
 

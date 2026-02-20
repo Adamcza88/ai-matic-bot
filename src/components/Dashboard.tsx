@@ -261,9 +261,9 @@ export default function Dashboard({
   const CHECKLIST_DEFAULTS_BY_PROFILE = useMemo(() => {
     const base = {
       "HTF bias": true,
-      "EMA order": true,
-      "EMA sep1": true,
-      "EMA sep2": true,
+      "EMA200 trend": true,
+      "EMA200 breakout": true,
+      "EMA200 confirm": true,
       "ATR% window": true,
       "Volume Pxx": true,
       "LTF pullback": true,

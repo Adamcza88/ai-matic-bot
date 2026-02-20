@@ -21,6 +21,8 @@ export type HTFTrendOptions = {
   emaPeriod?: number;
   minBars?: number;
   slopeLookback?: number;
+  breakoutLookback?: number;
+  confirmBars?: number;
 };
 
 export function evaluateHTFTrend(
@@ -34,6 +36,8 @@ export function evaluateHTFTrend(
   const emaPeriod = opts?.emaPeriod ?? 200;
   const minBars = opts?.minBars ?? Math.max(lookback * 2 + 2, emaPeriod);
   const slopeLookback = Math.max(1, opts?.slopeLookback ?? 6);
+  const breakoutLookback = Math.max(2, opts?.breakoutLookback ?? 8);
+  const confirmBars = Math.max(1, opts?.confirmBars ?? 2);
 
   if (!candles || candles.length < minBars) {
     return {
@@ -58,32 +62,52 @@ export function evaluateHTFTrend(
   const lastLow = lows[lows.length - 1];
   const prevLow = lows[lows.length - 2];
 
+  let bullBreakoutIdx = -1;
+  let bearBreakoutIdx = -1;
+  const start = Math.max(1, closes.length - breakoutLookback);
+  for (let i = start; i < closes.length; i++) {
+    const prevClose = closes[i - 1];
+    const prevEma = ema200Arr[i - 1];
+    const close = closes[i];
+    const ema = ema200Arr[i];
+    if (!Number.isFinite(prevClose) || !Number.isFinite(prevEma)) continue;
+    if (!Number.isFinite(close) || !Number.isFinite(ema)) continue;
+    if (prevClose <= prevEma && close > ema) bullBreakoutIdx = i;
+    if (prevClose >= prevEma && close < ema) bearBreakoutIdx = i;
+  }
+  const lastIdx = closes.length - 1;
+  const confirmedBull =
+    bullBreakoutIdx >= 0 &&
+    lastIdx - bullBreakoutIdx + 1 >= confirmBars &&
+    (() => {
+      for (let i = Math.max(bullBreakoutIdx, closes.length - confirmBars); i < closes.length; i++) {
+        if (closes[i] <= ema200Arr[i]) return false;
+      }
+      return true;
+    })();
+  const confirmedBear =
+    bearBreakoutIdx >= 0 &&
+    lastIdx - bearBreakoutIdx + 1 >= confirmBars &&
+    (() => {
+      for (let i = Math.max(bearBreakoutIdx, closes.length - confirmBars); i < closes.length; i++) {
+        if (closes[i] >= ema200Arr[i]) return false;
+      }
+      return true;
+    })();
+
   let direction: TrendDirection = "none";
-  let score = 0;
-
-  if (lastClose > ema200 && lastHigh && prevHigh && lastLow && prevLow) {
-    const hh = lastHigh.price > prevHigh.price;
-    const hl = lastLow.price > prevLow.price;
-    if (hh && hl) {
-      direction = "bull";
-      tags.push("HH", "HL");
-      score += 2;
-    }
-    if (lastClose > ema200) score += 1;
+  if (confirmedBull && !confirmedBear) direction = "bull";
+  else if (confirmedBear && !confirmedBull) direction = "bear";
+  else if (confirmedBull && confirmedBear) {
+    direction = bullBreakoutIdx >= bearBreakoutIdx ? "bull" : "bear";
   }
+  const score = direction === "none" ? 0 : 3;
+  if (bullBreakoutIdx >= 0) tags.push("BREAKOUT_UP");
+  if (bearBreakoutIdx >= 0) tags.push("BREAKOUT_DOWN");
+  if (confirmedBull || confirmedBear) tags.push("CONFIRMED");
+  if (lastClose > ema200) tags.push("ABOVE_EMA200");
+  if (lastClose < ema200) tags.push("BELOW_EMA200");
 
-  if (lastClose < ema200 && lastHigh && prevHigh && lastLow && prevLow) {
-    const ll = lastLow.price < prevLow.price;
-    const lh = lastHigh.price < prevHigh.price;
-    if (ll && lh) {
-      direction = "bear";
-      tags.push("LL", "LH");
-      score += 2;
-    }
-    if (lastClose < ema200) score += 1;
-  }
-
-  if (direction === "none") tags.push("STRUCTURE_NONE");
   const slopeBaseIdx = Math.max(0, ema200Arr.length - 1 - slopeLookback);
   const emaSlope = ema200Arr[ema200Arr.length - 1] - ema200Arr[slopeBaseIdx];
   if (direction === "bull" && emaSlope > 0) tags.push("EMA_SLOPE_UP");
@@ -157,8 +181,8 @@ export function evaluateHTFMultiTrend(
     resample?: (timeframeMin: number) => Candle[];
   }
 ): HTFMultiTrendResult {
-  const timeframes = opts?.timeframesMin ?? [60, 240, 1440];
-  const emaByTf = opts?.emaByTimeframe ?? { 60: 200, 240: 120, 1440: 60 };
+  const timeframes = opts?.timeframesMin ?? [5];
+  const emaByTf = opts?.emaByTimeframe ?? { 5: 200 };
   const resample = opts?.resample ?? ((tf: number) => resampleCandles(candles, tf));
   const byTimeframe: TimeframeTrend[] = [];
   for (const tf of timeframes) {
@@ -178,8 +202,9 @@ export function evaluateHTFMultiTrend(
   const bear = byTimeframe.filter((t) => t.result.direction === "bear").length;
   const alignedCount = Math.max(bull, bear);
   let consensus: TrendDirection = "none";
-  if (bull >= 2) consensus = "bull";
-  else if (bear >= 2) consensus = "bear";
+  const required = Math.max(1, Math.ceil(timeframes.length / 2));
+  if (bull >= required) consensus = "bull";
+  else if (bear >= required) consensus = "bear";
   if (consensus !== "none") tags.push(`ALIGN_${consensus.toUpperCase()}`);
   const score = byTimeframe.reduce((sum, t) => sum + (t.result.score || 0), 0);
   return {

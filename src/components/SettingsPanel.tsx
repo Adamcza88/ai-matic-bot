@@ -200,7 +200,7 @@ const SettingsPanel: React.FC<Props> = ({
       description: "Multi‑TF trendový engine s R‑based řízením.",
       notes: [
         ORDER_VALUE_NOTE,
-        "Bias gate: EMA50 + shoda HTF(1h)/mid(15m) se směrem obchodu.",
+        "Bias gate: EMA200 na 5m + potvrzený průraz směru.",
         "Entry typy: MOMENTUM / PULLBACK / BREAKOUT.",
         "SL: swing-based (nebo ATR fallback) + minimální bezpečná vzdálenost.",
         "TP: R-based (u tree 2.2R) + partial 1.0R (50%).",
@@ -230,9 +230,9 @@ const SettingsPanel: React.FC<Props> = ({
   const summaryText = `${coreMeta.title} · ${coreMeta.summary}`;
   const coreV2GateNames = [
     "HTF bias",
-    "EMA order",
-    "EMA sep1",
-    "EMA sep2",
+    "EMA200 trend",
+    "EMA200 breakout",
+    "EMA200 confirm",
     "ATR% window",
     "Volume Pxx",
     "LTF pullback",
@@ -286,7 +286,7 @@ const SettingsPanel: React.FC<Props> = ({
 
   const AI_MATIC_PRESET_UI: AISettings = {
     riskMode: "ai-matic",
-    trendGateMode: "adaptive",
+    trendGateMode: "follow",
     pauseOnHighVolatility: false,
     avoidLowLiquidity: false,
     useTrendFollowing: true,
@@ -318,7 +318,7 @@ const SettingsPanel: React.FC<Props> = ({
 
   const AI_MATIC_X_PRESET_UI: AISettings = {
     riskMode: "ai-matic-x",
-    trendGateMode: "adaptive",
+    trendGateMode: "follow",
     pauseOnHighVolatility: false,
     avoidLowLiquidity: false,
     useTrendFollowing: true,
@@ -350,7 +350,7 @@ const SettingsPanel: React.FC<Props> = ({
 
   const AI_MATIC_SCALP_PRESET_UI: AISettings = {
     riskMode: "ai-matic-scalp",
-    trendGateMode: "adaptive",
+    trendGateMode: "follow",
     pauseOnHighVolatility: false,
     avoidLowLiquidity: false,
     useTrendFollowing: true,
@@ -382,7 +382,7 @@ const SettingsPanel: React.FC<Props> = ({
 
   const AI_MATIC_TREE_PRESET_UI: AISettings = {
     riskMode: "ai-matic-tree",
-    trendGateMode: "adaptive",
+    trendGateMode: "follow",
     pauseOnHighVolatility: false,
     avoidLowLiquidity: true,
     useTrendFollowing: true,
@@ -414,7 +414,7 @@ const SettingsPanel: React.FC<Props> = ({
 
   const AI_MATIC_PRO_PRESET_UI: AISettings = {
     riskMode: "ai-matic-pro",
-    trendGateMode: "adaptive",
+    trendGateMode: "follow",
     pauseOnHighVolatility: false,
     avoidLowLiquidity: false,
     useTrendFollowing: true,
@@ -468,6 +468,7 @@ const SettingsPanel: React.FC<Props> = ({
     const saved = profileSettingsRef.current[mode];
     if (!saved) return preset;
     const merged: AISettings = { ...preset, ...saved, riskMode: mode };
+    merged.trendGateMode = "follow";
     if (!Number.isFinite(merged.maxOpenPositions)) {
       merged.maxOpenPositions = preset.maxOpenPositions;
     } else {
@@ -829,21 +830,14 @@ const SettingsPanel: React.FC<Props> = ({
               </label>
               <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
                 <select
-                  value={local.trendGateMode}
-                  onChange={(e) =>
-                    setLocal({
-                      ...local,
-                      trendGateMode: e.target.value as AISettings["trendGateMode"],
-                    })
-                  }
+                  value="follow"
+                  disabled
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
                 >
-                  <option value="adaptive">Adaptive</option>
                   <option value="follow">Follow</option>
-                  <option value="reverse">Reverse</option>
                 </select>
                 <div className="text-xs text-secondary-foreground/70">
-                  Filtr směru trendu z HTF 1h. Adaptive přepíná Follow/Reverse podle síly trendu.
+                  Fixní režim: EMA200 na 5m, průraz a potvrzení trendu.
                 </div>
               </div>
             </div>
@@ -852,28 +846,18 @@ const SettingsPanel: React.FC<Props> = ({
           {local.riskMode !== "ai-matic-pro" ? (
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none">
-                EMA Trend Perioda
+                Trend filtr
               </label>
               <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
                 <input
                   type="number"
-                  min={10}
-                  max={1000}
-                  step={10}
-                  value={local.emaTrendPeriod ?? 200}
-                  onChange={(event) => {
-                    const next = event.currentTarget.valueAsNumber;
-                    setLocal({
-                      ...local,
-                      emaTrendPeriod: Number.isFinite(next)
-                        ? Math.max(10, Math.round(next))
-                        : 200,
-                    });
-                  }}
+                  value={200}
+                  disabled
+                  readOnly
                   className="w-24 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
                 />
                 <span className="text-xs text-secondary-foreground/70">
-                  Perioda EMA pro určení hlavního trendu (HTF).
+                  Fixní EMA200 na TF 5m s průrazem a potvrzením trendu.
                 </span>
               </div>
             </div>

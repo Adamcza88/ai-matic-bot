@@ -138,15 +138,15 @@ const TREND_DAY_ADX_MIN = 20;
 const TREND_GATE_STRONG_SCORE = 3;
 const TREND_GATE_REVERSE_ADX = 19;
 const TREND_GATE_REVERSE_SCORE = 1;
-const HTF_TIMEFRAMES_MIN = [60, 240, 1440];
-const AI_MATIC_HTF_TIMEFRAMES_MIN = [60, 15];
-const AI_MATIC_LTF_TIMEFRAMES_MIN = [5, 1];
-const SCALP_LTF_TIMEFRAMES_MIN = [5, 1];
+const HTF_TIMEFRAMES_MIN = [5];
+const AI_MATIC_HTF_TIMEFRAMES_MIN = [5];
+const AI_MATIC_LTF_TIMEFRAMES_MIN = [5];
+const SCALP_LTF_TIMEFRAMES_MIN = [5];
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
-const EMA_TREND_PERIOD = 50;
+const EMA_TREND_PERIOD = 200;
 const EMA_TREND_CONFIRM_BARS = 2;
-const EMA_TREND_TOUCH_LOOKBACK = 2;
-const EMA_TREND_TIMEFRAMES_MIN = [60, 15, 5];
+const EMA_TREND_TOUCH_LOOKBACK = 8;
+const EMA_TREND_TIMEFRAMES_MIN = [5];
 const SCALP_EMA_PERIOD = 21;
 const SCALP_SWING_LOOKBACK = 2;
 const SCALP_EMA_FLAT_PCT = 0.02;
@@ -275,7 +275,7 @@ type AiMaticAdaptiveRiskParams = {
 
 const DEFAULT_SETTINGS: AISettings = {
   riskMode: "ai-matic",
-  trendGateMode: "adaptive",
+  trendGateMode: "follow",
   pauseOnHighVolatility: false,
   avoidLowLiquidity: false,
   useTrendFollowing: true,
@@ -311,13 +311,7 @@ function loadStoredSettings(): AISettings | null {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
     const merged = { ...DEFAULT_SETTINGS, ...parsed } as AISettings;
-    if (
-      merged.trendGateMode !== "adaptive" &&
-      merged.trendGateMode !== "follow" &&
-      merged.trendGateMode !== "reverse"
-    ) {
-      merged.trendGateMode = "adaptive";
-    }
+    merged.trendGateMode = "follow";
     if (typeof merged.autoRefreshEnabled !== "boolean") {
       merged.autoRefreshEnabled = DEFAULT_SETTINGS.autoRefreshEnabled;
     }
@@ -395,6 +389,90 @@ function clampPerTradeUsd(value: unknown, fallback: number) {
   );
 }
 
+type Ema200BreakoutState = {
+  direction: "BULL" | "BEAR" | "NONE";
+  ema: number;
+  close: number;
+  breakoutBull: boolean;
+  breakoutBear: boolean;
+  confirmedBull: boolean;
+  confirmedBear: boolean;
+};
+
+function resolveEma200BreakoutState(
+  candles: Candle[],
+  opts?: { emaPeriod?: number; breakoutLookback?: number; confirmBars?: number }
+): Ema200BreakoutState {
+  const emaPeriod = Math.max(10, Math.round(opts?.emaPeriod ?? EMA_TREND_PERIOD));
+  const breakoutLookback = Math.max(
+    2,
+    Math.round(opts?.breakoutLookback ?? EMA_TREND_TOUCH_LOOKBACK)
+  );
+  const confirmBars = Math.max(1, Math.round(opts?.confirmBars ?? EMA_TREND_CONFIRM_BARS));
+  const closes = candles.map((c) => c.close);
+  if (closes.length < Math.max(emaPeriod + 2, confirmBars + 2)) {
+    return {
+      direction: "NONE",
+      ema: Number.NaN,
+      close: Number.NaN,
+      breakoutBull: false,
+      breakoutBear: false,
+      confirmedBull: false,
+      confirmedBear: false,
+    };
+  }
+  const emaArr = computeEma(closes, emaPeriod);
+  const lastIdx = closes.length - 1;
+  const close = closes[lastIdx];
+  const ema = emaArr[lastIdx];
+  const start = Math.max(1, closes.length - breakoutLookback);
+  let bullBreakoutIdx = -1;
+  let bearBreakoutIdx = -1;
+  for (let i = start; i <= lastIdx; i++) {
+    const prevClose = closes[i - 1];
+    const prevEma = emaArr[i - 1];
+    const currClose = closes[i];
+    const currEma = emaArr[i];
+    if (!Number.isFinite(prevClose) || !Number.isFinite(prevEma)) continue;
+    if (!Number.isFinite(currClose) || !Number.isFinite(currEma)) continue;
+    if (prevClose <= prevEma && currClose > currEma) bullBreakoutIdx = i;
+    if (prevClose >= prevEma && currClose < currEma) bearBreakoutIdx = i;
+  }
+  const confirmedBull =
+    bullBreakoutIdx >= 0 &&
+    lastIdx - bullBreakoutIdx + 1 >= confirmBars &&
+    (() => {
+      for (let i = Math.max(bullBreakoutIdx, lastIdx - confirmBars + 1); i <= lastIdx; i++) {
+        if (closes[i] <= emaArr[i]) return false;
+      }
+      return true;
+    })();
+  const confirmedBear =
+    bearBreakoutIdx >= 0 &&
+    lastIdx - bearBreakoutIdx + 1 >= confirmBars &&
+    (() => {
+      for (let i = Math.max(bearBreakoutIdx, lastIdx - confirmBars + 1); i <= lastIdx; i++) {
+        if (closes[i] >= emaArr[i]) return false;
+      }
+      return true;
+    })();
+  let direction: Ema200BreakoutState["direction"] = "NONE";
+  if (confirmedBull && !confirmedBear) direction = "BULL";
+  else if (confirmedBear && !confirmedBull) direction = "BEAR";
+  else if (confirmedBull && confirmedBear) {
+    direction = bullBreakoutIdx >= bearBreakoutIdx ? "BULL" : "BEAR";
+  }
+  return {
+    direction,
+    ema,
+    close,
+    breakoutBull: bullBreakoutIdx >= 0,
+    breakoutBear: bearBreakoutIdx >= 0,
+    confirmedBull,
+    confirmedBear,
+  };
+}
+
 type EmaTrendFrame = {
   timeframeMin: number;
   direction: "bull" | "bear" | "none";
@@ -402,6 +480,7 @@ type EmaTrendFrame = {
   close: number;
   touched: boolean;
   confirmed: boolean;
+  breakout: boolean;
 };
 
 type EmaTrendResult = {
@@ -422,12 +501,11 @@ function evaluateEmaMultiTrend(
 ): EmaTrendResult {
   const timeframes = opts?.timeframesMin ?? EMA_TREND_TIMEFRAMES_MIN;
   const emaPeriod = opts?.emaPeriod ?? EMA_TREND_PERIOD;
-  const touchLookback = Math.max(1, opts?.touchLookback ?? EMA_TREND_TOUCH_LOOKBACK);
+  const touchLookback = Math.max(2, opts?.touchLookback ?? EMA_TREND_TOUCH_LOOKBACK);
   const confirmBars = Math.max(1, opts?.confirmBars ?? EMA_TREND_CONFIRM_BARS);
   const byTimeframe: EmaTrendFrame[] = timeframes.map((tf) => {
     const sampled = resampleCandles(candles, tf);
-    const minBars = Math.max(emaPeriod, touchLookback, confirmBars + 1);
-    if (!sampled.length || sampled.length < minBars) {
+    if (!sampled.length) {
       return {
         timeframeMin: tf,
         direction: "none",
@@ -435,56 +513,30 @@ function evaluateEmaMultiTrend(
         close: Number.NaN,
         touched: false,
         confirmed: false,
+        breakout: false,
       };
     }
-    const closes = sampled.map((c) => c.close);
-    const emaArr = computeEma(closes, emaPeriod);
-    const emaNow = emaArr[emaArr.length - 1];
-    const close = closes[closes.length - 1];
+    const breakout = resolveEma200BreakoutState(sampled, {
+      emaPeriod,
+      breakoutLookback: touchLookback,
+      confirmBars,
+    });
     const direction =
-      close > emaNow ? "bull" : close < emaNow ? "bear" : "none";
-    let touched = false;
-    const touchStart = Math.max(0, sampled.length - touchLookback);
-    for (let i = touchStart; i < sampled.length; i++) {
-      const candle = sampled[i];
-      const emaAt = emaArr[i];
-      if (!candle || !Number.isFinite(emaAt)) continue;
-      if (candle.low <= emaAt && candle.high >= emaAt) {
-        touched = true;
-        break;
-      }
-    }
-    let confirmed = true;
-    if (touched) {
-      if (direction === "none") {
-        confirmed = false;
-      } else {
-        const confirmStart = Math.max(0, sampled.length - confirmBars);
-        for (let i = confirmStart; i < sampled.length; i++) {
-          const candle = sampled[i];
-          const emaAt = emaArr[i];
-          if (!candle || !Number.isFinite(emaAt)) {
-            confirmed = false;
-            break;
-          }
-          if (direction === "bull" && candle.close <= emaAt) {
-            confirmed = false;
-            break;
-          }
-          if (direction === "bear" && candle.close >= emaAt) {
-            confirmed = false;
-            break;
-          }
-        }
-      }
-    }
+      breakout.direction === "BULL"
+        ? "bull"
+        : breakout.direction === "BEAR"
+          ? "bear"
+          : "none";
+    const touched = breakout.breakoutBull || breakout.breakoutBear;
+    const confirmed = breakout.confirmedBull || breakout.confirmedBear;
     return {
       timeframeMin: tf,
       direction,
-      ema: emaNow,
-      close,
+      ema: breakout.ema,
+      close: breakout.close,
       touched,
       confirmed,
+      breakout: touched,
     };
   });
   const bull = byTimeframe.filter((t) => t.direction === "bull").length;
@@ -528,9 +580,8 @@ type AiMaticPatterns = {
 type AiMaticEmaFlags = {
   bullOk: boolean;
   bearOk: boolean;
-  crossRecent: boolean;
-  ema20: number;
-  ema50: number;
+  breakoutRecent: boolean;
+  confirmed: boolean;
   ema200: number;
   close: number;
 };
@@ -751,28 +802,19 @@ const resolveRecentCross = (
 };
 
 const resolveAiMaticEmaFlags = (candles: Candle[]): AiMaticEmaFlags => {
-  const closes = candles.map((c) => c.close);
-  const ema20Arr = computeEma(closes, 20);
-  const ema50Arr = computeEma(closes, 50);
-  const ema200Arr = computeEma(closes, 200);
-  const ema20 = ema20Arr[ema20Arr.length - 1] ?? Number.NaN;
-  const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
-  const ema200 = ema200Arr[ema200Arr.length - 1] ?? Number.NaN;
-  const close = closes[closes.length - 1] ?? Number.NaN;
-  const bullOk =
-    Number.isFinite(close) &&
-    close > ema20 &&
-    ema20 > ema50 &&
-    ema50 > ema200;
-  const bearOk =
-    Number.isFinite(close) &&
-    close < ema20 &&
-    ema20 < ema50 &&
-    ema50 < ema200;
-  const crossRecent =
-    resolveRecentCross(ema20Arr, ema50Arr, AI_MATIC_EMA_CROSS_LOOKBACK) ||
-    resolveRecentCross(ema50Arr, ema200Arr, AI_MATIC_EMA_CROSS_LOOKBACK);
-  return { bullOk, bearOk, crossRecent, ema20, ema50, ema200, close };
+  const breakout = resolveEma200BreakoutState(candles, {
+    emaPeriod: 200,
+    breakoutLookback: EMA_TREND_TOUCH_LOOKBACK,
+    confirmBars: EMA_TREND_CONFIRM_BARS,
+  });
+  return {
+    bullOk: breakout.direction === "BULL",
+    bearOk: breakout.direction === "BEAR",
+    breakoutRecent: breakout.breakoutBull || breakout.breakoutBear,
+    confirmed: breakout.confirmedBull || breakout.confirmedBear,
+    ema200: breakout.ema,
+    close: breakout.close,
+  };
 };
 
 const resolveAiMaticPivots = (candles: Candle[], lookback = 2) => {
@@ -2223,12 +2265,13 @@ const evaluateAiMaticGatesCore = (args: {
       : aiMatic.htf.structureTrend === "BEAR";
   const htfEmaOk =
     dir === "bull" ? aiMatic.htf.ema?.bullOk : aiMatic.htf.ema?.bearOk;
-  const htfEmaValid = [
-    aiMatic.htf.ema?.ema20,
-    aiMatic.htf.ema?.ema50,
-    aiMatic.htf.ema?.ema200,
-  ].every(Number.isFinite);
-  const htfAligned = htfEmaValid ? Boolean(htfEmaOk) : structureAligned;
+  const htfEmaValid = Number.isFinite(aiMatic.htf.ema?.ema200);
+  const htfAligned =
+    htfEmaValid &&
+    aiMatic.htf.ema.breakoutRecent &&
+    aiMatic.htf.ema.confirmed
+      ? Boolean(htfEmaOk)
+      : structureAligned;
   const mtfStructureOk =
     dir === "bull"
       ? aiMatic.mtf.bosUp || aiMatic.mtf.chochUp
@@ -2255,10 +2298,10 @@ const evaluateAiMaticGatesCore = (args: {
     Number.isFinite(rrAfterFees) && rrAfterFees >= AI_MATIC_MIN_RR;
 
   const ltfClose = toNumber(core?.ltfClose);
-  const ltfEma20 = toNumber(aiMatic.ltf.ema?.ema20);
+  const ltfEma200 = toNumber(aiMatic.ltf.ema?.ema200);
   const pullbackPct =
-    Number.isFinite(ltfClose) && Number.isFinite(ltfEma20) && ltfClose > 0
-      ? Math.abs(ltfClose - ltfEma20) / ltfClose
+    Number.isFinite(ltfClose) && Number.isFinite(ltfEma200) && ltfClose > 0
+      ? Math.abs(ltfClose - ltfEma200) / ltfClose
       : Number.NaN;
   const pullbackOk =
     Number.isFinite(pullbackPct) &&
@@ -2532,6 +2575,11 @@ type CoreV2Metrics = {
   ema21: number;
   ema26: number;
   ema50: number;
+  ema200: number;
+  ema200BreakoutBull: boolean;
+  ema200BreakoutBear: boolean;
+  ema200ConfirmBull: boolean;
+  ema200ConfirmBear: boolean;
   atr14: number;
   atrPct: number;
   sep1: number;
@@ -2572,10 +2620,12 @@ type CoreV2Metrics = {
   ltfNoNewHigh: boolean;
   ltfNoNewLow: boolean;
   htfClose: number;
-  htfEma12: number;
-  htfEma26: number;
-  htfDiffPct: number;
+  htfEma200: number;
   htfBias: "BULL" | "BEAR" | "NONE";
+  htfBreakoutBull: boolean;
+  htfBreakoutBear: boolean;
+  htfConfirmBull: boolean;
+  htfConfirmBear: boolean;
   htfAtr14: number;
   htfAtrPct: number;
   htfPivotHigh?: number;
@@ -2831,11 +2881,18 @@ const computeCoreV2Metrics = (
   const ema21Arr = computeEma(ltfCloses, 21);
   const ema26Arr = computeEma(ltfCloses, 26);
   const ema50Arr = computeEma(ltfCloses, 50);
+  const ema200Arr = computeEma(ltfCloses, 200);
   const ema8 = ema8Arr[ema8Arr.length - 1] ?? Number.NaN;
   const ema12 = ema12Arr[ema12Arr.length - 1] ?? Number.NaN;
   const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
   const ema26 = ema26Arr[ema26Arr.length - 1] ?? Number.NaN;
   const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
+  const ema200 = ema200Arr[ema200Arr.length - 1] ?? Number.NaN;
+  const ema200BreakoutState = resolveEma200BreakoutState(ltf, {
+    emaPeriod: 200,
+    breakoutLookback: EMA_TREND_TOUCH_LOOKBACK,
+    confirmBars: EMA_TREND_CONFIRM_BARS,
+  });
   const emaCrossLookback = Math.min(
     Math.max(4, SCALP_EMA_CROSS_LOOKBACK + 2),
     Math.min(ema12Arr.length, ema26Arr.length)
@@ -3039,27 +3096,23 @@ const computeCoreV2Metrics = (
     recentVols[recentVols.length - 1] < recentVols[recentVols.length - 2] &&
     recentVols[recentVols.length - 2] < recentVols[recentVols.length - 3];
 
-  const htf = resample(60);
+  const htf = resample(5);
   const htfCloses = htf.map((c) => c.close);
   const htfHighs = htf.map((c) => c.high);
   const htfLows = htf.map((c) => c.low);
   const htfClose = htf.length ? htf[htf.length - 1].close : Number.NaN;
-  const htfEma12Arr = computeEma(htfCloses, 12);
-  const htfEma26Arr = computeEma(htfCloses, 26);
-  const htfEma12 = htfEma12Arr[htfEma12Arr.length - 1] ?? Number.NaN;
-  const htfEma26 = htfEma26Arr[htfEma26Arr.length - 1] ?? Number.NaN;
-  const htfDiffPct =
-    Number.isFinite(htfClose) && htfClose > 0
-      ? Math.abs(htfEma12 - htfEma26) / htfClose
-      : Number.NaN;
+  const htfEma200State = resolveEma200BreakoutState(htf, {
+    emaPeriod: 200,
+    breakoutLookback: EMA_TREND_TOUCH_LOOKBACK,
+    confirmBars: EMA_TREND_CONFIRM_BARS,
+  });
+  const htfEma200 = htfEma200State.ema;
   const htfBias =
-    Number.isFinite(htfEma12) && Number.isFinite(htfEma26)
-      ? htfEma12 > htfEma26
-        ? "BULL"
-        : htfEma12 < htfEma26
-          ? "BEAR"
-          : "NONE"
-      : "NONE";
+    htfEma200State.direction === "BULL"
+      ? "BULL"
+      : htfEma200State.direction === "BEAR"
+        ? "BEAR"
+        : "NONE";
   const htfAtrArr = computeATR(htfHighs, htfLows, htfCloses, 14);
   const htfAtr14 = htfAtrArr[htfAtrArr.length - 1] ?? Number.NaN;
   const htfAtrPct =
@@ -3119,17 +3172,13 @@ const computeCoreV2Metrics = (
     m15OverlapWicky = overlapCount >= SCALP_OVERLAP_BARS - 1;
   }
   const m15TrendLongOk =
-    Number.isFinite(m15Close) &&
-    Number.isFinite(ema15m26) &&
-    Number.isFinite(ema15m12) &&
-    m15Close > ema15m26 &&
-    ema15m12 > ema15m26;
+    htfEma200State.direction === "BULL" &&
+    htfEma200State.breakoutBull &&
+    htfEma200State.confirmedBull;
   const m15TrendShortOk =
-    Number.isFinite(m15Close) &&
-    Number.isFinite(ema15m26) &&
-    Number.isFinite(ema15m12) &&
-    m15Close < ema15m26 &&
-    ema15m12 < ema15m26;
+    htfEma200State.direction === "BEAR" &&
+    htfEma200State.breakoutBear &&
+    htfEma200State.confirmedBear;
   const m15EmaSep =
     Number.isFinite(ema15m12) && Number.isFinite(ema15m26)
       ? Math.abs(ema15m12 - ema15m26)
@@ -3402,6 +3451,11 @@ const computeCoreV2Metrics = (
     ema21,
     ema26,
     ema50,
+    ema200,
+    ema200BreakoutBull: ema200BreakoutState.breakoutBull,
+    ema200BreakoutBear: ema200BreakoutState.breakoutBear,
+    ema200ConfirmBull: ema200BreakoutState.confirmedBull,
+    ema200ConfirmBear: ema200BreakoutState.confirmedBear,
     atr14,
     atrPct,
     sep1,
@@ -3442,10 +3496,12 @@ const computeCoreV2Metrics = (
     ltfNoNewHigh,
     ltfNoNewLow,
     htfClose,
-    htfEma12,
-    htfEma26,
-    htfDiffPct,
+    htfEma200,
     htfBias,
+    htfBreakoutBull: htfEma200State.breakoutBull,
+    htfBreakoutBear: htfEma200State.breakoutBear,
+    htfConfirmBull: htfEma200State.confirmedBull,
+    htfConfirmBear: htfEma200State.confirmedBear,
     htfAtr14,
     htfAtrPct,
     htfPivotHigh,
@@ -5594,42 +5650,23 @@ export function useTradingBot(
       const isAiMaticX = settings.riskMode === "ai-matic-x";
       const xContext = (decision as any)?.xContext as AiMaticXContext | undefined;
       if (isAiMaticX && xContext) {
-        const detailParts = [
-          `X 1h ${xContext.htfTrend}`,
-          `5m ${xContext.ltfTrend}`,
-          `setup ${xContext.setup}`,
-        ];
-        if (xContext.mode) detailParts.push(`mode ${xContext.mode}`);
-        if (Number.isFinite(xContext.acceptanceCloses) && xContext.acceptanceCloses > 0) {
-          detailParts.push(`accept ${xContext.acceptanceCloses}`);
-        }
-        if (xContext.strongTrendExpanse) detailParts.push("expanse");
-        if (xContext.riskOff) detailParts.push("riskOff");
-        const detail = detailParts.join(" | ");
-
-        if (!signal) {
-          return { ok: true, detail };
-        }
+        const emaTrend = (decision as any)?.emaTrend as
+          | EmaTrendResult
+          | undefined;
+        const frame = Array.isArray(emaTrend?.byTimeframe)
+          ? emaTrend?.byTimeframe.find((entry) => Number(entry?.timeframeMin) === 5)
+          : undefined;
+        const dir = String(frame?.direction ?? "none").toUpperCase();
+        const detail = `EMA200 5m ${dir} | breakout ${frame?.breakout ? "yes" : "no"} | confirm ${frame?.confirmed ? "yes" : "no"}`;
+        if (!signal) return { ok: true, detail };
         const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
         const signalDir =
           sideRaw === "buy" ? "BULL" : sideRaw === "sell" ? "BEAR" : "";
-        let ok = Boolean(signalDir);
-        if (xContext.setup === "NO_TRADE") ok = false;
-        if (xContext.setup === "TREND_PULLBACK" || xContext.setup === "TREND_CONTINUATION") {
-          if (xContext.htfTrend !== signalDir || xContext.ltfTrend !== signalDir) {
-            ok = false;
-          }
-        } else if (xContext.setup === "RANGE_BREAK_FLIP") {
-          const htfOk =
-            xContext.htfTrend === "RANGE" || xContext.htfTrend === signalDir;
-          const ltfOk = xContext.ltfTrend === signalDir;
-          if (!htfOk || !ltfOk) ok = false;
-        } else if (xContext.setup === "RANGE_FADE") {
-          if (xContext.mode !== "RANGE" && xContext.htfTrend !== "RANGE") {
-            ok = false;
-          }
-          if (xContext.ltfTrend !== "RANGE") ok = false;
-        }
+        const ok =
+          Boolean(signalDir) &&
+          dir === signalDir &&
+          Boolean(frame?.breakout) &&
+          Boolean(frame?.confirmed);
         return { ok, detail };
       }
       const htfTrend = (decision as any)?.htfTrend;
@@ -5671,19 +5708,7 @@ export function useTradingBot(
         (Number.isFinite(adx) && adx >= TREND_GATE_STRONG_ADX) ||
         (Number.isFinite(score) && score >= TREND_GATE_STRONG_SCORE) ||
         htfStrong;
-      const modeSetting = settings.trendGateMode ?? "adaptive";
-      const reverseAllowed =
-        (Number.isFinite(adx) ? adx <= TREND_GATE_REVERSE_ADX : false) &&
-        (Number.isFinite(score) ? score <= TREND_GATE_REVERSE_SCORE : false) &&
-        !htfStrong;
-      let mode: "FOLLOW" | "REVERSE" = "FOLLOW";
-      if (modeSetting === "adaptive") {
-        mode = reverseAllowed && !strong ? "REVERSE" : "FOLLOW";
-      } else if (modeSetting === "reverse") {
-        mode = reverseAllowed ? "REVERSE" : "FOLLOW";
-      } else {
-        mode = "FOLLOW";
-      }
+      const mode: "FOLLOW" | "REVERSE" = "FOLLOW";
       if (ltfDir === "RANGE" && Array.isArray(ltfTrend?.byTimeframe)) {
         const dirs = ltfTrend.byTimeframe.map((entry: any) =>
           String(entry?.result?.direction ?? "none").toLowerCase()
@@ -5722,11 +5747,12 @@ export function useTradingBot(
           direction: String(entry?.direction ?? "none").toUpperCase(),
           touched: Boolean(entry?.touched),
           confirmed: Boolean(entry?.confirmed),
+          breakout: Boolean(entry?.breakout),
         };
       });
       const emaDetailParts = emaByTf.map((entry) => {
         const label = trendLabel(entry.direction);
-        const touchFlag = entry.touched ? (entry.confirmed ? "*" : "!") : "";
+        const touchFlag = entry.touched ? (entry.confirmed ? "B" : "!") : "";
         return `${emaTfLabel(entry.timeframeMin)} ${label}${touchFlag}`;
       });
       const detailParts = isAiMaticProfile
@@ -5779,15 +5805,13 @@ export function useTradingBot(
         if (tfParts.length) detailParts.push(`LTF ${tfParts.join(" · ")}`);
       }
       if (emaDetailParts.length) {
-        detailParts.push(`EMA50 ${emaDetailParts.join(" · ")}`);
+        detailParts.push(`EMA200 ${emaDetailParts.join(" · ")}`);
       }
       if (emaByTf.some((entry) => entry.touched && !entry.confirmed)) {
-        detailParts.push("EMA50 touch unconfirmed");
+        detailParts.push("EMA200 breakout unconfirmed");
       }
       if (!isAiMaticProfile) {
-        detailParts.push(
-          `mode ${mode}${modeSetting === "adaptive" ? " (adaptive)" : ""}`
-        );
+        detailParts.push(`mode ${mode}`);
       }
       const detail = detailParts.join(" | ");
 
@@ -5803,18 +5827,17 @@ export function useTradingBot(
       const emaAligned =
         emaByTf.length > 0 &&
         emaByTf.every((entry) => entry.direction === emaTarget);
-      const emaTouched = emaByTf.some((entry) => entry.touched);
-      const emaConfirmOk = !emaByTf.some(
-        (entry) => entry.touched && !entry.confirmed
-      );
-      const emaPullbackOk = !emaTouched || kind === "PULLBACK";
+      const emaBreakoutOk =
+        emaByTf.length > 0 && emaByTf.every((entry) => entry.breakout);
+      const emaConfirmOk =
+        emaByTf.length > 0 && emaByTf.every((entry) => entry.confirmed);
       if (!htfIsTrend) {
         return { ok: false, detail };
       }
       if (hasLtf && !ltfIsTrend) {
         return { ok: false, detail };
       }
-      if (!emaAligned || !emaConfirmOk || !emaPullbackOk) {
+      if (!emaAligned || !emaBreakoutOk || !emaConfirmOk) {
         return { ok: false, detail };
       }
       const ltfOk = ltfMatchesSignal(signalDir);
@@ -5876,28 +5899,49 @@ export function useTradingBot(
       const volumeThreshold = useTodVolumeGate
         ? todVolumeThreshold
         : percentileVolumeThreshold;
+      const htfBreakoutOk =
+        direction === "BULL"
+          ? Boolean(core?.htfBreakoutBull)
+          : direction === "BEAR"
+            ? Boolean(core?.htfBreakoutBear)
+            : false;
+      const htfConfirmOk =
+        direction === "BULL"
+          ? Boolean(core?.htfConfirmBull)
+          : direction === "BEAR"
+            ? Boolean(core?.htfConfirmBear)
+            : false;
       const htfBiasOk =
         direction !== "NONE" &&
         htfDir === direction &&
-        (settings.riskMode !== "ai-matic-x" ||
-          (Number.isFinite(core?.htfDiffPct) &&
-            core!.htfDiffPct >= CORE_V2_HTF_BUFFER_PCT));
+        htfBreakoutOk &&
+        htfConfirmOk;
+      const emaBreakoutOk =
+        direction === "BULL"
+          ? Boolean(core?.ema200BreakoutBull)
+          : direction === "BEAR"
+            ? Boolean(core?.ema200BreakoutBear)
+            : false;
+      const emaConfirmOk =
+        direction === "BULL"
+          ? Boolean(core?.ema200ConfirmBull)
+          : direction === "BEAR"
+            ? Boolean(core?.ema200ConfirmBear)
+            : false;
       const emaOrderOk =
         direction === "BULL"
           ? Number.isFinite(core?.ltfClose) &&
-            core!.ltfClose > core!.ema8 &&
-            core!.ema8 > core!.ema21 &&
-            core!.ema21 > core!.ema50
+            Number.isFinite(core?.ema200) &&
+            core!.ltfClose > core!.ema200 &&
+            emaBreakoutOk &&
+            emaConfirmOk
           : direction === "BEAR"
             ? Number.isFinite(core?.ltfClose) &&
-              core!.ltfClose < core!.ema8 &&
-              core!.ema8 < core!.ema21 &&
-              core!.ema21 < core!.ema50
+              Number.isFinite(core?.ema200) &&
+              core!.ltfClose < core!.ema200 &&
+              emaBreakoutOk &&
+              emaConfirmOk
             : false;
-      const sep1Ok =
-        Number.isFinite(core?.sep1) && core!.sep1 >= CORE_V2_EMA_SEP1_MIN;
-      const sep2Ok =
-        Number.isFinite(core?.sep2) && core!.sep2 >= CORE_V2_EMA_SEP2_MIN;
       const atrOk =
         Number.isFinite(core?.atrPct) && core!.atrPct >= atrMin;
       const volumeOk =
@@ -5951,11 +5995,8 @@ export function useTradingBot(
           ok: htfBiasOk,
           detail:
             settings.riskMode === "ai-matic-x"
-              ? Number.isFinite(core?.htfEma12) && Number.isFinite(core?.htfEma26)
-                ? `EMA12 ${formatNumber(core!.htfEma12, 3)} | EMA26 ${formatNumber(
-                    core!.htfEma26,
-                    3
-                  )} | diff ${formatNumber((core!.htfDiffPct ?? 0) * 100, 2)}%`
+              ? Number.isFinite(core?.htfEma200)
+                ? `EMA200 ${formatNumber(core!.htfEma200, 3)} | breakout ${htfBreakoutOk ? "yes" : "no"} | confirm ${htfConfirmOk ? "yes" : "no"}`
                 : "missing"
               : htfConsensus
                 ? `Consensus ${htfConsensus}${
@@ -5967,33 +6008,26 @@ export function useTradingBot(
           hard: true,
         },
         {
-          name: "EMA order",
+          name: "EMA200 trend",
           ok: emaOrderOk,
           detail: Number.isFinite(core?.ltfClose)
-            ? `close ${formatNumber(core!.ltfClose, 4)} | EMA8 ${formatNumber(
-                core!.ema8,
+            ? `close ${formatNumber(core!.ltfClose, 4)} | EMA200 ${formatNumber(
+                core!.ema200,
                 4
-              )} | EMA21 ${formatNumber(core!.ema21, 4)} | EMA50 ${formatNumber(
-                core!.ema50,
-                4
-              )}`
+              )} | breakout ${emaBreakoutOk ? "yes" : "no"} | confirm ${emaConfirmOk ? "yes" : "no"}`
             : "missing",
           hard: true,
         },
         {
-          name: "EMA sep1",
-          ok: sep1Ok,
-          detail: Number.isFinite(core?.sep1)
-            ? `sep1 ${formatNumber(core!.sep1, 2)} (min ${CORE_V2_EMA_SEP1_MIN})`
-            : "missing",
+          name: "EMA200 breakout",
+          ok: emaBreakoutOk,
+          detail: emaBreakoutOk ? "breakout detected" : "missing breakout",
           hard: true,
         },
         {
-          name: "EMA sep2",
-          ok: sep2Ok,
-          detail: Number.isFinite(core?.sep2)
-            ? `sep2 ${formatNumber(core!.sep2, 2)} (min ${CORE_V2_EMA_SEP2_MIN})`
-            : "missing",
+          name: "EMA200 confirm",
+          ok: emaConfirmOk,
+          detail: emaConfirmOk ? "confirmation ok" : "confirmation missing",
           hard: true,
         },
         {
