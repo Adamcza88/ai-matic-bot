@@ -40,10 +40,27 @@ function normalizePosition(bPos, orders, instrument) {
         const ro = o.reduceOnly ?? o.reduce_only ?? o.reduce;
         return ro === true || ro === "true";
     });
+    const isActiveOrder = (o) => {
+        const status = String(o.orderStatus || o.order_status || o.status || "").toLowerCase();
+        if (!status) return true;
+        return !(
+            status.includes("filled") ||
+            status.includes("cancel") ||
+            status.includes("reject") ||
+            status.includes("deactivat") ||
+            status.includes("expire")
+        );
+    };
     const stopOrders = reduceOnlyOrders.filter((o) => {
         const filter = String(o.orderFilter || "").toLowerCase();
         const stopType = String(o.stopOrderType || "").toLowerCase();
-        return filter === "stoporder" || stopType.length > 0 || o.triggerPrice != null;
+        return isActiveOrder(o) && (
+            filter === "stoporder" ||
+            filter === "tpsl" ||
+            filter === "tpslorder" ||
+            stopType.length > 0 ||
+            o.triggerPrice != null
+        );
     });
     const pickPrice = (ordersArr, dir) => {
         let best = 0;
@@ -67,7 +84,9 @@ function normalizePosition(bPos, orders, instrument) {
         sl = pickPrice(stopOrders, dir) || 0;
     }
     if (tp <= 0 && entry > 0) {
-        const limitOrders = reduceOnlyOrders.filter((o) => String(o.orderType || "").toLowerCase() === "limit");
+        const limitOrders = reduceOnlyOrders.filter((o) =>
+            isActiveOrder(o) && String(o.orderType || "").toLowerCase() === "limit"
+        );
         const dir = sideLower === "buy" ? "above" : "below";
         tp = pickPrice(limitOrders, dir) || 0;
     }

@@ -90,6 +90,7 @@ const FEED_TIMEFRAME_MS_BY_RISK_MODE: Record<AISettings["riskMode"], number> = {
 };
 const PROTECTION_RETRY_INTERVAL_MS = 5_000;
 const PROTECTION_RETRY_LOG_TTL_MS = 30_000;
+const PROTECTION_ATTACH_GRACE_MS = 8_000;
 const MIN_POSITION_NOTIONAL_USD = 5;
 const MAX_POSITION_NOTIONAL_USD = 50000;
 const DEFAULT_TESTNET_PER_TRADE_USD = 50;
@@ -4167,6 +4168,224 @@ function extractList(data: any) {
 }
 
 type EntryFallback = { triggerPrice?: number; price?: number; ts: number };
+type ProtectionOrderSnapshot = {
+  hasActiveSL: boolean;
+  hasActiveTP: boolean;
+  sl: number;
+  tp: number;
+};
+
+const TERMINAL_ORDER_STATUS_TOKENS = [
+  "filled",
+  "cancel",
+  "reject",
+  "deactivat",
+  "expire",
+];
+const ACTIVE_ENTRY_ORDER_STATUS_TOKENS = [
+  "new",
+  "open",
+  "partially",
+  "created",
+  "trigger",
+  "active",
+  "untriggered",
+];
+const PROTECTION_ORDER_FILTERS = new Set(["tpsl", "tpslorder"]);
+const PROTECTION_STOP_TYPES = new Set([
+  "takeprofit",
+  "stoploss",
+  "trailingstop",
+]);
+
+function normalizePositionSide(value: unknown): "Buy" | "Sell" {
+  return String(value ?? "").toLowerCase() === "sell" ? "Sell" : "Buy";
+}
+
+function normalizeOrderStatus(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function isOrderStatusActive(value: unknown) {
+  const status = normalizeOrderStatus(value);
+  if (!status) return true;
+  return !TERMINAL_ORDER_STATUS_TOKENS.some((token) => status.includes(token));
+}
+
+function isActiveEntryOrderStatus(value: unknown) {
+  const status = normalizeOrderStatus(value);
+  if (!status) return false;
+  if (!isOrderStatusActive(status)) return false;
+  return ACTIVE_ENTRY_ORDER_STATUS_TOKENS.some((token) => status.includes(token));
+}
+
+function isProtectionOrderLike(order: any): boolean {
+  if (!order) return false;
+  const reduceOnly = Boolean(order?.reduceOnly ?? order?.reduce_only ?? order?.reduce);
+  const filter = String(order?.orderFilter ?? order?.order_filter ?? "")
+    .trim()
+    .toLowerCase();
+  const stopType = String(order?.stopOrderType ?? order?.stop_order_type ?? "")
+    .trim()
+    .toLowerCase();
+  if (PROTECTION_STOP_TYPES.has(stopType)) return true;
+  if (PROTECTION_ORDER_FILTERS.has(filter)) return true;
+  return reduceOnly;
+}
+
+function pickDirectionalProtectionPrice(
+  prices: number[],
+  entryPrice: number,
+  direction: "below" | "above"
+) {
+  const finite = prices.filter((px) => Number.isFinite(px) && px > 0);
+  if (finite.length === 0) return Number.NaN;
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    return finite[finite.length - 1];
+  }
+  const directional = finite.filter((px) =>
+    direction === "below" ? px < entryPrice : px > entryPrice
+  );
+  if (directional.length > 0) {
+    let best = directional[0];
+    for (const px of directional) {
+      if (direction === "below" && px > best) best = px;
+      if (direction === "above" && px < best) best = px;
+    }
+    return best;
+  }
+  let closest = finite[0];
+  let closestDist = Math.abs(finite[0] - entryPrice);
+  for (const px of finite.slice(1)) {
+    const dist = Math.abs(px - entryPrice);
+    if (dist < closestDist) {
+      closest = px;
+      closestDist = dist;
+    }
+  }
+  return closest;
+}
+
+function resolveProtectionFromOrders(args: {
+  orders: any[];
+  symbol: string;
+  positionSide: "Buy" | "Sell";
+  entryPrice: number;
+  positionIdx?: number;
+}): ProtectionOrderSnapshot {
+  const targetSymbol = String(args.symbol ?? "").toUpperCase();
+  if (!targetSymbol || !Array.isArray(args.orders) || args.orders.length === 0) {
+    return {
+      hasActiveSL: false,
+      hasActiveTP: false,
+      sl: Number.NaN,
+      tp: Number.NaN,
+    };
+  }
+  const closeSide = args.positionSide === "Buy" ? "sell" : "buy";
+  const expectedPositionIdx = toNumber(args.positionIdx);
+  const hasExpectedPositionIdx = Number.isFinite(expectedPositionIdx);
+  let hasActiveSL = false;
+  let hasActiveTP = false;
+  const slCandidates: number[] = [];
+  const tpCandidates: number[] = [];
+
+  for (const order of args.orders) {
+    const symbol = String(order?.symbol ?? "").toUpperCase();
+    if (!symbol || symbol !== targetSymbol) continue;
+    if (!isProtectionOrderLike(order)) continue;
+    const status =
+      order?.orderStatus ?? order?.order_status ?? order?.status ?? "";
+    if (!isOrderStatusActive(status)) continue;
+    const side = String(order?.side ?? "").toLowerCase();
+    if (side === "buy" || side === "sell") {
+      if (side !== closeSide) continue;
+    }
+    const orderPositionIdx = toNumber(order?.positionIdx ?? order?.position_idx);
+    if (
+      hasExpectedPositionIdx &&
+      Number.isFinite(orderPositionIdx) &&
+      orderPositionIdx !== expectedPositionIdx
+    ) {
+      continue;
+    }
+    const filter = String(order?.orderFilter ?? order?.order_filter ?? "")
+      .trim()
+      .toLowerCase();
+    const stopType = String(order?.stopOrderType ?? order?.stop_order_type ?? "")
+      .trim()
+      .toLowerCase();
+    const orderType = String(order?.orderType ?? order?.order_type ?? "")
+      .trim()
+      .toLowerCase();
+    const triggerPrice = toNumber(order?.triggerPrice ?? order?.trigger_price);
+    const orderPrice = toNumber(order?.price);
+    const px =
+      Number.isFinite(triggerPrice) && triggerPrice > 0
+        ? triggerPrice
+        : Number.isFinite(orderPrice) && orderPrice > 0
+          ? orderPrice
+          : Number.NaN;
+
+    if (stopType === "stoploss" || stopType === "trailingstop") {
+      hasActiveSL = true;
+      if (Number.isFinite(px) && px > 0) slCandidates.push(px);
+      continue;
+    }
+    if (stopType === "takeprofit") {
+      hasActiveTP = true;
+      if (Number.isFinite(px) && px > 0) tpCandidates.push(px);
+      continue;
+    }
+
+    if (!Number.isFinite(px) || px <= 0) continue;
+    const isLong = args.positionSide === "Buy";
+    const canInferByEntry = Number.isFinite(args.entryPrice) && args.entryPrice > 0;
+    if (canInferByEntry) {
+      if (isLong) {
+        if (px < args.entryPrice) {
+          hasActiveSL = true;
+          slCandidates.push(px);
+        } else if (px > args.entryPrice) {
+          hasActiveTP = true;
+          tpCandidates.push(px);
+        }
+      } else if (px > args.entryPrice) {
+        hasActiveSL = true;
+        slCandidates.push(px);
+      } else if (px < args.entryPrice) {
+        hasActiveTP = true;
+        tpCandidates.push(px);
+      }
+      continue;
+    }
+
+    if (orderType === "limit") {
+      hasActiveTP = true;
+      tpCandidates.push(px);
+      continue;
+    }
+    if (
+      filter === "stoporder" ||
+      PROTECTION_ORDER_FILTERS.has(filter) ||
+      orderType === "market"
+    ) {
+      hasActiveSL = true;
+      slCandidates.push(px);
+    }
+  }
+
+  const slDirection = args.positionSide === "Buy" ? "below" : "above";
+  const tpDirection = args.positionSide === "Buy" ? "above" : "below";
+  const sl = pickDirectionalProtectionPrice(slCandidates, args.entryPrice, slDirection);
+  const tp = pickDirectionalProtectionPrice(tpCandidates, args.entryPrice, tpDirection);
+  return {
+    hasActiveSL: hasActiveSL || (Number.isFinite(sl) && sl > 0),
+    hasActiveTP: hasActiveTP || (Number.isFinite(tp) && tp > 0),
+    sl,
+    tp,
+  };
+}
 
 type AiMaticRetestFallbackState = {
   symbol: string;
@@ -4955,39 +5174,18 @@ export function useTradingBot(
 
   const isEntryOrder = useCallback((order: TestnetOrder | any): boolean => {
     if (!order) return false;
-    const reduceOnly = Boolean(order?.reduceOnly ?? order?.reduce_only ?? order?.reduce);
-    if (reduceOnly) return false;
-    const filter = String(order?.orderFilter ?? order?.order_filter ?? "").toLowerCase();
-    const stopType = String(order?.stopOrderType ?? order?.stop_order_type ?? "").toLowerCase();
-    if (
-      filter === "tpsl" ||
-      stopType === "takeprofit" ||
-      stopType === "stoploss" ||
-      stopType === "trailingstop"
-    ) {
-      return false;
-    }
-    const status = String(order?.status ?? "").toLowerCase();
-    if (!status) return true;
-    if (status.includes("filled") || status.includes("cancel") || status.includes("reject")) {
-      return false;
-    }
-    return true;
+    if (isProtectionOrderLike(order)) return false;
+    const status =
+      order?.status ?? order?.orderStatus ?? order?.order_status ?? "";
+    return isOrderStatusActive(status);
   }, []);
 
   const isActiveEntryOrder = useCallback(
     (order: TestnetOrder | any): boolean => {
       if (!isEntryOrder(order)) return false;
-      const status = String(order?.status ?? "").toLowerCase();
-      if (!status) return false;
-      return (
-        status.includes("new") ||
-        status.includes("open") ||
-        status.includes("partially") ||
-        status.includes("created") ||
-        status.includes("trigger") ||
-        status.includes("active")
-      );
+      const status =
+        order?.status ?? order?.orderStatus ?? order?.order_status ?? "";
+      return isActiveEntryOrderStatus(status);
     },
     [isEntryOrder]
   );
@@ -4998,7 +5196,10 @@ export function useTradingBot(
       return Number.isFinite(size) && size > 0 ? sum + 1 : sum;
     }, 0);
     const openOrdersTotal = Array.isArray(ordersRef.current)
-      ? ordersRef.current.length
+      ? ordersRef.current.reduce(
+          (sum, order) => sum + (isActiveEntryOrder(order) ? 1 : 0),
+          0
+        )
       : 0;
     const pendingIntentsTotal = intentPendingRef.current.size;
     const reservedPositionsTotal =
@@ -5040,7 +5241,7 @@ export function useTradingBot(
         maxOrders,
       }),
     };
-  }, [useTestnet]);
+  }, [isActiveEntryOrder, useTestnet]);
 
   const resolveDataHealthSnapshot = useCallback(
     (
@@ -5080,11 +5281,41 @@ export function useTradingBot(
   );
 
   const positionsWithoutActiveSl = useCallback(() => {
+    const now = Date.now();
     return positionsRef.current.filter((position) => {
       const size = toNumber(position?.size ?? position?.qty);
       if (!Number.isFinite(size) || size <= 0) return false;
       const sl = toNumber(position?.sl);
-      return !Number.isFinite(sl) || sl <= 0;
+      if (Number.isFinite(sl) && sl > 0) return false;
+      const symbol = String(position?.symbol ?? "").toUpperCase();
+      if (!symbol) return false;
+      const side = normalizePositionSide(position?.side);
+      const entryPrice = toNumber(position?.entryPrice ?? position?.triggerPrice);
+      const positionIdx = toNumber(position?.positionIdx);
+      const exchangeProtection = resolveProtectionFromOrders({
+        orders: ordersRef.current,
+        symbol,
+        positionSide: side,
+        entryPrice,
+        positionIdx: Number.isFinite(positionIdx) ? positionIdx : undefined,
+      });
+      if (exchangeProtection.hasActiveSL) return false;
+      const planned = plannedProtectionRef.current.get(symbol);
+      const plannedSl = toNumber(planned?.sl);
+      const plannedAt = toNumber(planned?.setAt);
+      if (
+        Number.isFinite(plannedSl) &&
+        plannedSl > 0 &&
+        Number.isFinite(plannedAt) &&
+        now - plannedAt <= PROTECTION_ATTACH_GRACE_MS
+      ) {
+        return false;
+      }
+      const openedAt = toEpoch(position?.openedAt ?? position?.timestamp);
+      if (Number.isFinite(openedAt) && now - openedAt <= PROTECTION_ATTACH_GRACE_MS) {
+        return false;
+      }
+      return true;
     });
   }, []);
 
@@ -7936,9 +8167,13 @@ export function useTradingBot(
     let sawOrderCanceled = false;
     let sawOrderFilled = false;
     const [positionsRes, ordersRes, executionsRes] = results;
-    const entryFallbackByKey =
+    const ordersSnapshot =
       ordersRes.status === "fulfilled"
-        ? buildEntryFallback(extractList(ordersRes.value))
+        ? extractList(ordersRes.value)
+        : [];
+    const entryFallbackByKey =
+      ordersSnapshot.length > 0
+        ? buildEntryFallback(ordersSnapshot)
         : new Map<string, EntryFallback>();
 
     if (positionsRes.status === "fulfilled") {
@@ -7989,15 +8224,8 @@ export function useTradingBot(
           const triggerFromPos = toNumber(
             p?.triggerPrice ?? p?.trigger_price
           );
-          const sl = toNumber(p?.stopLoss ?? p?.sl);
-          const tp = toNumber(p?.takeProfit ?? p?.tp);
-          if (Number.isFinite(sl) && sl > 0) {
-            plannedProtectionRef.current.set(symbol.toUpperCase(), {
-              sl,
-              setAt: now,
-            });
-            protectionRetryAtRef.current.delete(symbol.toUpperCase());
-          }
+          let sl = toNumber(p?.stopLoss ?? p?.sl);
+          let tp = toNumber(p?.takeProfit ?? p?.tp);
           const trailingActiveRaw = toNumber(
             p?.trailingActivePrice ?? p?.activePrice ?? p?.activationPrice
           );
@@ -8020,6 +8248,34 @@ export function useTradingBot(
               : Number.isFinite(fallback?.price)
                 ? (fallback?.price as number)
                 : Number.NaN;
+          const protectionFallback = resolveProtectionFromOrders({
+            orders: ordersSnapshot,
+            symbol,
+            positionSide: side,
+            entryPrice: resolvedEntry,
+            positionIdx,
+          });
+          if (
+            (!Number.isFinite(sl) || sl <= 0) &&
+            Number.isFinite(protectionFallback.sl) &&
+            protectionFallback.sl > 0
+          ) {
+            sl = protectionFallback.sl;
+          }
+          if (
+            (!Number.isFinite(tp) || tp <= 0) &&
+            Number.isFinite(protectionFallback.tp) &&
+            protectionFallback.tp > 0
+          ) {
+            tp = protectionFallback.tp;
+          }
+          if (Number.isFinite(sl) && sl > 0) {
+            plannedProtectionRef.current.set(symbol.toUpperCase(), {
+              sl,
+              setAt: now,
+            });
+            protectionRetryAtRef.current.delete(symbol.toUpperCase());
+          }
           const trailPlan =
             Number.isFinite(resolvedEntry) &&
             Number.isFinite(sl) &&
@@ -8300,15 +8556,7 @@ export function useTradingBot(
         })
         .filter((o: TestnetOrder) => Boolean(o.orderId || o.orderLinkId));
       const isProtectionOrder = (order: TestnetOrder) => {
-        const stopType = String(order.stopOrderType ?? "").toLowerCase();
-        const filter = String(order.orderFilter ?? "").toLowerCase();
-        return (
-          order.reduceOnly ||
-          filter === "tpsl" ||
-          stopType === "takeprofit" ||
-          stopType === "stoploss" ||
-          stopType === "trailingstop"
-        );
+        return isProtectionOrderLike(order);
       };
       const isTriggerEntryOrder = (order: TestnetOrder) => {
         const filter = String(order.orderFilter ?? "").toLowerCase();

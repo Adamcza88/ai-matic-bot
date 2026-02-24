@@ -65,7 +65,7 @@ function getOrderTypeTag(order: TestnetOrder) {
 function formatOrderStatus(status?: string) {
   const value = String(status ?? "").trim();
   if (!value) return "—";
-  if (value.toLowerCase() === "untriggered") return "Neaktivní";
+  if (value.toLowerCase() === "untriggered") return "Čekající";
   return value;
 }
 
