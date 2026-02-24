@@ -5,6 +5,7 @@ import { getApiBase } from "../engine/networkConfig.js";
 import { startPriceFeed } from "../engine/priceFeed.js";
 import { evaluateStrategyForSymbol, resampleCandles, computeATR } from "../engine/botEngine.js";
 import { evaluateAiMaticXStrategyForSymbol, } from "../engine/aiMaticXStrategy.js";
+import { evaluateAiMaticAmdStrategyForSymbol } from "../engine/aiMaticAmdStrategy.js";
 import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy.js";
 import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter.js";
 import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta.js";
@@ -37,6 +38,7 @@ const MAJOR_SYMBOLS = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const CORE_V2_RISK_PCT = {
     "ai-matic": 0.1,
     "ai-matic-x": 0.003,
+    "ai-matic-amd": 0.003,
     "ai-matic-scalp": 0.0025,
     "ai-matic-tree": 0.003,
     "ai-matic-pro": 0.003,
@@ -44,6 +46,7 @@ const CORE_V2_RISK_PCT = {
 const CORE_V2_COOLDOWN_MS = {
     "ai-matic": 0,
     "ai-matic-x": 0,
+    "ai-matic-amd": 0,
     "ai-matic-scalp": 0,
     "ai-matic-tree": 0,
     "ai-matic-pro": 0,
@@ -51,6 +54,7 @@ const CORE_V2_COOLDOWN_MS = {
 const CORE_V2_VOLUME_PCTL = {
     "ai-matic": 60,
     "ai-matic-x": 70,
+    "ai-matic-amd": 65,
     "ai-matic-scalp": 50,
     "ai-matic-tree": 65,
     "ai-matic-pro": 65,
@@ -58,6 +62,7 @@ const CORE_V2_VOLUME_PCTL = {
 const CORE_V2_SCORE_GATE = {
     "ai-matic": { major: 11, alt: 12 },
     "ai-matic-x": { major: 12, alt: 13 },
+    "ai-matic-amd": { major: 12, alt: 12 },
     "ai-matic-scalp": { major: 10, alt: 99 },
     "ai-matic-tree": { major: 11, alt: 13 },
     "ai-matic-pro": { major: 10, alt: 10 },
@@ -1133,6 +1138,35 @@ const evaluateAiMaticGatesCore = (args) => {
         pass: hardPass && entryFactorsPass && checklistPass,
     };
 };
+const evaluateAmdGatesCore = (args) => {
+    const amd = args.decision?.amdContext ?? null;
+    const signal = args.signal ?? null;
+    if (!amd) {
+        return { gates: [], pass: false };
+    }
+    const signalTp = Number(signal?.intent?.tp);
+    const target = amd.targets ?? null;
+    const gates = [
+        { name: "AMD: Phase sequence", ok: amd.gates?.phaseSequence === true },
+        { name: "AMD: Killzone active", ok: amd.gates?.killzoneActive === true },
+        { name: "AMD: Midnight open set", ok: amd.gates?.midnightOpenSet === true },
+        { name: "AMD: Asia range valid", ok: amd.gates?.asiaRangeValid === true },
+        { name: "AMD: Liquidity sweep", ok: amd.gates?.liquiditySweep === true },
+        { name: "AMD: Inversion FVG confirm", ok: amd.gates?.inversionFvgConfirm === true },
+        {
+            name: "AMD: Target model valid",
+            ok: amd.gates?.targetModelValid === true &&
+                Number.isFinite(target?.tp1) &&
+                Number.isFinite(target?.tp2) &&
+                Number.isFinite(signalTp) &&
+                signalTp > 0,
+        },
+    ];
+    return {
+        gates,
+        pass: gates.length > 0 && gates.every((gate) => gate.ok),
+    };
+};
 
 export const __aiMaticTest = {
     resolveAiMaticPatterns,
@@ -1787,6 +1821,7 @@ function computeRMultiple(entry, sl, price, side) {
 const TRAIL_PROFILE_BY_RISK_MODE = {
     "ai-matic": { activateR: 0.5, lockR: 0.3, retracementRate: 0.003 },
     "ai-matic-x": { activateR: 1.0, lockR: 0.3, retracementRate: 0.002 },
+    "ai-matic-amd": { activateR: 0.8, lockR: 0.4, retracementRate: 0.003 },
     "ai-matic-scalp": { activateR: 1.2, lockR: 0.6 },
     "ai-matic-tree": { activateR: 0.5, lockR: 0.3 },
     "ai-matic-pro": { activateR: 0.5, lockR: 0.3 },
@@ -1800,6 +1835,7 @@ const TRAIL_SYMBOL_MODE = {
 const PROFILE_BY_RISK_MODE = {
     "ai-matic": "AI-MATIC",
     "ai-matic-x": "AI-MATIC-X",
+    "ai-matic-amd": "AI-MATIC-AMD",
     "ai-matic-scalp": "AI-MATIC-SCALP",
     "ai-matic-tree": "AI-MATIC-TREE",
     "ai-matic-pro": "AI-MATIC-PRO",
@@ -1849,6 +1885,21 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 liquiditySweepVolumeMult: 1.0,
                 volExpansionAtrMult: 1.15,
                 volExpansionVolMult: 1.1,
+                cooldownBars: 0,
+            };
+        }
+        if (settings.riskMode === "ai-matic-amd") {
+            return {
+                ...baseConfig,
+                strategyProfile: "ai-matic-amd",
+                baseTimeframe: "1h",
+                signalTimeframe: "5m",
+                aiMaticMultiTf: true,
+                aiMaticHtfTimeframe: "1h",
+                aiMaticMidTimeframe: "15m",
+                aiMaticEntryTimeframe: "5m",
+                aiMaticExecTimeframe: "1m",
+                entryStrictness: strictness,
                 cooldownBars: 0,
             };
         }
@@ -2292,6 +2343,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const isScalpProfile = settings.riskMode === "ai-matic-scalp";
         const symbolMode = TRAIL_SYMBOL_MODE[symbol];
         const forceTrail = settings.riskMode === "ai-matic" ||
+            settings.riskMode === "ai-matic-amd" ||
             settings.riskMode === "ai-matic-x" ||
             settings.riskMode === "ai-matic-tree";
         if (isScalpProfile)
@@ -2981,6 +3033,9 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             dominanceOk,
         };
     }, [closedPnlRecords, resolveCorrelationGate, isBtcDecoupling]);
+    const evaluateAmdGates = useCallback((symbol, decision, signal) => {
+        return evaluateAmdGatesCore({ symbol, decision, signal });
+    }, []);
     const evaluateCoreV2 = useCallback((symbol, decision, signal, feedAgeMs) => {
         const settings = settingsRef.current;
         const core = decision?.coreV2;
@@ -3402,6 +3457,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const feedAgeOk = feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
         const signal = decision?.signal ?? null;
         const isAiMaticProfile = context.settings.riskMode === "ai-matic";
+        const isAmdProfile = context.settings.riskMode === "ai-matic-amd";
         const aiMaticContext = decision?.aiMatic ?? null;
         const inferredSide = aiMaticContext?.htf?.ema?.bullOk
             ? "buy"
@@ -3417,6 +3473,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const aiMaticEval = isAiMaticProfile && signalForEval
             ? evaluateAiMaticGates(symbol, decision, signalForEval)
             : null;
+        const amdEval = isAmdProfile && signal ? evaluateAmdGates(symbol, decision, signal) : null;
         const quality = resolveQualityScore(symbol, decision, signal, feedAgeMs);
         const gates = [];
         const addGate = (name, ok, detail) => {
@@ -3449,6 +3506,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 addGate("Checklist: 5 of 8", checklistOkCount >= AI_MATIC_CHECKLIST_MIN, `${checklistOkCount}/${AI_MATIC_CHECKLIST_TOTAL}`);
             }
         }
+        else if (isAmdProfile) {
+            if (amdEval) {
+                amdEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
+            }
+        }
         else {
             coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
         }
@@ -3467,9 +3529,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 ? `ATR ${formatNumber(core.atr14, 4)} | TP fib ext`
                 : "ATR missing");
         }
-        const hardEnabled = isAiMaticProfile ? true : false;
+        const hardEnabled = isAiMaticProfile || isAmdProfile ? true : false;
         const softEnabled = isAiMaticProfile
             ? false
+            : isAmdProfile
+                ? false
             : context.settings.enableSoftGates !== false;
         const hardReasons = [];
         const hardBlocked = isAiMaticProfile && aiMaticEval ? !aiMaticEval.hardPass : false;
@@ -3481,6 +3545,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 passedCount: aiMaticEval.checklist.filter((g) => g.ok).length,
                 pass: aiMaticEval.checklistPass,
             }
+            : isAmdProfile && amdEval
+                ? {
+                    eligibleCount: amdEval.gates.length,
+                    passedCount: amdEval.gates.filter((g) => g.ok).length,
+                    pass: amdEval.pass,
+                }
             : isProProfile
                 ? {
                     eligibleCount: coreEval.scoreTotal,
@@ -3488,7 +3558,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     pass: coreEval.scorePass !== false,
                 }
             : evaluateChecklistPass(gates);
-        const signalActive = Boolean(signal) || checklist.pass;
+        const signalActive = isAmdProfile ? Boolean(signal) : Boolean(signal) || checklist.pass;
         let executionAllowed = null;
         let executionReason;
         if (!execEnabled) {
@@ -3505,6 +3575,11 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
             executionAllowed = false;
             executionReason = `AI-MATIC gates hard ${hardCount}/${AI_MATIC_HARD_TOTAL} · entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL} (need ${AI_MATIC_ENTRY_FACTOR_MIN}) · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_TOTAL} (need ${AI_MATIC_CHECKLIST_MIN})`;
+        }
+        else if (isAmdProfile && amdEval && !amdEval.pass) {
+            const passCount = amdEval.gates.filter((g) => g.ok).length;
+            executionAllowed = false;
+            executionReason = `AI-MATIC-AMD gates ${passCount}/${amdEval.gates.length}`;
         }
         else if (!checklist.pass) {
             executionAllowed = false;
@@ -3546,6 +3621,8 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             feedAgeOk,
         };
     }, [
+        evaluateAiMaticGates,
+        evaluateAmdGates,
         evaluateChecklistPass,
         evaluateCoreV2,
         evaluateProGates,
@@ -4206,6 +4283,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const scalpActive = settingsRef.current.riskMode === "ai-matic-scalp";
         const isProProfile = settingsRef.current.riskMode === "ai-matic-pro";
         const isAiMaticProfile = settingsRef.current.riskMode === "ai-matic";
+        const isAmdProfile = settingsRef.current.riskMode === "ai-matic-amd";
         feedLastTickRef.current = now;
         symbolTickRef.current.set(symbol, now);
         decisionRef.current[symbol] = { decision, ts: now };
@@ -4345,7 +4423,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             : evaluateCoreV2(symbol, decision, rawSignal, feedAgeMs);
         const checklistBase = evaluateChecklistPass(coreEval.gates);
         let signal = rawSignal;
-        if (!signal && checklistBase.pass && !isProProfile) {
+        if (!signal && checklistBase.pass && !isProProfile && !isAmdProfile) {
             signal = buildChecklistSignal(symbol, decision, now);
         }
         if (!signal)
@@ -4355,6 +4433,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             return;
         signalSeenRef.current.add(signalId);
         let aiMaticEval = null;
+        let amdEval = null;
         if (isAiMaticProfile) {
             aiMaticEval = evaluateAiMaticGates(symbol, decision, signal);
             if (!aiMaticEval.pass) {
@@ -4380,6 +4459,22 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                         timestamp: new Date(now).toISOString(),
                         action: "RISK_BLOCK",
                         message: `${symbol} AI-MATIC gate hard ${hardCount}/${AI_MATIC_HARD_TOTAL} | entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL} (need ${AI_MATIC_ENTRY_FACTOR_MIN}) | checklist ${checklistCount}/${AI_MATIC_CHECKLIST_TOTAL} (need ${AI_MATIC_CHECKLIST_MIN}) -> NO TRADE${reasons.length ? ` (${reasons.join(" | ")})` : ""}`,
+                    },
+                ]);
+                return;
+            }
+        }
+        if (isAmdProfile) {
+            amdEval = evaluateAmdGates(symbol, decision, signal);
+            if (!amdEval.pass) {
+                const fails = amdEval.gates.filter((g) => !g.ok).map((g) => g.name);
+                const passCount = amdEval.gates.filter((g) => g.ok).length;
+                addLogEntries([
+                    {
+                        id: `ai-matic-amd-gate:${signalId}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "RISK_BLOCK",
+                        message: `${symbol} AI-MATIC-AMD gate ${passCount}/${amdEval.gates.length} -> NO TRADE${fails.length ? ` (fail: ${fails.join(", ")})` : ""}`,
                     },
                 ]);
                 return;
@@ -4553,7 +4648,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             ]);
             return;
         }
-        if (softEnabled && coreEval.scorePass === false && !isAiMaticProfile) {
+        if (softEnabled && coreEval.scorePass === false && !isAiMaticProfile && !isAmdProfile) {
             addLogEntries([
                 {
                     id: `signal:score:${signalId}`,
@@ -4621,6 +4716,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     passedCount: AI_MATIC_CHECKLIST_MIN,
                     pass: true,
                 }
+                : isAmdProfile
+                    ? {
+                        eligibleCount: amdEval?.gates.length ?? 0,
+                        passedCount: amdEval?.gates.filter((g) => g.ok).length ?? 0,
+                        pass: amdEval?.pass === true,
+                    }
                 : evaluateChecklistPass(checklistGates);
         if (!checklistExec.pass) {
             const checklistThreshold = isProProfile
@@ -4883,6 +4984,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         computeFixedSizing,
         computeNotionalForSignal,
         evaluateAiMaticGates,
+        evaluateAmdGates,
         evaluateChecklistPass,
         evaluateCoreV2,
         evaluateProGates,
@@ -4912,12 +5014,15 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const riskMode = settingsRef.current.riskMode;
         const isAiMaticX = riskMode === "ai-matic-x";
         const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
+        const isAmd = riskMode === "ai-matic-amd";
         const isAiMaticCore = riskMode === "ai-matic";
         const isScalp = riskMode === "ai-matic-scalp";
         const isPro = riskMode === "ai-matic-pro";
         const decisionFn = (symbol, candles, config) => {
             const baseDecision = isPro
                 ? evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin: 5 })
+                : isAmd
+                    ? evaluateAiMaticAmdStrategyForSymbol(symbol, candles)
                 : isAiMaticX
                     ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
                     : evaluateStrategyForSymbol(symbol, candles, config);
@@ -4926,10 +5031,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             if (isPro) {
                 return { ...baseDecision, coreV2 };
             }
-            const htfTimeframes = isAiMatic
+            const htfTimeframes = isAiMatic || isAmd
                 ? AI_MATIC_HTF_TIMEFRAMES_MIN
                 : HTF_TIMEFRAMES_MIN;
-            const ltfTimeframes = isAiMatic
+            const ltfTimeframes = isAiMatic || isAmd
                 ? AI_MATIC_LTF_TIMEFRAMES_MIN
                 : isScalp
                     ? SCALP_LTF_TIMEFRAMES_MIN
@@ -4961,11 +5066,13 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 ...(aiMaticContext ? { aiMatic: aiMaticContext } : {}),
             };
         };
-        const maxCandles = isAiMaticX || isAiMatic || isPro ? 5000 : undefined;
+        const maxCandles = isAiMaticX || isAiMatic || isAmd || isPro ? 5000 : undefined;
         const backfill = isAiMaticX
             ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
             : isAiMatic
                 ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
+                : isAmd
+                    ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
                 : isPro
                     ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
                     : undefined;

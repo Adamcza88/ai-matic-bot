@@ -1,4 +1,5 @@
 import { computeEma, computeRsi } from "./ta.js";
+import { evaluateAiMaticAmdStrategyForSymbol } from "./aiMaticAmdStrategy.js";
 export var Trend;
 (function (Trend) {
     Trend["Bull"] = "bull";
@@ -485,6 +486,7 @@ export class TradingBot {
             return;
         const tpMap = {
             "ai-matic": 2.2,
+            "ai-matic-amd": 2.2,
             "ai-matic-tree": 2.2,
             "ai-matic-x": 1.6,
             "ai-matic-scalp": 1.5,
@@ -492,6 +494,7 @@ export class TradingBot {
         };
         const widthMap = {
             "ai-matic": 1.1,
+            "ai-matic-amd": 1.1,
             "ai-matic-tree": 1.1,
             "ai-matic-x": 0.6,
             "ai-matic-scalp": 0.4,
@@ -603,6 +606,8 @@ export class TradingBot {
     enterPosition(side, entry, stopLoss, kind = "OTHER") {
         const profileRisk = this.config.strategyProfile === "ai-matic"
             ? 0.05
+            : this.config.strategyProfile === "ai-matic-amd"
+                ? 0.05
             : this.config.strategyProfile === "ai-matic-scalp"
                 ? 0.015
                 : this.config.strategyProfile === "ai-matic-x"
@@ -619,6 +624,7 @@ export class TradingBot {
         }
         const rrMap = {
             "ai-matic": 2.2,
+            "ai-matic-amd": 2.2,
             "ai-matic-tree": 2.2,
             "ai-matic-x": 1.6,
             "ai-matic-scalp": 1.5,
@@ -1419,6 +1425,9 @@ function ensureBot(symbol, config) {
 export function evaluateStrategyForSymbol(symbol, candles, config = {}) {
     const bot = ensureBot(symbol, config);
     const botConfig = bot.getConfig();
+    if (botConfig.strategyProfile === "ai-matic-amd") {
+        return evaluateAiMaticAmdStrategyForSymbol(symbol, candles);
+    }
     const useMultiTf = botConfig.aiMaticMultiTf;
     const tfBaseMin = timeframeToMinutes(botConfig.aiMaticHtfTimeframe ?? botConfig.baseTimeframe);
     const ht = resampleCandles(candles, tfBaseMin);

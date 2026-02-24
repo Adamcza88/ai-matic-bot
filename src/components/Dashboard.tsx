@@ -29,6 +29,7 @@ import {
 const RISK_PCT_BY_MODE = {
   "ai-matic": 0.004,
   "ai-matic-x": 0.003,
+  "ai-matic-amd": 0.003,
   "ai-matic-olikella": OLIKELLA_RISK_PER_TRADE,
   "ai-matic-tree": 0.003,
   "ai-matic-pro": 0.003,
@@ -215,6 +216,19 @@ export default function Dashboard({
         execution: "SL pod strukturu/OB + ATR buffer · trailing 1.0R",
       };
     }
+    if (riskMode === "ai-matic-amd") {
+      return {
+        label: "AI-MATIC-AMD",
+        subtitle: "PO3/AMD · Killzones NY · Inversion FVG",
+        symbols: SUPPORTED_SYMBOLS,
+        timeframes: "1h bias · 15m Asia range · 5m manip · 1m confirm",
+        session: "Killzones: London 02:00–05:00 NY · NY AM 08:00–11:00 NY",
+        risk: "Risk 0.30% equity/trade · strict phase sequence",
+        riskPct: RISK_PCT_BY_MODE["ai-matic-amd"],
+        entry: "Akumulace -> Manipulace -> Distribuce po inversion FVG",
+        execution: "LIMIT_MAKER_FIRST · TP1/TP2 z manip range expanze",
+      };
+    }
     if (riskMode === "ai-matic-tree") {
       const strictness = bot.settings?.entryStrictness ?? "base";
       const maxPos = bot.settings?.maxOpenPositions ?? 7;
@@ -291,9 +305,20 @@ export default function Dashboard({
       "Checklist: 5 of 8": true,
       "Exec allowed": true,
     };
+    const amd = {
+      "AMD: Phase sequence": true,
+      "AMD: Killzone active": true,
+      "AMD: Midnight open set": true,
+      "AMD: Asia range valid": true,
+      "AMD: Liquidity sweep": true,
+      "AMD: Inversion FVG confirm": true,
+      "AMD: Target model valid": true,
+      "Exec allowed": true,
+    };
     return {
       "ai-matic": aiMatic,
       "ai-matic-x": base,
+      "ai-matic-amd": amd,
       "ai-matic-tree": base,
       "ai-matic-pro": {
         "Hurst < 0.45": true,

@@ -12,6 +12,7 @@ export interface AISettings {
   riskMode:
     | "ai-matic"
     | "ai-matic-x"
+    | "ai-matic-amd"
     | "ai-matic-olikella"
     | "ai-matic-tree"
     | "ai-matic-pro";

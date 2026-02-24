@@ -28,6 +28,7 @@ export function migrateRiskMode(value, fallback = "ai-matic") {
     }
     if (normalized === "ai-matic" ||
         normalized === "ai-matic-x" ||
+        normalized === "ai-matic-amd" ||
         normalized === OLIKELLA_RISK_MODE ||
         normalized === "ai-matic-tree" ||
         normalized === "ai-matic-pro") {

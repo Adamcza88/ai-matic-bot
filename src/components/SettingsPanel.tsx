@@ -237,6 +237,29 @@ const SettingsPanel: React.FC<Props> = ({
         "BTC bias: směrový soulad; při decouplingu zvýšená opatrnost.",
       ],
     },
+    "ai-matic-amd": {
+      title: "AI-MATIC-AMD (PO3 / AMD)",
+      summary: "PO3 fáze · Killzones NY · Inversion FVG confirm",
+      description:
+        "Power of Three engine: Akumulace -> Manipulace -> Distribuce s killzone filtrem a FVG potvrzením obratu.",
+      notes: [
+        ORDER_VALUE_NOTE,
+        "PHASE MODEL",
+        "Akumulace: Asia session (20:00-00:00 NY) definuje range high/low.",
+        "Manipulace: sweep protisměrně proti HTF bias (midnight open + Asia range).",
+        "Distribuce: aktivní až po inversion FVG potvrzení.",
+        "KILLZONES",
+        "Manipulace a distribuce povolena pouze v London (02:00-05:00 NY) nebo NY AM (08:00-11:00 NY).",
+        "BIAS MODEL",
+        "HTF bias: 1h EMA50/EMA200 (bull: close > EMA50 > EMA200, bear: close < EMA50 < EMA200).",
+        "TARGET MODEL",
+        "TP1 = manipLow + 1x(manipHigh-manipLow) / inverse pro short.",
+        "TP2 = manipLow + 2x(manipHigh-manipLow) / inverse pro short.",
+        "ENTRY POLICY",
+        "Vstup pouze při kompletní sekvenci AMD + inversion FVG confirm.",
+        "Typ vstupu: LIMIT_MAKER_FIRST, bez MARKET override.",
+      ],
+    },
     "ai-matic-olikella": {
       title: `${OLIKELLA_PROFILE_LABEL} Core`,
       summary: "4h cycle logic · 15m feed · long/short symmetry",
@@ -321,9 +344,19 @@ const SettingsPanel: React.FC<Props> = ({
     "Entry: 3 of 4",
     "Checklist: 5 of 8",
   ];
+  const amdGateNames = [
+    "AMD: Phase sequence",
+    "AMD: Killzone active",
+    "AMD: Midnight open set",
+    "AMD: Asia range valid",
+    "AMD: Liquidity sweep",
+    "AMD: Inversion FVG confirm",
+    "AMD: Target model valid",
+  ];
   const checklistGatesByProfile: Record<AISettings["riskMode"], string[]> = {
     "ai-matic": aiMaticGateNames,
     "ai-matic-x": coreV2GateNames,
+    "ai-matic-amd": amdGateNames,
     "ai-matic-tree": coreV2GateNames,
     "ai-matic-olikella": [
       ...OLIKELLA_GATE_NAMES,
@@ -347,6 +380,8 @@ const SettingsPanel: React.FC<Props> = ({
       value:
         local.riskMode === "ai-matic-pro"
           ? "Off (PRO)"
+          : local.riskMode === "ai-matic-amd"
+            ? "PO3/AMD bias (1h EMA50/200)"
           : local.riskMode === OLIKELLA_RISK_MODE
             ? "4h EMA10/20 cycle"
           : local.trendGateMode,
@@ -411,6 +446,38 @@ const SettingsPanel: React.FC<Props> = ({
     customStrategy: "",
     min24hVolume: 50,
     minProfitFactor: 0,
+    minWinRate: 65,
+    makerFeePct: 0.01,
+    takerFeePct: 0.06,
+    slippageBufferPct: 0.02,
+    perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
+    perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
+    emaTrendPeriod: 200,
+  };
+
+  const AI_MATIC_AMD_PRESET_UI: AISettings = {
+    riskMode: "ai-matic-amd",
+    trendGateMode: "follow",
+    pauseOnHighVolatility: false,
+    avoidLowLiquidity: false,
+    useTrendFollowing: true,
+    smcScalpMode: false,
+    useLiquiditySweeps: true,
+    enableHardGates: true,
+    enableSoftGates: true,
+    maxOpenPositions: 2,
+    maxOpenOrders: 8,
+    selectedSymbols: [...SUPPORTED_SYMBOLS],
+    entryStrictness: "ultra",
+    useDynamicPositionSizing: true,
+    lockProfitsWithTrail: true,
+    autoRefreshEnabled: false,
+    autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
+    requireConfirmationInAuto: false,
+    customInstructions: "",
+    customStrategy: "",
+    min24hVolume: 50,
+    minProfitFactor: 1.0,
     minWinRate: 65,
     makerFeePct: 0.01,
     takerFeePct: 0.06,
@@ -519,6 +586,7 @@ const SettingsPanel: React.FC<Props> = ({
   const presets: Record<AISettings["riskMode"], AISettings> = {
     "ai-matic": AI_MATIC_PRESET_UI,
     "ai-matic-x": AI_MATIC_X_PRESET_UI,
+    "ai-matic-amd": AI_MATIC_AMD_PRESET_UI,
     "ai-matic-olikella": AI_MATIC_OLIKELLA_PRESET_UI,
     "ai-matic-tree": AI_MATIC_TREE_PRESET_UI,
     "ai-matic-pro": AI_MATIC_PRO_PRESET_UI,
@@ -786,6 +854,16 @@ const SettingsPanel: React.FC<Props> = ({
                 AI-Matic-X
               </button>
               <button
+                onClick={() => applyPreset("ai-matic-amd")}
+                className={`rounded-md border border-input px-3 py-2 text-sm ${
+                  local.riskMode === "ai-matic-amd"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-800 text-secondary-foreground"
+                }`}
+              >
+                AI-Matic-AMD
+              </button>
+              <button
                 onClick={() => applyPreset("ai-matic-olikella")}
                 className={`rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic-olikella"
@@ -906,7 +984,8 @@ const SettingsPanel: React.FC<Props> = ({
           </div>
 
           {local.riskMode !== OLIKELLA_RISK_MODE &&
-          local.riskMode !== "ai-matic-pro" ? (
+          local.riskMode !== "ai-matic-pro" &&
+          local.riskMode !== "ai-matic-amd" ? (
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Režim trend gate
@@ -935,7 +1014,8 @@ const SettingsPanel: React.FC<Props> = ({
           ) : null}
 
           {local.riskMode !== "ai-matic-pro" &&
-          local.riskMode !== OLIKELLA_RISK_MODE ? (
+          local.riskMode !== OLIKELLA_RISK_MODE &&
+          local.riskMode !== "ai-matic-amd" ? (
             <div className="grid gap-2">
               <label className="text-sm font-medium leading-none">
                 Trend filtr
