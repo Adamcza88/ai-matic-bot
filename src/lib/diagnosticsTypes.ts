@@ -18,6 +18,26 @@ export type GateDisplayRow = {
   enabled: boolean;
 };
 
+export type EntryGateState = "READY" | "WAITING" | "BLOCKED";
+
+export type EntryGateRule = {
+  name: string;
+  passed: boolean;
+  pending?: boolean;
+};
+
+export type EntryGateProgress = {
+  profile: string;
+  valid: boolean;
+  state: EntryGateState;
+  passed: number;
+  required: number;
+  total: number;
+  pct: number;
+  label: string;
+  reason?: string;
+};
+
 export type SymbolDiagnostic = {
   executionAllowed?: boolean;
   relayState?: "READY" | "BLOCKED" | "PAUSED" | "WAITING" | "IDLE";
@@ -35,6 +55,8 @@ export type SymbolDiagnostic = {
   manageReason?: string;
   lastScanTs?: number;
   gates?: DiagnosticGate[];
+  entryGateProgress?: EntryGateProgress;
+  entryGateRules?: EntryGateRule[];
   decisionTrace?: Array<{
     gate: string;
     result: {

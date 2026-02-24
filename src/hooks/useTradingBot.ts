@@ -73,6 +73,7 @@ import {
   resetPnlHistoryMap,
 } from "../lib/pnlHistory";
 import type { AssetPnlMap } from "../lib/pnlHistory";
+import { buildEntryGateProgress } from "../lib/entryGateProgressModel";
 
 export type ActivePosition = BaseActivePosition & { isBreakeven?: boolean };
 
@@ -239,6 +240,15 @@ const AI_MATIC_ENTRY_FACTOR_MIN = 3;
 const AI_MATIC_ENTRY_FACTOR_TOTAL = 4;
 const AI_MATIC_CHECKLIST_MIN = 5;
 const AI_MATIC_CHECKLIST_TOTAL = 8;
+const AMD_ENTRY_RULE_NAMES = [
+  "AMD: Phase sequence",
+  "AMD: Killzone active",
+  "AMD: Midnight open set",
+  "AMD: Asia range valid",
+  "AMD: Liquidity sweep",
+  "AMD: Inversion FVG confirm",
+  "AMD: Target model valid",
+] as const;
 const AI_MATIC_EMA_CROSS_LOOKBACK = 6;
 const AI_MATIC_POI_DISTANCE_PCT = 0.0015;
 const AI_MATIC_SL_ATR_BUFFER = 0.3;
@@ -7524,6 +7534,155 @@ export function useTradingBot(
             ? "BLOCKED"
             : "WAITING";
 
+      const profileKey = String(context.settings.riskMode ?? "ai-matic");
+      let entryGateRules: { name: string; passed: boolean; pending?: boolean }[] = [];
+      let entryGateProgress:
+        | ReturnType<typeof buildEntryGateProgress>
+        | undefined;
+
+      if (isAiMaticProfile) {
+        entryGateRules = aiMaticEval
+          ? [
+              {
+                name: "Hard: ALL 4",
+                passed: aiMaticEval.hardPass,
+              },
+              {
+                name: "Entry: 3 of 4",
+                passed: aiMaticEval.entryFactorsPass,
+              },
+              {
+                name: "Checklist: 5 of 8",
+                passed: aiMaticEval.checklistPass,
+              },
+            ]
+          : [
+              { name: "Hard: ALL 4", passed: false, pending: true },
+              { name: "Entry: 3 of 4", passed: false, pending: true },
+              { name: "Checklist: 5 of 8", passed: false, pending: true },
+            ];
+        const passed = entryGateRules.filter((rule) => rule.passed).length;
+        entryGateProgress = buildEntryGateProgress({
+          profile: profileKey,
+          passed,
+          required: 3,
+          total: 3,
+          label: "AI-MATIC checkpoints",
+          reason: executionReason,
+          signalActive,
+          rules: entryGateRules,
+        });
+      } else if (isAmdProfile) {
+        entryGateRules =
+          amdEval?.gates.length
+            ? amdEval.gates.map((gate) => ({
+                name: gate.name,
+                passed: gate.ok,
+                pending: gate.pending,
+              }))
+            : AMD_ENTRY_RULE_NAMES.map((name) => ({
+                name,
+                passed: false,
+                pending: true,
+              }));
+        const passed = entryGateRules.filter((rule) => rule.passed).length;
+        entryGateProgress = buildEntryGateProgress({
+          profile: profileKey,
+          passed,
+          required: AMD_ENTRY_RULE_NAMES.length,
+          total: AMD_ENTRY_RULE_NAMES.length,
+          label: "AMD gates",
+          reason: executionReason,
+          signalActive,
+          rules: entryGateRules,
+        });
+      } else if (isScalpProfile) {
+        const scalpRulesRaw = [
+          {
+            name: OLIKELLA_GATE_SIGNAL_CHECKLIST,
+            value: oliContext?.gates.signalChecklistOk,
+          },
+          {
+            name: OLIKELLA_GATE_ENTRY_CONDITIONS,
+            value: oliContext?.gates.entryConditionsOk,
+          },
+          {
+            name: OLIKELLA_GATE_EXIT_CONDITIONS,
+            value: oliContext?.gates.exitConditionsOk,
+          },
+          {
+            name: OLIKELLA_GATE_RISK_RULES,
+            value: oliContext?.gates.riskRulesOk,
+          },
+        ] as const;
+        entryGateRules = scalpRulesRaw.map((rule) => {
+          const known = typeof rule.value === "boolean";
+          return {
+            name: rule.name,
+            passed: rule.value === true,
+            pending: !known && !signalActive,
+          };
+        });
+        const passed = entryGateRules.filter((rule) => rule.passed).length;
+        entryGateProgress = buildEntryGateProgress({
+          profile: profileKey,
+          passed,
+          required: 4,
+          total: 4,
+          label: "OLIkella gates",
+          reason: executionReason,
+          signalActive,
+          rules: entryGateRules,
+        });
+      } else if (isProProfile) {
+        const score = Number.isFinite(coreEval.score) ? coreEval.score : 0;
+        const threshold = Number.isFinite(coreEval.threshold)
+          ? coreEval.threshold
+          : 0;
+        const scoreTotal = Number.isFinite(coreEval.scoreTotal)
+          ? coreEval.scoreTotal
+          : 0;
+        const scorePassed = threshold > 0 ? score >= threshold : false;
+        entryGateRules = [
+          {
+            name: `Score >= ${threshold}`,
+            passed: scorePassed,
+            pending:
+              (!Number.isFinite(coreEval.score) ||
+                !Number.isFinite(coreEval.threshold)) &&
+              !signalActive,
+          },
+        ];
+        entryGateProgress = buildEntryGateProgress({
+          profile: profileKey,
+          passed: score,
+          required: threshold,
+          total: scoreTotal,
+          label: "PRO score",
+          reason: executionReason,
+          signalActive,
+          rules: entryGateRules,
+        });
+      } else {
+        entryGateRules = [
+          {
+            name: `Checklist >= ${MIN_CHECKLIST_PASS}`,
+            passed: checklist.pass,
+            pending: !signalActive && !checklist.pass,
+          },
+        ];
+        entryGateProgress = buildEntryGateProgress({
+          profile: profileKey,
+          passed: checklist.passedCount,
+          required: MIN_CHECKLIST_PASS,
+          total: checklist.eligibleCount,
+          label: "Checklist threshold",
+          reason: executionReason,
+          signalActive,
+          rules: entryGateRules,
+        });
+      }
+
       return {
         symbolState,
         manageReason,
@@ -7544,6 +7703,8 @@ export function useTradingBot(
         relayState,
         relayReason: undefined,
         gates,
+        entryGateProgress,
+        entryGateRules,
         qualityScore: quality.score,
         qualityThreshold: quality.threshold,
         qualityPass: quality.pass,

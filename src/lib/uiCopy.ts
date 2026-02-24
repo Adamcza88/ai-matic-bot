@@ -32,6 +32,11 @@ export const UI_COPY = {
       DISABLED: "Vypnutý",
       waitingDetail: "čeká na vyhodnocení gate",
       noDetail: "bez detailu",
+      entryProgressTitle: "Progres Entry gate",
+      entryReady: "Entry připraven",
+      entryWaiting: "Entry čeká",
+      entryBlocked: "Entry blokován",
+      showAll: "Zobrazit vše",
     },
   },
   statusBar: {
