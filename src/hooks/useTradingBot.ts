@@ -79,7 +79,17 @@ export type ActivePosition = BaseActivePosition & { isBreakeven?: boolean };
 
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
-const FEED_AGE_OK_MS = 60_000;
+const DATA_HEALTH_LAG_FACTOR = 2;
+const FEED_TIMEFRAME_MS_BY_RISK_MODE: Record<AISettings["riskMode"], number> = {
+  "ai-matic": 60_000,
+  "ai-matic-x": 60_000,
+  "ai-matic-amd": 60_000,
+  "ai-matic-olikella": 15 * 60_000,
+  "ai-matic-tree": 60_000,
+  "ai-matic-pro": 60_000,
+};
+const PROTECTION_RETRY_INTERVAL_MS = 5_000;
+const PROTECTION_RETRY_LOG_TTL_MS = 30_000;
 const MIN_POSITION_NOTIONAL_USD = 5;
 const MAX_POSITION_NOTIONAL_USD = 50000;
 const DEFAULT_TESTNET_PER_TRADE_USD = 50;
@@ -2289,6 +2299,18 @@ type CapacityStatus = {
   ordFull: boolean;
   reason: CapacityReason;
 };
+type AtomicExposureSnapshot = {
+  openPositionsTotal: number;
+  openOrdersTotal: number;
+  pendingIntentsTotal: number;
+  reservedPositionsTotal: number;
+  reservedOrdersTotal: number;
+  maxPos: number;
+  maxOrders: number;
+  status: CapacityStatus;
+  reservedStatus: CapacityStatus;
+  fingerprint: string;
+};
 type CapacityPauseTrigger =
   | "POSITION_CLOSED"
   | "ORDER_CANCELED"
@@ -2304,6 +2326,11 @@ type RelayPauseState = {
   forceScanReason: CapacityPauseTrigger | null;
   lastTtlRecheckAt: number;
 };
+
+function resolveDataHealthLagMs(riskMode: AISettings["riskMode"]): number {
+  const timeframeMs = FEED_TIMEFRAME_MS_BY_RISK_MODE[riskMode] ?? 60_000;
+  return Math.max(1_000, timeframeMs * DATA_HEALTH_LAG_FACTOR);
+}
 
 function normalizeCapacityLimit(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
@@ -4683,6 +4710,11 @@ export function useTradingBot(
   const lastHeartbeatRef = useRef(0);
   const lastStateRef = useRef<Map<string, string>>(new Map());
   const lastRestartRef = useRef(0);
+  const plannedProtectionRef = useRef<
+    Map<string, { sl: number; setAt: number }>
+  >(new Map());
+  const protectionRetryAtRef = useRef<Map<string, number>>(new Map());
+  const protectionRetryLogRef = useRef<Map<string, number>>(new Map());
   const [feedEpoch, setFeedEpoch] = useState(0);
   const symbolTickRef = useRef<Map<string, number>>(new Map());
 
@@ -4959,6 +4991,143 @@ export function useTradingBot(
     },
     [isEntryOrder]
   );
+
+  const getAtomicExposureSnapshot = useCallback((): AtomicExposureSnapshot => {
+    const openPositionsTotal = positionsRef.current.reduce((sum, position) => {
+      const size = toNumber(position?.size ?? position?.qty);
+      return Number.isFinite(size) && size > 0 ? sum + 1 : sum;
+    }, 0);
+    const openOrdersTotal = Array.isArray(ordersRef.current)
+      ? ordersRef.current.length
+      : 0;
+    const pendingIntentsTotal = intentPendingRef.current.size;
+    const reservedPositionsTotal =
+      openPositionsTotal + (useTestnet ? 0 : pendingIntentsTotal);
+    const reservedOrdersTotal =
+      openOrdersTotal + (useTestnet ? 0 : pendingIntentsTotal);
+    const maxPos = normalizeCapacityLimit(
+      toNumber(settingsRef.current.maxOpenPositions)
+    );
+    const maxOrders = normalizeCapacityLimit(
+      toNumber(settingsRef.current.maxOpenOrders)
+    );
+    const status = getCapacityStatus({
+      openPositionsTotal,
+      maxPos,
+      openOrdersTotal,
+      maxOrders,
+    });
+    const reservedStatus = getCapacityStatus({
+      openPositionsTotal: reservedPositionsTotal,
+      maxPos,
+      openOrdersTotal: reservedOrdersTotal,
+      maxOrders,
+    });
+    return {
+      openPositionsTotal,
+      openOrdersTotal,
+      pendingIntentsTotal,
+      reservedPositionsTotal,
+      reservedOrdersTotal,
+      maxPos,
+      maxOrders,
+      status,
+      reservedStatus,
+      fingerprint: buildCapacityFingerprint({
+        openPositionsTotal: reservedPositionsTotal,
+        maxPos,
+        openOrdersTotal: reservedOrdersTotal,
+        maxOrders,
+      }),
+    };
+  }, [useTestnet]);
+
+  const resolveDataHealthSnapshot = useCallback(
+    (
+      symbol: string,
+      now = Date.now(),
+      riskMode?: AISettings["riskMode"]
+    ) => {
+      const mode = riskMode ?? settingsRef.current.riskMode;
+      const maxLagMs = resolveDataHealthLagMs(mode);
+      const lastTick = symbolTickRef.current.get(symbol) ?? 0;
+      const feedAgeMs = lastTick > 0 ? Math.max(0, now - lastTick) : null;
+      const safe = feedAgeMs != null && feedAgeMs <= maxLagMs;
+      return { feedAgeMs, maxLagMs, safe };
+    },
+    []
+  );
+
+  const dataHealthGate = useCallback(
+    (
+      symbol: string,
+      now = Date.now(),
+      riskMode?: AISettings["riskMode"]
+    ): GateResult => {
+      const health = resolveDataHealthSnapshot(symbol, now, riskMode);
+      if (health.safe) {
+        return { ok: true, code: "OK", reason: "data health" };
+      }
+      const diff = health.feedAgeMs == null ? "NO_TICK" : `${Math.round(health.feedAgeMs)}ms`;
+      return {
+        ok: false,
+        code: "DATA_HEALTH",
+        reason: `SKIP::DATA_HEALTH lastMarketTick ${diff} (max ${Math.round(health.maxLagMs)}ms)`,
+        ttlMs: SKIP_LOG_THROTTLE_MS,
+      };
+    },
+    [resolveDataHealthSnapshot]
+  );
+
+  const positionsWithoutActiveSl = useCallback(() => {
+    return positionsRef.current.filter((position) => {
+      const size = toNumber(position?.size ?? position?.qty);
+      if (!Number.isFinite(size) || size <= 0) return false;
+      const sl = toNumber(position?.sl);
+      return !Number.isFinite(sl) || sl <= 0;
+    });
+  }, []);
+
+  const protectionGate = useCallback((): GateResult => {
+    const missing = positionsWithoutActiveSl();
+    if (missing.length === 0) {
+      return { ok: true, code: "OK", reason: "protection" };
+    }
+    const sample = missing
+      .slice(0, 3)
+      .map((position) => String(position.symbol ?? "").toUpperCase())
+      .filter(Boolean)
+      .join(",");
+    const suffix = sample ? ` (${sample})` : "";
+    return {
+      ok: false,
+      code: "PROTECTION_INACTIVE",
+      reason: `SKIP::PROTECTION_INACTIVE missing SL ${missing.length}${suffix}`,
+      ttlMs: SKIP_LOG_THROTTLE_MS,
+    };
+  }, [positionsWithoutActiveSl]);
+
+  const resolveProtectionRetryStop = useCallback((position: ActivePosition) => {
+    const symbol = String(position.symbol ?? "").toUpperCase();
+    const planned = plannedProtectionRef.current.get(symbol);
+    const plannedSl = toNumber(planned?.sl);
+    if (Number.isFinite(plannedSl) && plannedSl > 0) {
+      return plannedSl;
+    }
+    const entry = toNumber(position.entryPrice);
+    if (!Number.isFinite(entry) || entry <= 0) {
+      return Number.NaN;
+    }
+    const side = String(position.side ?? "").toLowerCase() === "sell" ? "Sell" : "Buy";
+    const atr = toNumber(
+      (decisionRef.current[symbol]?.decision as any)?.coreV2?.atr14
+    );
+    const minDistance = resolveMinProtectionDistance(entry, atr);
+    const fallbackSl = side === "Buy" ? entry - minDistance : entry + minDistance;
+    return Number.isFinite(fallbackSl) && fallbackSl > 0
+      ? fallbackSl
+      : Number.NaN;
+  }, []);
 
   const getOpenBiasState = useCallback(() => {
     const biases = new Set<"bull" | "bear">();
@@ -5417,6 +5586,18 @@ export function useTradingBot(
         );
         if (!hasPosition && !hasOrder && !hasPending) {
           proTargetsRef.current.delete(symbol);
+        }
+      }
+      for (const symbol of plannedProtectionRef.current.keys()) {
+        const hasPosition = seenSymbols.has(symbol);
+        const hasPending = intentPendingRef.current.has(symbol);
+        const hasOrder = ordersRef.current.some(
+          (order) => isEntryOrder(order) && String(order?.symbol ?? "") === symbol
+        );
+        if (!hasPosition && !hasOrder && !hasPending) {
+          plannedProtectionRef.current.delete(symbol);
+          protectionRetryAtRef.current.delete(symbol);
+          protectionRetryLogRef.current.delete(symbol);
         }
       }
       for (const symbol of scalpExitStateRef.current.keys()) {
@@ -6063,49 +6244,37 @@ export function useTradingBot(
       const settings = settingsRef.current;
       const now = new Date();
       const sessionOk = isSessionAllowed(now, settings);
-      const maxPositions = toNumber(settings.maxOpenPositions);
-      const normalizedMaxPositions = normalizeCapacityLimit(maxPositions);
-      const pendingIntents = intentPendingRef.current.size;
-      const openPositionsCount =
-        positionsRef.current.length + (useTestnet ? 0 : pendingIntents);
-      const maxPositionsOk = normalizedMaxPositions > 0
-        ? openPositionsCount < normalizedMaxPositions
+      const exposure = getAtomicExposureSnapshot();
+      const openPositionsCount = exposure.reservedPositionsTotal;
+      const maxPositionsOk = exposure.maxPos > 0
+        ? openPositionsCount < exposure.maxPos
         : false;
       const hasPosition = positionsRef.current.some((p) => {
         if (p.symbol !== symbol) return false;
         const size = toNumber(p.size ?? p.qty);
         return Number.isFinite(size) && size > 0;
       });
-      const openOrdersCount =
-        ordersRef.current.length + (useTestnet ? 0 : pendingIntents);
-      const maxOrders = toNumber(settings.maxOpenOrders);
-      const normalizedMaxOrders = normalizeCapacityLimit(maxOrders);
-      const ordersClearOk = normalizedMaxOrders > 0
-        ? openOrdersCount < normalizedMaxOrders
+      const openOrdersCount = exposure.reservedOrdersTotal;
+      const ordersClearOk = exposure.maxOrders > 0
+        ? openOrdersCount < exposure.maxOrders
         : false;
       const engineOk = !(decision?.halted ?? false);
-      const capacityStateFingerprint = buildCapacityFingerprint({
-        openPositionsTotal: openPositionsCount,
-        maxPos: normalizedMaxPositions,
-        openOrdersTotal: openOrdersCount,
-        maxOrders: normalizedMaxOrders,
-      });
       return {
         settings,
         now,
         sessionOk,
         maxPositionsOk,
-        maxPositions: normalizedMaxPositions,
-        maxOrders: normalizedMaxOrders,
+        maxPositions: exposure.maxPos,
+        maxOrders: exposure.maxOrders,
         openPositionsCount,
         hasPosition,
         openOrdersCount,
         ordersClearOk,
         engineOk,
-        capacityStateFingerprint,
+        capacityStateFingerprint: exposure.fingerprint,
       };
     },
-    [isSessionAllowed, useTestnet]
+    [getAtomicExposureSnapshot, isSessionAllowed]
   );
 
   const shouldEmitBlockLog = useCallback(
@@ -6136,29 +6305,9 @@ export function useTradingBot(
     (trigger: CapacityPauseTrigger) => {
       const relay = relayPauseRef.current;
       if (!relay.paused) return false;
-      const pendingIntents = intentPendingRef.current.size;
-      const openPositionsTotal =
-        positionsRef.current.length + (useTestnet ? 0 : pendingIntents);
-      const openOrdersTotal =
-        ordersRef.current.length + (useTestnet ? 0 : pendingIntents);
-      const maxPos = normalizeCapacityLimit(
-        toNumber(settingsRef.current.maxOpenPositions)
-      );
-      const maxOrders = normalizeCapacityLimit(
-        toNumber(settingsRef.current.maxOpenOrders)
-      );
-      const currentStatus = getCapacityStatus({
-        openPositionsTotal,
-        maxPos,
-        openOrdersTotal,
-        maxOrders,
-      });
-      const currentFingerprint = buildCapacityFingerprint({
-        openPositionsTotal,
-        maxPos,
-        openOrdersTotal,
-        maxOrders,
-      });
+      const exposure = getAtomicExposureSnapshot();
+      const currentStatus = exposure.reservedStatus;
+      const currentFingerprint = exposure.fingerprint;
       if (trigger !== "TTL_RECHECK") {
         if (currentFingerprint === relay.lastCapacityFingerprint) return false;
         if (currentStatus.reason !== "OK") return false;
@@ -6189,7 +6338,7 @@ export function useTradingBot(
       ]);
       return true;
     },
-    [activeSymbols, addLogEntries, useTestnet]
+    [activeSymbols, addLogEntries, getAtomicExposureSnapshot]
   );
 
   const resolveTrendGate = useCallback(
@@ -7125,11 +7274,13 @@ export function useTradingBot(
     (symbol: string, decision: PriceFeedDecision, lastScanTs: number) => {
       const context = getSymbolContext(symbol, decision);
       const symbolState = resolveSymbolState(symbol);
-      const lastTick = symbolTickRef.current.get(symbol) ?? 0;
-      const feedAgeMs =
-        lastTick > 0 ? Math.max(0, Date.now() - lastTick) : null;
-      const feedAgeOk =
-        feedAgeMs == null ? null : feedAgeMs <= FEED_AGE_OK_MS;
+      const dataHealth = resolveDataHealthSnapshot(
+        symbol,
+        Date.now(),
+        context.settings.riskMode
+      );
+      const feedAgeMs = dataHealth.feedAgeMs;
+      const feedAgeOk = dataHealth.feedAgeMs == null ? null : dataHealth.safe;
       const capacityStatus = getCapacityStatus({
         openPositionsTotal: context.openPositionsCount,
         maxPos: context.maxPositions,
@@ -7357,6 +7508,12 @@ export function useTradingBot(
           ttlMs: MAX_ORDERS_GATE_TTL_MS,
         });
       }
+      const dataGate = dataHealthGate(symbol, now, context.settings.riskMode);
+      appendTrace("DataHealth", dataGate);
+      if (!dataGate.ok) addBlockReason(dataGate.reason);
+      const protectionState = protectionGate();
+      appendTrace("ProtectionSL", protectionState);
+      if (!protectionState.ok) addBlockReason(protectionState.reason);
       if (
         context.settings.riskMode === "ai-matic-x" &&
         (decision as any)?.xContext?.riskOff
@@ -7730,6 +7887,9 @@ export function useTradingBot(
       isGateEnabled,
       resolveQualityScore,
       resolveSymbolState,
+      resolveDataHealthSnapshot,
+      dataHealthGate,
+      protectionGate,
       shouldEmitBlockLog,
     ]
   );
@@ -7831,6 +7991,13 @@ export function useTradingBot(
           );
           const sl = toNumber(p?.stopLoss ?? p?.sl);
           const tp = toNumber(p?.takeProfit ?? p?.tp);
+          if (Number.isFinite(sl) && sl > 0) {
+            plannedProtectionRef.current.set(symbol.toUpperCase(), {
+              sl,
+              setAt: now,
+            });
+            protectionRetryAtRef.current.delete(symbol.toUpperCase());
+          }
           const trailingActiveRaw = toNumber(
             p?.trailingActivePrice ?? p?.activePrice ?? p?.activationPrice
           );
@@ -9352,6 +9519,75 @@ export function useTradingBot(
     };
   }, [authToken, refreshFast, refreshSlow, syncTrailingProtection]);
 
+  useEffect(() => {
+    if (!authToken) return;
+    let alive = true;
+    const retryMissingSlProtection = async () => {
+      if (!alive) return;
+      const missing = positionsWithoutActiveSl();
+      if (missing.length === 0) return;
+      const now = Date.now();
+      for (const position of missing) {
+        const symbol = String(position.symbol ?? "").toUpperCase();
+        if (!symbol) continue;
+        const lastAttempt = protectionRetryAtRef.current.get(symbol) ?? 0;
+        if (now - lastAttempt < PROTECTION_RETRY_INTERVAL_MS) continue;
+        protectionRetryAtRef.current.set(symbol, now);
+        const sl = resolveProtectionRetryStop(position);
+        if (!Number.isFinite(sl) || sl <= 0) continue;
+        try {
+          await postJson("/protection", {
+            symbol,
+            sl,
+            positionIdx: Number.isFinite(position.positionIdx)
+              ? position.positionIdx
+              : undefined,
+          });
+          plannedProtectionRef.current.set(symbol, { sl, setAt: now });
+          const lastLog = protectionRetryLogRef.current.get(symbol) ?? 0;
+          if (now - lastLog >= PROTECTION_RETRY_LOG_TTL_MS) {
+            protectionRetryLogRef.current.set(symbol, now);
+            addLogEntries([
+              {
+                id: `protection:retry:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} PROTECTION_RETRY_SL ${formatNumber(sl, 6)}`,
+              },
+            ]);
+          }
+        } catch (err) {
+          const lastLog = protectionRetryLogRef.current.get(symbol) ?? 0;
+          if (now - lastLog >= PROTECTION_RETRY_LOG_TTL_MS) {
+            protectionRetryLogRef.current.set(symbol, now);
+            addLogEntries([
+              {
+                id: `protection:retry:error:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "ERROR",
+                message: `${symbol} PROTECTION_RETRY_SL failed: ${asErrorMessage(err)}`,
+              },
+            ]);
+          }
+        }
+      }
+    };
+    const id = setInterval(() => {
+      void retryMissingSlProtection();
+    }, PROTECTION_RETRY_INTERVAL_MS);
+    void retryMissingSlProtection();
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [
+    addLogEntries,
+    authToken,
+    positionsWithoutActiveSl,
+    postJson,
+    resolveProtectionRetryStop,
+  ]);
+
   async function autoTrade(signal: {
     symbol: Symbol;
     side: "Buy" | "Sell";
@@ -9851,8 +10087,12 @@ export function useTradingBot(
       }
 
       const rawSignal = decision?.signal ?? null;
-      const lastTick = symbolTickRef.current.get(symbol) ?? 0;
-      const feedAgeMs = lastTick > 0 ? Math.max(0, now - lastTick) : null;
+      const dataHealthSnapshot = resolveDataHealthSnapshot(
+        symbol,
+        now,
+        settingsRef.current.riskMode
+      );
+      const feedAgeMs = dataHealthSnapshot.feedAgeMs;
       const coreEval = isProProfile
         ? evaluateProGates(decision, rawSignal)
         : evaluateCoreV2(symbol as Symbol, decision, rawSignal, feedAgeMs);
@@ -10169,6 +10409,16 @@ export function useTradingBot(
           reason: "max orders",
           ttlMs: MAX_ORDERS_GATE_TTL_MS,
         });
+      }
+      const dataGate = dataHealthGate(symbol, now, context.settings.riskMode);
+      appendTrace("DataHealth", dataGate);
+      if (!dataGate.ok) {
+        entryBlockReasons.push(dataGate.reason);
+      }
+      const slProtectionGate = protectionGate();
+      appendTrace("ProtectionSL", slProtectionGate);
+      if (!slProtectionGate.ok) {
+        entryBlockReasons.push(slProtectionGate.reason);
       }
       if (entryBlockReasons.length > 0) {
         const profileLabel =
@@ -10787,6 +11037,11 @@ export function useTradingBot(
         return;
       }
 
+      plannedProtectionRef.current.set(String(symbol).toUpperCase(), {
+        sl: resolvedSl,
+        setAt: now,
+      });
+
       if (
         isAiMaticProfile &&
         aiMaticTargets &&
@@ -11207,6 +11462,7 @@ export function useTradingBot(
       closedPnlRecords,
       computeFixedSizing,
       computeNotionalForSignal,
+      dataHealthGate,
       evaluateAiMaticGates,
       evaluateAmdGates,
       evaluateChecklistPass,
@@ -11221,6 +11477,8 @@ export function useTradingBot(
       maybeRunAiMaticRetestFallback,
       postJson,
       queueCapacityRecheck,
+      protectionGate,
+      resolveDataHealthSnapshot,
       resolvePortfolioRegime,
       resolvePortfolioRiskScale,
       resolveH1M15TrendGate,
@@ -11264,6 +11522,9 @@ export function useTradingBot(
     partialExitRef.current.clear();
     proTargetsRef.current.clear();
     proPartialRef.current.clear();
+    plannedProtectionRef.current.clear();
+    protectionRetryAtRef.current.clear();
+    protectionRetryLogRef.current.clear();
     leverageBySymbolRef.current.clear();
     blockDecisionCooldownRef.current.clear();
     entryBlockFingerprintRef.current.clear();

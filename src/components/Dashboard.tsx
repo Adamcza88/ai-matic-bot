@@ -36,7 +36,15 @@ const RISK_PCT_BY_MODE = {
   "ai-matic-pro": 0.003,
 } as const;
 
-const HEALTH_OK_MS = 2_000;
+const DATA_HEALTH_LAG_FACTOR = 2;
+const FEED_TIMEFRAME_MS_BY_RISK_MODE = {
+  "ai-matic": 60_000,
+  "ai-matic-x": 60_000,
+  "ai-matic-amd": 60_000,
+  "ai-matic-olikella": 15 * 60_000,
+  "ai-matic-tree": 60_000,
+  "ai-matic-pro": 60_000,
+} as const;
 const MODE_OPTIONS: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
 
 function modeLabel(value: TradingMode) {
@@ -554,8 +562,20 @@ export default function Dashboard({
     if (mode !== TradingMode.AUTO_ON) return false;
     if (systemState.bybitStatus !== "Connected") return false;
     if (!Number.isFinite(feedStats.maxAge)) return false;
-    return (feedStats.maxAge as number) < HEALTH_OK_MS && feedStats.ok;
-  }, [feedStats.maxAge, feedStats.ok, mode, systemState.bybitStatus]);
+    const riskMode = bot.settings?.riskMode ?? "ai-matic";
+    const timeframeMs =
+      FEED_TIMEFRAME_MS_BY_RISK_MODE[
+        riskMode as keyof typeof FEED_TIMEFRAME_MS_BY_RISK_MODE
+      ] ?? 60_000;
+    const healthOkMs = timeframeMs * DATA_HEALTH_LAG_FACTOR;
+    return (feedStats.maxAge as number) <= healthOkMs && feedStats.ok;
+  }, [
+    bot.settings?.riskMode,
+    feedStats.maxAge,
+    feedStats.ok,
+    mode,
+    systemState.bybitStatus,
+  ]);
 
   const criticalByLoss = Number.isFinite(dailyPnl) && Number.isFinite(riskPerTradeUsd)
     ? (dailyPnl as number) <= -2 * (riskPerTradeUsd as number)
