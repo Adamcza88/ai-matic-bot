@@ -41,6 +41,15 @@ test("missing gate + WAITING context -> WAITING", () => {
   assert.equal(status, "WAITING");
 });
 
+test("pending gate + ok:false -> WAITING", () => {
+  const status = resolveGateDisplayStatus({
+    gate: { name: "AMD: Phase sequence", ok: false, pending: true },
+    enabled: true,
+    diag: { relayState: "WAITING", executionAllowed: null, signalActive: false },
+  });
+  assert.equal(status, "WAITING");
+});
+
 test("AMD-like empty gates -> all enabled profile gates WAITING", () => {
   const rows = buildGateDisplayRows({
     diag: { relayState: "WAITING", executionAllowed: null, signalActive: false, gates: [] },

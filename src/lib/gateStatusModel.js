@@ -12,6 +12,8 @@ const isWaitingContext = (diag) => {
 export const resolveGateDisplayStatus = ({ gate, enabled, diag, }) => {
     if (!enabled)
         return "DISABLED";
+    if (gate?.pending === true)
+        return "WAITING";
     if ((gate?.ok) === true)
         return "ALLOWED";
     if ((gate?.ok) === false)

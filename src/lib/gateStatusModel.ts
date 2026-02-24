@@ -33,6 +33,7 @@ export const resolveGateDisplayStatus = ({
   diag,
 }: ResolveGateDisplayStatusArgs): GateDisplayStatus => {
   if (!enabled) return "DISABLED";
+  if (gate?.pending === true) return "WAITING";
   if (gate?.ok === true) return "ALLOWED";
   if (gate?.ok === false) return "BLOCKED";
   if (isWaitingContext(diag)) return "WAITING";

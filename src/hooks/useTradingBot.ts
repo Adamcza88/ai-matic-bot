@@ -2252,7 +2252,7 @@ const resolveAiMaticEntryType = (args: {
   return { entryType: "LIMIT_MAKER_FIRST", allowMarket: false };
 };
 
-type AiMaticGate = { name: string; ok: boolean; detail?: string };
+type AiMaticGate = { name: string; ok: boolean; detail?: string; pending?: boolean };
 type AiMaticGateEval = {
   hardGates: AiMaticGate[];
   entryFactors: AiMaticGate[];
@@ -2588,20 +2588,114 @@ const evaluateAmdGatesCore = (args: {
   if (!amd) return empty;
   const target = amd.targets ?? null;
   const signalTp = toNumber(signal?.intent?.tp);
-  const targetValid =
+  const hasSignal = Boolean(signal);
+  const waitingMode = !hasSignal;
+  const phase = String(amd.phase ?? "NONE");
+  const kz = String(amd.killzoneName ?? "NONE");
+  const midnight = toNumber(amd.midnightOpen);
+  const asiaHigh = toNumber(amd.accumulationRange?.high);
+  const asiaLow = toNumber(amd.accumulationRange?.low);
+  const sweepLow = toNumber(amd.manipulation?.low);
+  const sweepHigh = toNumber(amd.manipulation?.high);
+  const tp1 = toNumber(target?.tp1);
+  const tp2 = toNumber(target?.tp2);
+  const baseTargetValid =
     amd.gates?.targetModelValid === true &&
-    Number.isFinite(target?.tp1) &&
-    Number.isFinite(target?.tp2) &&
+    Number.isFinite(tp1) &&
+    Number.isFinite(tp2);
+  const targetValid =
+    baseTargetValid &&
     Number.isFinite(signalTp) &&
     signalTp > 0;
+  const resolveDetail = (
+    ok: boolean,
+    pending: string,
+    blocked: string,
+    passed = "OK"
+  ) => {
+    if (ok) return passed;
+    return waitingMode ? pending : blocked;
+  };
   const gates: AiMaticGate[] = [
-    { name: "AMD: Phase sequence", ok: amd.gates?.phaseSequence === true },
-    { name: "AMD: Killzone active", ok: amd.gates?.killzoneActive === true },
-    { name: "AMD: Midnight open set", ok: amd.gates?.midnightOpenSet === true },
-    { name: "AMD: Asia range valid", ok: amd.gates?.asiaRangeValid === true },
-    { name: "AMD: Liquidity sweep", ok: amd.gates?.liquiditySweep === true },
-    { name: "AMD: Inversion FVG confirm", ok: amd.gates?.inversionFvgConfirm === true },
-    { name: "AMD: Target model valid", ok: targetValid },
+    {
+      name: "AMD: Phase sequence",
+      ok: amd.gates?.phaseSequence === true,
+      pending: waitingMode && amd.gates?.phaseSequence !== true,
+      detail: resolveDetail(
+        amd.gates?.phaseSequence === true,
+        `phase ${phase} -> čeká DISTRIBUTION`,
+        `phase ${phase} není DISTRIBUTION`
+      ),
+    },
+    {
+      name: "AMD: Killzone active",
+      ok: amd.gates?.killzoneActive === true,
+      pending: waitingMode && amd.gates?.killzoneActive !== true,
+      detail: resolveDetail(
+        amd.gates?.killzoneActive === true,
+        `killzone ${kz} -> čeká LONDON/NY_AM`,
+        `killzone ${kz} mimo LONDON/NY_AM`
+      ),
+    },
+    {
+      name: "AMD: Midnight open set",
+      ok: amd.gates?.midnightOpenSet === true,
+      pending: waitingMode && amd.gates?.midnightOpenSet !== true,
+      detail: resolveDetail(
+        amd.gates?.midnightOpenSet === true,
+        "čeká midnight open",
+        "midnight open není validní",
+        Number.isFinite(midnight) ? `midnight ${formatNumber(midnight, 4)}` : "OK"
+      ),
+    },
+    {
+      name: "AMD: Asia range valid",
+      ok: amd.gates?.asiaRangeValid === true,
+      pending: waitingMode && amd.gates?.asiaRangeValid !== true,
+      detail: resolveDetail(
+        amd.gates?.asiaRangeValid === true,
+        "čeká validní Asia range",
+        "Asia range není validní",
+        Number.isFinite(asiaLow) && Number.isFinite(asiaHigh)
+          ? `Asia ${formatNumber(asiaLow, 4)}-${formatNumber(asiaHigh, 4)}`
+          : "OK"
+      ),
+    },
+    {
+      name: "AMD: Liquidity sweep",
+      ok: amd.gates?.liquiditySweep === true,
+      pending: waitingMode && amd.gates?.liquiditySweep !== true,
+      detail: resolveDetail(
+        amd.gates?.liquiditySweep === true,
+        "čeká liquidity sweep",
+        "liquidity sweep nepotvrzen",
+        Number.isFinite(sweepLow) && Number.isFinite(sweepHigh)
+          ? `sweep ${formatNumber(sweepLow, 4)}-${formatNumber(sweepHigh, 4)}`
+          : "OK"
+      ),
+    },
+    {
+      name: "AMD: Inversion FVG confirm",
+      ok: amd.gates?.inversionFvgConfirm === true,
+      pending: waitingMode && amd.gates?.inversionFvgConfirm !== true,
+      detail: resolveDetail(
+        amd.gates?.inversionFvgConfirm === true,
+        "čeká inversion FVG potvrzení",
+        "inversion FVG nepotvrzen"
+      ),
+    },
+    {
+      name: "AMD: Target model valid",
+      ok: targetValid,
+      pending: waitingMode && !targetValid,
+      detail: targetValid
+        ? `TP1 ${formatNumber(tp1, 4)} · TP2 ${formatNumber(tp2, 4)}`
+        : waitingMode
+          ? baseTargetValid
+            ? "čeká finální signal TP"
+            : "čeká validní target model"
+          : "target model není validní",
+    },
   ];
   return {
     gates,
@@ -7104,13 +7198,18 @@ export function useTradingBot(
           ? evaluateAiMaticGates(symbol, decision, signalForEval)
           : null;
       const amdEval =
-        isAmdProfile && signal ? evaluateAmdGates(symbol, decision, signal) : null;
+        isAmdProfile ? evaluateAmdGates(symbol, decision, signal) : null;
       const quality = resolveQualityScore(symbol as Symbol, decision, signal, feedAgeMs);
       const now = Number.isFinite(lastScanTs) ? lastScanTs : Date.now();
 
-      const gates: { name: string; ok: boolean; detail?: string }[] = [];
-      const addGate = (name: string, ok: boolean, detail?: string) => {
-        gates.push({ name, ok, detail });
+      const gates: { name: string; ok: boolean; detail?: string; pending?: boolean }[] = [];
+      const addGate = (
+        name: string,
+        ok: boolean,
+        detail?: string,
+        pending?: boolean
+      ) => {
+        gates.push({ name, ok, detail, pending });
       };
 
       const correlation = resolveCorrelationGate(symbol, now, signal);
@@ -7305,7 +7404,9 @@ export function useTradingBot(
         }
       } else if (isAmdProfile) {
         if (amdEval) {
-          amdEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
+          amdEval.gates.forEach((gate) =>
+            addGate(gate.name, gate.ok, gate.detail, gate.pending)
+          );
         }
       } else if (isScalpProfile) {
         addGate(

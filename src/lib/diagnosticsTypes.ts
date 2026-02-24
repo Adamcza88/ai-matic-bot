@@ -2,6 +2,7 @@ export type DiagnosticGate = {
   name: string;
   ok: boolean;
   detail?: string;
+  pending?: boolean;
 };
 
 export type GateDisplayStatus =
