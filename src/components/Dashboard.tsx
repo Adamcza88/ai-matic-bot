@@ -897,6 +897,13 @@ export default function Dashboard({
                 riskExposureUsd={riskExposureUsd}
                 riskExposureLimitUsd={riskExposureLimitUsd}
               />
+              <GateStatusPanel
+                selectedSymbol={selectedSignalSymbol}
+                scanDiagnostics={scanDiagnostics}
+                scanLoaded={scanLoaded}
+                profileGateNames={checklistGateNames}
+                checklistEnabled={checklistEnabled}
+              />
               <div className="grid grid-cols-12 gap-6">
                 <div className="col-span-12 xl:col-span-6">
                   <OverviewTab
@@ -925,13 +932,6 @@ export default function Dashboard({
                   />
                 </div>
               </div>
-              <GateStatusPanel
-                selectedSymbol={selectedSignalSymbol}
-                scanDiagnostics={scanDiagnostics}
-                scanLoaded={scanLoaded}
-                profileGateNames={checklistGateNames}
-                checklistEnabled={checklistEnabled}
-              />
               <RecentEventsPanel
                 logEntries={logEntries}
                 logsLoaded={logsLoaded}
