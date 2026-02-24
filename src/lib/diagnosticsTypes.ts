@@ -4,6 +4,19 @@ export type DiagnosticGate = {
   detail?: string;
 };
 
+export type GateDisplayStatus =
+  | "ALLOWED"
+  | "WAITING"
+  | "BLOCKED"
+  | "DISABLED";
+
+export type GateDisplayRow = {
+  name: string;
+  status: GateDisplayStatus;
+  detail: string;
+  enabled: boolean;
+};
+
 export type SymbolDiagnostic = {
   executionAllowed?: boolean;
   relayState?: "READY" | "BLOCKED" | "PAUSED" | "WAITING" | "IDLE";

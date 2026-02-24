@@ -14,6 +14,7 @@ import LogsPanel from "./dashboard/LogsPanel";
 import StrategyProfileMini from "./dashboard/StrategyProfileMini";
 import RecentEventsPanel from "./dashboard/RecentEventsPanel";
 import RiskBlockPanel from "./dashboard/RiskBlockPanel";
+import GateStatusPanel from "./dashboard/GateStatusPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
 import type { DiagnosticGate, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
 import { UI_COPY } from "@/lib/uiCopy";
@@ -924,6 +925,13 @@ export default function Dashboard({
                   />
                 </div>
               </div>
+              <GateStatusPanel
+                selectedSymbol={selectedSignalSymbol}
+                scanDiagnostics={scanDiagnostics}
+                scanLoaded={scanLoaded}
+                profileGateNames={checklistGateNames}
+                checklistEnabled={checklistEnabled}
+              />
               <RecentEventsPanel
                 logEntries={logEntries}
                 logsLoaded={logsLoaded}

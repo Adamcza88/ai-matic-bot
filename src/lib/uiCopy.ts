@@ -25,6 +25,14 @@ export const UI_COPY = {
     whyNoTrade: "Proč se teď neobchoduje",
     signalsSnapshot: "Přehled signálů",
     signalDetail: "Detail signálu",
+    gateStatus: {
+      ALLOWED: "Povolený",
+      WAITING: "Čeká",
+      BLOCKED: "Blokovaný",
+      DISABLED: "Vypnutý",
+      waitingDetail: "čeká na vyhodnocení gate",
+      noDetail: "bez detailu",
+    },
   },
   statusBar: {
     demo: "Demo",
@@ -59,4 +67,3 @@ export const UI_COPY = {
     updated: "Aktualizováno",
   },
 } as const;
-
