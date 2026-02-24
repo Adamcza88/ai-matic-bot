@@ -27,6 +27,7 @@ type OrdersPanelProps = {
 };
 
 type FilterMode = "all" | "symbol" | "last1h";
+const FILLS_PAGE_SIZE = 10;
 
 function parseTimestamp(value?: string) {
   if (!value) return NaN;
@@ -103,6 +104,7 @@ export default function OrdersPanel({
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [closingOrderId, setClosingOrderId] = useState<string | null>(null);
+  const [fillsPage, setFillsPage] = useState(1);
   const showActions = allowCancel !== false;
 
   const symbolOptions = useMemo(() => {
@@ -147,6 +149,37 @@ export default function OrdersPanel({
       return true;
     });
   }, [trades, filterMode, selectedSymbol]);
+
+  const sortedTrades = useMemo(() => {
+    return [...filteredTrades].sort((a, b) => {
+      const aTs = parseTimestamp(a.time);
+      const bTs = parseTimestamp(b.time);
+      const aValid = Number.isFinite(aTs);
+      const bValid = Number.isFinite(bTs);
+      if (aValid && bValid && aTs !== bTs) return bTs - aTs;
+      if (aValid && !bValid) return -1;
+      if (!aValid && bValid) return 1;
+      return String(b.id).localeCompare(String(a.id));
+    });
+  }, [filteredTrades]);
+
+  const fillsPageCount = Math.max(
+    1,
+    Math.ceil(sortedTrades.length / FILLS_PAGE_SIZE)
+  );
+  const fillsPageStart = (fillsPage - 1) * FILLS_PAGE_SIZE;
+  const pagedTrades = useMemo(
+    () => sortedTrades.slice(fillsPageStart, fillsPageStart + FILLS_PAGE_SIZE),
+    [fillsPageStart, sortedTrades]
+  );
+
+  useEffect(() => {
+    setFillsPage(1);
+  }, [filterMode, selectedSymbol]);
+
+  useEffect(() => {
+    setFillsPage((prev) => Math.min(prev, fillsPageCount));
+  }, [fillsPageCount]);
 
   const canCancelOrder = (order: TestnetOrder) => {
     const status = String(order.status ?? "").trim().toLowerCase();
@@ -367,51 +400,89 @@ export default function OrdersPanel({
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
             Načítám filly…
           </div>
-        ) : filteredTrades.length === 0 ? (
+        ) : sortedTrades.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
             Zatím bez fillů.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm lm-table dm-table">
-              <thead className="text-xs text-muted-foreground">
-                <tr className="border-b border-border/60">
-                  <th className="py-2 text-left font-medium">Symbol</th>
-                  <th className="py-2 text-left font-medium">Směr</th>
-                  <th className="py-2 text-right font-medium">Objem</th>
-                  <th className="py-2 text-right font-medium">Cena</th>
-                  <th className="py-2 text-right font-medium">Poplatek</th>
-                  <th className="py-2 text-right font-medium">PnL</th>
-                  <th className="py-2 text-right font-medium">Čas</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTrades.map((trade) => (
-                  <tr key={trade.id} className="border-b border-border/40 lm-table-row">
-                    <td className="py-3 font-mono">{trade.symbol}</td>
-                    <td className="py-3">
-                      <Badge
-                        variant="outline"
-                        className={
-                          trade.side === "Buy"
-                            ? "border-emerald-500/50 text-emerald-400 dm-status-pass"
-                            : "border-red-500/50 text-red-400 dm-status-sell"
-                        }
-                      >
-                        {trade.side}
-                      </Badge>
-                    </td>
-                    <td className="py-3 text-right font-mono tabular-nums">{formatQty(trade.qty)}</td>
-                    <td className="py-3 text-right font-mono tabular-nums">{formatPrice(trade.price)}</td>
-                    <td className="py-3 text-right font-mono tabular-nums">{formatPrice(trade.fee)}</td>
-                    <td className="py-3 text-right font-mono tabular-nums text-muted-foreground">—</td>
-                    <td className="py-3 text-right text-xs tabular-nums text-muted-foreground">
-                      {formatOrderTime(trade.time)}
-                    </td>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                Stránka {fillsPage}/{fillsPageCount}
+              </span>
+              <span>
+                Zobrazeno {fillsPageStart + 1}-
+                {Math.min(fillsPageStart + FILLS_PAGE_SIZE, sortedTrades.length)} z{" "}
+                {sortedTrades.length}
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-sm lm-table dm-table">
+                <thead className="text-xs text-muted-foreground">
+                  <tr className="border-b border-border/60">
+                    <th className="py-2 text-left font-medium">Symbol</th>
+                    <th className="py-2 text-left font-medium">Směr</th>
+                    <th className="py-2 text-right font-medium">Objem</th>
+                    <th className="py-2 text-right font-medium">Cena</th>
+                    <th className="py-2 text-right font-medium">Poplatek</th>
+                    <th className="py-2 text-right font-medium">PnL</th>
+                    <th className="py-2 text-right font-medium">Čas</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {pagedTrades.map((trade) => (
+                    <tr key={trade.id} className="border-b border-border/40 lm-table-row">
+                      <td className="py-3 font-mono">{trade.symbol}</td>
+                      <td className="py-3">
+                        <Badge
+                          variant="outline"
+                          className={
+                            trade.side === "Buy"
+                              ? "border-emerald-500/50 text-emerald-400 dm-status-pass"
+                              : "border-red-500/50 text-red-400 dm-status-sell"
+                          }
+                        >
+                          {trade.side}
+                        </Badge>
+                      </td>
+                      <td className="py-3 text-right font-mono tabular-nums">{formatQty(trade.qty)}</td>
+                      <td className="py-3 text-right font-mono tabular-nums">{formatPrice(trade.price)}</td>
+                      <td className="py-3 text-right font-mono tabular-nums">{formatPrice(trade.fee)}</td>
+                      <td className="py-3 text-right font-mono tabular-nums text-muted-foreground">—</td>
+                      <td className="py-3 text-right text-xs tabular-nums text-muted-foreground">
+                        {formatOrderTime(trade.time)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {fillsPageCount > 1 ? (
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-3 text-xs dm-button-control"
+                  onClick={() => setFillsPage((prev) => Math.max(1, prev - 1))}
+                  disabled={fillsPage <= 1}
+                >
+                  Předchozí
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-3 text-xs dm-button-control"
+                  onClick={() =>
+                    setFillsPage((prev) => Math.min(fillsPageCount, prev + 1))
+                  }
+                  disabled={fillsPage >= fillsPageCount}
+                >
+                  Další
+                </Button>
+              </div>
+            ) : null}
           </div>
         )}
       </Panel>
