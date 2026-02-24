@@ -91,6 +91,7 @@ const FEED_TIMEFRAME_MS_BY_RISK_MODE: Record<AISettings["riskMode"], number> = {
 const PROTECTION_RETRY_INTERVAL_MS = 5_000;
 const PROTECTION_RETRY_LOG_TTL_MS = 30_000;
 const PROTECTION_ATTACH_GRACE_MS = 8_000;
+const PROTECTION_SYNC_STALE_MS = 4_000;
 const MIN_POSITION_NOTIONAL_USD = 5;
 const MAX_POSITION_NOTIONAL_USD = 50000;
 const DEFAULT_TESTNET_PER_TRADE_USD = 50;
@@ -4182,15 +4183,11 @@ const TERMINAL_ORDER_STATUS_TOKENS = [
   "deactivat",
   "expire",
 ];
-const ACTIVE_ENTRY_ORDER_STATUS_TOKENS = [
+const ACTIVE_EXCHANGE_ORDER_STATUS_KEYS = new Set([
   "new",
-  "open",
-  "partially",
-  "created",
-  "trigger",
-  "active",
   "untriggered",
-];
+  "partiallyfilled",
+]);
 const PROTECTION_ORDER_FILTERS = new Set(["tpsl", "tpslorder"]);
 const PROTECTION_STOP_TYPES = new Set([
   "takeprofit",
@@ -4206,6 +4203,16 @@ function normalizeOrderStatus(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function normalizeOrderStatusKey(value: unknown) {
+  return normalizeOrderStatus(value).replace(/[^a-z]/g, "");
+}
+
+function isExchangeActiveOrderStatus(value: unknown) {
+  const key = normalizeOrderStatusKey(value);
+  if (!key) return false;
+  return ACTIVE_EXCHANGE_ORDER_STATUS_KEYS.has(key);
+}
+
 function isOrderStatusActive(value: unknown) {
   const status = normalizeOrderStatus(value);
   if (!status) return true;
@@ -4213,10 +4220,7 @@ function isOrderStatusActive(value: unknown) {
 }
 
 function isActiveEntryOrderStatus(value: unknown) {
-  const status = normalizeOrderStatus(value);
-  if (!status) return false;
-  if (!isOrderStatusActive(status)) return false;
-  return ACTIVE_ENTRY_ORDER_STATUS_TOKENS.some((token) => status.includes(token));
+  return isExchangeActiveOrderStatus(value);
 }
 
 function isProtectionOrderLike(order: any): boolean {
@@ -4296,7 +4300,7 @@ function resolveProtectionFromOrders(args: {
     if (!isProtectionOrderLike(order)) continue;
     const status =
       order?.orderStatus ?? order?.order_status ?? order?.status ?? "";
-    if (!isOrderStatusActive(status)) continue;
+    if (!isExchangeActiveOrderStatus(status)) continue;
     const side = String(order?.side ?? "").toLowerCase();
     if (side === "buy" || side === "sell") {
       if (side !== closeSide) continue;
@@ -4826,6 +4830,7 @@ export function useTradingBot(
   const positionStateSignatureRef = useRef("");
   const limitSnapshotIdRef = useRef(0);
   const positionSyncRef = useRef({ lastEventAt: 0, lastReconcileAt: 0 });
+  const lastAtomicSyncAtRef = useRef(0);
   const trailWatermarkRef = useRef<
     Map<string, { high: number; low: number; updatedAt: number }>
   >(new Map());
@@ -5282,6 +5287,14 @@ export function useTradingBot(
 
   const positionsWithoutActiveSl = useCallback(() => {
     const now = Date.now();
+    const lastAtomicSyncAt = lastAtomicSyncAtRef.current;
+    if (
+      !Number.isFinite(lastAtomicSyncAt) ||
+      lastAtomicSyncAt <= 0 ||
+      now - lastAtomicSyncAt > PROTECTION_SYNC_STALE_MS
+    ) {
+      return [];
+    }
     return positionsRef.current.filter((position) => {
       const size = toNumber(position?.size ?? position?.qty);
       if (!Number.isFinite(size) || size <= 0) return false;
@@ -8171,6 +8184,9 @@ export function useTradingBot(
       ordersRes.status === "fulfilled"
         ? extractList(ordersRes.value)
         : [];
+    if (positionsRes.status === "fulfilled" && ordersRes.status === "fulfilled") {
+      lastAtomicSyncAtRef.current = now;
+    }
     const entryFallbackByKey =
       ordersSnapshot.length > 0
         ? buildEntryFallback(ordersSnapshot)
@@ -11779,6 +11795,7 @@ export function useTradingBot(
     positionStateSignatureRef.current = "";
     positionSnapshotIdRef.current = 0;
     positionSyncRef.current = { lastEventAt: 0, lastReconcileAt: 0 };
+    lastAtomicSyncAtRef.current = 0;
     trailWatermarkRef.current.clear();
     decisionRef.current = {};
     portfolioRegimeRef.current = {

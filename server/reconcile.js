@@ -40,16 +40,15 @@ function normalizePosition(bPos, orders, instrument) {
         const ro = o.reduceOnly ?? o.reduce_only ?? o.reduce;
         return ro === true || ro === "true";
     });
+    const ACTIVE_STATUS_KEYS = new Set(["new", "untriggered", "partiallyfilled"]);
+    const normalizeStatusKey = (value) =>
+        String(value || "")
+            .toLowerCase()
+            .replace(/[^a-z]/g, "");
     const isActiveOrder = (o) => {
-        const status = String(o.orderStatus || o.order_status || o.status || "").toLowerCase();
-        if (!status) return true;
-        return !(
-            status.includes("filled") ||
-            status.includes("cancel") ||
-            status.includes("reject") ||
-            status.includes("deactivat") ||
-            status.includes("expire")
-        );
+        const key = normalizeStatusKey(o.orderStatus || o.order_status || o.status || "");
+        if (!key) return false;
+        return ACTIVE_STATUS_KEYS.has(key);
     };
     const stopOrders = reduceOnlyOrders.filter((o) => {
         const filter = String(o.orderFilter || "").toLowerCase();
