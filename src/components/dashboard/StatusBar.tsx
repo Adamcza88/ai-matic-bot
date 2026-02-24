@@ -16,18 +16,7 @@ type StatusBarProps = {
   dailyPnl?: number;
   openPositionsPnl?: number;
   totalCapital?: number;
-  capitalRange?: {
-    min: number;
-    max: number;
-  };
 };
-
-function formatMoneyRange(range?: { min: number; max: number }) {
-  if (!range) return "—";
-  if (!Number.isFinite(range.min) || !Number.isFinite(range.max)) return "—";
-  if (Math.abs(range.min - range.max) < 0.005) return formatMoney(range.min);
-  return `${formatMoney(range.min)} – ${formatMoney(range.max)}`;
-}
 
 function pnlTone(value?: number) {
   if (!Number.isFinite(value)) return "text-[#D32F2F]";
@@ -48,7 +37,6 @@ export default function StatusBar({
   dailyPnl,
   openPositionsPnl,
   totalCapital,
-  capitalRange,
 }: StatusBarProps) {
   const previousHealthRef = useRef<boolean | null>(null);
   const [healthFxClass, setHealthFxClass] = useState("");
@@ -147,9 +135,9 @@ export default function StatusBar({
           <div className="text-right">
             <div className="text-xs uppercase tracking-wide text-muted-foreground">Celkový kapitál</div>
             <div className="mt-1 text-[30px] font-semibold tabular-nums leading-none text-foreground">
-              {formatMoneyRange(capitalRange) !== "—" ? formatMoneyRange(capitalRange) : formatMoney(totalCapital)}
+              {formatMoney(totalCapital)}
             </div>
-            <div className="mt-2 text-xs text-muted-foreground">Aktuální zůstatek účtu</div>
+            <div className="mt-2 text-xs text-muted-foreground">Přímý stav účtu Bybit (total equity)</div>
           </div>
         </div>
       </div>

@@ -468,8 +468,9 @@ export default function Dashboard({
   const openPositionsCount = positionsLoaded ? activePositions.length : 0;
   const openOrdersCount = ordersLoaded ? exchangeOrders.length : 0;
   const maxOpenOrders = bot.settings?.maxOpenOrders ?? 0;
-  const totalCapital =
-    portfolioState?.totalCapital ?? portfolioState?.totalEquity;
+  const totalCapital = Number.isFinite(portfolioState?.totalEquity)
+    ? portfolioState?.totalEquity
+    : portfolioState?.totalCapital;
   const allocated = portfolioState?.allocatedCapital;
   const riskPerTradePct = profileMeta.riskPct;
   const riskPerTradeUsd =
@@ -494,17 +495,6 @@ export default function Dashboard({
     : Number.isFinite(riskPerTradeUsd)
       ? (riskPerTradeUsd as number) * Math.max(1, maxOpenPositions)
     : Number.NaN;
-  const capitalRange = useMemo(() => {
-    if (!Number.isFinite(totalCapital)) return undefined;
-    if (!Number.isFinite(openPositionsPnl)) return undefined;
-    if (!openPositionsPnlRange) return undefined;
-    const realizedBase = (totalCapital as number) - (openPositionsPnl as number);
-    return {
-      min: realizedBase + openPositionsPnlRange.min,
-      max: realizedBase + openPositionsPnlRange.max,
-    };
-  }, [openPositionsPnl, openPositionsPnlRange, totalCapital]);
-
   const blockedSignalsCount = useMemo(() => {
     if (!scanDiagnostics) return 0;
     return Object.values(scanDiagnostics).filter((diag: SymbolDiagnostic) => {
@@ -739,7 +729,6 @@ export default function Dashboard({
         dailyPnl={dailyPnl}
         openPositionsPnl={openPositionsPnl}
         totalCapital={totalCapital}
-        capitalRange={capitalRange}
       />
 
       <Tabs
@@ -887,7 +876,6 @@ export default function Dashboard({
           gatesTotal={gateStats.total}
           blockedSignals={blockedSignalsCount}
           totalCapital={totalCapital}
-          capitalRange={capitalRange}
           allocated={allocated}
           dailyPnl={dailyPnl}
           dailyPnlBreakdown={dailyPnlBreakdown}
