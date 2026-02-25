@@ -462,9 +462,7 @@ export default function Dashboard({
     setSelectedSignalSymbol(blocked ?? allowedSymbols[0]);
   }, [allowedSymbols, scanDiagnostics, selectedSignalSymbol]);
 
-  const rawMaxOpenPositions =
-    portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
-  const maxOpenPositions = rawMaxOpenPositions;
+  const maxOpenPositions = bot.settings?.maxOpenPositions ?? 3;
   const openPositionsCount = positionsLoaded ? activePositions.length : 0;
   const openOrdersCount = ordersLoaded ? exchangeOrders.length : 0;
   const maxOpenOrders = bot.settings?.maxOpenOrders ?? 0;
