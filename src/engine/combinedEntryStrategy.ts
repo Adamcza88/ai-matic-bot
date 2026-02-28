@@ -3,7 +3,7 @@
 // Implementuje dopady při chybějících modulech a vrací rozhodnutí + bloky.
 
 export type Mode = "SCALP" | "INTRADAY" | "SWING";
-export type Side = "LONG" | "SHORT";
+export type Side = "long" | "short";
 
 export type EntryType =
   | "REJECTION_ZONE"     // LVN/OB rejekce
@@ -93,30 +93,35 @@ export function decideCombinedEntry(
 
   // 1) SWING má prioritu, pokud je potvrzená HTF reakce.
   if (s.htfReactionConfirmed) {
-    return {
-      ok: true,
-      mode: "SWING",
-      side: inferSideFromBOS(s),
-      entryType: "HTF_REACTION_ONLY",
-      tfContext: "1h",
-      tfEntry: "5m",
-      slRule: "UNDER_SWING",
-      tpPlan: { tp1: "SWING_PERCENT_4_6" },
-      trailing: "NONE",
-      blocks,
-    };
+    const swingSide = inferSideFromBOS(s);
+    if (swingSide) {
+      return {
+        ok: true,
+        mode: "SWING",
+        side: swingSide,
+        entryType: "HTF_REACTION_ONLY",
+        tfContext: "1h",
+        tfEntry: "5m",
+        slRule: "UNDER_SWING",
+        tpPlan: { tp1: "SWING_PERCENT_4_6" },
+        trailing: "NONE",
+        blocks,
+      };
+    }
   }
 
   // 2) INTRADAY, pokud je struktura čitelná
   if (s.structureReadable) {
+    const bosSide = inferSideFromBOS(s);
+
     if (!deps.hasOB && !s.returnToLevel) {
       return noTrade([...blocks, BLOCK("INTRADAY_BLOCK:OB_MISSING_NEEDS_RETURN")]);
     }
-    if (deps.hasOB && s.touchOB) {
+    if (deps.hasOB && s.touchOB && bosSide) {
       return {
         ok: true,
         mode: "INTRADAY",
-        side: inferSideFromBOS(s),
+        side: bosSide,
         entryType: "OB_RETURN",
         tfContext: "1h",
         tfEntry: "5m",
@@ -130,7 +135,6 @@ export function decideCombinedEntry(
       };
     }
 
-    const bosSide = inferSideFromBOS(s);
     const canUseTrap = deps.hasTrap && s.trapReaction;
 
     if (bosSide && (s.bosUp || s.bosDown) && s.returnToLevel) {
@@ -180,7 +184,7 @@ export function decideCombinedEntry(
 
   const scalpSide = inferSideFromBOS(s);
 
-  if (deps.hasVP && s.rejectionInLVN) {
+  if (deps.hasVP && s.rejectionInLVN && scalpSide) {
     return {
       ok: true,
       mode: "SCALP",
@@ -195,7 +199,7 @@ export function decideCombinedEntry(
     };
   }
 
-  if (deps.hasOB && s.rejectionInOB) {
+  if (deps.hasOB && s.rejectionInOB && scalpSide) {
     return {
       ok: true,
       mode: "SCALP",
@@ -210,7 +214,7 @@ export function decideCombinedEntry(
     };
   }
 
-  if ((s.bosUp || s.bosDown) && s.returnToLevel) {
+  if ((s.bosUp || s.bosDown) && s.returnToLevel && scalpSide) {
     return {
       ok: true,
       mode: "SCALP",
@@ -244,7 +248,7 @@ function noTrade(blocks: string[]): StrategyDecision {
 }
 
 function inferSideFromBOS(s: MarketSignals): Side | null {
-  if (s.bosUp && !s.bosDown) return "LONG";
-  if (s.bosDown && !s.bosUp) return "SHORT";
+  if (s.bosUp && !s.bosDown) return "long";
+  if (s.bosDown && !s.bosUp) return "short";
   return null;
 }

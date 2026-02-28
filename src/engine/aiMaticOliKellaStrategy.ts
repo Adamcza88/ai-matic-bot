@@ -143,7 +143,7 @@ function detectBaseNBreak(args: {
     const nearEma = base.every((bar, idx) => {
       const zoneLow = Math.min(baseEma10[idx], baseEma20[idx]) * 0.98;
       const zoneHigh = Math.max(baseEma10[idx], baseEma20[idx]) * 1.02;
-      return bar.close >= zoneLow && bar.close <= zoneHigh * 1.015;
+      return bar.close >= zoneLow && bar.close <= zoneHigh;
     });
     if (!nearEma) continue;
     const breakoutOk =
@@ -267,8 +267,9 @@ function detectEmaCrossback(args: {
   const zoneTouches = lookback
     .map((bar, idx) => {
       const sourceIdx = last - 8 + idx;
-      const zoneLow = Math.min(ema10[sourceIdx], ema20[sourceIdx]) * 0.997;
-      const zoneHigh = Math.max(ema10[sourceIdx], ema20[sourceIdx]) * 1.003;
+      // Relaxed from 0.3% to 0.6% to catch near-miss pullbacks
+      const zoneLow = Math.min(ema10[sourceIdx], ema20[sourceIdx]) * 0.994;
+      const zoneHigh = Math.max(ema10[sourceIdx], ema20[sourceIdx]) * 1.006;
       const touched = bar.low <= zoneHigh && bar.high >= zoneLow;
       return { touched, bar };
     })
