@@ -141,8 +141,8 @@ function detectBaseNBreak(args: {
     const rangePct = safeRatio(baseHigh - baseLow, mean(closes));
     if (!Number.isFinite(rangePct) || rangePct > 0.08) continue;
     const nearEma = base.every((bar, idx) => {
-      const zoneLow = Math.min(baseEma10[idx], baseEma20[idx]) * 0.99;
-      const zoneHigh = Math.max(baseEma10[idx], baseEma20[idx]) * 1.01;
+      const zoneLow = Math.min(baseEma10[idx], baseEma20[idx]) * 0.98;
+      const zoneHigh = Math.max(baseEma10[idx], baseEma20[idx]) * 1.02;
       return bar.close >= zoneLow && bar.close <= zoneHigh * 1.015;
     });
     if (!nearEma) continue;
