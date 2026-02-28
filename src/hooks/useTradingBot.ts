@@ -248,7 +248,7 @@ const SCALP_HTF_NEAR_ATR = 0.6;
 const NONSCALP_PARTIAL_TAKE_R = 1.0;
 const NONSCALP_PARTIAL_FRACTION = 0.35;
 const NONSCALP_PARTIAL_COOLDOWN_MS = 60_000;
-const AI_MATIC_HARD_MIN = 4;
+const AI_MATIC_HARD_MIN = 3;
 const AI_MATIC_HARD_TOTAL = 4;
 const AI_MATIC_ENTRY_FACTOR_MIN = 3;
 const AI_MATIC_ENTRY_FACTOR_TOTAL = 4;
@@ -7806,7 +7806,7 @@ export function useTradingBot(
         if (aiMaticEval) {
           const hardOkCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
           addGate(
-            "Hard: ALL 4",
+            "Hard: 3/4 validní pro ENTRY",
             hardOkCount >= AI_MATIC_HARD_MIN,
             `${hardOkCount}/${AI_MATIC_HARD_TOTAL}`
           );
@@ -7955,7 +7955,7 @@ export function useTradingBot(
         entryGateRules = aiMaticEval
           ? [
               {
-                name: "Hard: ALL 4",
+                name: "Hard: 3/4 validní pro ENTRY",
                 passed: aiMaticEval.hardPass,
               },
               {
@@ -7968,7 +7968,7 @@ export function useTradingBot(
               },
             ]
           : [
-              { name: "Hard: ALL 4", passed: false, pending: true },
+              { name: "Hard: 3/4 validní pro ENTRY", passed: false, pending: true },
               { name: "Entry: 3 of 4", passed: false, pending: true },
               { name: "Checklist: 5 of 8", passed: false, pending: true },
             ];

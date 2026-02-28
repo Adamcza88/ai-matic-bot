@@ -116,7 +116,7 @@ const SCALP_FIB_TOL_PCT = 0.0005;
 const NONSCALP_PARTIAL_TAKE_R = 1.0;
 const NONSCALP_PARTIAL_FRACTION = 0.35;
 const NONSCALP_PARTIAL_COOLDOWN_MS = 60_000;
-const AI_MATIC_HARD_MIN = 4;
+const AI_MATIC_HARD_MIN = 3;
 const AI_MATIC_HARD_TOTAL = 4;
 const AI_MATIC_ENTRY_FACTOR_MIN = 3;
 const AI_MATIC_ENTRY_FACTOR_TOTAL = 4;
@@ -3564,7 +3564,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (isAiMaticProfile) {
             if (aiMaticEval) {
                 const hardOkCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
-                addGate("Hard: ALL 4", hardOkCount >= AI_MATIC_HARD_MIN, `${hardOkCount}/${AI_MATIC_HARD_TOTAL}`);
+                addGate("Hard: 3/4 validní pro ENTRY", hardOkCount >= AI_MATIC_HARD_MIN, `${hardOkCount}/${AI_MATIC_HARD_TOTAL}`);
                 const entryOkCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
                 addGate("Entry: 3 of 4", entryOkCount >= AI_MATIC_ENTRY_FACTOR_MIN, `${entryOkCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL}`);
                 const checklistOkCount = aiMaticEval.checklist.filter((g) => g.ok).length;
@@ -3670,12 +3670,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (isAiMaticProfile) {
             entryGateRules = aiMaticEval
                 ? [
-                    { name: "Hard: ALL 4", passed: aiMaticEval.hardPass },
+                    { name: "Hard: 3/4 validní pro ENTRY", passed: aiMaticEval.hardPass },
                     { name: "Entry: 3 of 4", passed: aiMaticEval.entryFactorsPass },
                     { name: "Checklist: 5 of 8", passed: aiMaticEval.checklistPass },
                 ]
                 : [
-                    { name: "Hard: ALL 4", passed: false, pending: true },
+                    { name: "Hard: 3/4 validní pro ENTRY", passed: false, pending: true },
                     { name: "Entry: 3 of 4", passed: false, pending: true },
                     { name: "Checklist: 5 of 8", passed: false, pending: true },
                 ];

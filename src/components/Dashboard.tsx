@@ -292,7 +292,7 @@ export default function Dashboard({
       "Exec allowed": false,
     };
     const aiMatic = {
-      "Hard: 3 of 4": true,
+      "Hard: 3/4 validní pro ENTRY": true,
       "Entry: 3 of 4": true,
       "Checklist: 5 of 8": true,
       "Exec allowed": false,
@@ -344,7 +344,7 @@ export default function Dashboard({
   const CHECKLIST_ALIASES = useMemo(
     () => ({
       "HTF bias": ["Trend bias", "X setup", "Tree setup", "1h bias"],
-      "Hard: 3 of 4": ["Hard: ALL 4", "Hard: 3 of 6"],
+      "Hard: 3/4 validní pro ENTRY": ["Hard: ALL 4", "Hard: 3 of 6", "Hard: 3 of 4"],
       "Entry: 3 of 4": ["Entry: Any of 5"],
       "Checklist: 5 of 8": ["Checklist: 3 of 7"],
     }),
