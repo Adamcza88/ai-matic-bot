@@ -4,12 +4,9 @@ export const SUPPORTED_SYMBOLS = [
     "SOLUSDT",
     "ADAUSDT",
     "XRPUSDT",
-    "SUIUSDT",
     "DOGEUSDT",
-    "LINKUSDT",
-    "ZILUSDT",
     "AVAXUSDT",
-    "HYPEUSDT",
+    "XAUTUSDT",
     "OPUSDT",
 ];
 export function filterSupportedSymbols(value) {

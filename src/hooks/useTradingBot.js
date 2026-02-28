@@ -27,12 +27,9 @@ const ORDER_VALUE_BY_SYMBOL = {
     SOLUSDT: 20,
     ADAUSDT: 20,
     XRPUSDT: 20,
-    SUIUSDT: 20,
     DOGEUSDT: 20,
-    LINKUSDT: 20,
-    ZILUSDT: 20,
     AVAXUSDT: 20,
-    HYPEUSDT: 20,
+    XAUTUSDT: 20,
     OPUSDT: 20,
 };
 const MAJOR_SYMBOLS = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);

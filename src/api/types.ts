@@ -4,12 +4,9 @@ export type Symbol =
   | "SOLUSDT"
   | "ADAUSDT"
   | "XRPUSDT"
-  | "SUIUSDT"
   | "DOGEUSDT"
-  | "LINKUSDT"
-  | "ZILUSDT"
   | "AVAXUSDT"
-  | "HYPEUSDT"
+  | "XAUTUSDT"
   | "OPUSDT";
 export type Side = "Buy" | "Sell";
 export type EntryType =

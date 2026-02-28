@@ -6,12 +6,9 @@ export const SUPPORTED_SYMBOLS: Symbol[] = [
   "SOLUSDT",
   "ADAUSDT",
   "XRPUSDT",
-  "SUIUSDT",
   "DOGEUSDT",
-  "LINKUSDT",
-  "ZILUSDT",
   "AVAXUSDT",
-  "HYPEUSDT",
+  "XAUTUSDT",
   "OPUSDT",
 ];
 
