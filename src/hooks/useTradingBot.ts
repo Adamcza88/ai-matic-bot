@@ -2603,7 +2603,8 @@ const evaluateAiMaticGatesCore = (args: {
     { name: "Risk budget available", ok: riskBudgetOk },
     { name: "Loss streak <= 3", ok: lossStreakOk },
   ];
-  const hardPass = hardGates.filter((g) => g.ok).length >= AI_MATIC_HARD_MIN;
+  const hardPass =
+    hardGates.filter((g) => g.ok).length >= AI_MATIC_HARD_MIN;
   const entryFactorsPass =
     entryFactors.filter((g) => g.ok).length >= AI_MATIC_ENTRY_FACTOR_MIN;
   const checklistPass =

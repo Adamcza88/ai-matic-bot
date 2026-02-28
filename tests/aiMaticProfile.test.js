@@ -49,7 +49,7 @@ test("AI-MATIC EMA flags: stack + cross recent", () => {
   assert.equal(flagsFlip.crossRecent, true);
 });
 
-test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
+test("AI-MATIC gate eval: hard gates pass with 3/4 and fail with 2/4", () => {
   const emaOk = {
     bullOk: true,
     bearOk: false,
@@ -170,7 +170,24 @@ test("AI-MATIC gate eval: pass + fail on EMA cross", () => {
     lossStreak: 0,
     takerFeePct: 0.06,
   });
-  assert.equal(bad.pass, false);
+  assert.equal(bad.hardPass, true);
+  assert.equal(bad.pass, true);
+
+  const twoHardFailsSignal = {
+    intent: { side: "buy", entry: 106, sl: 104.8, tp: 106.9 },
+  };
+  const blocked = evaluateAiMaticGatesCore({
+    decision: badDecision,
+    signal: twoHardFailsSignal,
+    correlationOk: true,
+    dominanceOk: true,
+    symbol: "BTCUSDT",
+    nowTs: Date.UTC(2026, 0, 12, 14, 0, 0),
+    lossStreak: 0,
+    takerFeePct: 0.06,
+  });
+  assert.equal(blocked.hardPass, false);
+  assert.equal(blocked.pass, false);
 });
 
 test("AI-MATIC SL/TP selection", () => {
