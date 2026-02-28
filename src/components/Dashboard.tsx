@@ -14,37 +14,21 @@ import LogsPanel from "./dashboard/LogsPanel";
 import StrategyProfileMini from "./dashboard/StrategyProfileMini";
 import RecentEventsPanel from "./dashboard/RecentEventsPanel";
 import RiskBlockPanel from "./dashboard/RiskBlockPanel";
-import GateStatusPanel from "./dashboard/GateStatusPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
 import type { DiagnosticGate, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
 import { UI_COPY } from "@/lib/uiCopy";
-import {
-  OLIKELLA_CHECKLIST_DEFAULTS,
-  OLIKELLA_GATE_NAMES,
-  OLIKELLA_LEGACY_RISK_MODE,
-  OLIKELLA_PROFILE_LABEL,
-  OLIKELLA_RISK_MODE,
-  OLIKELLA_RISK_PER_TRADE,
-} from "@/lib/oliKellaProfile";
+import { OLIKELLA_GATE_NAMES, OLIKELLA_PROFILE_LABEL } from "../lib/oliKellaProfile";
 
 const RISK_PCT_BY_MODE = {
   "ai-matic": 0.004,
   "ai-matic-x": 0.003,
-  "ai-matic-amd": 0.003,
-  "ai-matic-olikella": OLIKELLA_RISK_PER_TRADE,
   "ai-matic-tree": 0.003,
   "ai-matic-pro": 0.003,
+  "ai-matic-amd": 0.003,
+  "ai-matic-olikella": 0.015,
 } as const;
 
-const DATA_HEALTH_LAG_FACTOR = 2;
-const FEED_TIMEFRAME_MS_BY_RISK_MODE = {
-  "ai-matic": 60_000,
-  "ai-matic-x": 60_000,
-  "ai-matic-amd": 60_000,
-  "ai-matic-olikella": 15 * 60_000,
-  "ai-matic-tree": 60_000,
-  "ai-matic-pro": 60_000,
-} as const;
+const HEALTH_OK_MS = 2_000;
 const MODE_OPTIONS: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
 
 function modeLabel(value: TradingMode) {
@@ -198,20 +182,6 @@ export default function Dashboard({
 
   const riskMode = bot.settings?.riskMode ?? "ai-matic";
   const profileMeta = useMemo(() => {
-    if (riskMode === OLIKELLA_RISK_MODE) {
-      return {
-        label: OLIKELLA_PROFILE_LABEL,
-        subtitle: "Oliver Kell 4h adaptation · long/short",
-        symbols: SUPPORTED_SYMBOLS,
-        timeframes: "4h logic · 15m feed",
-        session: "24/7",
-        risk: "Risk 1.5% equity/trade · max positions 5 · max orders 20",
-        riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
-        entry: "Priority: Wedge Pop -> Base 'n Break -> EMA Crossback",
-        execution:
-          "Exhaustion #1 partial 60% · #2 full exit · opposite crossback / wedge drop hard exit",
-      };
-    }
     if (riskMode === "ai-matic-x") {
       return {
         label: "AI-MATIC-X",
@@ -223,19 +193,6 @@ export default function Dashboard({
         riskPct: RISK_PCT_BY_MODE["ai-matic-x"],
         entry: "Entry 1: reakce z OB/sweep · Entry 2: retest OB/GAP/Fibo",
         execution: "SL pod strukturu/OB + ATR buffer · trailing 1.0R",
-      };
-    }
-    if (riskMode === "ai-matic-amd") {
-      return {
-        label: "AI-MATIC-AMD",
-        subtitle: "PO3/AMD · Killzones NY · Inversion FVG",
-        symbols: SUPPORTED_SYMBOLS,
-        timeframes: "1h bias · 15m Asia range · 5m manip · 1m confirm",
-        session: "Killzones: London 02:00–05:00 NY · NY AM 08:00–11:00 NY",
-        risk: "Risk 0.30% equity/trade · strict phase sequence",
-        riskPct: RISK_PCT_BY_MODE["ai-matic-amd"],
-        entry: "Akumulace -> Manipulace -> Distribuce po inversion FVG",
-        execution: "LIMIT_MAKER_FIRST · TP1/TP2 z manip range expanze",
       };
     }
     if (riskMode === "ai-matic-tree") {
@@ -264,6 +221,32 @@ export default function Dashboard({
         riskPct: RISK_PCT_BY_MODE["ai-matic-pro"],
         entry: "VA edge + OFI/Delta absorpce",
         execution: "T1 VWAP/mid (60%) · T2 POC/VAH/VAL · time stop 10 svíček/60m",
+      };
+    }
+    if (riskMode === "ai-matic-amd") {
+      return {
+        label: "AI-MATIC-AMD",
+        subtitle: "PO3 / AMD · Killzones NY",
+        symbols: SUPPORTED_SYMBOLS,
+        timeframes: "1h bias · 15m/5m entry",
+        session: "London / NY AM only",
+        risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
+        riskPct: RISK_PCT_BY_MODE["ai-matic-amd"],
+        entry: "AMD sequence + Inversion FVG",
+        execution: "TP1/TP2 based on manipulation range",
+      };
+    }
+    if (riskMode === "ai-matic-olikella") {
+      return {
+        label: OLIKELLA_PROFILE_LABEL,
+        subtitle: "4h cycle logic · 15m feed",
+        symbols: SUPPORTED_SYMBOLS,
+        timeframes: "4h logic (resampled) · 15m feed",
+        session: "24/7",
+        risk: "Risk 1.5% equity/trade · max 1 add-on",
+        riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
+        entry: "Wedge Pop / Base 'n Break / EMA Crossback",
+        execution: "Exhaustion exit / Trailing EMA10",
       };
     }
     return {
@@ -306,28 +289,17 @@ export default function Dashboard({
       "Trend strength": true,
       "Maker entry": true,
       "SL structural": true,
-      "Exec allowed": true,
+      "Exec allowed": false,
     };
     const aiMatic = {
-      "Hard: ALL 4": true,
+      "Hard: 3 of 4": true,
       "Entry: 3 of 4": true,
       "Checklist: 5 of 8": true,
-      "Exec allowed": true,
-    };
-    const amd = {
-      "AMD: Phase sequence": true,
-      "AMD: Killzone active": true,
-      "AMD: Midnight open set": true,
-      "AMD: Asia range valid": true,
-      "AMD: Liquidity sweep": true,
-      "AMD: Inversion FVG confirm": true,
-      "AMD: Target model valid": true,
-      "Exec allowed": true,
+      "Exec allowed": false,
     };
     return {
       "ai-matic": aiMatic,
       "ai-matic-x": base,
-      "ai-matic-amd": amd,
       "ai-matic-tree": base,
       "ai-matic-pro": {
         "Hurst < 0.45": true,
@@ -336,9 +308,25 @@ export default function Dashboard({
         "VPIN < 0.8": true,
         "OFI/Delta trigger": true,
         "VA edge": true,
-        "Exec allowed": true,
+        "Exec allowed": false,
       },
-      "ai-matic-olikella": OLIKELLA_CHECKLIST_DEFAULTS,
+      "ai-matic-amd": {
+        "AMD: Phase sequence": true,
+        "AMD: Killzone active": true,
+        "AMD: Midnight open set": true,
+        "AMD: Asia range valid": true,
+        "AMD: Liquidity sweep": true,
+        "AMD: Inversion FVG confirm": true,
+        "AMD: Target model valid": true,
+        "Exec allowed": false,
+      },
+      "ai-matic-olikella": {
+        ...OLIKELLA_GATE_NAMES.reduce((acc, name) => {
+          acc[name] = true;
+          return acc;
+        }, {} as Record<string, boolean>),
+        "Exec allowed": false,
+      },
     };
   }, []);
   const CHECKLIST_DEFAULTS = useMemo(() => {
@@ -356,18 +344,9 @@ export default function Dashboard({
   const CHECKLIST_ALIASES = useMemo(
     () => ({
       "HTF bias": ["Trend bias", "X setup", "Tree setup", "1h bias"],
-      "Hard: ALL 4": ["Hard: 3 of 6"],
+      "Hard: 3 of 4": ["Hard: ALL 4", "Hard: 3 of 6"],
       "Entry: 3 of 4": ["Entry: Any of 5"],
       "Checklist: 5 of 8": ["Checklist: 3 of 7"],
-      [OLIKELLA_GATE_NAMES[0]]: [
-        "Primary Timeframe: 15m for trend, 1m for entry.",
-      ],
-      [OLIKELLA_GATE_NAMES[1]]: [
-        "Entry Logic: EMA Cross (last <= 6 bars) + RSI Divergence + Volume Spike.",
-      ],
-      [OLIKELLA_GATE_NAMES[2]]: [
-        "Exit Logic: Trailing Stop (ATR 2.5x) or Fixed TP (1.5 RRR).",
-      ],
     }),
     []
   );
@@ -386,18 +365,8 @@ export default function Dashboard({
       return;
     }
     try {
-      const legacyGlobal = localStorage.getItem("ai-matic-checklist-enabled");
-      const legacyProfile =
-        riskMode === OLIKELLA_RISK_MODE
-          ? localStorage.getItem(
-              `ai-matic-checklist-enabled:${OLIKELLA_LEGACY_RISK_MODE}`
-            )
-          : null;
-      const existing = localStorage.getItem(gateStorageKey);
-      if (!existing && legacyProfile) {
-        localStorage.setItem(gateStorageKey, legacyProfile);
-      }
-      const raw = existing ?? legacyProfile ?? legacyGlobal;
+      const legacy = localStorage.getItem("ai-matic-checklist-enabled");
+      const raw = localStorage.getItem(gateStorageKey) ?? legacy;
       if (!raw) {
         setChecklistEnabled(CHECKLIST_DEFAULTS);
         return;
@@ -436,7 +405,7 @@ export default function Dashboard({
     );
     setChecklistEnabled((prev) => ({
       ...prev,
-      "Exec allowed": true,
+      "Exec allowed": false,
     }));
   }, [riskMode]);
 
@@ -462,13 +431,14 @@ export default function Dashboard({
     setSelectedSignalSymbol(blocked ?? allowedSymbols[0]);
   }, [allowedSymbols, scanDiagnostics, selectedSignalSymbol]);
 
-  const maxOpenPositions = bot.settings?.maxOpenPositions ?? 3;
+  const rawMaxOpenPositions =
+    portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
+  const maxOpenPositions = rawMaxOpenPositions;
   const openPositionsCount = positionsLoaded ? activePositions.length : 0;
   const openOrdersCount = ordersLoaded ? exchangeOrders.length : 0;
   const maxOpenOrders = bot.settings?.maxOpenOrders ?? 0;
-  const totalCapital = Number.isFinite(portfolioState?.totalEquity)
-    ? portfolioState?.totalEquity
-    : portfolioState?.totalCapital;
+  const totalCapital =
+    portfolioState?.totalCapital ?? portfolioState?.totalEquity;
   const allocated = portfolioState?.allocatedCapital;
   const riskPerTradePct = profileMeta.riskPct;
   const riskPerTradeUsd =
@@ -488,11 +458,20 @@ export default function Dashboard({
         return sum + Math.abs(entry - stop) * Math.abs(qty);
       }, 0)
     : Number.NaN;
-  const riskExposureLimitUsd = Number.isFinite(maxDailyLossUsd)
-    ? Math.abs(maxDailyLossUsd as number)
-    : Number.isFinite(riskPerTradeUsd)
-      ? (riskPerTradeUsd as number) * Math.max(1, maxOpenPositions)
+  const riskExposureLimitUsd = Number.isFinite(riskPerTradeUsd)
+    ? (riskPerTradeUsd as number) * Math.max(1, maxOpenPositions)
     : Number.NaN;
+  const capitalRange = useMemo(() => {
+    if (!Number.isFinite(totalCapital)) return undefined;
+    if (!Number.isFinite(openPositionsPnl)) return undefined;
+    if (!openPositionsPnlRange) return undefined;
+    const realizedBase = (totalCapital as number) - (openPositionsPnl as number);
+    return {
+      min: realizedBase + openPositionsPnlRange.min,
+      max: realizedBase + openPositionsPnlRange.max,
+    };
+  }, [openPositionsPnl, openPositionsPnlRange, totalCapital]);
+
   const blockedSignalsCount = useMemo(() => {
     if (!scanDiagnostics) return 0;
     return Object.values(scanDiagnostics).filter((diag: SymbolDiagnostic) => {
@@ -550,20 +529,8 @@ export default function Dashboard({
     if (mode !== TradingMode.AUTO_ON) return false;
     if (systemState.bybitStatus !== "Connected") return false;
     if (!Number.isFinite(feedStats.maxAge)) return false;
-    const riskMode = bot.settings?.riskMode ?? "ai-matic";
-    const timeframeMs =
-      FEED_TIMEFRAME_MS_BY_RISK_MODE[
-        riskMode as keyof typeof FEED_TIMEFRAME_MS_BY_RISK_MODE
-      ] ?? 60_000;
-    const healthOkMs = timeframeMs * DATA_HEALTH_LAG_FACTOR;
-    return (feedStats.maxAge as number) <= healthOkMs && feedStats.ok;
-  }, [
-    bot.settings?.riskMode,
-    feedStats.maxAge,
-    feedStats.ok,
-    mode,
-    systemState.bybitStatus,
-  ]);
+    return (feedStats.maxAge as number) < HEALTH_OK_MS && feedStats.ok;
+  }, [feedStats.maxAge, feedStats.ok, mode, systemState.bybitStatus]);
 
   const criticalByLoss = Number.isFinite(dailyPnl) && Number.isFinite(riskPerTradeUsd)
     ? (dailyPnl as number) <= -2 * (riskPerTradeUsd as number)
@@ -656,10 +623,9 @@ export default function Dashboard({
 
   const handleResetAllGates = useCallback(() => {
     resetChecklist();
-    setExecOverrideEnabled(false);
     setResetRippleKey((value) => value + 1);
     showToast("All gates reset", "neutral");
-  }, [resetChecklist, setExecOverrideEnabled, showToast]);
+  }, [resetChecklist, showToast]);
 
   const handleConfirmBulkOverride = useCallback(() => {
     const affected = holdSymbols.length;
@@ -739,7 +705,7 @@ export default function Dashboard({
         }}
         className="space-y-3 lm-tabs"
       >
-        <section className="relative space-y-3 overflow-hidden rounded-xl border border-border/70 bg-card/92 p-3 shadow-[0_8px_16px_-12px_rgba(0,0,0,0.7)]">
+        <section className="relative sticky top-[152px] z-10 space-y-3 overflow-hidden rounded-xl border border-border/70 bg-card/92 p-3 shadow-[0_8px_16px_-12px_rgba(0,0,0,0.7)] backdrop-blur">
           {resetRippleKey > 0 ? (
             <div
               key={resetRippleKey}
@@ -756,7 +722,7 @@ export default function Dashboard({
                 aria-pressed={execOverrideEnabled}
                 className="h-11 px-4 text-sm font-semibold"
               >
-                Override ALL HOLD → EXECUTE (global)
+                Override ALL HOLD → EXECUTE
               </Button>
               <Button
                 type="button"
@@ -766,7 +732,7 @@ export default function Dashboard({
                 aria-pressed={!execOverrideEnabled}
                 className="h-11 px-4 text-sm font-semibold"
               >
-                Disable Override (global)
+                Disable Override
               </Button>
               <Button
                 type="button"
@@ -775,7 +741,7 @@ export default function Dashboard({
                 onClick={handleResetAllGates}
                 className="h-11 px-4 text-sm font-semibold"
               >
-                Reset ALL gates (global)
+                Reset ALL gates
               </Button>
             </div>
 
@@ -874,6 +840,7 @@ export default function Dashboard({
           gatesTotal={gateStats.total}
           blockedSignals={blockedSignalsCount}
           totalCapital={totalCapital}
+          capitalRange={capitalRange}
           allocated={allocated}
           dailyPnl={dailyPnl}
           dailyPnlBreakdown={dailyPnlBreakdown}
@@ -902,13 +869,6 @@ export default function Dashboard({
                 killSwitchActive={killSwitchActive}
                 riskExposureUsd={riskExposureUsd}
                 riskExposureLimitUsd={riskExposureLimitUsd}
-              />
-              <GateStatusPanel
-                selectedSymbol={selectedSignalSymbol}
-                scanDiagnostics={scanDiagnostics}
-                scanLoaded={scanLoaded}
-                profileGateNames={checklistGateNames}
-                checklistEnabled={checklistEnabled}
               />
               <div className="grid grid-cols-12 gap-6">
                 <div className="col-span-12 xl:col-span-6">

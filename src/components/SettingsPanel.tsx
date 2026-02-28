@@ -340,7 +340,7 @@ const SettingsPanel: React.FC<Props> = ({
     "SL structural",
   ];
   const aiMaticGateNames = [
-    "Hard: ALL 4",
+    "Hard: 3 of 4",
     "Entry: 3 of 4",
     "Checklist: 5 of 8",
   ];
