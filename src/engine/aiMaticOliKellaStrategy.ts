@@ -178,55 +178,76 @@ function detectWedgePop(args: {
   side: "buy" | "sell";
 }): PatternDetection | null {
   const { bars, ema10, ema20, volumeSma20, side } = args;
-  const last = bars.length - 1;
-  if (last < 8) return null;
-  const setup = bars.slice(last - 6, last);
-  const highs = setup.map((bar) => bar.high);
-  const lows = setup.map((bar) => bar.low);
-  const ranges = setup.map((bar) => bar.high - bar.low);
-  const firstHalfRange = mean(ranges.slice(0, 3));
-  const secondHalfRange = mean(ranges.slice(-3));
-  if (!Number.isFinite(firstHalfRange) || !Number.isFinite(secondHalfRange)) {
+  const lastIdx = bars.length - 1;
+  const SETUP_LEN = 6;
+
+  // 1. Validation: Need enough history
+  if (lastIdx < SETUP_LEN + 2) return null;
+
+  // 2. Define Setup Phase (consolidation before pop)
+  const setupBars = bars.slice(lastIdx - SETUP_LEN, lastIdx);
+
+  // 3. Check Volatility Contraction (Ranges getting smaller)
+  const ranges = setupBars.map((bar) => bar.high - bar.low);
+  const firstHalfAvg = mean(ranges.slice(0, SETUP_LEN / 2));
+  const secondHalfAvg = mean(ranges.slice(SETUP_LEN / 2));
+
+  if (!Number.isFinite(firstHalfAvg) || !Number.isFinite(secondHalfAvg)) {
     return null;
   }
-  if (secondHalfRange > firstHalfRange * 0.85) return null;
+  // Expect second half range to be at most 85% of first half
+  if (secondHalfAvg > firstHalfAvg * 0.85) return null;
 
-  const firstHigh = Math.max(...highs.slice(0, 3));
-  const secondHigh = Math.max(...highs.slice(-3));
-  const firstLow = Math.min(...lows.slice(0, 3));
-  const secondLow = Math.min(...lows.slice(-3));
-  const narrowing =
-    side === "buy"
-      ? secondHigh <= firstHigh && secondLow >= firstLow
-      : secondLow >= firstLow && secondHigh <= firstHigh;
-  if (!narrowing) return null;
+  // 4. Check Price Narrowing (Triangle formation)
+  const highs = setupBars.map((bar) => bar.high);
+  const lows = setupBars.map((bar) => bar.low);
 
-  const emaNear = setup.every((bar, idx) => {
-    const sourceIdx = last - 6 + idx;
-    const zoneLow = Math.min(ema10[sourceIdx], ema20[sourceIdx]) * 0.988;
-    const zoneHigh = Math.max(ema10[sourceIdx], ema20[sourceIdx]) * 1.012;
-    return bar.close >= zoneLow && bar.close <= zoneHigh;
+  const firstHigh = Math.max(...highs.slice(0, SETUP_LEN / 2));
+  const secondHigh = Math.max(...highs.slice(SETUP_LEN / 2));
+  const firstLow = Math.min(...lows.slice(0, SETUP_LEN / 2));
+  const secondLow = Math.min(...lows.slice(SETUP_LEN / 2));
+
+  // Logic: Lower Highs AND Higher Lows (Symmetrical Wedge)
+  const isNarrowing = secondHigh <= firstHigh && secondLow >= firstLow;
+  if (!isNarrowing) return null;
+
+  // 5. Check EMA Adherence (Price hugging EMA10/20)
+  const isNearEma = setupBars.every((bar, i) => {
+    const idx = lastIdx - SETUP_LEN + i;
+    const e10 = ema10[idx];
+    const e20 = ema20[idx];
+    // Tolerance +/- 1.2% around the EMA band
+    const bandLow = Math.min(e10, e20) * 0.988;
+    const bandHigh = Math.max(e10, e20) * 1.012;
+    return bar.close >= bandLow && bar.close <= bandHigh;
   });
-  if (!emaNear) return null;
+  if (!isNearEma) return null;
 
-  const signal = bars[last];
-  const pivot = side === "buy" ? Math.max(...highs) : Math.min(...lows);
-  const breakoutOk =
+  // 6. Check Breakout Signal
+  const signalBar = bars[lastIdx];
+  const pivotHigh = Math.max(...highs);
+  const pivotLow = Math.min(...lows);
+  const pivot = side === "buy" ? pivotHigh : pivotLow;
+
+  const isBreakout =
     side === "buy"
-      ? signal.close >= pivot * (1 + BREAKOUT_PCT)
-      : signal.close <= pivot * (1 - BREAKOUT_PCT);
-  if (!breakoutOk) return null;
-  const volSma = volumeSma20[last];
-  const volOk =
+      ? signalBar.close >= pivot * (1 + BREAKOUT_PCT)
+      : signalBar.close <= pivot * (1 - BREAKOUT_PCT);
+  if (!isBreakout) return null;
+
+  // 7. Check Volume Confirmation
+  const volSma = volumeSma20[lastIdx];
+  const isVolumeOk =
     Number.isFinite(volSma) &&
     volSma > 0 &&
-    signal.volume >= volSma * BREAKOUT_VOLUME_MULT;
-  if (!volOk) return null;
+    signalBar.volume >= volSma * BREAKOUT_VOLUME_MULT;
+  if (!isVolumeOk) return null;
+
   return {
     ok: true,
     pattern: "WEDGE_POP",
     side,
-    stop: side === "buy" ? Math.min(...lows) : Math.max(...highs),
+    stop: side === "buy" ? pivotLow : pivotHigh,
     pivot,
     detail: `narrowing wedge | breakout 0.4% | vol>=1.3x`,
   };

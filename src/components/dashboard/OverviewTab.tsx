@@ -91,7 +91,9 @@ export default function OverviewTab({
 
   const pnlRows = useMemo(() => {
     if (!assetPnlHistory) return [];
+    const allowedSet = new Set(allowedSymbols.map((symbol) => String(symbol).toUpperCase()));
     return Object.entries(assetPnlHistory)
+      .filter(([symbol]) => allowedSet.has(String(symbol).toUpperCase()))
       .map(([symbol, records]) => {
         const latest = records[0];
         const sum = records.reduce((acc, r) => {
@@ -104,7 +106,7 @@ export default function OverviewTab({
         };
       })
       .sort((a, b) => a.netPnl - b.netPnl);
-  }, [assetPnlHistory]);
+  }, [allowedSymbols, assetPnlHistory]);
 
   const totalPages = Math.max(1, Math.ceil(pnlRows.length / PNL_HISTORY_PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);

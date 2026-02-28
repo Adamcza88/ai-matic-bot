@@ -151,7 +151,7 @@ export function decideCombinedEntry(
       };
     }
 
-    if (canUseTrap && s.returnToLevel) {
+    if (canUseTrap && s.returnToLevel && bosSide) {
       return {
         ok: true,
         mode: "INTRADAY",

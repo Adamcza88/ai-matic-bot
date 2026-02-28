@@ -70,6 +70,7 @@ import {
 import {
   loadPnlHistory,
   mergePnlRecords,
+  persistPnlHistory,
   resetPnlHistoryMap,
 } from "../lib/pnlHistory";
 import type { AssetPnlMap } from "../lib/pnlHistory";
@@ -97,6 +98,7 @@ const MAX_POSITION_NOTIONAL_USD = 50000;
 const DEFAULT_TESTNET_PER_TRADE_USD = 50;
 const DEFAULT_MAINNET_PER_TRADE_USD = 20;
 const MAJOR_SYMBOLS = new Set<Symbol>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
+const SUPPORTED_SYMBOL_SET = new Set<Symbol>(SUPPORTED_SYMBOLS);
 const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
   "ai-matic": 0.12,
   "ai-matic-x": 0.003,
@@ -4773,7 +4775,18 @@ export function useTradingBot(
     Record<string, any> | null
   >(null);
   const [assetPnlHistory, setAssetPnlHistory] = useState<AssetPnlMap | null>(
-    () => loadPnlHistory()
+    () => {
+      const loaded = loadPnlHistory();
+      const next: AssetPnlMap = {};
+      for (const symbol of SUPPORTED_SYMBOLS) {
+        const records = loaded[symbol];
+        if (Array.isArray(records)) next[symbol] = records;
+      }
+      if (Object.keys(next).length !== Object.keys(loaded).length) {
+        persistPnlHistory(next);
+      }
+      return next;
+    }
   );
   const [closedPnlRecords, setClosedPnlRecords] = useState<
     ClosedPnlRecord[] | null
@@ -9665,9 +9678,10 @@ export function useTradingBot(
         .map((r: any) => {
           const ts = toNumber(r?.execTime ?? r?.updatedTime ?? r?.createdTime);
           const pnl = toNumber(r?.closedPnl ?? r?.realisedPnl);
-          const symbol = String(r?.symbol ?? "");
+          const symbol = String(r?.symbol ?? "").toUpperCase();
           if (!symbol || !Number.isFinite(ts) || !Number.isFinite(pnl))
             return null;
+          if (!SUPPORTED_SYMBOL_SET.has(symbol as Symbol)) return null;
           return { symbol, pnl, ts };
         })
         .filter((r: ClosedPnlRecord | null): r is ClosedPnlRecord =>
@@ -12103,25 +12117,11 @@ export function useTradingBot(
   ]);
 
   const resetPnlHistory = useCallback(() => {
-    const symbols = new Set<string>();
-    if (assetPnlHistory) {
-      Object.keys(assetPnlHistory).forEach((symbol) => {
-        if (symbol) symbols.add(symbol);
-      });
-    }
-    if (Array.isArray(positions)) {
-      positions.forEach((pos) => {
-        if (pos.symbol) symbols.add(pos.symbol);
-      });
-    }
-    if (symbols.size === 0) {
-      activeSymbols.forEach((symbol) => symbols.add(symbol));
-    }
-    const next = resetPnlHistoryMap(Array.from(symbols));
+    const next = resetPnlHistoryMap(activeSymbols);
     setAssetPnlHistory(next);
     setClosedPnlRecords([]);
     pnlSeenRef.current = new Set();
-  }, [activeSymbols, assetPnlHistory, positions]);
+  }, [activeSymbols]);
 
   const manualClosePosition = useCallback(
     async (pos: ActivePosition) => {
