@@ -68,8 +68,7 @@ export default function OverviewTab({
     gateByPrefix(activeDiag, "Checklist:") ??
     gateByPrefix(activeDiag, "Signal Checklist");
   const passedGateCount = activeGates.filter((gate) => gate.ok).length;
-  const hardStatus =
-    activeGates.length === 0 ? "N/A" : activeGates.every((gate) => gate.ok) ? "PASS" : "FAIL";
+  const hardStatus = !hardGate ? "N/A" : hardGate.ok ? "PASS" : "FAIL";
   const checklistScore =
     parseRatio(checklistGate?.detail) ??
     (activeGates.length > 0 ? `${passedGateCount}/${activeGates.length}` : "N/A");
