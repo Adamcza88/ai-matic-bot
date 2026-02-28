@@ -705,7 +705,7 @@ export default function Dashboard({
         }}
         className="space-y-3 lm-tabs"
       >
-        <section className="relative sticky top-[152px] z-10 space-y-3 overflow-hidden rounded-xl border border-border/70 bg-card/92 p-3 shadow-[0_8px_16px_-12px_rgba(0,0,0,0.7)] backdrop-blur">
+        <section className="relative space-y-3 overflow-hidden rounded-xl border border-border/70 bg-card/92 p-3 shadow-[0_8px_16px_-12px_rgba(0,0,0,0.7)] backdrop-blur">
           {resetRippleKey > 0 ? (
             <div
               key={resetRippleKey}
