@@ -12,6 +12,7 @@ import OrdersPanel from "./dashboard/OrdersPanel";
 import SignalsAccordion from "./dashboard/SignalsAccordion";
 import LogsPanel from "./dashboard/LogsPanel";
 import StrategyProfileMini from "./dashboard/StrategyProfileMini";
+import GateStatusPanel from "./dashboard/GateStatusPanel";
 import RecentEventsPanel from "./dashboard/RecentEventsPanel";
 import RiskBlockPanel from "./dashboard/RiskBlockPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
@@ -941,10 +942,17 @@ export default function Dashboard({
                   logsLoaded={logsLoaded}
                 />
               </div>
-              <div className="col-span-12 xl:col-span-4">
+              <div className="col-span-12 xl:col-span-4 space-y-4">
                 <StrategyProfileMini
                   profileMeta={profileMeta}
                   onOpenSettings={() => setShowSettings(true)}
+                />
+                <GateStatusPanel
+                  selectedSymbol={selectedSignalSymbol}
+                  scanDiagnostics={scanDiagnostics}
+                  scanLoaded={scanLoaded}
+                  profileGateNames={checklistGateNames}
+                  checklistEnabled={checklistEnabled}
                 />
               </div>
             </div>
