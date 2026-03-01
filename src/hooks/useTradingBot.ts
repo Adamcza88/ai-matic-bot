@@ -176,8 +176,11 @@ const SCALP_DRIFT_GATE = "OLIkella Trend Stability";
 const SCALP_FAKE_MOMENTUM_GATE = "OLIkella False Momentum";
 const SCALP_PROTECTED_ENTRY_GATE = OLIKELLA_GATE_RISK_RULES;
 const OLIKELLA_TRAIL_TIMEFRAME_MIN = 5;
-const OLIKELLA_TRAIL_ACTIVATION_PCT = 0.006;
-const OLIKELLA_TRAIL_RETRACE_RATE = 0.004;
+const OLIKELLA_TRAIL_ACTIVATION_R = 1.0;
+const OLIKELLA_TRAIL_RETRACE_BASE_RATE = 0.004;
+const OLIKELLA_TRAIL_RETRACE_MIN_RATE = 0.002;
+const OLIKELLA_TRAIL_RETRACE_MAX_RATE = 0.01;
+const OLIKELLA_TRAIL_RETRACE_ATR_MULT = 0.8;
 const SKIP_STATUS_SUPPRESSED_CODES = new Set([
   "MAX_POS",
   "MAX_ORDERS",
@@ -4552,6 +4555,38 @@ function resolveMinProtectionDistance(entry: number, atr?: number) {
     ? (atr as number) * MIN_PROTECTION_ATR_FACTOR
     : 0;
   return Math.max(pctDistance, atrDistance);
+}
+
+function resolveOliKellaTrailConfig(args: {
+  entry: number;
+  sl: number;
+  side: "Buy" | "Sell";
+  atr?: number;
+}) {
+  const { entry, sl, side, atr } = args;
+  if (!Number.isFinite(entry) || entry <= 0) return null;
+  if (!Number.isFinite(sl) || sl <= 0) return null;
+  const riskDistance = Math.abs(entry - sl);
+  if (!Number.isFinite(riskDistance) || riskDistance <= 0) return null;
+  const minDistance = resolveMinProtectionDistance(entry, atr);
+  const atrRate =
+    Number.isFinite(atr) && (atr as number) > 0
+      ? (atr as number) / entry
+      : Number.NaN;
+  const retraceRateRaw =
+    Number.isFinite(atrRate) && atrRate > 0
+      ? atrRate * OLIKELLA_TRAIL_RETRACE_ATR_MULT
+      : OLIKELLA_TRAIL_RETRACE_BASE_RATE;
+  const retraceRate = Math.min(
+    OLIKELLA_TRAIL_RETRACE_MAX_RATE,
+    Math.max(OLIKELLA_TRAIL_RETRACE_MIN_RATE, retraceRateRaw)
+  );
+  const trailingStop = Math.max(entry * retraceRate, minDistance);
+  const dir = side === "Buy" ? 1 : -1;
+  const trailingActivePrice = entry + dir * riskDistance * OLIKELLA_TRAIL_ACTIVATION_R;
+  if (!Number.isFinite(trailingStop) || trailingStop <= 0) return null;
+  if (!Number.isFinite(trailingActivePrice) || trailingActivePrice <= 0) return null;
+  return { trailingStop, trailingActivePrice, retraceRate };
 }
 
 function normalizeProtectionLevels(
@@ -9555,36 +9590,24 @@ export function useTradingBot(
         Math.round(ltfTimeframeMin) === OLIKELLA_TRAIL_TIMEFRAME_MIN &&
         allowAction("olikella-trail-5m", 20_000)
       ) {
-        const activationPrice =
-          side === "Buy"
-            ? entry * (1 + OLIKELLA_TRAIL_ACTIVATION_PCT)
-            : entry * (1 - OLIKELLA_TRAIL_ACTIVATION_PCT);
-        const activated =
-          side === "Buy" ? price >= activationPrice : price <= activationPrice;
-        if (activated && Number.isFinite(activationPrice) && activationPrice > 0) {
-          const minDistance = resolveMinProtectionDistance(entry, atr);
-          const distance = Math.max(
-            entry * OLIKELLA_TRAIL_RETRACE_RATE,
-            minDistance
-          );
-          const hasTrailing =
-            Number.isFinite(currentTrailingStop) &&
-            currentTrailingStop > 0 &&
-            Number.isFinite(currentTrailingActive) &&
-            currentTrailingActive > 0;
-          const stopClose =
-            hasTrailing &&
-            Math.abs(currentTrailingStop - distance) <= distance * 0.05;
-          const activeClose =
-            hasTrailing &&
-            Math.abs(currentTrailingActive - activationPrice) <=
-              activationPrice * 0.002;
-          if (!stopClose || !activeClose) {
+        const hasTrailing =
+          Number.isFinite(currentTrailingStop) &&
+          currentTrailingStop > 0 &&
+          Number.isFinite(currentTrailingActive) &&
+          currentTrailingActive > 0;
+        if (!hasTrailing) {
+          const trail = resolveOliKellaTrailConfig({
+            entry,
+            sl,
+            side,
+            atr,
+          });
+          if (trail) {
             try {
               await updateProtection({
                 symbol,
-                trailingStop: distance,
-                trailingActivePrice: activationPrice,
+                trailingStop: trail.trailingStop,
+                trailingActivePrice: trail.trailingActivePrice,
                 positionIdx: Number.isFinite(pos.positionIdx)
                   ? pos.positionIdx
                   : undefined,
@@ -9594,7 +9617,7 @@ export function useTradingBot(
                   id: `olikella:trail:${symbol}:${now}`,
                   timestamp: new Date(now).toISOString(),
                   action: "STATUS",
-                  message: `${symbol} OLIkella trail 5m active @ 0.6% | retrace 0.4%`,
+                  message: `${symbol} OLIkella trail set (activate 1R | retrace ${(trail.retraceRate * 100).toFixed(2)}%)`,
                 },
               ]);
             } catch (err) {
@@ -11662,26 +11685,12 @@ export function useTradingBot(
             : [];
       const oliKellaInitialTrail =
         isScalpProfile && Number.isFinite(entry) && entry > 0
-          ? (() => {
-              const minDistance = resolveMinProtectionDistance(entry, core?.atr14);
-              const trailingStop = Math.max(
-                entry * OLIKELLA_TRAIL_RETRACE_RATE,
-                minDistance
-              );
-              const trailingActivePrice =
-                side === "Buy"
-                  ? entry * (1 + OLIKELLA_TRAIL_ACTIVATION_PCT)
-                  : entry * (1 - OLIKELLA_TRAIL_ACTIVATION_PCT);
-              if (
-                !Number.isFinite(trailingStop) ||
-                trailingStop <= 0 ||
-                !Number.isFinite(trailingActivePrice) ||
-                trailingActivePrice <= 0
-              ) {
-                return null;
-              }
-              return { trailingStop, trailingActivePrice };
-            })()
+          ? resolveOliKellaTrailConfig({
+              entry,
+              sl: resolvedSl,
+              side,
+              atr: core?.atr14,
+            })
           : null;
       const aiMaticLtfMin = Math.max(1, Math.round(core?.ltfTimeframeMin ?? 5));
       const signalExpireAfterMs = isAiMaticProfile
