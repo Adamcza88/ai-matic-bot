@@ -85,7 +85,7 @@ const FEED_TIMEFRAME_MS_BY_RISK_MODE: Record<AISettings["riskMode"], number> = {
   "ai-matic": 60_000,
   "ai-matic-x": 60_000,
   "ai-matic-amd": 60_000,
-  "ai-matic-olikella": 15 * 60_000,
+  "ai-matic-olikella": 5 * 60_000,
   "ai-matic-tree": 60_000,
   "ai-matic-pro": 60_000,
 };
@@ -3014,8 +3014,7 @@ const percentile = (values: number[], p: number) => {
   return sorted[rank];
 };
 
-const resolveEntryTfMin = (riskMode: AISettings["riskMode"]) =>
-  riskMode === "ai-matic-olikella" ? 15 : 5;
+const resolveEntryTfMin = (_riskMode: AISettings["riskMode"]) => 5;
 
 const resolveBboAgeLimit = (symbol: Symbol) =>
   CORE_V2_BBO_AGE_BY_SYMBOL[symbol] ?? CORE_V2_BBO_AGE_DEFAULT_MS;
@@ -4738,8 +4737,8 @@ export function useTradingBot(
       return {
         ...baseConfig,
         strategyProfile: "ai-matic-olikella",
-        baseTimeframe: "4h",
-        signalTimeframe: "15m",
+        baseTimeframe: "1h",
+        signalTimeframe: "5m",
         entryStrictness: strictness,
         cooldownBars: 0,
       };
@@ -9419,7 +9418,7 @@ export function useTradingBot(
       const atr = Number.isFinite(context.atr14)
         ? context.atr14
         : toNumber(core?.atr14);
-      const ema10 =
+      const ema8 =
         Number.isFinite(context.ema10) && context.ema10 > 0
           ? context.ema10
           : Number.NaN;
@@ -9455,7 +9454,7 @@ export function useTradingBot(
               timestamp: new Date(now).toISOString(),
               action: "RISK_BLOCK",
               message: `${symbol} OLIkella hard exit: ${
-                wedgeDrop ? "Wedge Drop" : "Opposite EMA Crossback"
+                wedgeDrop ? "Wedge Drop" : "Opposite EMA8/EMA16 Cross"
               }`,
             },
           ]);
@@ -9550,12 +9549,12 @@ export function useTradingBot(
       }
 
       if (
-        Number.isFinite(ema10) &&
+        Number.isFinite(ema8) &&
         Number.isFinite(atr) &&
         atr > 0 &&
-        allowAction("olikella-ema10-trail", 20_000)
+        allowAction("olikella-ema8-trail", 20_000)
       ) {
-        const targetSl = side === "Buy" ? ema10 - atr * 0.2 : ema10 + atr * 0.2;
+        const targetSl = side === "Buy" ? ema8 - atr * 0.4 : ema8 + atr * 0.4;
         const tighten = side === "Buy" ? targetSl > sl : targetSl < sl;
         const valid = side === "Buy" ? targetSl < price : targetSl > price;
         if (tighten && valid && Number.isFinite(targetSl) && targetSl > 0) {
@@ -9572,7 +9571,7 @@ export function useTradingBot(
                 id: `olikella:trail:${symbol}:${now}`,
                 timestamp: new Date(now).toISOString(),
                 action: "STATUS",
-                message: `${symbol} OLIkella EMA10 trail with ATR0.2`,
+                message: `${symbol} OLIkella EMA8 trail with ATR0.4`,
               },
             ]);
           } catch (err) {
@@ -11915,7 +11914,7 @@ export function useTradingBot(
         : isScalp
           ? {
               enabled: true,
-              interval: "15",
+              interval: "5",
               lookbackMinutes: 60 * 24 * 60,
               limit: 1000,
             }
@@ -11929,7 +11928,7 @@ export function useTradingBot(
       },
       {
         useTestnet,
-        timeframe: isScalp ? "15" : "1",
+        timeframe: isScalp ? "5" : "1",
         configOverrides: engineConfig,
         decisionFn,
         maxCandles,

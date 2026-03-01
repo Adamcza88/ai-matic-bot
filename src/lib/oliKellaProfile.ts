@@ -3,11 +3,11 @@ export const OLIKELLA_LEGACY_RISK_MODE = "ai-matic-scalp";
 export const OLIKELLA_PROFILE_LABEL = "AI-MATIC-OLIkella";
 
 export const OLIKELLA_GATE_SIGNAL_CHECKLIST =
-  "Signal Checklist (Wedge Pop -> Base 'n Break -> EMA Crossback)";
+  "Signal Checklist (H4 structure/pattern + 1h EMA8/EMA16 cross)";
 export const OLIKELLA_GATE_ENTRY_CONDITIONS =
-  "Entry Conditions (4h trend + breakout volume)";
+  "Entry Conditions (H4 support/resistance + pattern alignment)";
 export const OLIKELLA_GATE_EXIT_CONDITIONS =
-  "Exit Conditions (Exhaustion / Opposite Crossback / Wedge Drop)";
+  "Exit Conditions (Exhaustion / Opposite EMA8/EMA16 Cross)";
 export const OLIKELLA_GATE_RISK_RULES =
   "Risk Rules (1.5% risk, max 5 positions, max 20 orders)";
 

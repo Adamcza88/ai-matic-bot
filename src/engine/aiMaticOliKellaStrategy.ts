@@ -8,7 +8,11 @@ import {
 } from "./botEngine";
 import { computeATR, computeEma } from "./ta";
 
-export type OliKellaPattern = "WEDGE_POP" | "BASE_N_BREAK" | "EMA_CROSSBACK";
+export type OliKellaPattern =
+  | "WEDGE_POP"
+  | "BASE_N_BREAK"
+  | "EMA_CROSSBACK"
+  | "EMA8_16_CROSS";
 
 type PatternDetection = {
   ok: boolean;
@@ -55,6 +59,7 @@ export type AiMaticOliKellaContext = {
   canScaleIn: boolean;
 };
 
+const H1_MINUTES = 60;
 const H4_MINUTES = 240;
 const BREAKOUT_PCT = 0.004;
 const BREAKOUT_VOLUME_MULT = 1.3;
@@ -89,29 +94,57 @@ function buildSma(values: number[], period: number): number[] {
   });
 }
 
-function detectDirection(closes: number[], ema10: number[], ema20: number[]) {
-  const last = closes.length - 1;
-  if (last < 3) return "NONE" as const;
-  const slope10 = safeRatio(ema10[last] - ema10[last - 3], ema10[last - 3]);
-  const slope20 = safeRatio(ema20[last] - ema20[last - 3], ema20[last - 3]);
-  const close = closes[last];
-  const longOk =
-    close > ema10[last] &&
-    ema10[last] > ema20[last] &&
-    Number.isFinite(slope10) &&
-    Number.isFinite(slope20) &&
-    slope10 > 0 &&
-    slope20 > 0;
-  const shortOk =
-    close < ema10[last] &&
-    ema10[last] < ema20[last] &&
-    Number.isFinite(slope10) &&
-    Number.isFinite(slope20) &&
-    slope10 < 0 &&
-    slope20 < 0;
-  if (longOk) return "BUY" as const;
-  if (shortOk) return "SELL" as const;
+function detectCrossDirection(ema8: number[], ema16: number[]) {
+  const last = ema8.length - 1;
+  if (last < 0 || !Number.isFinite(ema8[last]) || !Number.isFinite(ema16[last])) {
+    return "NONE" as const;
+  }
+  if (ema8[last] > ema16[last]) return "BUY" as const;
+  if (ema8[last] < ema16[last]) return "SELL" as const;
   return "NONE" as const;
+}
+
+function detectEma8Ema16Entry(args: {
+  bars: Candle[];
+  ema8: number[];
+  ema16: number[];
+  side: "buy" | "sell";
+}): PatternDetection | null {
+  const { bars, ema8, ema16, side } = args;
+  const last = bars.length - 1;
+  if (last < 1) return null;
+  const prev8 = ema8[last - 1];
+  const prev16 = ema16[last - 1];
+  const curr8 = ema8[last];
+  const curr16 = ema16[last];
+  if (
+    !Number.isFinite(prev8) ||
+    !Number.isFinite(prev16) ||
+    !Number.isFinite(curr8) ||
+    !Number.isFinite(curr16)
+  ) {
+    return null;
+  }
+  const longCross = prev8 <= prev16 && curr8 > curr16;
+  const shortCross = prev8 >= prev16 && curr8 < curr16;
+  const triggered = side === "buy" ? longCross : shortCross;
+  if (!triggered) return null;
+  const lookback = bars.slice(Math.max(0, last - 8), last + 1);
+  const stop =
+    side === "buy"
+      ? Math.min(...lookback.map((bar) => bar.low))
+      : Math.max(...lookback.map((bar) => bar.high));
+  return {
+    ok: true,
+    pattern: "EMA8_16_CROSS",
+    side,
+    stop,
+    pivot: bars[last].close,
+    detail:
+      side === "buy"
+        ? "1h EMA8 crossed above EMA16"
+        : "1h EMA8 crossed below EMA16",
+  };
 }
 
 function detectBaseNBreak(args: {
@@ -378,6 +411,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
   candles: Candle[]
 ): EngineDecision {
   const h4 = resampleCandles(candles, H4_MINUTES);
+  const h1 = resampleCandles(candles, H1_MINUTES);
   if (h4.length < 40) {
     return {
       state: State.Scan,
@@ -412,7 +446,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
         },
         gates: {
           signalChecklistOk: false,
-          signalChecklistDetail: "need >=40 bars",
+          signalChecklistDetail: "need >=40 H4 bars",
           entryConditionsOk: false,
           entryConditionsDetail: "insufficient 4h history",
           exitConditionsOk: false,
@@ -425,123 +459,158 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     };
   }
 
-  const closes = h4.map((bar) => bar.close);
-  const highs = h4.map((bar) => bar.high);
-  const lows = h4.map((bar) => bar.low);
-  const volumes = h4.map((bar) => bar.volume);
-  const ema10 = computeEma(closes, 10);
-  const ema20 = computeEma(closes, 20);
-  const atr = computeATR(highs, lows, closes, 14);
-  const volumeSma20 = buildSma(volumes, 20);
-  const last = h4.length - 1;
-  const direction = detectDirection(closes, ema10, ema20);
+  const h1Closes = h1.map((bar) => bar.close);
+  const h1Highs = h1.map((bar) => bar.high);
+  const h1Lows = h1.map((bar) => bar.low);
+  const h1Ema8 = computeEma(h1Closes, 8);
+  const h1Ema16 = computeEma(h1Closes, 16);
+  const h1Atr = computeATR(h1Highs, h1Lows, h1Closes, 14);
+  const lastH1 = h1.length - 1;
+
+  const h4Closes = h4.map((bar) => bar.close);
+  const h4Highs = h4.map((bar) => bar.high);
+  const h4Lows = h4.map((bar) => bar.low);
+  const h4Volumes = h4.map((bar) => bar.volume);
+  const h4Ema10 = computeEma(h4Closes, 10);
+  const h4Ema20 = computeEma(h4Closes, 20);
+  const h4VolumeSma20 = buildSma(h4Volumes, 20);
+  const lastH4 = h4.length - 1;
+  const direction = detectCrossDirection(h1Ema8, h1Ema16);
   const trendOk = direction !== "NONE";
 
+  const crossEntryLong = detectEma8Ema16Entry({
+    bars: h1,
+    ema8: h1Ema8,
+    ema16: h1Ema16,
+    side: "buy",
+  });
+  const crossEntryShort = detectEma8Ema16Entry({
+    bars: h1,
+    ema8: h1Ema8,
+    ema16: h1Ema16,
+    side: "sell",
+  });
   const baseBreakLong = detectBaseNBreak({
     bars: h4,
-    ema10,
-    ema20,
-    volumeSma20,
+    ema10: h4Ema10,
+    ema20: h4Ema20,
+    volumeSma20: h4VolumeSma20,
     side: "buy",
   });
   const baseBreakShort = detectBaseNBreak({
     bars: h4,
-    ema10,
-    ema20,
-    volumeSma20,
+    ema10: h4Ema10,
+    ema20: h4Ema20,
+    volumeSma20: h4VolumeSma20,
     side: "sell",
   });
   const wedgePopLong = detectWedgePop({
     bars: h4,
-    ema10,
-    ema20,
-    volumeSma20,
+    ema10: h4Ema10,
+    ema20: h4Ema20,
+    volumeSma20: h4VolumeSma20,
     side: "buy",
   });
   const wedgePopShort = detectWedgePop({
     bars: h4,
-    ema10,
-    ema20,
-    volumeSma20,
+    ema10: h4Ema10,
+    ema20: h4Ema20,
+    volumeSma20: h4VolumeSma20,
     side: "sell",
   });
   const crossbackLong = detectEmaCrossback({
     bars: h4,
-    ema10,
-    ema20,
+    ema10: h4Ema10,
+    ema20: h4Ema20,
     side: "buy",
   });
   const crossbackShort = detectEmaCrossback({
     bars: h4,
-    ema10,
-    ema20,
+    ema10: h4Ema10,
+    ema20: h4Ema20,
     side: "sell",
   });
+  const h4PriorityLong = [wedgePopLong, baseBreakLong, crossbackLong].filter(
+    (item): item is PatternDetection => Boolean(item?.ok)
+  );
+  const h4PriorityShort = [wedgePopShort, baseBreakShort, crossbackShort].filter(
+    (item): item is PatternDetection => Boolean(item?.ok)
+  );
+  const selectedH4Pattern =
+    direction === "BUY"
+      ? h4PriorityLong[0] ?? null
+      : direction === "SELL"
+        ? h4PriorityShort[0] ?? null
+        : null;
+  const selectedCross =
+    direction === "BUY"
+      ? crossEntryLong
+      : direction === "SELL"
+        ? crossEntryShort
+        : null;
   const exhaustion = detectExhaustion({
-    close: closes[last],
-    ema10: ema10[last],
-    volume: volumes[last],
-    volumeSma20: volumeSma20[last],
+    close: h4Closes[lastH4],
+    ema10: h4Ema10[lastH4],
+    volume: h4Volumes[lastH4],
+    volumeSma20: h4VolumeSma20[lastH4],
   });
   const wedgeDrop = detectWedgeDrop({
     bars: h4,
-    ema20,
-    volumeSma20,
+    ema20: h4Ema20,
+    volumeSma20: h4VolumeSma20,
   });
 
-  const priorityLong = [wedgePopLong, baseBreakLong, crossbackLong].filter(
-    (item): item is PatternDetection => Boolean(item?.ok)
-  );
-  const priorityShort = [wedgePopShort, baseBreakShort, crossbackShort].filter(
-    (item): item is PatternDetection => Boolean(item?.ok)
-  );
-  const selected =
-    direction === "BUY"
-      ? priorityLong[0] ?? null
-      : direction === "SELL"
-        ? priorityShort[0] ?? null
-        : null;
-  const entry = closes[last];
+  const selected = selectedCross && selectedH4Pattern ? selectedCross : null;
+  const entry = h1Closes[lastH1];
   const signal =
     selected && Number.isFinite(entry)
       ? toSignal({
           symbol,
           side: selected.side,
-          pattern: selected,
+          pattern: {
+            ...selected,
+            detail: `${selected.detail} | H4 ${selectedH4Pattern?.pattern ?? "NO_PATTERN"}`,
+          },
           entry,
-          atr: atr[last],
+          atr: h1Atr[lastH1],
         })
       : null;
 
+  const strongSupport = Math.min(...h4Lows.slice(-20));
+  const strongResistance = Math.max(...h4Highs.slice(-20));
   const trendAnchor =
     direction === "BUY"
-      ? Math.min(...lows.slice(-20))
+      ? strongSupport
       : direction === "SELL"
-        ? Math.max(...highs.slice(-20))
+        ? strongResistance
         : Number.NaN;
   const trendLegId = Number.isFinite(trendAnchor)
     ? `${direction}:${trendAnchor.toFixed(2)}`
     : "NONE";
 
-  const checklistDetail = selected
-    ? `${selected.pattern} selected (priority Wedge Pop > Base 'n Break > EMA Crossback)`
-    : "no valid pattern on latest 4h candle";
-  const entryDetail = trendOk
-    ? `${direction} trend aligned EMA10/20 | breakout 0.4% | volume >=1.3x`
-    : "EMA10/20 trend alignment missing";
-  const exitReady = Number.isFinite(ema10[last]) && Number.isFinite(atr[last]);
+  const checklistDetail =
+    selectedH4Pattern && selectedCross
+      ? `${selectedH4Pattern.pattern} on H4 + EMA8/EMA16 cross on 1h`
+      : !selectedH4Pattern
+        ? "no valid H4 pattern on latest candle"
+        : "no EMA8/EMA16 crossover on latest 1h candle";
+  const entryDetail =
+    trendOk && selectedH4Pattern
+      ? `${direction} 1h EMA8/EMA16 | H4 pattern | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)}`
+      : "missing 1h EMA8/EMA16 direction or H4 pattern";
+  const exitReady = Number.isFinite(h1Ema8[lastH1]) && Number.isFinite(h1Atr[lastH1]);
   const exitDetail = exhaustion.active
-    ? `exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
-    : "watch exhaustion >=9% + vol>=1.5x, opposite crossback, wedge drop";
+    ? `H4 exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
+    : "watch H4 exhaustion >=9% + vol>=1.5x, opposite EMA8/EMA16 cross, H4 wedge drop";
 
   const context: AiMaticOliKellaContext = {
     timeframe: "4h",
     direction,
     trendOk,
     trendLegId,
-    ema10: ema10[last],
-    atr14: atr[last],
-    selectedPattern: selected?.pattern ?? null,
+    ema10: h1Ema8[lastH1],
+    atr14: h1Atr[lastH1],
+    selectedPattern: selectedH4Pattern?.pattern ?? null,
     baseBreak:
       direction === "BUY"
         ? baseBreakLong
@@ -560,8 +629,8 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
         : direction === "SELL"
           ? crossbackShort
           : null,
-    oppositeCrossbackLong: Boolean(crossbackShort?.ok),
-    oppositeCrossbackShort: Boolean(crossbackLong?.ok),
+    oppositeCrossbackLong: Boolean(crossEntryShort?.ok),
+    oppositeCrossbackShort: Boolean(crossEntryLong?.ok),
     exhaustion: {
       active: exhaustion.active,
       direction: exhaustion.direction,
@@ -570,16 +639,16 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     },
     wedgeDrop,
     gates: {
-      signalChecklistOk: Boolean(selected),
+      signalChecklistOk: Boolean(selectedCross && selectedH4Pattern),
       signalChecklistDetail: checklistDetail,
-      entryConditionsOk: trendOk && Boolean(selected),
+      entryConditionsOk: trendOk && Boolean(selectedCross && selectedH4Pattern),
       entryConditionsDetail: entryDetail,
       exitConditionsOk: exitReady,
       exitConditionsDetail: exitDetail,
       riskRulesOk: true,
       riskRulesDetail: "risk 1.5% | max positions 5 | max orders 20",
     },
-    canScaleIn: trendOk && Boolean(selected),
+    canScaleIn: trendOk && Boolean(selectedCross && selectedH4Pattern),
   };
 
   return {
@@ -595,6 +664,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
 }
 
 export const __aiMaticOliKellaTest = {
+  detectEma8Ema16Entry,
   detectBaseNBreak,
   detectWedgePop,
   detectEmaCrossback,

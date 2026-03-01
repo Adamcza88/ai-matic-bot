@@ -262,27 +262,25 @@ const SettingsPanel: React.FC<Props> = ({
     },
     "ai-matic-olikella": {
       title: `${OLIKELLA_PROFILE_LABEL} Core`,
-      summary: "4h cycle logic · 15m feed · long/short symmetry",
+      summary: "H4 structure/pattern/SR · 5m feed · long/short symmetry",
       description:
-        "Oliver Kell cycle adaptace: Wedge Pop -> Base 'n Break -> EMA Crossback -> Exhaustion -> Wedge Drop.",
+        "Entry cross běží na 1h. Struktura, patterny a silné support/resistance běží na H4.",
       notes: [
         ORDER_VALUE_NOTE,
         "SIGNAL CHECKLIST",
-        "Priorita setupu: Wedge Pop -> Base 'n Break -> EMA Crossback.",
-        "Trend gate: 4h EMA10/EMA20 alignment + slope (long i short symetricky).",
-        "Base 'n Break: base 4-12 svíček, breakout 0.4%, volume >=1.3x SMA20.",
-        "Wedge Pop: narrowing range u EMA10/20 + breakout volume >=1.3x.",
-        "EMA Crossback: pullback 2-8 svíček do EMA10/20 + rejection candle.",
-        "ENTRY CONDITIONS",
-        "Vstup jen na pattern signál z OLIkella evaluátoru, bez generic checklist auto-signálu.",
-        "Feed: 15m, pattern logika resamplovaná do 4h adaptace.",
+        "Minimum historie: 40 H4 svíček.",
+        "Struktura/patterny/silné support-resistance se vyhodnocují na H4 (H4_MINUTES=240).",
+        "Trigger: 1h EMA8 překříží EMA16 (long zespodu nahoru, short shora dolů).",
+        "Pokračování: long drží EMA8 nad EMA16, short drží EMA8 pod EMA16.",
         "Směr: long + short, mirror pravidla.",
+        "ENTRY CONDITIONS",
+        "Vstup jen při validním 1h cross + potvrzeném H4 patternu.",
+        "Feed: 5m, entry logika resamplovaná do 1h.",
         "EXIT CONDITIONS",
-        "Exhaustion Extension: distance od EMA10 >=9% + volume >=1.5x.",
+        "Exhaustion Extension: distance od H4 EMA10 >=9% + volume >=1.5x.",
         "První exhaustion: partial 60%. Druhý exhaustion: full exit.",
-        "Protective exit: opposite EMA Crossback.",
-        "Hard exit: Wedge Drop po extension.",
-        "Trail: EMA10 s ATR bufferem 0.2. BE move při >=1R.",
+        "Protective exit: opposite EMA8/EMA16 cross.",
+        "Trail: EMA8 s ATR bufferem 0.4. BE move při >=1R.",
         "RISK RULES",
         "Risk na trade: 1.5% equity.",
         "Scale-in: max 1 add-on při >=1R unrealized a fresh setupu.",
@@ -383,7 +381,7 @@ const SettingsPanel: React.FC<Props> = ({
           : local.riskMode === "ai-matic-amd"
             ? "PO3/AMD bias (1h EMA50/200)"
           : local.riskMode === OLIKELLA_RISK_MODE
-            ? "4h EMA10/20 cycle"
+            ? "1h EMA8/16 cross"
           : local.trendGateMode,
     },
     { label: "Max pozic", value: String(local.maxOpenPositions) },

@@ -244,14 +244,14 @@ export default function Dashboard({
     if (riskMode === "ai-matic-olikella") {
       return {
         label: OLIKELLA_PROFILE_LABEL,
-        subtitle: "4h cycle logic · 15m feed",
+        subtitle: "H4 structure/pattern/SR · 5m feed",
         symbols: SUPPORTED_SYMBOLS,
-        timeframes: "4h logic (resampled) · 15m feed",
+        timeframes: "H4 structure/pattern · 1h cross entry · 5m feed",
         session: "24/7",
         risk: "Risk 1.5% equity/trade · max 1 add-on",
         riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
-        entry: "Wedge Pop / Base 'n Break / EMA Crossback",
-        execution: "Exhaustion exit / Trailing EMA10",
+        entry: "1h EMA8/EMA16 crossover + H4 pattern alignment",
+        execution: "Exhaustion exit / Trailing EMA8 (ATR*0.4)",
       };
     }
     return {
