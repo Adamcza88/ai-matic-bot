@@ -12,7 +12,8 @@ export type OliKellaPattern =
   | "WEDGE_POP"
   | "BASE_N_BREAK"
   | "EMA_CROSSBACK"
-  | "EMA8_16_CROSS";
+  | "EMA8_16_CROSS"
+  | "H4_STRUCTURE";
 
 type PatternDetection = {
   ok: boolean;
@@ -144,6 +145,48 @@ function detectEma8Ema16Entry(args: {
       side === "buy"
         ? "1h EMA8 crossed above EMA16"
         : "1h EMA8 crossed below EMA16",
+  };
+}
+
+function detectEma8Ema16Continuation(args: {
+  bars: Candle[];
+  ema8: number[];
+  ema16: number[];
+  side: "buy" | "sell";
+}): PatternDetection | null {
+  const { bars, ema8, ema16, side } = args;
+  const last = bars.length - 1;
+  if (last < 1) return null;
+  const prev8 = ema8[last - 1];
+  const prev16 = ema16[last - 1];
+  const curr8 = ema8[last];
+  const curr16 = ema16[last];
+  if (
+    !Number.isFinite(prev8) ||
+    !Number.isFinite(prev16) ||
+    !Number.isFinite(curr8) ||
+    !Number.isFinite(curr16)
+  ) {
+    return null;
+  }
+  const alignedNow = side === "buy" ? curr8 > curr16 : curr8 < curr16;
+  const alignedPrev = side === "buy" ? prev8 > prev16 : prev8 < prev16;
+  if (!alignedNow || !alignedPrev) return null;
+  const lookback = bars.slice(Math.max(0, last - 8), last + 1);
+  const stop =
+    side === "buy"
+      ? Math.min(...lookback.map((bar) => bar.low))
+      : Math.max(...lookback.map((bar) => bar.high));
+  return {
+    ok: true,
+    pattern: "EMA8_16_CROSS",
+    side,
+    stop,
+    pivot: bars[last].close,
+    detail:
+      side === "buy"
+        ? "1h EMA8 stays above EMA16"
+        : "1h EMA8 stays below EMA16",
   };
 }
 
@@ -283,6 +326,41 @@ function detectWedgePop(args: {
     stop: side === "buy" ? pivotLow : pivotHigh,
     pivot,
     detail: `narrowing wedge | breakout 0.4% | vol>=1.3x`,
+  };
+}
+
+function detectH4StructurePattern(args: {
+  bars: Candle[];
+  side: "buy" | "sell";
+}): PatternDetection | null {
+  const { bars, side } = args;
+  const last = bars.length - 1;
+  const SETUP_LEN = 8;
+  if (last < SETUP_LEN + 1) return null;
+  const setup = bars.slice(last - SETUP_LEN, last + 1);
+  const half = Math.floor(setup.length / 2);
+  if (half < 2) return null;
+
+  const first = setup.slice(0, half);
+  const second = setup.slice(half);
+  const firstHigh = Math.max(...first.map((bar) => bar.high));
+  const secondHigh = Math.max(...second.map((bar) => bar.high));
+  const firstLow = Math.min(...first.map((bar) => bar.low));
+  const secondLow = Math.min(...second.map((bar) => bar.low));
+  const narrowing = secondHigh <= firstHigh && secondLow >= firstLow;
+  if (!narrowing) return null;
+
+  const stop =
+    side === "buy"
+      ? Math.min(...setup.map((bar) => bar.low))
+      : Math.max(...setup.map((bar) => bar.high));
+  return {
+    ok: true,
+    pattern: "H4_STRUCTURE",
+    side,
+    stop,
+    pivot: bars[last].close,
+    detail: "H4 structure compression (higher lows + lower highs)",
   };
 }
 
@@ -490,6 +568,18 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     ema16: h1Ema16,
     side: "sell",
   });
+  const continuationLong = detectEma8Ema16Continuation({
+    bars: h1,
+    ema8: h1Ema8,
+    ema16: h1Ema16,
+    side: "buy",
+  });
+  const continuationShort = detectEma8Ema16Continuation({
+    bars: h1,
+    ema8: h1Ema8,
+    ema16: h1Ema16,
+    side: "sell",
+  });
   const baseBreakLong = detectBaseNBreak({
     bars: h4,
     ema10: h4Ema10,
@@ -530,12 +620,22 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     ema20: h4Ema20,
     side: "sell",
   });
+  const structureLong = detectH4StructurePattern({
+    bars: h4,
+    side: "buy",
+  });
+  const structureShort = detectH4StructurePattern({
+    bars: h4,
+    side: "sell",
+  });
   const h4PriorityLong = [wedgePopLong, baseBreakLong, crossbackLong].filter(
     (item): item is PatternDetection => Boolean(item?.ok)
   );
   const h4PriorityShort = [wedgePopShort, baseBreakShort, crossbackShort].filter(
     (item): item is PatternDetection => Boolean(item?.ok)
   );
+  if (structureLong?.ok) h4PriorityLong.push(structureLong);
+  if (structureShort?.ok) h4PriorityShort.push(structureShort);
   const selectedH4Pattern =
     direction === "BUY"
       ? h4PriorityLong[0] ?? null
@@ -544,9 +644,9 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
         : null;
   const selectedCross =
     direction === "BUY"
-      ? crossEntryLong
+      ? crossEntryLong ?? continuationLong
       : direction === "SELL"
-        ? crossEntryShort
+        ? crossEntryShort ?? continuationShort
         : null;
   const exhaustion = detectExhaustion({
     close: h4Closes[lastH4],
@@ -590,10 +690,10 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
 
   const checklistDetail =
     selectedH4Pattern && selectedCross
-      ? `${selectedH4Pattern.pattern} on H4 + EMA8/EMA16 cross on 1h`
+      ? `${selectedH4Pattern.pattern} on H4 + ${selectedCross.detail}`
       : !selectedH4Pattern
         ? "no valid H4 pattern on latest candle"
-        : "no EMA8/EMA16 crossover on latest 1h candle";
+        : "no valid 1h EMA8/EMA16 state (cross or continuation)";
   const entryDetail =
     trendOk && selectedH4Pattern
       ? `${direction} 1h EMA8/EMA16 | H4 pattern | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)}`
@@ -665,6 +765,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
 
 export const __aiMaticOliKellaTest = {
   detectEma8Ema16Entry,
+  detectH4StructurePattern,
   detectBaseNBreak,
   detectWedgePop,
   detectEmaCrossback,
