@@ -18,6 +18,16 @@ export type GateDisplayRow = {
   enabled: boolean;
 };
 
+export type GateBlockerKind = "SYSTEM" | "GATE_BLOCKED" | "WAITING";
+
+export type GateBlockerItem = {
+  kind: GateBlockerKind;
+  title: string;
+  reason: string;
+  targetStatus: "BLOCKED" | "WAITING";
+  gateName?: string;
+};
+
 export type EntryGateState = "READY" | "WAITING" | "BLOCKED";
 
 export type EntryGateRule = {

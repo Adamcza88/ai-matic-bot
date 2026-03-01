@@ -897,6 +897,14 @@ export default function Dashboard({
                     onSelectSymbol={setSelectedSignalSymbol}
                     loading={dashboardLoading}
                   />
+                  <GateStatusPanel
+                    strategyLabel={profileMeta.label}
+                    selectedSymbol={selectedSignalSymbol}
+                    scanDiagnostics={scanDiagnostics}
+                    scanLoaded={scanLoaded}
+                    profileGateNames={checklistGateNames}
+                    checklistEnabled={checklistEnabled}
+                  />
                 </div>
               </div>
               <RecentEventsPanel
@@ -946,13 +954,6 @@ export default function Dashboard({
                 <StrategyProfileMini
                   profileMeta={profileMeta}
                   onOpenSettings={() => setShowSettings(true)}
-                />
-                <GateStatusPanel
-                  selectedSymbol={selectedSignalSymbol}
-                  scanDiagnostics={scanDiagnostics}
-                  scanLoaded={scanLoaded}
-                  profileGateNames={checklistGateNames}
-                  checklistEnabled={checklistEnabled}
                 />
               </div>
             </div>

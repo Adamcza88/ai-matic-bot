@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import Panel from "@/components/dashboard/Panel";
 import type {
+  GateBlockerItem,
   EntryGateState,
   GateDisplayRow,
   GateDisplayStatus,
   ScanDiagnostics,
 } from "@/lib/diagnosticsTypes";
-import { buildGateDisplayRows } from "@/lib/gateStatusModel";
+import { buildGateBlockers, buildGateDisplayRows } from "@/lib/gateStatusModel";
 import { buildRingSegmentsFromRows } from "@/lib/entryGateProgressModel";
 import { UI_COPY } from "@/lib/uiCopy";
 
 type GateStatusPanelProps = {
+  strategyLabel: string;
   selectedSymbol: string | null;
   scanDiagnostics: ScanDiagnostics | null;
   scanLoaded: boolean;
@@ -65,7 +67,24 @@ function entryStateClass(state: EntryGateState): string {
   return "text-[#FFB300]";
 }
 
+function blockerTitle(kind: GateBlockerItem["kind"]): string {
+  if (kind === "SYSTEM") return UI_COPY.dashboard.gateStatus.blockerSystem;
+  if (kind === "GATE_BLOCKED") return UI_COPY.dashboard.gateStatus.blockerGateBlocked;
+  return UI_COPY.dashboard.gateStatus.blockerWaiting;
+}
+
+function blockerClass(kind: GateBlockerItem["kind"]): string {
+  if (kind === "SYSTEM") {
+    return "border-[#D32F2F]/60 bg-[#D32F2F]/10 text-[#D32F2F]";
+  }
+  if (kind === "GATE_BLOCKED") {
+    return "border-[#D32F2F]/45 bg-[#D32F2F]/5 text-[#D32F2F]";
+  }
+  return "border-[#FFB300]/45 bg-[#FFB300]/5 text-[#FFB300]";
+}
+
 export default function GateStatusPanel({
+  strategyLabel,
   selectedSymbol,
   scanDiagnostics,
   scanLoaded,
@@ -123,6 +142,16 @@ export default function GateStatusPanel({
     if (!activeFilter) return rows;
     return rows.filter((row) => row.status === activeFilter);
   }, [activeFilter, rows]);
+  const blockers = useMemo(
+    () =>
+      buildGateBlockers({
+        diag,
+        rows,
+        waitingDetail: UI_COPY.dashboard.gateStatus.waitingDetail,
+        noDetail: UI_COPY.dashboard.gateStatus.noDetail,
+      }),
+    [diag, rows]
+  );
 
   const progress = diag?.entryGateProgress;
   const progressState: EntryGateState = progress?.state ?? "WAITING";
@@ -151,6 +180,15 @@ export default function GateStatusPanel({
         </div>
       ) : (
         <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex rounded-md border border-border/60 bg-background/30 px-2 py-1 text-[11px] font-semibold uppercase tracking-widest text-foreground">
+              {strategyLabel}
+            </span>
+            <span className="inline-flex rounded-md border border-border/60 bg-background/30 px-2 py-1 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+              {selectedSymbol}
+            </span>
+          </div>
+
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
             <div className="rounded-lg border border-border/60 bg-background/25 p-3">
               <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
@@ -278,6 +316,44 @@ export default function GateStatusPanel({
                 {UI_COPY.dashboard.gateStatus.showAll}
               </button>
             ) : null}
+          </div>
+
+          <div className="rounded-lg border border-border/60 bg-background/25 p-3">
+            <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
+              {UI_COPY.dashboard.gateStatus.blockersTitle}
+            </div>
+            {blockers.length === 0 ? (
+              <div className="mt-2 text-xs text-muted-foreground">
+                {UI_COPY.dashboard.gateStatus.blockerEmpty}
+              </div>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {blockers.map((item, index) => (
+                  <button
+                    key={`${item.kind}:${item.reason}:${index}`}
+                    type="button"
+                    onClick={() => setActiveFilter(item.targetStatus)}
+                    className={`rounded-md border px-2 py-1 text-left text-xs transition-colors ${
+                      activeFilter === item.targetStatus
+                        ? "border-foreground/45 bg-background/45"
+                        : "border-border/60 bg-background/20"
+                    }`}
+                  >
+                    <span
+                      className={`mr-2 inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${blockerClass(
+                        item.kind
+                      )}`}
+                    >
+                      {blockerTitle(item.kind)}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {item.gateName ? `${item.gateName}: ` : ""}
+                      {item.reason}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="overflow-hidden rounded-lg border border-border/60">
