@@ -4871,6 +4871,18 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                 }
             }
         }
+        if (isAiMaticProfile && aiMaticEval?.pass) {
+            if (entryType === "MARKET") {
+                entryType = "CONDITIONAL";
+                aiMaticMarketAllowed = false;
+                if (!Number.isFinite(aiMaticTriggerOverride) && Number.isFinite(entry) && entry > 0) {
+                    aiMaticTriggerOverride = entry;
+                }
+            }
+            else if (entryType === "LIMIT_MAKER_FIRST") {
+                entryType = "LIMIT";
+            }
+        }
         const checklistGates = [...coreEval.gates];
         if (isScalpProfile) {
             checklistGates.push({

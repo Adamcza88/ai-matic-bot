@@ -11013,9 +11013,20 @@ export function useTradingBot(
         }
       }
       if (isAiMaticProfile && symbol === "ETHUSDT" && side === "Buy") {
-        entryType = "LIMIT_MAKER_FIRST";
+        entryType = "LIMIT";
         aiMaticMarketAllowed = false;
         aiMaticTriggerOverride = undefined;
+      }
+      if (isAiMaticProfile && aiMaticEval?.pass) {
+        if (entryType === "MARKET") {
+          entryType = "CONDITIONAL";
+          aiMaticMarketAllowed = false;
+          if (!Number.isFinite(aiMaticTriggerOverride) && Number.isFinite(entry) && entry > 0) {
+            aiMaticTriggerOverride = entry;
+          }
+        } else if (entryType === "LIMIT_MAKER_FIRST") {
+          entryType = "LIMIT";
+        }
       }
       const checklistGates = isScalpProfile ? [] : [...coreEval.gates];
       if (isScalpProfile) {
@@ -11113,7 +11124,7 @@ export function useTradingBot(
           allowMarket = false;
         }
         if (!allowMarket) {
-          entryType = isAiMaticProfile ? "LIMIT_MAKER_FIRST" : "LIMIT";
+          entryType = "LIMIT";
         }
       }
       const triggerPrice =
@@ -11491,7 +11502,7 @@ export function useTradingBot(
       const primaryEntryType: EntryType = shouldUseStagedRetest
         ? entryType === "CONDITIONAL"
           ? "CONDITIONAL"
-          : "LIMIT_MAKER_FIRST"
+          : "LIMIT"
         : entryType;
       const secondaryEntryType: EntryType = shouldUseStagedRetest
         ? entryType === "CONDITIONAL"
