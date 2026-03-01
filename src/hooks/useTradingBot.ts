@@ -7807,7 +7807,7 @@ export function useTradingBot(
         if (aiMaticEval) {
           const hardOkCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
           addGate(
-            "Hard: 3/4 validní pro ENTRY",
+            "Hard: 3/4 validní Hard gate",
             hardOkCount >= AI_MATIC_HARD_MIN,
             `${hardOkCount}/${AI_MATIC_HARD_TOTAL}`
           );
@@ -7956,7 +7956,7 @@ export function useTradingBot(
         entryGateRules = aiMaticEval
           ? [
               {
-                name: "Hard: 3/4 validní pro ENTRY",
+                name: "Hard: 3/4 validní Hard gate",
                 passed: aiMaticEval.hardPass,
               },
               {
@@ -7969,7 +7969,7 @@ export function useTradingBot(
               },
             ]
           : [
-              { name: "Hard: 3/4 validní pro ENTRY", passed: false, pending: true },
+              { name: "Hard: 3/4 validní Hard gate", passed: false, pending: true },
               { name: "Entry: 3 of 4", passed: false, pending: true },
               { name: "Checklist: 5 of 8", passed: false, pending: true },
             ];

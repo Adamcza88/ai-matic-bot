@@ -3564,7 +3564,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (isAiMaticProfile) {
             if (aiMaticEval) {
                 const hardOkCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
-                addGate("Hard: 3/4 validní pro ENTRY", hardOkCount >= AI_MATIC_HARD_MIN, `${hardOkCount}/${AI_MATIC_HARD_TOTAL}`);
+                addGate("Hard: 3/4 validní Hard gate", hardOkCount >= AI_MATIC_HARD_MIN, `${hardOkCount}/${AI_MATIC_HARD_TOTAL}`);
                 const entryOkCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
                 addGate("Entry: 3 of 4", entryOkCount >= AI_MATIC_ENTRY_FACTOR_MIN, `${entryOkCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL}`);
                 const checklistOkCount = aiMaticEval.checklist.filter((g) => g.ok).length;
@@ -3670,12 +3670,12 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (isAiMaticProfile) {
             entryGateRules = aiMaticEval
                 ? [
-                    { name: "Hard: 3/4 validní pro ENTRY", passed: aiMaticEval.hardPass },
+                    { name: "Hard: 3/4 validní Hard gate", passed: aiMaticEval.hardPass },
                     { name: "Entry: 3 of 4", passed: aiMaticEval.entryFactorsPass },
                     { name: "Checklist: 5 of 8", passed: aiMaticEval.checklistPass },
                 ]
                 : [
-                    { name: "Hard: 3/4 validní pro ENTRY", passed: false, pending: true },
+                    { name: "Hard: 3/4 validní Hard gate", passed: false, pending: true },
                     { name: "Entry: 3 of 4", passed: false, pending: true },
                     { name: "Checklist: 5 of 8", passed: false, pending: true },
                 ];

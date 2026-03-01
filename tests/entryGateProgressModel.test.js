@@ -10,7 +10,7 @@ const makeRule = (name, passed, pending = false) => ({ name, passed, pending });
 
 test("ai-matic: 3/3 -> READY", () => {
   const rules = [
-    makeRule("Hard: 3/4 validní pro ENTRY", true),
+    makeRule("Hard: 3/4 validní Hard gate", true),
     makeRule("Entry: 3 of 4", true),
     makeRule("Checklist: 5 of 8", true),
   ];
@@ -31,7 +31,7 @@ test("ai-matic: 3/3 -> READY", () => {
 
 test("ai-matic: 2/3 + no signal -> WAITING", () => {
   const rules = [
-    makeRule("Hard: 3/4 validní pro ENTRY", true),
+    makeRule("Hard: 3/4 validní Hard gate", true),
     makeRule("Entry: 3 of 4", true),
     makeRule("Checklist: 5 of 8", false, true),
   ];
@@ -52,7 +52,7 @@ test("ai-matic: 2/3 + no signal -> WAITING", () => {
 
 test("ai-matic: 2/3 + signal active -> BLOCKED", () => {
   const rules = [
-    makeRule("Hard: 3/4 validní pro ENTRY", true),
+    makeRule("Hard: 3/4 validní Hard gate", true),
     makeRule("Entry: 3 of 4", true),
     makeRule("Checklist: 5 of 8", false),
   ];
