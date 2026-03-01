@@ -927,18 +927,18 @@ export default function Dashboard({
                     onJumpToGateFilter={handleJumpToGateFilter}
                     loading={dashboardLoading}
                   />
-                  <GateStatusPanel
-                    strategyLabel={profileMeta.label}
-                    selectedSymbol={selectedSignalSymbol}
-                    scanDiagnostics={scanDiagnostics}
-                    scanLoaded={scanLoaded}
-                    profileGateNames={checklistGateNames}
-                    checklistEnabled={checklistEnabled}
-                    activeFilter={gatePanelFilter}
-                    onActiveFilterChange={setGatePanelFilter}
-                  />
                 </div>
               </div>
+              <GateStatusPanel
+                strategyLabel={profileMeta.label}
+                selectedSymbol={selectedSignalSymbol}
+                scanDiagnostics={scanDiagnostics}
+                scanLoaded={scanLoaded}
+                profileGateNames={checklistGateNames}
+                checklistEnabled={checklistEnabled}
+                activeFilter={gatePanelFilter}
+                onActiveFilterChange={setGatePanelFilter}
+              />
               <RecentEventsPanel
                 logEntries={logEntries}
                 logsLoaded={logsLoaded}
