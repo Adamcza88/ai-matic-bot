@@ -251,7 +251,7 @@ export default function Dashboard({
         risk: "Risk 1.5% equity/trade · max 1 add-on",
         riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
         entry: "1h EMA8/EMA16 crossover + H4 pattern alignment",
-        execution: "Exhaustion exit / Trailing EMA8 (ATR*0.4)",
+        execution: "Exhaustion exit / Trailing stop 5m (activate 0.6% · retrace 0.4%)",
       };
     }
     return {

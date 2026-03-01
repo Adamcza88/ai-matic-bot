@@ -175,6 +175,9 @@ const SCALP_EXIT_GATE = OLIKELLA_GATE_EXIT_CONDITIONS;
 const SCALP_DRIFT_GATE = "OLIkella Trend Stability";
 const SCALP_FAKE_MOMENTUM_GATE = "OLIkella False Momentum";
 const SCALP_PROTECTED_ENTRY_GATE = OLIKELLA_GATE_RISK_RULES;
+const OLIKELLA_TRAIL_TIMEFRAME_MIN = 5;
+const OLIKELLA_TRAIL_ACTIVATION_PCT = 0.006;
+const OLIKELLA_TRAIL_RETRACE_RATE = 0.004;
 const SKIP_STATUS_SUPPRESSED_CODES = new Set([
   "MAX_POS",
   "MAX_ORDERS",
@@ -9418,10 +9421,9 @@ export function useTradingBot(
       const atr = Number.isFinite(context.atr14)
         ? context.atr14
         : toNumber(core?.atr14);
-      const ema8 =
-        Number.isFinite(context.ema10) && context.ema10 > 0
-          ? context.ema10
-          : Number.NaN;
+      const ltfTimeframeMin = toNumber(core?.ltfTimeframeMin);
+      const currentTrailingStop = toNumber(pos.currentTrailingStop);
+      const currentTrailingActive = toNumber(pos.trailingActivePrice);
       const rMultiple = computeRMultiple(entry, sl, price, side);
       const legId = String(context.trendLegId ?? "NONE");
       const prevLegId = oliTrendLegRef.current.get(symbol);
@@ -9549,40 +9551,62 @@ export function useTradingBot(
       }
 
       if (
-        Number.isFinite(ema8) &&
-        Number.isFinite(atr) &&
-        atr > 0 &&
-        allowAction("olikella-ema8-trail", 20_000)
+        Number.isFinite(ltfTimeframeMin) &&
+        Math.round(ltfTimeframeMin) === OLIKELLA_TRAIL_TIMEFRAME_MIN &&
+        allowAction("olikella-trail-5m", 20_000)
       ) {
-        const targetSl = side === "Buy" ? ema8 - atr * 0.4 : ema8 + atr * 0.4;
-        const tighten = side === "Buy" ? targetSl > sl : targetSl < sl;
-        const valid = side === "Buy" ? targetSl < price : targetSl > price;
-        if (tighten && valid && Number.isFinite(targetSl) && targetSl > 0) {
-          try {
-            await updateProtection({
-              symbol,
-              sl: targetSl,
-              positionIdx: Number.isFinite(pos.positionIdx)
-                ? pos.positionIdx
-                : undefined,
-            });
-            addLogEntries([
-              {
-                id: `olikella:trail:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "STATUS",
-                message: `${symbol} OLIkella EMA8 trail with ATR0.4`,
-              },
-            ]);
-          } catch (err) {
-            addLogEntries([
-              {
-                id: `olikella:trail:error:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "ERROR",
-                message: `${symbol} OLIkella trail update failed: ${asErrorMessage(err)}`,
-              },
-            ]);
+        const activationPrice =
+          side === "Buy"
+            ? entry * (1 + OLIKELLA_TRAIL_ACTIVATION_PCT)
+            : entry * (1 - OLIKELLA_TRAIL_ACTIVATION_PCT);
+        const activated =
+          side === "Buy" ? price >= activationPrice : price <= activationPrice;
+        if (activated && Number.isFinite(activationPrice) && activationPrice > 0) {
+          const minDistance = resolveMinProtectionDistance(entry, atr);
+          const distance = Math.max(
+            entry * OLIKELLA_TRAIL_RETRACE_RATE,
+            minDistance
+          );
+          const hasTrailing =
+            Number.isFinite(currentTrailingStop) &&
+            currentTrailingStop > 0 &&
+            Number.isFinite(currentTrailingActive) &&
+            currentTrailingActive > 0;
+          const stopClose =
+            hasTrailing &&
+            Math.abs(currentTrailingStop - distance) <= distance * 0.05;
+          const activeClose =
+            hasTrailing &&
+            Math.abs(currentTrailingActive - activationPrice) <=
+              activationPrice * 0.002;
+          if (!stopClose || !activeClose) {
+            try {
+              await updateProtection({
+                symbol,
+                trailingStop: distance,
+                trailingActivePrice: activationPrice,
+                positionIdx: Number.isFinite(pos.positionIdx)
+                  ? pos.positionIdx
+                  : undefined,
+              });
+              addLogEntries([
+                {
+                  id: `olikella:trail:${symbol}:${now}`,
+                  timestamp: new Date(now).toISOString(),
+                  action: "STATUS",
+                  message: `${symbol} OLIkella trail 5m active @ 0.6% | retrace 0.4%`,
+                },
+              ]);
+            } catch (err) {
+              addLogEntries([
+                {
+                  id: `olikella:trail:error:${symbol}:${now}`,
+                  timestamp: new Date(now).toISOString(),
+                  action: "ERROR",
+                  message: `${symbol} OLIkella trail update failed: ${asErrorMessage(err)}`,
+                },
+              ]);
+            }
           }
         }
       }
