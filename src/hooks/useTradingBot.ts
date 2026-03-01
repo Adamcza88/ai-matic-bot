@@ -9895,6 +9895,8 @@ export function useTradingBot(
     tpPrices: number[];
     entryType: EntryType;
     triggerPrice?: number;
+    trailingStop?: number;
+    trailingActivePrice?: number;
     qtyMode: "USDT_NOTIONAL" | "BASE_QTY";
     qtyValue: number;
     intentId?: string;
@@ -9911,6 +9913,8 @@ export function useTradingBot(
       entryType: signal.entryType,
       entryPrice: signal.entryPrice,
       triggerPrice: signal.triggerPrice,
+      trailingStop: signal.trailingStop,
+      trailingActivePrice: signal.trailingActivePrice,
       qtyMode: signal.qtyMode,
       qtyValue: signal.qtyValue,
       slPrice: signal.slPrice,
@@ -11656,6 +11660,29 @@ export function useTradingBot(
           : Number.isFinite(resolvedTp)
             ? [resolvedTp]
             : [];
+      const oliKellaInitialTrail =
+        isScalpProfile && Number.isFinite(entry) && entry > 0
+          ? (() => {
+              const minDistance = resolveMinProtectionDistance(entry, core?.atr14);
+              const trailingStop = Math.max(
+                entry * OLIKELLA_TRAIL_RETRACE_RATE,
+                minDistance
+              );
+              const trailingActivePrice =
+                side === "Buy"
+                  ? entry * (1 + OLIKELLA_TRAIL_ACTIVATION_PCT)
+                  : entry * (1 - OLIKELLA_TRAIL_ACTIVATION_PCT);
+              if (
+                !Number.isFinite(trailingStop) ||
+                trailingStop <= 0 ||
+                !Number.isFinite(trailingActivePrice) ||
+                trailingActivePrice <= 0
+              ) {
+                return null;
+              }
+              return { trailingStop, trailingActivePrice };
+            })()
+          : null;
       const aiMaticLtfMin = Math.max(1, Math.round(core?.ltfTimeframeMin ?? 5));
       const signalExpireAfterMs = isAiMaticProfile
         ? aiMaticLtfMin * AI_MATIC_SIGNAL_EXPIRE_BARS * 60_000
@@ -11672,6 +11699,8 @@ export function useTradingBot(
                 primaryEntryType === "CONDITIONAL" ? triggerPrice : undefined,
               slPrice: resolvedSl,
               tpPrices,
+              trailingStop: oliKellaInitialTrail?.trailingStop,
+              trailingActivePrice: oliKellaInitialTrail?.trailingActivePrice,
               qtyMode: "BASE_QTY",
               qtyValue: stagedPrimaryQty,
               intentId: primaryIntentId,
@@ -11688,6 +11717,8 @@ export function useTradingBot(
                   : undefined,
               slPrice: resolvedSl,
               tpPrices,
+              trailingStop: oliKellaInitialTrail?.trailingStop,
+              trailingActivePrice: oliKellaInitialTrail?.trailingActivePrice,
               qtyMode: "BASE_QTY",
               qtyValue: stagedSecondaryQty,
               intentId: secondaryIntentId,
@@ -11729,6 +11760,8 @@ export function useTradingBot(
               triggerPrice,
               slPrice: resolvedSl,
               tpPrices,
+              trailingStop: oliKellaInitialTrail?.trailingStop,
+              trailingActivePrice: oliKellaInitialTrail?.trailingActivePrice,
               qtyMode,
               qtyValue,
               intentId: primaryIntentId,
