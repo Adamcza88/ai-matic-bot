@@ -48,12 +48,12 @@ export async function sendIntent(intent: TradeIntent, opts: AuthOpts) {
     orderType,
     price: intent.entryPrice,
     triggerPrice,
-    trailingStop: intent.trailingStop,
-    trailingActivePrice: intent.trailingActivePrice,
     timeInForce,
     orderLinkId: intent.intentId,
     sl: intent.slPrice,
     tp: intent.tpPrices?.[0],
+    trailingStop: intent.trailingStop,
+    trailingActivePrice: intent.trailingActivePrice,
     reduceOnly: false,
   };
 
