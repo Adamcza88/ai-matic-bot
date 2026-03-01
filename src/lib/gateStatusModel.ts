@@ -27,6 +27,14 @@ type BuildGateBlockersArgs = {
   noDetail?: string;
 };
 
+type ResolvePrimaryBlockerTargetArgs = {
+  diag?: SymbolDiagnostic | null;
+  profileGateNames: string[];
+  checklistEnabled: Record<string, boolean>;
+  waitingDetail?: string;
+  noDetail?: string;
+};
+
 const isWaitingContext = (diag?: SymbolDiagnostic | null) => {
   if (!diag) return true;
   if (diag.relayState === "WAITING") return true;
@@ -150,4 +158,27 @@ export const buildGateBlockers = ({
   }
 
   return blockers;
+};
+
+export const resolvePrimaryBlockerTarget = ({
+  diag,
+  profileGateNames,
+  checklistEnabled,
+  waitingDetail = "čeká na vyhodnocení gate",
+  noDetail = "bez detailu",
+}: ResolvePrimaryBlockerTargetArgs): "BLOCKED" | "WAITING" | null => {
+  const rows = buildGateDisplayRows({
+    diag,
+    profileGateNames,
+    checklistEnabled,
+    waitingDetail,
+    noDetail,
+  });
+  const blockers = buildGateBlockers({
+    diag,
+    rows,
+    waitingDetail,
+    noDetail,
+  });
+  return blockers[0]?.targetStatus ?? null;
 };

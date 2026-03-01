@@ -111,3 +111,19 @@ export const buildGateBlockers = ({ diag, rows, waitingDetail = "čeká na vyhod
     }
     return blockers;
 };
+export const resolvePrimaryBlockerTarget = ({ diag, profileGateNames, checklistEnabled, waitingDetail = "čeká na vyhodnocení gate", noDetail = "bez detailu", }) => {
+    const rows = buildGateDisplayRows({
+        diag,
+        profileGateNames,
+        checklistEnabled,
+        waitingDetail,
+        noDetail,
+    });
+    const blockers = buildGateBlockers({
+        diag,
+        rows,
+        waitingDetail,
+        noDetail,
+    });
+    return blockers[0]?.targetStatus ?? null;
+};

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import Panel from "@/components/dashboard/Panel";
 import type {
   GateBlockerItem,
@@ -18,6 +18,8 @@ type GateStatusPanelProps = {
   scanLoaded: boolean;
   profileGateNames: string[];
   checklistEnabled: Record<string, boolean>;
+  activeFilter: GateDisplayStatus | null;
+  onActiveFilterChange: (status: GateDisplayStatus | null) => void;
 };
 
 const STATUS_ORDER: GateDisplayStatus[] = [
@@ -90,8 +92,9 @@ export default function GateStatusPanel({
   scanLoaded,
   profileGateNames,
   checklistEnabled,
+  activeFilter,
+  onActiveFilterChange,
 }: GateStatusPanelProps) {
-  const [activeFilter, setActiveFilter] = useState<GateDisplayStatus | null>(null);
   const diag = selectedSymbol ? scanDiagnostics?.[selectedSymbol] : null;
   const circumference = 2 * Math.PI * RING_RADIUS;
   const rows = useMemo(
@@ -105,10 +108,6 @@ export default function GateStatusPanel({
       }),
     [checklistEnabled, diag, profileGateNames]
   );
-
-  useEffect(() => {
-    setActiveFilter(null);
-  }, [selectedSymbol, profileGateNames]);
 
   const stats = useMemo(() => {
     const counts: Record<GateDisplayStatus, number> = {
@@ -161,7 +160,7 @@ export default function GateStatusPanel({
   const progressRequired = Number.isFinite(progress?.required) ? Number(progress?.required) : 0;
 
   const toggleFilter = (status: GateDisplayStatus) => {
-    setActiveFilter((prev) => (prev === status ? null : status));
+    onActiveFilterChange(activeFilter === status ? null : status);
   };
 
   return (
@@ -310,7 +309,7 @@ export default function GateStatusPanel({
             {activeFilter ? (
               <button
                 type="button"
-                onClick={() => setActiveFilter(null)}
+                onClick={() => onActiveFilterChange(null)}
                 className="rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
               >
                 {UI_COPY.dashboard.gateStatus.showAll}
@@ -332,7 +331,7 @@ export default function GateStatusPanel({
                   <button
                     key={`${item.kind}:${item.reason}:${index}`}
                     type="button"
-                    onClick={() => setActiveFilter(item.targetStatus)}
+                    onClick={() => onActiveFilterChange(item.targetStatus)}
                     className={`rounded-md border px-2 py-1 text-left text-xs transition-colors ${
                       activeFilter === item.targetStatus
                         ? "border-foreground/45 bg-background/45"

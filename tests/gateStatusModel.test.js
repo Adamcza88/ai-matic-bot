@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildGateBlockers,
   buildGateDisplayRows,
+  resolvePrimaryBlockerTarget,
   resolveGateDisplayStatus,
 } from "../src/lib/gateStatusModel.js";
 
@@ -193,4 +194,61 @@ test("blockers: duplicate reasons are deduplicated", () => {
   });
   assert.equal(blockers.length, 1);
   assert.equal(blockers[0].reason, "max positions reached");
+});
+
+test("resolvePrimaryBlockerTarget: blocked when system block reason exists", () => {
+  const target = resolvePrimaryBlockerTarget({
+    diag: {
+      relayState: "BLOCKED",
+      executionAllowed: false,
+      entryBlockReasons: ["max positions reached"],
+      gates: [{ name: "HTF bias", ok: false, detail: "trend mismatch" }],
+    },
+    profileGateNames: ["HTF bias"],
+    checklistEnabled: { "HTF bias": true },
+  });
+  assert.equal(target, "BLOCKED");
+});
+
+test("resolvePrimaryBlockerTarget: waiting when pending gate is primary", () => {
+  const target = resolvePrimaryBlockerTarget({
+    diag: {
+      relayState: "WAITING",
+      executionAllowed: null,
+      signalActive: false,
+      gates: [{ name: "AMD: Phase sequence", ok: false, pending: true, detail: "čeká DISTRIBUTION" }],
+    },
+    profileGateNames: ["AMD: Phase sequence"],
+    checklistEnabled: { "AMD: Phase sequence": true },
+  });
+  assert.equal(target, "WAITING");
+});
+
+test("resolvePrimaryBlockerTarget: null when no blockers found", () => {
+  const target = resolvePrimaryBlockerTarget({
+    diag: {
+      relayState: "READY",
+      executionAllowed: true,
+      gates: [{ name: "Gate A", ok: true, detail: "ok" }],
+    },
+    profileGateNames: ["Gate A"],
+    checklistEnabled: { "Gate A": true },
+  });
+  assert.equal(target, null);
+});
+
+test("resolvePrimaryBlockerTarget: duplicate reasons keep same target", () => {
+  const target = resolvePrimaryBlockerTarget({
+    diag: {
+      relayState: "BLOCKED",
+      executionAllowed: false,
+      entryBlockReasons: ["max positions reached"],
+      executionReason: "max positions reached",
+      relayReason: "max positions reached",
+      gates: [{ name: "HTF bias", ok: false, detail: "max positions reached" }],
+    },
+    profileGateNames: ["HTF bias"],
+    checklistEnabled: { "HTF bias": true },
+  });
+  assert.equal(target, "BLOCKED");
 });

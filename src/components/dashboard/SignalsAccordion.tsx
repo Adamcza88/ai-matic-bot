@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import Panel from "@/components/dashboard/Panel";
 import type { ScanDiagnostics, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
+import { resolvePrimaryBlockerTarget } from "@/lib/gateStatusModel";
+import { UI_COPY } from "@/lib/uiCopy";
 
 type SignalsAccordionProps = {
   allowedSymbols: string[];
@@ -10,7 +12,10 @@ type SignalsAccordionProps = {
   scanAgeOffsetMs?: number;
   loading?: boolean;
   selectedSymbol: string | null;
+  profileGateNames: string[];
+  checklistEnabled: Record<string, boolean>;
   onSelectSymbol: (symbol: string) => void;
+  onJumpToGateFilter: (symbol: string, status: "BLOCKED" | "WAITING") => void;
 };
 
 const FEED_OK_MS = 2_000;
@@ -46,7 +51,10 @@ export default function SignalsAccordion({
   scanAgeOffsetMs,
   loading,
   selectedSymbol,
+  profileGateNames,
+  checklistEnabled,
   onSelectSymbol,
+  onJumpToGateFilter,
 }: SignalsAccordionProps) {
   const [page, setPage] = useState(0);
   const rows = useMemo(
@@ -54,6 +62,13 @@ export default function SignalsAccordion({
       allowedSymbols
         .map((symbol) => {
           const diag = scanDiagnostics?.[symbol];
+          const jumpTarget = resolvePrimaryBlockerTarget({
+            diag,
+            profileGateNames,
+            checklistEnabled,
+            waitingDetail: UI_COPY.dashboard.gateStatus.waitingDetail,
+            noDetail: UI_COPY.dashboard.gateStatus.noDetail,
+          });
           return {
             symbol,
             state: summary(diag, scanLoaded),
@@ -61,6 +76,7 @@ export default function SignalsAccordion({
               Number.isFinite(Number(diag?.feedAgeMs))
                 ? Number(diag?.feedAgeMs) + Math.max(0, scanAgeOffsetMs ?? 0)
                 : Number.NaN,
+            jumpTarget,
           };
         })
         .sort((a, b) => {
@@ -75,7 +91,14 @@ export default function SignalsAccordion({
           }
           return a.symbol.localeCompare(b.symbol);
         }),
-    [allowedSymbols, scanAgeOffsetMs, scanDiagnostics, scanLoaded]
+    [
+      allowedSymbols,
+      checklistEnabled,
+      profileGateNames,
+      scanAgeOffsetMs,
+      scanDiagnostics,
+      scanLoaded,
+    ]
   );
   const totalPages = Math.max(1, Math.ceil(rows.length / SIGNAL_RELAY_PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -126,6 +149,7 @@ export default function SignalsAccordion({
                   <th>Trh</th>
                   <th>Stav</th>
                   <th>Feed age</th>
+                  <th className="text-center">Jump</th>
                 </tr>
               </thead>
               <tbody className="text-foreground">
@@ -155,6 +179,34 @@ export default function SignalsAccordion({
                       </td>
                       <td className={`px-3 text-xs tabular-nums leading-6 ${feedToneClass(row.feedAgeMs)}`}>
                         {formatFeedAge(row.feedAgeMs)}
+                      </td>
+                      <td className="px-3 text-center">
+                        {row.jumpTarget ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onJumpToGateFilter(row.symbol, row.jumpTarget);
+                            }}
+                            className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${
+                              row.jumpTarget === "BLOCKED"
+                                ? "border-[#D32F2F]/60 bg-[#D32F2F]/10"
+                                : "border-[#FFB300]/60 bg-[#FFB300]/10"
+                            }`}
+                            aria-label={`Jump to ${row.jumpTarget.toLowerCase()} gates for ${row.symbol}`}
+                            title={`Jump to ${row.jumpTarget.toLowerCase()} gates`}
+                          >
+                            <span
+                              className={`h-2.5 w-2.5 rounded-full ${
+                                row.jumpTarget === "BLOCKED"
+                                  ? "bg-[#D32F2F]"
+                                  : "bg-[#FFB300]"
+                              }`}
+                            />
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </td>
                     </tr>
                   );

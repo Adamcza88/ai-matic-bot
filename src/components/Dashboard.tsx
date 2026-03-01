@@ -16,7 +16,11 @@ import GateStatusPanel from "./dashboard/GateStatusPanel";
 import RecentEventsPanel from "./dashboard/RecentEventsPanel";
 import RiskBlockPanel from "./dashboard/RiskBlockPanel";
 import { SUPPORTED_SYMBOLS } from "../constants/symbols";
-import type { DiagnosticGate, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
+import type {
+  DiagnosticGate,
+  GateDisplayStatus,
+  SymbolDiagnostic,
+} from "@/lib/diagnosticsTypes";
 import { UI_COPY } from "@/lib/uiCopy";
 import { OLIKELLA_GATE_NAMES, OLIKELLA_PROFILE_LABEL } from "../lib/oliKellaProfile";
 
@@ -419,10 +423,14 @@ export default function Dashboard({
   }, [CHECKLIST_DEFAULTS]);
   const [showSettings, setShowSettings] = useState(false);
   const [selectedSignalSymbol, setSelectedSignalSymbol] = useState<string | null>(null);
+  const [gatePanelFilter, setGatePanelFilter] = useState<GateDisplayStatus | null>(
+    null
+  );
 
   useEffect(() => {
     if (!allowedSymbols.length) {
       setSelectedSignalSymbol(null);
+      setGatePanelFilter(null);
       return;
     }
     if (selectedSignalSymbol && allowedSymbols.includes(selectedSignalSymbol)) return;
@@ -430,7 +438,21 @@ export default function Dashboard({
       (symbol) => scanDiagnostics?.[symbol]?.executionAllowed === false
     );
     setSelectedSignalSymbol(blocked ?? allowedSymbols[0]);
+    setGatePanelFilter(null);
   }, [allowedSymbols, scanDiagnostics, selectedSignalSymbol]);
+
+  const handleSelectSymbol = useCallback((symbol: string) => {
+    setSelectedSignalSymbol(symbol);
+    setGatePanelFilter(null);
+  }, []);
+
+  const handleJumpToGateFilter = useCallback(
+    (symbol: string, status: "BLOCKED" | "WAITING") => {
+      setSelectedSignalSymbol(symbol);
+      setGatePanelFilter(status);
+    },
+    []
+  );
 
   const rawMaxOpenPositions =
     portfolioState?.maxOpenPositions ?? bot.settings?.maxOpenPositions ?? 3;
@@ -894,7 +916,10 @@ export default function Dashboard({
                     scanLoaded={scanLoaded}
                     scanAgeOffsetMs={feedAgeOffsetMs}
                     selectedSymbol={selectedSignalSymbol}
-                    onSelectSymbol={setSelectedSignalSymbol}
+                    profileGateNames={checklistGateNames}
+                    checklistEnabled={checklistEnabled}
+                    onSelectSymbol={handleSelectSymbol}
+                    onJumpToGateFilter={handleJumpToGateFilter}
                     loading={dashboardLoading}
                   />
                   <GateStatusPanel
@@ -904,6 +929,8 @@ export default function Dashboard({
                     scanLoaded={scanLoaded}
                     profileGateNames={checklistGateNames}
                     checklistEnabled={checklistEnabled}
+                    activeFilter={gatePanelFilter}
+                    onActiveFilterChange={setGatePanelFilter}
                   />
                 </div>
               </div>
