@@ -181,6 +181,9 @@ const OLIKELLA_TRAIL_RETRACE_BASE_RATE = 0.004;
 const OLIKELLA_TRAIL_RETRACE_MIN_RATE = 0.002;
 const OLIKELLA_TRAIL_RETRACE_MAX_RATE = 0.01;
 const OLIKELLA_TRAIL_RETRACE_ATR_MULT = 0.8;
+const SCALP_OPEN_POS_SNAPSHOT_TTL_MS = 12_000;
+const SCALP_MIN_POSITION_NOTIONAL_USD = 1;
+const SCALP_MIN_POSITION_SIZE_FALLBACK = 1e-6;
 const PRO_MTF_FIBO_GATE_NAMES = [
   "4H trend confirmed (SMA50 + swing sequence)",
   "Fib proximity <= 1% (38.2/61.8)",
@@ -4239,6 +4242,18 @@ function isActiveEntryOrderStatus(value: unknown) {
   return isExchangeActiveOrderStatus(value);
 }
 
+function hasMeaningfulOpenPosition(position: any) {
+  const size = Math.abs(toNumber(position?.size ?? position?.qty));
+  if (!Number.isFinite(size) || size <= 0) return false;
+  const refPrice = toNumber(
+    position?.entryPrice ?? position?.avgEntryPrice ?? position?.markPrice
+  );
+  if (Number.isFinite(refPrice) && refPrice > 0) {
+    return size * refPrice >= SCALP_MIN_POSITION_NOTIONAL_USD;
+  }
+  return size >= SCALP_MIN_POSITION_SIZE_FALLBACK;
+}
+
 function isProtectionOrderLike(order: any): boolean {
   if (!order) return false;
   const reduceOnly = Boolean(order?.reduceOnly ?? order?.reduce_only ?? order?.reduce);
@@ -4884,6 +4899,8 @@ export function useTradingBot(
   const positionsRef = useRef<ActivePosition[]>([]);
   const positionSnapshotIdRef = useRef(0);
   const positionStateSignatureRef = useRef("");
+  const positionsSnapshotAtRef = useRef(0);
+  const ordersSnapshotAtRef = useRef(0);
   const limitSnapshotIdRef = useRef(0);
   const positionSyncRef = useRef({ lastEventAt: 0, lastReconcileAt: 0 });
   const lastAtomicSyncAtRef = useRef(0);
@@ -5252,6 +5269,8 @@ export function useTradingBot(
   const isWaitingLimitEntryOrder = useCallback(
     (order: TestnetOrder | any): boolean => {
       if (!isActiveEntryOrder(order)) return false;
+      const qty = Math.abs(toNumber(order?.qty ?? order?.orderQty ?? order?.leavesQty));
+      if (!Number.isFinite(qty) || qty <= 0) return false;
       const orderTypeRaw = String(order?.orderType ?? order?.order_type ?? "")
         .trim()
         .toLowerCase();
@@ -7563,13 +7582,17 @@ export function useTradingBot(
           isWaitingLimitEntryOrder(order) &&
           String(order?.symbol ?? "") === symbol
       );
-      const hasAnyOpenPosition = positionsRef.current.some((position) => {
-        const size = toNumber(position?.size ?? position?.qty);
-        return Number.isFinite(size) && size > 0;
-      });
-      const hasAnyWaitingLimitEntryOrder = ordersRef.current.some((order) =>
-        isWaitingLimitEntryOrder(order)
-      );
+      const scalpSnapshotFresh =
+        positionsSnapshotAtRef.current > 0 &&
+        ordersSnapshotAtRef.current > 0 &&
+        now - positionsSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS &&
+        now - ordersSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS;
+      const hasAnyOpenPosition = scalpSnapshotFresh
+        ? positionsRef.current.some((position) => hasMeaningfulOpenPosition(position))
+        : false;
+      const hasAnyWaitingLimitEntryOrder = scalpSnapshotFresh
+        ? ordersRef.current.some((order) => isWaitingLimitEntryOrder(order))
+        : false;
       const scalpOpenPosBlocked =
         isScalpProfile &&
         !context.hasPosition &&
@@ -8390,6 +8413,7 @@ export function useTradingBot(
       }
       setPositions(next);
       positionsRef.current = next;
+      positionsSnapshotAtRef.current = now;
       setLastSuccessAt(now);
       void syncTrailingProtection(next);
       const pausedByOpenPosition = symbolOpenPositionPauseRef.current;
@@ -8571,6 +8595,7 @@ export function useTradingBot(
         : mapped;
       setOrders(next);
       ordersRef.current = next;
+      ordersSnapshotAtRef.current = now;
       setOrdersError(null);
       setLastSuccessAt(now);
       const activeEntrySymbols = new Set(
@@ -10060,13 +10085,17 @@ export function useTradingBot(
           isWaitingLimitEntryOrder(order) &&
           String(order?.symbol ?? "") === symbol
       );
-      const runtimeHasAnyOpenPosition = positionsRef.current.some((position) => {
-        const size = toNumber(position?.size ?? position?.qty);
-        return Number.isFinite(size) && size > 0;
-      });
-      const runtimeHasAnyWaitingLimitEntryOrder = ordersRef.current.some((order) =>
-        isWaitingLimitEntryOrder(order)
-      );
+      const scalpSnapshotFresh =
+        positionsSnapshotAtRef.current > 0 &&
+        ordersSnapshotAtRef.current > 0 &&
+        now - positionsSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS &&
+        now - ordersSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS;
+      const runtimeHasAnyOpenPosition = scalpSnapshotFresh
+        ? positionsRef.current.some((position) => hasMeaningfulOpenPosition(position))
+        : false;
+      const runtimeHasAnyWaitingLimitEntryOrder = scalpSnapshotFresh
+        ? ordersRef.current.some((order) => isWaitingLimitEntryOrder(order))
+        : false;
       const runtimeScalpOpenPosBlocked =
         scalpActive &&
         !hasPosition &&
@@ -10118,7 +10147,7 @@ export function useTradingBot(
               id: `open-pos-gate:${symbol}:${now}`,
               timestamp: new Date(now).toISOString(),
               action: "RISK_BLOCK",
-              message: `${symbol} OPEN_POS gate: open position or waiting limit order active`,
+              message: `${symbol} OPEN_POS gate: open position or waiting limit order active${scalpSnapshotFresh ? "" : " (snapshot stale)"}`,
             },
           ]);
         }
@@ -10503,13 +10532,17 @@ export function useTradingBot(
           isWaitingLimitEntryOrder(order) &&
           String(order?.symbol ?? "") === symbol
       );
-      const entryHasAnyOpenPosition = positionsRef.current.some((position) => {
-        const size = toNumber(position?.size ?? position?.qty);
-        return Number.isFinite(size) && size > 0;
-      });
-      const entryHasAnyWaitingLimitEntryOrder = ordersRef.current.some((order) =>
-        isWaitingLimitEntryOrder(order)
-      );
+      const entryScalpSnapshotFresh =
+        positionsSnapshotAtRef.current > 0 &&
+        ordersSnapshotAtRef.current > 0 &&
+        now - positionsSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS &&
+        now - ordersSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS;
+      const entryHasAnyOpenPosition = entryScalpSnapshotFresh
+        ? positionsRef.current.some((position) => hasMeaningfulOpenPosition(position))
+        : false;
+      const entryHasAnyWaitingLimitEntryOrder = entryScalpSnapshotFresh
+        ? ordersRef.current.some((order) => isWaitingLimitEntryOrder(order))
+        : false;
       const entryScalpOpenPosBlocked =
         isScalpProfile &&
         !hasSymbolPosition &&
@@ -10537,7 +10570,9 @@ export function useTradingBot(
         appendTrace("OpenPosGate", {
           ok: false,
           code: "OPEN_POS",
-          reason: "open position or waiting limit order active",
+          reason: `open position or waiting limit order active${
+            entryScalpSnapshotFresh ? "" : " (snapshot stale)"
+          }`,
           ttlMs: POSITION_GATE_TTL_MS,
         });
       }
@@ -11797,6 +11832,8 @@ export function useTradingBot(
     blockDecisionCooldownRef.current.clear();
     entryBlockFingerprintRef.current.clear();
     positionStateSignatureRef.current = "";
+    positionsSnapshotAtRef.current = 0;
+    ordersSnapshotAtRef.current = 0;
     positionSnapshotIdRef.current = 0;
     positionSyncRef.current = { lastEventAt: 0, lastReconcileAt: 0 };
     lastAtomicSyncAtRef.current = 0;
