@@ -3602,7 +3602,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             : context.settings.enableSoftGates !== false;
         const hardReasons = [];
         const hardBlocked = isAiMaticProfile && aiMaticEval ? !aiMaticEval.hardPass : false;
-        const execEnabled = isGateEnabled("Exec allowed");
         const softBlocked = softEnabled && quality.pass === false;
         const checklist = isAiMaticProfile && aiMaticEval
             ? {
@@ -3626,11 +3625,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const signalActive = isAmdProfile ? Boolean(signal) : Boolean(signal) || checklist.pass;
         let executionAllowed = null;
         let executionReason;
-        if (!execEnabled) {
-            executionAllowed = false;
-            executionReason = "Exec OFF";
-        }
-        else if (!signalActive) {
+        if (!signalActive) {
             executionAllowed = null;
             executionReason = "čeká na signál";
         }
@@ -4830,18 +4825,6 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
                     hardBlockReasons.push(SCALP_ENTRY_GATE);
                 }
             }
-        }
-        const execEnabled = isGateEnabled("Exec allowed");
-        if (!execEnabled) {
-            addLogEntries([
-                {
-                    id: `signal:exec-off:${signalId}`,
-                    timestamp: new Date(now).toISOString(),
-                    action: "STATUS",
-                    message: `${symbol} exec disabled (manual)`,
-                },
-            ]);
-            return;
         }
         if (softEnabled && coreEval.scorePass === false && !isAiMaticProfile && !isAmdProfile) {
             addLogEntries([

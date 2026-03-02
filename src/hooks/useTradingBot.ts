@@ -7835,7 +7835,6 @@ export function useTradingBot(
       const hardReasons: string[] = [];
       const hardBlocked =
         isAiMaticProfile && aiMaticEval ? !aiMaticEval.hardPass : false;
-      const execEnabled = isGateEnabled("Exec allowed");
       const softBlocked = softEnabled && quality.pass === false;
       const oliChecklist = isScalpProfile
         ? (() => {
@@ -7876,10 +7875,7 @@ export function useTradingBot(
         : Boolean(signal) || checklist.pass;
       let executionAllowed: boolean | null = null;
       let executionReason: string | undefined;
-      if (!execEnabled) {
-        executionAllowed = false;
-        executionReason = "Exec OFF";
-      } else if (entryBlockReasons.length > 0) {
+      if (entryBlockReasons.length > 0) {
         executionAllowed = false;
         executionReason = entryBlockReasons.join(", ");
       } else if (!signalActive) {
@@ -10899,18 +10895,6 @@ export function useTradingBot(
           }
         }
       }
-      const execEnabled = isGateEnabled("Exec allowed");
-      if (!execEnabled) {
-        addLogEntries([
-          {
-            id: `signal:exec-off:${signalId}`,
-            timestamp: new Date(now).toISOString(),
-            action: "STATUS",
-            message: `${symbol} exec disabled (manual)`,
-          },
-        ]);
-        return;
-      }
       if (
         softEnabled &&
         coreEval.scorePass === false &&
@@ -11622,7 +11606,7 @@ export function useTradingBot(
         });
       }
       // Pozastavíme feed pro tento symbol, dokud nedoběhne intent/pozice,
-      // aby se nevyvolávaly nové obchody při Exec allowed ON.
+      // aby se nevyvolávaly nové obchody.
       feedPauseRef.current.add(symbol);
       const tpPrices =
         isProProfile && proTargets

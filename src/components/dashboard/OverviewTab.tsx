@@ -19,7 +19,6 @@ const PNL_HISTORY_PAGE_SIZE = 12;
 
 function normalizeReason(reason?: string) {
   if (!reason) return "Bez aktivní blokace.";
-  if (reason === "Exec OFF") return "Execution je vypnutý (manual).";
   if (reason === "čeká na signál") return "Čeká na potvrzení signálu.";
   return reason;
 }

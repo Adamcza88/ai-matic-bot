@@ -134,7 +134,6 @@ export default function Dashboard({
   const scanLoaded = scanDiagnostics !== null;
   const [activeTab, setActiveTab] = useState("decision");
   const [nowTick, setNowTick] = useState(() => Date.now());
-  const [showBulkOverrideDialog, setShowBulkOverrideDialog] = useState(false);
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [signalFadePulse, setSignalFadePulse] = useState(false);
   const [riskPulseActive, setRiskPulseActive] = useState(false);
@@ -294,13 +293,11 @@ export default function Dashboard({
       "Trend strength": true,
       "Maker entry": true,
       "SL structural": true,
-      "Exec allowed": false,
     };
     const aiMatic = {
       "Hard: 3/4 validní Hard gate": true,
       "Entry: 3 of 4": true,
       "Checklist: 5 of 8": true,
-      "Exec allowed": false,
     };
     return {
       "ai-matic": aiMatic,
@@ -313,7 +310,6 @@ export default function Dashboard({
         "15m trigger valid (engulfing/pin/breakout+vol)": true,
         "Volatility gate ATR >= 0.8x 20d avg": true,
         "RR gate >= 1.5": true,
-        "Exec allowed": false,
       },
       "ai-matic-amd": {
         "AMD: Phase sequence": true,
@@ -323,14 +319,12 @@ export default function Dashboard({
         "AMD: Liquidity sweep": true,
         "AMD: Inversion FVG confirm": true,
         "AMD: Target model valid": true,
-        "Exec allowed": false,
       },
       "ai-matic-olikella": {
         ...OLIKELLA_GATE_NAMES.reduce((acc, name) => {
           acc[name] = true;
           return acc;
         }, {} as Record<string, boolean>),
-        "Exec allowed": false,
       },
     };
   }, []);
@@ -344,7 +338,7 @@ export default function Dashboard({
     const defaults =
       CHECKLIST_DEFAULTS_BY_PROFILE[riskMode] ??
       CHECKLIST_DEFAULTS_BY_PROFILE["ai-matic"];
-    return Object.keys(defaults).filter((name) => name !== "Exec allowed");
+    return Object.keys(defaults);
   }, [CHECKLIST_DEFAULTS_BY_PROFILE, riskMode]);
   const CHECKLIST_ALIASES = useMemo(
     () => ({
@@ -383,6 +377,7 @@ export default function Dashboard({
       }
       const parsed = JSON.parse(raw) as Record<string, boolean>;
       const next = { ...CHECKLIST_DEFAULTS, ...(parsed ?? {}) };
+      delete (next as Record<string, boolean>)["Exec allowed"];
       Object.entries(CHECKLIST_ALIASES).forEach(([name, aliases]) => {
         if (typeof parsed?.[name] === "boolean") return;
         for (const alias of aliases) {
@@ -405,18 +400,12 @@ export default function Dashboard({
 
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
-    const migrated = localStorage.getItem(
-      `ai-matic-checklist-migration-v3:${riskMode}`
-    );
-    if (migrated) return;
-    localStorage.setItem(
-      `ai-matic-checklist-migration-v3:${riskMode}`,
-      "true"
-    );
-    setChecklistEnabled((prev) => ({
-      ...prev,
-      "Exec allowed": false,
-    }));
+    setChecklistEnabled((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, "Exec allowed")) return prev;
+      const next = { ...prev } as Record<string, boolean>;
+      delete next["Exec allowed"];
+      return next;
+    });
   }, [riskMode]);
 
   useEffect(() => {
@@ -545,14 +534,6 @@ export default function Dashboard({
     };
   }, [allowedSymbols, scanDiagnostics]);
 
-  const execOverrideEnabled = checklistEnabled["Exec allowed"] ?? true;
-  const setExecOverrideEnabled = useCallback((enabled: boolean) => {
-    setChecklistEnabled((prev) => ({
-      ...prev,
-      "Exec allowed": enabled,
-    }));
-  }, []);
-
   const dataHealthSafe = useMemo(() => {
     if (mode !== TradingMode.AUTO_ON) return false;
     if (systemState.bybitStatus !== "Connected") return false;
@@ -567,11 +548,10 @@ export default function Dashboard({
 
   const riskLevel = useMemo(() => {
     if (criticalByLoss || criticalByUsage) return "CRITICAL" as const;
-    if (execOverrideEnabled) return "CRITICAL" as const;
     if (blockedSignalsCount > 0) return "ELEVATED" as const;
     if (gateStats.total > 0 && gateStats.pass < gateStats.total) return "ELEVATED" as const;
     return "LOW" as const;
-  }, [blockedSignalsCount, criticalByLoss, criticalByUsage, execOverrideEnabled, gateStats.pass, gateStats.total]);
+  }, [blockedSignalsCount, criticalByLoss, criticalByUsage, gateStats.pass, gateStats.total]);
 
   const killSwitchActive = useMemo(() => {
     let latestHalt = 0;
@@ -584,15 +564,6 @@ export default function Dashboard({
     }
     return latestHalt > latestReset;
   }, [logEntries]);
-
-  const holdSymbols = useMemo(() => {
-    return allowedSymbols.filter((symbol) => {
-      const diag = scanDiagnostics?.[symbol];
-      if (!diag) return false;
-      const blocks = Array.isArray(diag.entryBlockReasons) ? diag.entryBlockReasons : [];
-      return diag.executionAllowed === false && blocks.length > 0;
-    });
-  }, [allowedSymbols, scanDiagnostics]);
 
   const feedAgeOffsetMs = useMemo(() => {
     if (!Number.isFinite(lastScanTs)) return 0;
@@ -654,13 +625,6 @@ export default function Dashboard({
     setResetRippleKey((value) => value + 1);
     showToast("All gates reset", "neutral");
   }, [resetChecklist, showToast]);
-
-  const handleConfirmBulkOverride = useCallback(() => {
-    const affected = holdSymbols.length;
-    setShowBulkOverrideDialog(false);
-    setExecOverrideEnabled(true);
-    showToast(`${affected} gates executed`, "success");
-  }, [holdSymbols.length, setExecOverrideEnabled, showToast]);
 
   const handleTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     if (typeof window === "undefined") return;
@@ -742,26 +706,6 @@ export default function Dashboard({
           ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant={execOverrideEnabled ? "destructive" : "default"}
-                size="sm"
-                onClick={() => setShowBulkOverrideDialog(true)}
-                aria-pressed={execOverrideEnabled}
-                className="h-11 px-4 text-sm font-semibold"
-              >
-                Override ALL HOLD → EXECUTE
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setExecOverrideEnabled(false)}
-                aria-pressed={!execOverrideEnabled}
-                className="h-11 px-4 text-sm font-semibold"
-              >
-                Disable Override
-              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -992,35 +936,6 @@ export default function Dashboard({
           </TabsContent>
         </div>
       </Tabs>
-
-      {showBulkOverrideDialog ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-xl border border-border/70 bg-card p-6 shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
-            <div className="text-lg font-semibold text-foreground">Force execution of all HOLD gates?</div>
-            <div className="mt-2 text-sm text-muted-foreground">
-              Force execution of all HOLD gates? ({holdSymbols.length} gates affected)
-            </div>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-10 px-4"
-                onClick={() => setShowBulkOverrideDialog(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                className="h-10 px-4"
-                onClick={handleConfirmBulkOverride}
-              >
-                Force Execute
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {toast ? (
         <div className="fixed inset-x-0 bottom-5 z-50 flex justify-center px-4">
