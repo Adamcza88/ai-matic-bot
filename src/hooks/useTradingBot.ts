@@ -5693,20 +5693,25 @@ export function useTradingBot(
   );
 
   const computeFixedSizing = useCallback(
-    (symbol: Symbol, entry: number, sl: number) => {
-      if (!useTestnet) return null;
+    (
+      symbol: Symbol,
+      entry: number,
+      sl: number,
+      options?: { allowMainnet?: boolean }
+    ) => {
+      if (!useTestnet && !options?.allowMainnet) return null;
       if (!Number.isFinite(entry) || entry <= 0) {
         return { ok: false as const, reason: "invalid_entry" as const };
       }
       const settings = settingsRef.current;
-      const perTradeTestnetUsd = clampPerTradeUsd(
-        settings.perTradeTestnetUsd,
-        DEFAULT_TESTNET_PER_TRADE_USD
+      const perTradeUsd = clampPerTradeUsd(
+        useTestnet ? settings.perTradeTestnetUsd : settings.perTradeMainnetUsd,
+        useTestnet ? DEFAULT_TESTNET_PER_TRADE_USD : DEFAULT_MAINNET_PER_TRADE_USD
       );
       const leverage = resolveSymbolLeverage(symbol);
       const targetNotional = Math.min(
         Math.max(
-          perTradeTestnetUsd *
+          perTradeUsd *
             (Number.isFinite(leverage) && leverage > 0 ? leverage : 1),
           MIN_POSITION_NOTIONAL_USD
         ),
@@ -11229,6 +11234,16 @@ export function useTradingBot(
           entryType = "LIMIT";
         }
       }
+      if (isScalpProfile) {
+        if (entryType === "MARKET") {
+          entryType =
+            Number.isFinite(signal.triggerPrice) || (Number.isFinite(entry) && entry > 0)
+              ? "CONDITIONAL"
+              : "LIMIT";
+        } else if (entryType === "LIMIT_MAKER_FIRST") {
+          entryType = "LIMIT";
+        }
+      }
       const checklistGates = isScalpProfile ? [] : [...coreEval.gates];
       if (isScalpProfile) {
         checklistGates.push({
@@ -11574,7 +11589,9 @@ export function useTradingBot(
       let scalpExitMode: "TRAIL" | "TP" | null = null;
       let scalpExitReason: string | null = null;
 
-      const fixedSizing = computeFixedSizing(symbol as Symbol, entry, resolvedSl);
+      const fixedSizing = computeFixedSizing(symbol as Symbol, entry, resolvedSl, {
+        allowMainnet: isScalpProfile,
+      });
       const treeUseDynamicSizing =
         !isTreeProfile || settingsRef.current.useDynamicPositionSizing !== false;
       const sizing = isTreeProfile
