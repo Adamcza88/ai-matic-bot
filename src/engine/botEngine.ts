@@ -2304,39 +2304,7 @@ export function evaluateStrategyForSymbol(
   // INTEGRACE AI-MATIC-PRO
   if (botConfig.strategyProfile === "ai-matic-pro") {
     const entryTfMin = timeframeToMinutes(botConfig.aiMaticEntryTimeframe ?? "5m");
-    const decision = evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin });
-
-    // BTC Correlation Check for PRO
-    if (symbol !== "BTCUSDT") {
-      const btcBot = botRegistry["BTCUSDT"];
-      const btcPos = btcBot?.getPosition();
-      const isDecoupling = btcBot ? btcBot.getDecouplingMode() : false;
-      
-      if (!isDecoupling) {
-        // Strict Correlation Check
-        if (decision.signal) {
-          const btcSide = btcPos ? (btcPos.side === "long" ? "buy" : "sell") : null;
-          if (!btcSide || decision.signal.intent.side !== btcSide) {
-            decision.blockedSignal = { 
-              ...decision.signal, 
-              blocked: true, 
-              message: `Blocked: BTC ${btcSide || "Flat"}` 
-            };
-            decision.signal = null;
-          }
-        }
-      }
-      
-      // Check active position
-      const myPos = bot.getPosition();
-      if (myPos && (!btcPos || myPos.side !== btcPos.side)) {
-        const currentPrice = candles[candles.length - 1].close;
-        bot.exitPosition(currentPrice);
-        decision.position = null;
-        decision.correlationExit = true;
-      }
-    }
-    return decision;
+    return evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin });
   }
 
   const useMultiTf = botConfig.aiMaticMultiTf;

@@ -304,16 +304,20 @@ const SettingsPanel: React.FC<Props> = ({
       ],
     },
     "ai-matic-pro": {
-      title: "AI-MATIC-PRO (Sideways)",
-      summary: "Sideways only · VA/POC · OFI/VPIN/HMM",
-      description: "Mean‑reversion engine pouze pro range režim.",
+      title: "AI-MATIC-PRO MTF Fibo",
+      summary: "4H trend + swings · 15m confirmations · Fib levels",
+      description:
+        "Multi-timeframe Fibonacci strategie s HTF trend filtrem a LTF potvrzenim triggeru.",
       notes: [
         ORDER_VALUE_NOTE,
-        "Aktivace: Hurst < 0.45, CHOP > 60, HMM state0 p>=0.7, VPIN < 0.8.",
-        "Market Profile: VAH/VAL/POC + VWAP/VA mid pro cíle.",
-        "Entry: VA edge + OFI/Delta absorpce (LIMIT_MAKER_FIRST).",
-        "Exit: T1 ~VWAP/mid (60%), T2 POC/VAH/VAL, time stop 10 svíček / 60m.",
-        "SL: za LVN nebo 2x ATR, po T1 SL na BE.",
+        "HTF 4H: trend je validni pri close nad/pod SMA50 a sekvenci swingu (HL/LH).",
+        "Swing body: pivot 2-2 pro high/low, anchor je posledni potvrzeny impuls.",
+        "Fib retracement: 23.6 / 38.2 / 50 / 61.8 / 78.6.",
+        "Fib extension: TP1 127.2 (partial 60%), TP2 161.8.",
+        "LTF 15m: trigger je alespon 1 z 3 (engulfing, pin bar, breakout+volume).",
+        "Breakout trigger: close pres lokalni swing + volume > 1.0x 20-bar avg.",
+        "Filtry: cena do 1% od Fib 38.2/61.8, swing do 0.50%, ATR gate >= 0.8x 20d avg.",
+        "Risk gate: RR k TP2 >= 1.5, SL za swing + ATR buffer, po TP1 presun na BE + trailing.",
       ],
     },
   };
@@ -362,12 +366,12 @@ const SettingsPanel: React.FC<Props> = ({
       ...OLIKELLA_GATE_NAMES,
     ],
     "ai-matic-pro": [
-      "Hurst < 0.45",
-      "CHOP > 60",
-      "HMM state0 p>=0.7",
-      "VPIN < 0.8",
-      "OFI/Delta trigger",
-      "VA edge",
+      "4H trend confirmed (SMA50 + swing sequence)",
+      "Fib proximity <= 1% (38.2/61.8)",
+      "15m swing near Fib <= 0.50%",
+      "15m trigger valid (engulfing/pin/breakout+vol)",
+      "Volatility gate ATR >= 0.8x 20d avg",
+      "RR gate >= 1.5",
     ],
   };
   const activeGateNames =

@@ -153,15 +153,22 @@ test("olikella: 3/4 + signal active -> BLOCKED", () => {
   assert.equal(progress.state, "BLOCKED");
 });
 
-test("pro: score >= threshold -> READY", () => {
+test("pro: all fibo gates passed -> READY", () => {
   const progress = buildEntryGateProgress({
     profile: "ai-matic-pro",
-    passed: 11,
-    required: 10,
-    total: 14,
-    label: "PRO score",
+    passed: 6,
+    required: 6,
+    total: 6,
+    label: "PRO MTF Fibo gates",
     signalActive: true,
-    rules: [makeRule("Score >= 10", true)],
+    rules: [
+      makeRule("4H trend confirmed (SMA50 + swing sequence)", true),
+      makeRule("Fib proximity <= 1% (38.2/61.8)", true),
+      makeRule("15m swing near Fib <= 0.50%", true),
+      makeRule("15m trigger valid (engulfing/pin/breakout+vol)", true),
+      makeRule("Volatility gate ATR >= 0.8x 20d avg", true),
+      makeRule("RR gate >= 1.5", true),
+    ],
   });
 
   assert.equal(progress.state, "READY");
@@ -169,15 +176,22 @@ test("pro: score >= threshold -> READY", () => {
   assert.equal(progress.pct, 100);
 });
 
-test("pro: score < threshold + no signal -> WAITING", () => {
+test("pro: partial fibo gates + no signal -> WAITING", () => {
   const progress = buildEntryGateProgress({
     profile: "ai-matic-pro",
-    passed: 8,
-    required: 10,
-    total: 14,
-    label: "PRO score",
+    passed: 4,
+    required: 6,
+    total: 6,
+    label: "PRO MTF Fibo gates",
     signalActive: false,
-    rules: [makeRule("Score >= 10", false)],
+    rules: [
+      makeRule("4H trend confirmed (SMA50 + swing sequence)", true),
+      makeRule("Fib proximity <= 1% (38.2/61.8)", true),
+      makeRule("15m swing near Fib <= 0.50%", true),
+      makeRule("15m trigger valid (engulfing/pin/breakout+vol)", false, true),
+      makeRule("Volatility gate ATR >= 0.8x 20d avg", false, true),
+      makeRule("RR gate >= 1.5", true),
+    ],
   });
 
   assert.equal(progress.state, "WAITING");

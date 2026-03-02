@@ -38,7 +38,7 @@ import type {
 } from "../engine/botEngine";
 import { TradingMode } from "../types";
 import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy";
-import { getOrderFlowSnapshot, updateOpenInterest } from "../engine/orderflow";
+import { getOrderFlowSnapshot } from "../engine/orderflow";
 import {
   SUPPORTED_SYMBOLS,
   filterSupportedSymbols,
@@ -181,6 +181,14 @@ const OLIKELLA_TRAIL_RETRACE_BASE_RATE = 0.004;
 const OLIKELLA_TRAIL_RETRACE_MIN_RATE = 0.002;
 const OLIKELLA_TRAIL_RETRACE_MAX_RATE = 0.01;
 const OLIKELLA_TRAIL_RETRACE_ATR_MULT = 0.8;
+const PRO_MTF_FIBO_GATE_NAMES = [
+  "4H trend confirmed (SMA50 + swing sequence)",
+  "Fib proximity <= 1% (38.2/61.8)",
+  "15m swing near Fib <= 0.50%",
+  "15m trigger valid (engulfing/pin/breakout+vol)",
+  "Volatility gate ATR >= 0.8x 20d avg",
+  "RR gate >= 1.5",
+] as const;
 const SKIP_STATUS_SUPPRESSED_CODES = new Set([
   "MAX_POS",
   "MAX_ORDERS",
@@ -4894,8 +4902,6 @@ export function useTradingBot(
       {
         t1: number;
         t2: number;
-        timeStopMinutes: number;
-        entryTfMin: number;
         entryPrice: number;
         side: "Buy" | "Sell";
         setAt: number;
@@ -4908,7 +4914,6 @@ export function useTradingBot(
       {
         t1: number;
         t2: number;
-        timeStopMinutes: number;
         entryPrice: number;
         side: "Buy" | "Sell";
         t1Taken: boolean;
@@ -4916,6 +4921,7 @@ export function useTradingBot(
       }
     >
   >(new Map());
+  const proTrailArmedRef = useRef<Map<string, boolean>>(new Map());
   const decisionRef = useRef<
     Record<string, { decision: PriceFeedDecision; ts: number }>
   >({});
@@ -5755,7 +5761,11 @@ export function useTradingBot(
     ) => {
       const settings = settingsRef.current;
       const isScalpProfile = settings.riskMode === "ai-matic-olikella";
+      const isProProfile = settings.riskMode === "ai-matic-pro";
       if (isScalpProfile) {
+        return null;
+      }
+      if (isProProfile && !proTrailArmedRef.current.get(symbol)) {
         return null;
       }
       const symbolMode = TRAIL_SYMBOL_MODE[symbol];
@@ -5902,6 +5912,7 @@ export function useTradingBot(
         );
         if (!hasPosition && !hasOrder && !hasPending) {
           proTargetsRef.current.delete(symbol);
+          proTrailArmedRef.current.delete(symbol);
         }
       }
       for (const symbol of plannedProtectionRef.current.keys()) {
@@ -6171,7 +6182,6 @@ export function useTradingBot(
               proState = {
                 t1: seed.t1,
                 t2: seed.t2,
-                timeStopMinutes: seed.timeStopMinutes,
                 entryPrice: seed.entryPrice,
                 side: seed.side,
                 t1Taken: false,
@@ -6181,47 +6191,6 @@ export function useTradingBot(
             }
           }
           if (proState) {
-            const openedAtMs = Date.parse(pos.openedAt);
-            if (
-              Number.isFinite(openedAtMs) &&
-              proState.timeStopMinutes > 0 &&
-              now - openedAtMs >= proState.timeStopMinutes * 60_000 &&
-              now - proState.lastAttempt >= 30_000
-            ) {
-              proState.lastAttempt = now;
-              proPartialRef.current.set(positionKey, proState);
-              try {
-                await postJson("/order", {
-                  symbol,
-                  side: side === "Buy" ? "Sell" : "Buy",
-                  qty: sizeRaw,
-                  orderType: "Market",
-                  reduceOnly: true,
-                  timeInForce: "IOC",
-                  positionIdx: Number.isFinite(pos.positionIdx)
-                    ? pos.positionIdx
-                    : undefined,
-                });
-                addLogEntries([
-                  {
-                    id: `pro-timestop:${symbol}:${now}`,
-                    timestamp: new Date(now).toISOString(),
-                    action: "STATUS",
-                    message: `${symbol} PRO time stop -> EXIT`,
-                  },
-                ]);
-              } catch (err) {
-                addLogEntries([
-                  {
-                    id: `pro-timestop:error:${symbol}:${now}`,
-                    timestamp: new Date(now).toISOString(),
-                    action: "ERROR",
-                    message: `${symbol} PRO time stop failed: ${asErrorMessage(err)}`,
-                  },
-                ]);
-              }
-              continue;
-            }
             const t1Hit =
               Number.isFinite(price) &&
               Number.isFinite(proState.t1) &&
@@ -6261,6 +6230,7 @@ export function useTradingBot(
                     ? pos.positionIdx
                     : undefined,
                 });
+                proTrailArmedRef.current.set(symbol, true);
                 addLogEntries([
                   {
                     id: `pro-t1:${symbol}:${now}`,
@@ -7203,167 +7173,43 @@ export function useTradingBot(
       decision: PriceFeedDecision | null | undefined,
       signal: PriceFeedDecision["signal"] | null
     ) => {
-      const regime = (decision as any)?.proRegime as
-        | {
-            hurst: number;
-            chop: number;
-            hmmProb: number;
-            hmmState: number;
-            vpin: number;
-            ofi: number;
-            delta: number;
-            regimeOk: boolean;
-            shock: boolean;
-            trendProb?: number;
-            manipProb?: number;
-          }
-        | undefined;
-      const profile = (decision as any)?.marketProfile as
-        | { vah?: number; val?: number; poc?: number; vwap?: number }
-        | undefined;
-      const orderflow = (decision as any)?.orderflow as
-        | {
-            ofi?: number;
-            ofiPrev?: number;
-            delta?: number;
-            deltaPrev?: number;
-            vpin?: number;
-            absorptionScore?: number;
-          }
-        | undefined;
-      const proState = String((decision as any)?.proState ?? "").toUpperCase();
-      const rangeRegimeRequired =
-        proState === "RANGE_TRADING" || proState === "MANIPULATION_WATCH";
-      const vaEdgeRequired = rangeRegimeRequired;
-      const sideRaw = String((signal as any)?.intent?.side ?? "").toLowerCase();
-      const side =
-        sideRaw === "buy"
-          ? "Buy"
-          : sideRaw === "sell"
-            ? "Sell"
-            : null;
-      const refPrice = toNumber(
-        (signal as any)?.intent?.entry ?? (decision as any)?.coreV2?.ltfClose
-      );
-      const hurstOk =
-        Number.isFinite(regime?.hurst) && (regime?.hurst ?? 1) < 0.45;
-      const chopOk =
-        Number.isFinite(regime?.chop) && (regime?.chop ?? 0) > 60;
-      const hmmOk =
-        Number.isFinite(regime?.hmmProb) && (regime?.hmmProb ?? 0) >= 0.7;
-      const vpinOk =
-        Number.isFinite(regime?.vpin ?? orderflow?.vpin) &&
-        (regime?.vpin ?? orderflow?.vpin ?? 1) < 0.8;
-      const absorptionScore = orderflow?.absorptionScore ?? 0;
-      const absorptionOk =
-        Number.isFinite(absorptionScore) && absorptionScore >= 2;
-      const ofi = orderflow?.ofi ?? 0;
-      const delta = orderflow?.delta ?? 0;
-      const ofiUp = Number.isFinite(ofi) && ofi > 0;
-      const ofiDown = Number.isFinite(ofi) && ofi < 0;
-      const deltaUp = Number.isFinite(delta) && delta > 0;
-      const deltaDown = Number.isFinite(delta) && delta < 0;
-      const sideDeltaOk =
-        side === "Buy"
-          ? deltaUp
-          : side === "Sell"
-            ? deltaDown
-            : false;
-      const sideOfiOk =
-        side === "Buy"
-          ? ofiUp
-          : side === "Sell"
-            ? ofiDown
-            : false;
-      const directionalFlowOk = sideDeltaOk || sideOfiOk;
-      const flowTriggerOk = side
-        ? sideDeltaOk || absorptionOk
-        : directionalFlowOk || absorptionOk;
-      const vaBoundsOk =
-        Number.isFinite(profile?.vah) &&
-        Number.isFinite(profile?.val) &&
-        (profile?.vah ?? 0) > 0 &&
-        (profile?.val ?? 0) > 0;
-      const vaEdgeBySide =
-        !side || !Number.isFinite(refPrice)
-          ? vaBoundsOk
-          : side === "Buy"
-            ? refPrice <= (profile?.val ?? 0) * 1.001
-            : refPrice >= (profile?.vah ?? 0) * 0.999;
-      const vaOk = vaEdgeRequired ? vaBoundsOk && vaEdgeBySide : true;
-      const gates = [
-        {
-          name: "Hurst < 0.45",
-          ok: rangeRegimeRequired ? hurstOk : true,
-          detail: rangeRegimeRequired
-            ? Number.isFinite(regime?.hurst)
-              ? `H ${formatNumber(regime!.hurst, 3)}`
-              : "missing"
-            : "not required",
+      const source = (decision as any)?.proMtfFibo?.gates;
+      const signalActive = Boolean(signal);
+      const gateByName = new Map<
+        string,
+        { ok: boolean; detail: string; pending?: boolean }
+      >();
+      if (Array.isArray(source)) {
+        for (const gate of source) {
+          const name = String(gate?.name ?? "");
+          if (!name) continue;
+          gateByName.set(name, {
+            ok: gate?.ok === true,
+            detail: String(gate?.detail ?? ""),
+            pending: gate?.pending === true,
+          });
+        }
+      }
+      const gates = PRO_MTF_FIBO_GATE_NAMES.map((name) => {
+        const existing = gateByName.get(name);
+        return {
+          name,
+          ok: existing?.ok === true,
+          detail: existing?.detail || "missing",
+          pending: existing?.pending ?? !signalActive,
           hard: false,
-        },
-        {
-          name: "CHOP > 60",
-          ok: rangeRegimeRequired ? chopOk : true,
-          detail: rangeRegimeRequired
-            ? Number.isFinite(regime?.chop)
-              ? `CHOP ${formatNumber(regime!.chop, 1)}`
-              : "missing"
-            : "not required",
-          hard: false,
-        },
-        {
-          name: "HMM state0 p>=0.7",
-          ok: rangeRegimeRequired ? hmmOk : true,
-          detail: rangeRegimeRequired
-            ? Number.isFinite(regime?.hmmProb)
-              ? `p ${formatNumber(regime!.hmmProb, 2)}`
-              : "missing"
-            : "not required",
-          hard: false,
-        },
-        {
-          name: "VPIN < 0.8",
-          ok: vpinOk,
-          detail: Number.isFinite(regime?.vpin ?? orderflow?.vpin)
-            ? `VPIN ${formatNumber(
-                (regime?.vpin ?? orderflow?.vpin ?? 0),
-                2
-              )}`
-            : "missing",
-          hard: false,
-        },
-        {
-          name: "OFI/Delta trigger",
-          ok: flowTriggerOk,
-          detail:
-            Number.isFinite(orderflow?.ofi) || Number.isFinite(orderflow?.delta)
-              ? `OFI ${formatNumber(orderflow?.ofi ?? 0, 2)} | Δ ${formatNumber(orderflow?.delta ?? 0, 2)} | Abs ${formatNumber(absorptionScore, 2)}`
-              : "missing",
-          hard: false,
-        },
-        {
-          name: "VA edge",
-          ok: vaOk,
-          detail: vaEdgeRequired
-            ? Number.isFinite(profile?.vah) && Number.isFinite(profile?.val)
-              ? `VAL ${formatNumber(profile!.val, 2)} | VAH ${formatNumber(profile!.vah, 2)}${Number.isFinite(refPrice) ? ` | Px ${formatNumber(refPrice, 2)}` : ""}`
-              : "missing"
-            : "not required",
-          hard: false,
-        },
-      ];
-      const required = gates.filter((g) => g.detail !== "not required");
-      const score = required.filter((g) => g.ok).length;
-      const scoreTotal = required.length;
-      const scorePass = scoreTotal > 0 ? score >= scoreTotal : true;
+        };
+      });
+      const score = gates.filter((g) => g.ok).length;
+      const scoreTotal = gates.length;
+      const scorePass = scoreTotal > 0 ? score >= scoreTotal : false;
       return {
         gates,
         score,
         scoreTotal,
-        threshold: scoreTotal,
+        threshold: scoreTotal > 0 ? scoreTotal : PRO_MTF_FIBO_GATE_NAMES.length,
         scorePass,
-        hardFailures: required.filter((g) => !g.ok).map((g) => g.name),
+        hardFailures: gates.filter((g) => !g.ok).map((g) => g.name),
         atrMin: Number.NaN,
         volumePct: 0,
         isMajor: false,
@@ -8147,30 +7993,23 @@ export function useTradingBot(
           rules: entryGateRules,
         });
       } else if (isProProfile) {
-        const score = Number.isFinite(coreEval.score) ? coreEval.score : 0;
-        const threshold = Number.isFinite(coreEval.threshold)
-          ? coreEval.threshold
-          : 0;
-        const scoreTotal = Number.isFinite(coreEval.scoreTotal)
-          ? coreEval.scoreTotal
-          : 0;
-        const scorePassed = threshold > 0 ? score >= threshold : false;
-        entryGateRules = [
-          {
-            name: `Score >= ${threshold}`,
-            passed: scorePassed,
-            pending:
-              (!Number.isFinite(coreEval.score) ||
-                !Number.isFinite(coreEval.threshold)) &&
-              !signalActive,
-          },
-        ];
+        entryGateRules = coreEval.gates.length
+          ? coreEval.gates.map((gate) => ({
+              name: gate.name,
+              passed: gate.ok,
+              pending: gate.pending,
+            }))
+          : PRO_MTF_FIBO_GATE_NAMES.map((name) => ({
+              name,
+              passed: false,
+              pending: !signalActive,
+            }));
         entryGateProgress = buildEntryGateProgress({
           profile: profileKey,
-          passed: score,
-          required: threshold,
-          total: scoreTotal,
-          label: "PRO score",
+          passed: coreEval.score,
+          required: coreEval.threshold,
+          total: coreEval.scoreTotal,
+          label: "PRO MTF Fibo gates",
           reason: executionReason,
           signalActive,
           rules: entryGateRules,
@@ -8220,12 +8059,7 @@ export function useTradingBot(
         qualityScore: quality.score,
         qualityThreshold: quality.threshold,
         qualityPass: quality.pass,
-        proState: (decision as any)?.proState ?? null,
-        manipActive: (decision as any)?.proRegime?.manipActive ?? null,
-        liqProximityPct:
-          (decision as any)?.proSignals?.liqProximityPct ??
-          (decision as any)?.orderflow?.liqProximityPct ??
-          null,
+        proTrend: (decision as any)?.proMtfFibo?.trend ?? null,
         lastScanTs,
         feedAgeMs,
         feedAgeOk,
@@ -10273,46 +10107,6 @@ export function useTradingBot(
         }
         return;
       }
-      if (isProProfile) {
-        const proRegime = (decision as any)?.proRegime as { shock?: boolean } | undefined;
-        if (proRegime?.shock) {
-          const shockKey = `pro-shock:${symbol}`;
-          const last = autoCloseCooldownRef.current.get(shockKey) ?? 0;
-          if (now - last >= 15_000) {
-            autoCloseCooldownRef.current.set(shockKey, now);
-            const cancelTargets = ordersRef.current.filter(
-              (order) =>
-                isEntryOrder(order) && String(order?.symbol ?? "") === symbol
-            );
-            cancelTargets.forEach((order) => {
-              const orderId = order.orderId || "";
-              const orderLinkId = order.orderLinkId || "";
-              void postJson("/cancel", {
-                symbol,
-                orderId: orderId || undefined,
-                orderLinkId: orderLinkId || undefined,
-              }).catch(() => null);
-            });
-            if (hasPosition) {
-              const pos = positionsRef.current.find((p) => p.symbol === symbol);
-              if (pos) {
-                void submitReduceOnlyOrder(pos, Math.abs(toNumber(pos.size ?? pos.qty))).catch(
-                  () => null
-                );
-              }
-            }
-            addLogEntries([
-              {
-                id: `pro-shock:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "RISK_BLOCK",
-                message: `${symbol} PRO shock regime -> CLOSE & CANCEL`,
-              },
-            ]);
-          }
-          return;
-        }
-      }
       void maybeRunAiMaticRetestFallback(symbol, decision, now);
       if (runtimeScalpOpenPosBlocked) {
         const openPosKey = `open-pos-gate:${symbol}`;
@@ -10352,49 +10146,6 @@ export function useTradingBot(
       if (hasPosition || hasEntryOrder) {
         if (hasPosition && scalpActive) {
           void handleOliKellaInTrade(symbol, decision, now);
-        }
-        if (hasPosition && isProProfile) {
-          const orderflow = (decision as any)?.orderflow as
-            | { ofi?: number; cvd?: number; cvdPrev?: number }
-            | undefined;
-          const pos = positionsRef.current.find((p) => p.symbol === symbol);
-          if (pos && orderflow) {
-            const side = String(pos.side ?? "");
-            const ofi = toNumber(orderflow.ofi);
-            const cvd = toNumber(orderflow.cvd);
-            const cvdPrev = toNumber(orderflow.cvdPrev);
-            const cvdChange =
-              Number.isFinite(cvd) && Number.isFinite(cvdPrev)
-                ? cvd - cvdPrev
-                : Number.NaN;
-            const ofiFlip =
-              side === "Buy"
-                ? Number.isFinite(ofi) && ofi < 0
-                : Number.isFinite(ofi) && ofi > 0;
-            const cvdFlip =
-              side === "Buy"
-                ? Number.isFinite(cvdChange) && cvdChange < 0
-                : Number.isFinite(cvdChange) && cvdChange > 0;
-            if (ofiFlip || cvdFlip) {
-              const flipKey = `pro-flip:${symbol}`;
-              const last = autoCloseCooldownRef.current.get(flipKey) ?? 0;
-              if (now - last >= 15_000) {
-                autoCloseCooldownRef.current.set(flipKey, now);
-                void submitReduceOnlyOrder(
-                  pos,
-                  Math.abs(toNumber(pos.size ?? pos.qty))
-                ).catch(() => null);
-                addLogEntries([
-                  {
-                    id: `pro-flip:${symbol}:${now}`,
-                    timestamp: new Date(now).toISOString(),
-                    action: "RISK_BLOCK",
-                    message: `${symbol} PRO flow flip -> EXIT (${ofiFlip ? "OFI" : "CVD"})`,
-                  },
-                ]);
-              }
-            }
-          }
         }
         if (hasPosition && settingsRef.current.riskMode === "ai-matic") {
           const aiMatic = (decision as any)?.aiMatic as AiMaticContext | null;
@@ -11574,16 +11325,11 @@ export function useTradingBot(
         proTargetsRef.current.set(symbol, {
           t1: proTargets.t1,
           t2: proTargets.t2,
-          timeStopMinutes: Number.isFinite(proTargets.timeStopMinutes)
-            ? proTargets.timeStopMinutes
-            : 60,
-          entryTfMin: Number.isFinite(proTargets.entryTfMin)
-            ? proTargets.entryTfMin
-            : 5,
           entryPrice: entry,
           side,
           setAt: now,
         });
+        proTrailArmedRef.current.set(symbol, false);
       }
 
       let scalpExitMode: "TRAIL" | "TP" | null = null;
@@ -12043,6 +11789,7 @@ export function useTradingBot(
     partialExitRef.current.clear();
     proTargetsRef.current.clear();
     proPartialRef.current.clear();
+    proTrailArmedRef.current.clear();
     plannedProtectionRef.current.clear();
     protectionRetryAtRef.current.clear();
     protectionRetryLogRef.current.clear();
@@ -12138,8 +11885,13 @@ export function useTradingBot(
         ...(aiMaticOrderflow ? { orderflow: aiMaticOrderflow } : {}),
       };
     };
-    const maxCandles =
-      isScalp ? 7000 : isAiMaticX || isAiMatic || isAmd || isPro ? 5000 : undefined;
+    const maxCandles = isScalp
+      ? 7000
+      : isPro
+        ? 45_000
+        : isAiMaticX || isAiMatic || isAmd
+          ? 5000
+          : undefined;
     const backfill = isAiMaticX
       ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
       : isAiMatic
@@ -12154,7 +11906,12 @@ export function useTradingBot(
               limit: 1000,
             }
         : isPro
-          ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
+          ? {
+              enabled: true,
+              interval: "1",
+              lookbackMinutes: 43_200,
+              limit: 1000,
+            }
         : undefined;
     const stop = startPriceFeed(
       feedSymbols,
@@ -12169,7 +11926,7 @@ export function useTradingBot(
         maxCandles,
         backfill,
         orderflow:
-          isPro || isAiMaticCore
+          isAiMaticCore
             ? { enabled: true, depth: 50 }
             : undefined,
       }
@@ -12194,57 +11951,6 @@ export function useTradingBot(
       stop();
     };
   }, [addLogEntries, authToken, engineConfig, feedEpoch, feedSymbols, useTestnet]);
-
-  useEffect(() => {
-    if (!authToken) return;
-    let active = true;
-    const baseUrl = useTestnet
-      ? "https://api-testnet.bybit.com"
-      : "https://api.bybit.com";
-    const intervalMs = 30_000;
-
-    const pollOpenInterest = async () => {
-      if (!active) return;
-      if (settingsRef.current.riskMode !== "ai-matic-pro") return;
-      const symbols = activeSymbols.length ? activeSymbols : [];
-      if (!symbols.length) return;
-      await Promise.all(
-        symbols.map(async (symbol) => {
-          try {
-            const url = `${baseUrl}/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=5min&limit=1`;
-            const res = await fetch(url);
-            const json = await res.json().catch(() => ({}));
-            const list =
-              json?.result?.list ??
-              json?.result?.data ??
-              json?.result ??
-              json?.list ??
-              [];
-            const row = Array.isArray(list) ? list[0] : list;
-            const raw =
-              row?.openInterest ??
-              row?.open_interest ??
-              row?.value ??
-              row?.openInterestValue ??
-              row?.sumOpenInterest;
-            const oi = toNumber(raw);
-            if (Number.isFinite(oi) && oi > 0) {
-              updateOpenInterest(String(symbol), oi);
-            }
-          } catch {
-            // ignore OI errors
-          }
-        })
-      );
-    };
-
-    const id = setInterval(pollOpenInterest, intervalMs);
-    void pollOpenInterest();
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [activeSymbols, authToken, useTestnet]);
 
   useEffect(() => {
     if (!authToken) return;

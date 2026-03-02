@@ -217,15 +217,15 @@ export default function Dashboard({
     }
     if (riskMode === "ai-matic-pro") {
       return {
-        label: "AI-MATIC-PRO",
-        subtitle: "Sideways only · Market Profile + Orderflow",
+        label: "AI-MATIC-PRO MTF Fibo",
+        subtitle: "4H trend filter + 15m confirmations",
         symbols: SUPPORTED_SYMBOLS,
-        timeframes: "1h režim · 15m/mid · 5m entry · 1m exec",
+        timeframes: "HTF 4h · LTF 15m · feed 1m",
         session: "24/7",
         risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
         riskPct: RISK_PCT_BY_MODE["ai-matic-pro"],
-        entry: "VA edge + OFI/Delta absorpce",
-        execution: "T1 VWAP/mid (60%) · T2 POC/VAH/VAL · time stop 10 svíček/60m",
+        entry: "Fib 38.2/61.8 proximity + engulfing/pin/breakout trigger",
+        execution: "TP1 Fib 127.2 (60% + BE) · TP2 Fib 161.8 · trailing after TP1",
       };
     }
     if (riskMode === "ai-matic-amd") {
@@ -307,12 +307,12 @@ export default function Dashboard({
       "ai-matic-x": base,
       "ai-matic-tree": base,
       "ai-matic-pro": {
-        "Hurst < 0.45": true,
-        "CHOP > 60": true,
-        "HMM state0 p>=0.7": true,
-        "VPIN < 0.8": true,
-        "OFI/Delta trigger": true,
-        "VA edge": true,
+        "4H trend confirmed (SMA50 + swing sequence)": true,
+        "Fib proximity <= 1% (38.2/61.8)": true,
+        "15m swing near Fib <= 0.50%": true,
+        "15m trigger valid (engulfing/pin/breakout+vol)": true,
+        "Volatility gate ATR >= 0.8x 20d avg": true,
+        "RR gate >= 1.5": true,
         "Exec allowed": false,
       },
       "ai-matic-amd": {
