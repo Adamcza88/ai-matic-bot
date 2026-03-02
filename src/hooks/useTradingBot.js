@@ -2406,11 +2406,15 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
     const computeTrailingPlan = useCallback((entry, sl, side, symbol) => {
         const settings = settingsRef.current;
         const isScalpProfile = settings.riskMode === "ai-matic-scalp";
+        const isProProfile = settings.riskMode === "ai-matic-pro";
+        const proTrailArmed = Boolean(proTrailArmedRef.current.get(symbol));
+        const proSeed = isProProfile ? proTargetsRef.current.get(symbol) : null;
         const symbolMode = TRAIL_SYMBOL_MODE[symbol];
         const forceTrail = settings.riskMode === "ai-matic" ||
             settings.riskMode === "ai-matic-amd" ||
             settings.riskMode === "ai-matic-x" ||
-            settings.riskMode === "ai-matic-tree";
+            settings.riskMode === "ai-matic-tree" ||
+            settings.riskMode === "ai-matic-pro";
         if (isScalpProfile)
             return null;
         if (symbolMode === "off")
@@ -2443,9 +2447,22 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (!Number.isFinite(distance) || distance <= 0)
             return null;
         const dir = side === "Buy" ? 1 : -1;
+        const proTp1ActivationMove = isProProfile &&
+            !proTrailArmed &&
+            proSeed &&
+            proSeed.side === side &&
+            Number.isFinite(proSeed.t1) &&
+            Number.isFinite(proSeed.entryPrice)
+            ? Math.abs(proSeed.t1 - proSeed.entryPrice) * 0.5
+            : Number.NaN;
         const activePrice = usePercentActivation
             ? entry + dir * distance
-            : entry + dir * Math.max(activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r, minDistance);
+            : isProProfile &&
+                !proTrailArmed &&
+                Number.isFinite(proTp1ActivationMove) &&
+                proTp1ActivationMove > 0
+                ? entry + dir * proTp1ActivationMove
+                : entry + dir * Math.max(activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r, minDistance);
         if (!Number.isFinite(activePrice) || activePrice <= 0)
             return null;
         return { trailingStop: distance, trailingActivePrice: activePrice };

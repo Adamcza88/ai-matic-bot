@@ -5781,10 +5781,9 @@ export function useTradingBot(
       const settings = settingsRef.current;
       const isScalpProfile = settings.riskMode === "ai-matic-olikella";
       const isProProfile = settings.riskMode === "ai-matic-pro";
+      const proTrailArmed = Boolean(proTrailArmedRef.current.get(symbol));
+      const proSeed = isProProfile ? proTargetsRef.current.get(symbol) : null;
       if (isScalpProfile) {
-        return null;
-      }
-      if (isProProfile && !proTrailArmedRef.current.get(symbol)) {
         return null;
       }
       const symbolMode = TRAIL_SYMBOL_MODE[symbol];
@@ -5792,7 +5791,8 @@ export function useTradingBot(
         settings.riskMode === "ai-matic" ||
         settings.riskMode === "ai-matic-amd" ||
         settings.riskMode === "ai-matic-x" ||
-        settings.riskMode === "ai-matic-tree";
+        settings.riskMode === "ai-matic-tree" ||
+        settings.riskMode === "ai-matic-pro";
       if (symbolMode === "off") return null;
       if (!forceTrail && !settings.lockProfitsWithTrail && symbolMode !== "on") {
         return null;
@@ -5846,19 +5846,34 @@ export function useTradingBot(
         entry * AI_MATIC_TRAIL_ACTIVATE_PCT,
         minDistance
       );
+      const proTp1ActivationMove =
+        isProProfile &&
+        !proTrailArmed &&
+        proSeed &&
+        proSeed.side === side &&
+        Number.isFinite(proSeed.t1) &&
+        Number.isFinite(proSeed.entryPrice)
+          ? Math.abs((proSeed.t1 as number) - (proSeed.entryPrice as number)) * 0.5
+          : Number.NaN;
       const treeActivationMove = Math.max(treePctDistance, minDistance);
-      const activePrice = isAiMaticCoreProfile
-        ? entry + dir * aiMaticActivationMove
-        : isTreeProfile
-          ? entry + dir * treeActivationMove
-          : usePercentActivation
-            ? entry + dir * distance
-            : entry +
-              dir *
-                Math.max(
-                  activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
-                  minDistance
-                );
+      const activePrice =
+        isProProfile &&
+        !proTrailArmed &&
+        Number.isFinite(proTp1ActivationMove) &&
+        proTp1ActivationMove > 0
+          ? entry + dir * (proTp1ActivationMove as number)
+          : isAiMaticCoreProfile
+            ? entry + dir * aiMaticActivationMove
+            : isTreeProfile
+              ? entry + dir * treeActivationMove
+              : usePercentActivation
+                ? entry + dir * distance
+                : entry +
+                  dir *
+                    Math.max(
+                      activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
+                      minDistance
+                    );
       if (!Number.isFinite(activePrice) || activePrice <= 0) return null;
       return { trailingStop: distance, trailingActivePrice: activePrice };
     },
