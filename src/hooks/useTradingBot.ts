@@ -7712,6 +7712,18 @@ export function useTradingBot(
           isWaitingLimitEntryOrder(order) &&
           String(order?.symbol ?? "") === symbol
       );
+      const hasAnyOpenPosition = positionsRef.current.some((position) => {
+        const size = toNumber(position?.size ?? position?.qty);
+        return Number.isFinite(size) && size > 0;
+      });
+      const hasAnyWaitingLimitEntryOrder = ordersRef.current.some((order) =>
+        isWaitingLimitEntryOrder(order)
+      );
+      const scalpOpenPosBlocked =
+        isScalpProfile &&
+        !context.hasPosition &&
+        !hasWaitingLimitOrder &&
+        (hasAnyOpenPosition || hasAnyWaitingLimitEntryOrder);
       const hasPendingIntent = intentPendingRef.current.has(symbol);
       const signalSideRaw = String(signal?.intent?.side ?? "")
         .trim()
@@ -7742,6 +7754,15 @@ export function useTradingBot(
       });
       appendTrace("PositionCapacity", capacityGate);
       if (!capacityGate.ok) addBlockReason(capacityGate.reason);
+      if (scalpOpenPosBlocked) {
+        addBlockReason("open_pos");
+        appendTrace("OpenPosGate", {
+          ok: false,
+          code: "OPEN_POS",
+          reason: "open position or waiting limit order active",
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
+      }
       if (buySignal && (context.hasPosition || hasWaitingLimitOrder)) {
         addBlockReason("buy lock");
         appendTrace("BuyLock", {
@@ -10200,6 +10221,18 @@ export function useTradingBot(
           isWaitingLimitEntryOrder(order) &&
           String(order?.symbol ?? "") === symbol
       );
+      const runtimeHasAnyOpenPosition = positionsRef.current.some((position) => {
+        const size = toNumber(position?.size ?? position?.qty);
+        return Number.isFinite(size) && size > 0;
+      });
+      const runtimeHasAnyWaitingLimitEntryOrder = ordersRef.current.some((order) =>
+        isWaitingLimitEntryOrder(order)
+      );
+      const runtimeScalpOpenPosBlocked =
+        scalpActive &&
+        !hasPosition &&
+        !hasWaitingLimitOrder &&
+        (runtimeHasAnyOpenPosition || runtimeHasAnyWaitingLimitEntryOrder);
       const hasPendingIntent = intentPendingRef.current.has(symbol);
       const signalSideRaw = String(decision?.signal?.intent?.side ?? "")
         .trim()
@@ -10276,6 +10309,22 @@ export function useTradingBot(
         }
       }
       void maybeRunAiMaticRetestFallback(symbol, decision, now);
+      if (runtimeScalpOpenPosBlocked) {
+        const openPosKey = `open-pos-gate:${symbol}`;
+        const lastOpenPosLog = skipLogThrottleRef.current.get(openPosKey) ?? 0;
+        if (now - lastOpenPosLog >= POSITION_GATE_TTL_MS) {
+          skipLogThrottleRef.current.set(openPosKey, now);
+          addLogEntries([
+            {
+              id: `open-pos-gate:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} OPEN_POS gate: open position or waiting limit order active`,
+            },
+          ]);
+        }
+        return;
+      }
       if (buySignal && (hasPosition || hasWaitingLimitOrder)) {
         const buyLockKey = `buy-lock:${symbol}`;
         const lastBuyLockLog = skipLogThrottleRef.current.get(buyLockKey) ?? 0;
@@ -10698,6 +10747,18 @@ export function useTradingBot(
           isWaitingLimitEntryOrder(order) &&
           String(order?.symbol ?? "") === symbol
       );
+      const entryHasAnyOpenPosition = positionsRef.current.some((position) => {
+        const size = toNumber(position?.size ?? position?.qty);
+        return Number.isFinite(size) && size > 0;
+      });
+      const entryHasAnyWaitingLimitEntryOrder = ordersRef.current.some((order) =>
+        isWaitingLimitEntryOrder(order)
+      );
+      const entryScalpOpenPosBlocked =
+        isScalpProfile &&
+        !hasSymbolPosition &&
+        !hasSymbolWaitingLimitOrder &&
+        (entryHasAnyOpenPosition || entryHasAnyWaitingLimitEntryOrder);
       const decisionTrace: DecisionTraceEntry[] = [];
       const appendTrace = (gate: string, result: GateResult) => {
         decisionTrace.push({ gate, result });
@@ -10715,6 +10776,15 @@ export function useTradingBot(
       });
       appendTrace("PositionCapacity", capacityGate);
       if (!capacityGate.ok) entryBlockReasons.push(capacityGate.reason);
+      if (entryScalpOpenPosBlocked) {
+        entryBlockReasons.push("open_pos");
+        appendTrace("OpenPosGate", {
+          ok: false,
+          code: "OPEN_POS",
+          reason: "open position or waiting limit order active",
+          ttlMs: POSITION_GATE_TTL_MS,
+        });
+      }
       if (side === "Buy" && (hasSymbolPosition || hasSymbolWaitingLimitOrder)) {
         entryBlockReasons.push("buy lock");
         appendTrace("BuyLock", {
