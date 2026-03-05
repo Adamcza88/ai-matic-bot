@@ -8895,6 +8895,7 @@ export function useTradingBot(
 
     const syncState = positionSyncRef.current;
     if (
+      !USE_BACKEND_ENGINE &&
       syncState.lastEventAt > 0 &&
       syncState.lastEventAt >= syncState.lastReconcileAt &&
       now - syncState.lastReconcileAt >= POSITION_RECONCILE_INTERVAL_MS

@@ -42,10 +42,14 @@ export default async function handler(req, res) {
     }
 
     const data = await fetchDashboardSnapshot({
+      userId: user.id,
+      env: useTestnet ? "testnet" : "mainnet",
       apiKey,
       apiSecret,
       useTestnet,
       scope: req.query.scope,
+      riskMode: req.query.riskMode,
+      symbols: req.query.symbols,
       ordersLimit: req.query.ordersLimit,
       executionsLimit: req.query.executionsLimit,
       pnlLimit: req.query.pnlLimit,

@@ -579,3 +579,31 @@ export async function getPersistentDashboardSnapshot(args) {
   session.lastAccessAt = Date.now();
   return buildSessionSnapshot(session, scope);
 }
+
+export function getPersistentAggregatorHealth() {
+  cleanupStaleSessions();
+  const activeSessions = Array.from(sessions.values());
+  const now = Date.now();
+  return {
+    status: "ok",
+    sessionCount: activeSessions.length,
+    sessions: activeSessions.map((session) => ({
+      userId: session.userId,
+      env: session.env,
+      useTestnet: session.useTestnet,
+      updatedAt: session.updatedAt || null,
+      updatedAtIso: session.updatedAt
+        ? new Date(session.updatedAt).toISOString()
+        : null,
+      lastAccessAt: session.lastAccessAt,
+      lastAccessAtIso: new Date(session.lastAccessAt).toISOString(),
+      isStale:
+        session.lastAccessAt > 0 &&
+        now - session.lastAccessAt >= STALE_SESSION_TTL_MS,
+      wsConnected: session.ws.connected,
+      wsLastError: session.ws.lastError,
+      engineConnected: session.engine.connected,
+      engineLastError: session.engine.lastError,
+    })),
+  };
+}

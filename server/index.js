@@ -1,10 +1,12 @@
 // ===========================================
-// DEV_ONLY SERVER (Locally mimics Vercel API)
+// HTTP server for local dev and persistent deployment
 // ===========================================
 
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 import { getUserApiKeys } from "./userCredentials.js";
 import {
   createDemoOrder,
@@ -19,9 +21,17 @@ import {
 } from "./bybitClient.js";
 import { reconcileState } from "./reconcile.js";
 import { getInstrumentInfo } from "./instrumentCache.js";
-import { getPersistentDashboardSnapshot } from "./persistentAggregator.js";
+import {
+  getPersistentAggregatorHealth,
+  getPersistentDashboardSnapshot,
+} from "./persistentAggregator.js";
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DIST_DIR = path.resolve(__dirname, "../dist");
+const INDEX_HTML = path.join(DIST_DIR, "index.html");
 
 // A4: STRICT SECURITY CHECK
 // Unless we are in a purely local dev environment without Supabase needs, this should be present.
@@ -31,7 +41,7 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
 }
 
 const app = express();
-const PORT = 4000;
+const PORT = Number(process.env.PORT || 4000);
 
 app.use(cors());
 app.use(express.json());
@@ -526,11 +536,29 @@ app.get("/api/dashboard", (req, res) => handleGetRequest(req, res, getDashboardS
 
 // Health
 app.get("/api/health", (req, res) => {
-  return sendResponse(res, { status: "ok" }, { uptime: process.uptime() });
+  return sendResponse(
+    res,
+    {
+      status: "ok",
+      aggregator: getPersistentAggregatorHealth(),
+    },
+    { uptime: process.uptime() }
+  );
+});
+
+app.use(express.static(DIST_DIR));
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api/")) {
+    next();
+    return;
+  }
+  res.sendFile(INDEX_HTML, (err) => {
+    if (err) next(err);
+  });
 });
 
 
 app.listen(PORT, () => {
-  console.log(`[DEV_ONLY] Server running on http://localhost:${PORT}`);
+  console.log(`[SERVER] Running on http://0.0.0.0:${PORT}`);
   console.log(`[SECURITY] Strict Mode: ON`);
 });

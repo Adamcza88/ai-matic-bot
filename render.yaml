@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: ai-matic
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm ci && cd server && npm ci && cd .. && npm run build
+    startCommand: node server/index.js
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
