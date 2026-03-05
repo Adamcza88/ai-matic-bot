@@ -12,8 +12,10 @@ import { evaluateAiMaticXStrategyForSymbol } from "../src/engine/aiMaticXStrateg
 import { evaluateAiMaticAmdStrategyForSymbol } from "../src/engine/aiMaticAmdStrategy.js";
 import { evaluateAiMaticOliKellaStrategyForSymbol } from "../src/engine/aiMaticOliKellaStrategy.js";
 
-const FAST_POLL_MS = 5_000;
+const FAST_POLL_MS = 30_000;
 const SLOW_POLL_MS = 15_000;
+const WS_ACCOUNT_STALE_MS = 20_000;
+const PRIVATE_EXECUTIONS_MAX = 500;
 const STALE_SESSION_TTL_MS = 15 * 60_000;
 const REST_URL_MAINNET = "https://api.bybit.com";
 const REST_URL_TESTNET = "https://api-demo.bybit.com";
@@ -26,6 +28,10 @@ function nowIso() {
 
 function extractList(data) {
   return data?.result?.list ?? data?.list ?? [];
+}
+
+function makeResultList(list) {
+  return { retCode: 0, result: { list: Array.isArray(list) ? list : [] } };
 }
 
 function toErrorMessage(reason) {
@@ -71,6 +77,122 @@ function normalizeSymbols(value) {
     );
   }
   return [...SUPPORTED_SYMBOLS];
+}
+
+function extractWsRows(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+  if (Array.isArray(payload.list)) return payload.list;
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.result?.list)) return payload.result.list;
+  if (Array.isArray(payload.result)) return payload.result;
+  return [payload];
+}
+
+function orderStatusKey(order) {
+  return String(order?.orderStatus ?? order?.order_status ?? order?.status ?? "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+}
+
+function isActiveOrder(order) {
+  const key = orderStatusKey(order);
+  return key === "new" || key === "created" || key === "untriggered" || key === "partiallyfilled";
+}
+
+function positionKey(position) {
+  const symbol = String(position?.symbol ?? "").toUpperCase();
+  const side = String(position?.side ?? "").toLowerCase();
+  const idxRaw = Number(position?.positionIdx ?? position?.position_id ?? NaN);
+  const idx = Number.isFinite(idxRaw) ? idxRaw : 0;
+  return `${symbol}:${side}:${idx}`;
+}
+
+function orderKey(order) {
+  const orderId = String(order?.orderId ?? order?.orderID ?? "");
+  if (orderId) return orderId;
+  const orderLinkId = String(order?.orderLinkId ?? order?.order_link_id ?? "");
+  if (orderLinkId) return `link:${orderLinkId}`;
+  const symbol = String(order?.symbol ?? "").toUpperCase();
+  const side = String(order?.side ?? "").toUpperCase();
+  const created = String(order?.createdTime ?? order?.updatedTime ?? "");
+  return `${symbol}:${side}:${created}`;
+}
+
+function executionKey(execution) {
+  const execId = String(execution?.execId ?? execution?.tradeId ?? "");
+  if (execId) return execId;
+  const orderId = String(execution?.orderId ?? execution?.orderID ?? "");
+  const ts = String(execution?.execTime ?? execution?.transactTime ?? execution?.createdTime ?? "");
+  const symbol = String(execution?.symbol ?? "").toUpperCase();
+  return `${symbol}:${orderId}:${ts}`;
+}
+
+function executionTs(execution) {
+  const value = Number(execution?.execTime ?? execution?.transactTime ?? execution?.createdTime ?? NaN);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function syncSnapshotFromPrivateState(session) {
+  const positions = Array.from(session.privateState.positions.values());
+  const orders = Array.from(session.privateState.orders.values());
+  const executions = Array.from(session.privateState.executions.values())
+    .sort((a, b) => executionTs(b) - executionTs(a))
+    .slice(0, session.limits.executions);
+
+  session.snapshot.positions = makeResultList(positions);
+  session.snapshot.orders = makeResultList(orders);
+  session.snapshot.executions = makeResultList(executions);
+  session.snapshot.protection = buildProtectionSnapshot(
+    session.snapshot.positions,
+    session.snapshot.orders
+  );
+
+  delete session.snapshot.errors.positions;
+  delete session.snapshot.errors.orders;
+  delete session.snapshot.errors.executions;
+  session.updatedAt = Date.now();
+}
+
+function hydratePrivateFastStateFromSnapshot(session) {
+  const positions = extractList(session.snapshot.positions);
+  const orders = extractList(session.snapshot.orders);
+  const executions = extractList(session.snapshot.executions);
+
+  session.privateState.positions.clear();
+  session.privateState.orders.clear();
+  session.privateState.executions.clear();
+
+  for (const position of positions) {
+    const key = positionKey(position);
+    if (!key || key.startsWith("::")) continue;
+    session.privateState.positions.set(key, position);
+  }
+  for (const order of orders) {
+    const key = orderKey(order);
+    if (!key) continue;
+    session.privateState.orders.set(key, order);
+  }
+  for (const execution of executions) {
+    const key = executionKey(execution);
+    if (!key) continue;
+    session.privateState.executions.set(key, execution);
+  }
+}
+
+function shouldRefreshFastFromRest(session) {
+  const now = Date.now();
+  if (!session.ws.connected) return true;
+  if (session.ws.lastUpdateAt <= 0) return true;
+  if (now - session.ws.lastUpdateAt > WS_ACCOUNT_STALE_MS) return true;
+
+  const requiredTopics = ["position", "order", "execution"];
+  for (const topic of requiredTopics) {
+    const ts = Number(session.ws.topics[topic] ?? 0);
+    if (!Number.isFinite(ts) || ts <= 0) return true;
+    if (now - ts > WS_ACCOUNT_STALE_MS) return true;
+  }
+  return false;
 }
 
 function normalizeWsKline(row) {
@@ -276,6 +398,13 @@ async function runFastPoll(session) {
     session.snapshot.positions,
     session.snapshot.orders
   );
+  if (
+    positionsRes.status === "fulfilled" &&
+    ordersRes.status === "fulfilled" &&
+    executionsRes.status === "fulfilled"
+  ) {
+    hydratePrivateFastStateFromSnapshot(session);
+  }
   session.updatedAt = Date.now();
 }
 
@@ -334,6 +463,12 @@ function onWsUpdate(session, event) {
   session.ws.lastUpdateAt = ts;
   if (topic) {
     session.ws.topics[topic] = ts;
+    const rootTopic = topic.split(".")[0];
+    if (rootTopic && !session.ws.topics[rootTopic]) {
+      session.ws.topics[rootTopic] = ts;
+    } else if (rootTopic) {
+      session.ws.topics[rootTopic] = ts;
+    }
   }
 
   if (topic.startsWith("kline.")) {
@@ -356,20 +491,69 @@ function onWsUpdate(session, event) {
     return;
   }
 
-  if (topic === "wallet") {
+  const rootTopic = topic.split(".")[0];
+
+  if (rootTopic === "wallet") {
     session.ws.latest.wallet = data;
+    const rows = extractWsRows(data);
+    if (rows.length) {
+      session.snapshot.wallet = makeResultList(rows);
+      delete session.snapshot.errors.wallet;
+      session.updatedAt = ts;
+    }
     return;
   }
-  if (topic === "position") {
+  if (rootTopic === "position") {
     session.ws.latest.position = data;
+    const rows = extractWsRows(data);
+    for (const row of rows) {
+      const key = positionKey(row);
+      if (!key || key.startsWith("::")) continue;
+      const size = Number(row?.size ?? row?.qty ?? 0);
+      if (!Number.isFinite(size) || Math.abs(size) <= 0) {
+        session.privateState.positions.delete(key);
+        continue;
+      }
+      session.privateState.positions.set(key, row);
+    }
+    syncSnapshotFromPrivateState(session);
     return;
   }
-  if (topic === "order") {
+  if (rootTopic === "order") {
     session.ws.latest.order = data;
+    const rows = extractWsRows(data);
+    for (const row of rows) {
+      const key = orderKey(row);
+      if (!key) continue;
+      if (isActiveOrder(row)) {
+        session.privateState.orders.set(key, row);
+      } else {
+        session.privateState.orders.delete(key);
+      }
+    }
+    syncSnapshotFromPrivateState(session);
     return;
   }
-  if (topic === "execution") {
+  if (rootTopic === "execution") {
     session.ws.latest.execution = data;
+    const rows = extractWsRows(data);
+    for (const row of rows) {
+      const key = executionKey(row);
+      if (!key) continue;
+      session.privateState.executions.set(key, row);
+    }
+    if (session.privateState.executions.size > PRIVATE_EXECUTIONS_MAX) {
+      const trimmed = Array.from(session.privateState.executions.values())
+        .sort((a, b) => executionTs(b) - executionTs(a))
+        .slice(0, PRIVATE_EXECUTIONS_MAX);
+      session.privateState.executions.clear();
+      for (const row of trimmed) {
+        const key = executionKey(row);
+        if (!key) continue;
+        session.privateState.executions.set(key, row);
+      }
+    }
+    syncSnapshotFromPrivateState(session);
   }
 }
 
@@ -435,6 +619,11 @@ function createSession(args) {
       lastError: null,
     },
     wsClient: ws,
+    privateState: {
+      positions: new Map(),
+      orders: new Map(),
+      executions: new Map(),
+    },
     timers: {
       fast: null,
       slow: null,
@@ -488,6 +677,7 @@ function createSession(args) {
     initEngineBackfill(session),
   ]).finally(() => {
     session.timers.fast = setInterval(() => {
+      if (!shouldRefreshFastFromRest(session)) return;
       void runFastPoll(session).catch((err) => {
         session.snapshot.errors.fast = toErrorMessage(err);
       });
