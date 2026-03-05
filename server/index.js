@@ -41,7 +41,19 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
 }
 
 const app = express();
-const PORT = Number(process.env.PORT || 4000);
+const isRenderRuntime =
+  process.env.RENDER === "true" || Boolean(process.env.RENDER_SERVICE_ID);
+const parsedPort = Number(process.env.PORT);
+const hasValidPort = Number.isFinite(parsedPort) && parsedPort > 0;
+const fallbackPort = isRenderRuntime ? 10000 : 4000;
+// Render health checks target the runtime port. If PORT was manually set to 4000,
+// force the platform default to avoid boot loops.
+const PORT =
+  isRenderRuntime && parsedPort === 4000
+    ? 10000
+    : hasValidPort
+      ? parsedPort
+      : fallbackPort;
 
 app.use(cors());
 app.use(express.json());
@@ -550,5 +562,10 @@ app.get("*", (req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`[SERVER] Running on http://0.0.0.0:${PORT}`);
+  if (isRenderRuntime && parsedPort === 4000) {
+    console.error(
+      "[SERVER] Ignoring manual PORT=4000 on Render. Using PORT=10000 for health checks."
+    );
+  }
   console.log(`[SECURITY] Strict Mode: ON`);
 });
