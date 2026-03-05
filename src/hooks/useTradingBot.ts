@@ -150,7 +150,6 @@ const CAPACITY_RECHECK_MS = 30_000;
 const FAST_POLL_INTERVAL_MS = 5_000;
 const SLOW_POLL_INTERVAL_MS = 15_000;
 const POSITION_RECONCILE_INTERVAL_MS = 30_000;
-const RECONCILE_POLL_INTERVAL_MS = 30_000;
 const INTENT_COOLDOWN_MS = 8_000;
 const ENTRY_ORDER_LOCK_MS = 20_000;
 const CORE_V2_EMA_SEP1_MIN = 0.18;
@@ -8152,18 +8151,38 @@ export function useTradingBot(
     fastPollRef.current = true;
 
     const now = Date.now();
-    const results = await Promise.allSettled([
-      fetchJson("/positions"),
-      fetchJson("/orders", { limit: "50" }),
-      fetchJson("/executions", { limit: "50" }),
+    const [dashboardRes] = await Promise.allSettled([
+      fetchJson("/dashboard", {
+        scope: "fast",
+        ordersLimit: "50",
+        executionsLimit: "50",
+      }),
     ]);
+    const dashboardData =
+      dashboardRes.status === "fulfilled" ? dashboardRes.value ?? {} : null;
+    const dashboardErrors: Record<string, unknown> =
+      dashboardRes.status === "fulfilled" && dashboardData?.errors
+        ? dashboardData.errors
+        : {};
+    const getSectionResult = (key: string): PromiseSettledResult<any> => {
+      if (dashboardRes.status === "rejected") {
+        return { status: "rejected", reason: dashboardRes.reason };
+      }
+      const sectionError = dashboardErrors[key];
+      if (sectionError) {
+        return { status: "rejected", reason: new Error(String(sectionError)) };
+      }
+      return { status: "fulfilled", value: dashboardData?.[key] ?? {} };
+    };
 
     let sawError = false;
     const newLogs: LogEntry[] = [];
     let sawPositionClosed = false;
     let sawOrderCanceled = false;
     let sawOrderFilled = false;
-    const [positionsRes, ordersRes, executionsRes] = results;
+    const positionsRes = getSectionResult("positions");
+    const ordersRes = getSectionResult("orders");
+    const executionsRes = getSectionResult("executions");
     const ordersSnapshot =
       ordersRes.status === "fulfilled"
         ? extractList(ordersRes.value)
@@ -9624,17 +9643,27 @@ export function useTradingBot(
     slowPollRef.current = true;
 
     const now = Date.now();
-    const shouldRunReconcile =
-      now - positionSyncRef.current.lastReconcileAt >=
-      RECONCILE_POLL_INTERVAL_MS;
-    const [walletRes, closedPnlRes] = await Promise.allSettled([
-      fetchJson("/wallet"),
-      fetchJson("/closed-pnl", { limit: "200" }),
+    const [dashboardRes] = await Promise.allSettled([
+      fetchJson("/dashboard", { scope: "slow", pnlLimit: "200" }),
     ]);
-    let reconcileRes: PromiseSettledResult<any> | null = null;
-    if (shouldRunReconcile) {
-      [reconcileRes] = await Promise.allSettled([fetchJson("/reconcile")]);
-    }
+    const dashboardData =
+      dashboardRes.status === "fulfilled" ? dashboardRes.value ?? {} : null;
+    const dashboardErrors: Record<string, unknown> =
+      dashboardRes.status === "fulfilled" && dashboardData?.errors
+        ? dashboardData.errors
+        : {};
+    const getSectionResult = (key: string): PromiseSettledResult<any> => {
+      if (dashboardRes.status === "rejected") {
+        return { status: "rejected", reason: dashboardRes.reason };
+      }
+      const sectionError = dashboardErrors[key];
+      if (sectionError) {
+        return { status: "rejected", reason: new Error(String(sectionError)) };
+      }
+      return { status: "fulfilled", value: dashboardData?.[key] ?? {} };
+    };
+    const walletRes = getSectionResult("wallet");
+    const closedPnlRes = getSectionResult("pnl");
 
     let sawError = false;
     const newLogs: LogEntry[] = [];
@@ -9714,33 +9743,6 @@ export function useTradingBot(
       sawError = true;
     }
 
-    if (reconcileRes?.status === "fulfilled") {
-      positionSyncRef.current.lastReconcileAt = now;
-      const payload = reconcileRes.value ?? {};
-      const reconDiffs = payload?.diffs ?? [];
-      if (Array.isArray(reconDiffs) && reconDiffs.length > 0) {
-        queueCapacityRecheck("RECONCILED");
-      }
-      for (const diff of reconDiffs) {
-        const sym = String(diff?.symbol ?? "");
-        const label = String(diff?.message ?? diff?.field ?? diff?.type ?? "");
-        if (!label) continue;
-        const severity = String(diff?.severity ?? "").toUpperCase();
-        newLogs.push({
-          id: `reconcile:${sym}:${label}:${now}`,
-          timestamp: new Date(now).toISOString(),
-          action: severity === "HIGH" ? "ERROR" : "STATUS",
-          message: `RECONCILE ${sym} ${label}`,
-        });
-      }
-      setLastSuccessAt(now);
-    } else if (shouldRunReconcile && reconcileRes?.status === "rejected") {
-      const msg = asErrorMessage(reconcileRes.reason);
-      setSystemError(msg);
-      setRecentErrors((prev) => [msg, ...prev].slice(0, 5));
-      sawError = true;
-    }
-
     if (newLogs.length) {
       addLogEntries(newLogs);
     } else {
@@ -9753,7 +9755,7 @@ export function useTradingBot(
     }
 
     slowPollRef.current = false;
-  }, [addLogEntries, fetchJson, queueCapacityRecheck]);
+  }, [addLogEntries, fetchJson]);
 
   useEffect(() => {
     if (!authToken) {

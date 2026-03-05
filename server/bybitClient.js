@@ -190,21 +190,6 @@ async function normalizeQty(symbol, qtyInput, priceInput = 0, useTestnet = true)
 }
 
 const lastLeverageBySymbol = new Map();
-const LEVERAGE_BY_SYMBOL = {
-  BTCUSDT: 100,
-  ETHUSDT: 100,
-  SOLUSDT: 100,
-  ADAUSDT: 75,
-  XRPUSDT: 75,
-  SUIUSDT: 50,
-  DOGEUSDT: 75,
-  LINKUSDT: 50,
-  ZILUSDT: 25,
-  AVAXUSDT: 50,
-  HYPEUSDT: 75,
-  OPUSDT: 50,
-};
-const leverageSyncCooldownMs = 60_000;
 
 export async function getServerTime(useTestnet = true) {
   const url = `${resolveBase(useTestnet)}/v5/market/time`;
@@ -678,50 +663,7 @@ export async function getDemoPositions(creds, useTestnet = true) {
 
   const query = "category=linear&accountType=UNIFIED&settleCoin=USDT";
   const res = await buildSignedGet(`/v5/position/list?${query}`, creds, useTestnet);
-  const data = res.data;
-  const list = data?.result?.list || [];
-  const now = Date.now();
-
-  for (const pos of list) {
-    const symbol = String(pos?.symbol ?? "");
-    if (!symbol || !Object.prototype.hasOwnProperty.call(LEVERAGE_BY_SYMBOL, symbol)) {
-      continue;
-    }
-    const size = Number(pos?.size ?? 0);
-    if (!Number.isFinite(size) || Math.abs(size) <= 0) continue;
-    const currentLev = Number(
-      pos?.leverage ?? pos?.buyLeverage ?? pos?.sellLeverage ?? NaN
-    );
-    const targetLev = LEVERAGE_BY_SYMBOL[symbol] ?? 1;
-    const lastSync = lastLeverageBySymbol.get(`${useTestnet ? "demo" : "mainnet"}:${symbol}:sync`) ?? 0;
-    if (now - lastSync < leverageSyncCooldownMs) continue;
-    if (Number.isFinite(currentLev) && Number.isFinite(targetLev) && currentLev === targetLev) {
-      continue;
-    }
-    try {
-      const resLev = await setLeverage(
-        { symbol, leverage: targetLev },
-        creds,
-        useTestnet
-      );
-      if (resLev?.retCode && resLev.retCode !== 0) {
-        throw new Error(resLev?.retMsg || "set_leverage_failed");
-      }
-      lastLeverageBySymbol.set(
-        `${useTestnet ? "demo" : "mainnet"}:${symbol}:sync`,
-        now
-      );
-      lastLeverageBySymbol.set(
-        `${useTestnet ? "demo" : "mainnet"}:${symbol}`,
-        targetLev
-      );
-    } catch (err) {
-      const msg = err?.response?.data || err?.message || "Unknown leverage error";
-      console.error("[Bybit] leverage sync failed:", symbol, msg);
-    }
-  }
-
-  return data;
+  return res.data;
 }
 
 /**

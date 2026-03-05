@@ -11,6 +11,7 @@ import {
   listDemoOrders,
   getDemoPositions,
   listDemoTrades,
+  listExecutions,
   getWalletBalance,
   listClosedPnl,
   setTradingStop,
@@ -18,6 +19,7 @@ import {
 } from "./bybitClient.js";
 import { reconcileState } from "./reconcile.js";
 import { getInstrumentInfo } from "./instrumentCache.js";
+import { fetchDashboardSnapshot } from "../api/shared/dashboardSnapshot.js";
 
 dotenv.config();
 
@@ -482,6 +484,17 @@ const handleGetRequest = async (req, res, fetcher) => {
   }
 };
 
+const getDashboardSnapshot = async (creds, query, isTestnet) =>
+  fetchDashboardSnapshot({
+    apiKey: creds.apiKey,
+    apiSecret: creds.apiSecret,
+    useTestnet: isTestnet,
+    scope: query?.scope,
+    ordersLimit: query?.ordersLimit,
+    executionsLimit: query?.executionsLimit,
+    pnlLimit: query?.pnlLimit,
+  });
+
 app.get("/api/:env/positions", (req, res) => handleGetRequest(req, res, getDemoPositions));
 app.get("/api/positions", (req, res) => handleGetRequest(req, res, getDemoPositions));
 
@@ -490,6 +503,9 @@ app.get("/api/orders", (req, res) => handleGetRequest(req, res, listDemoOrders))
 
 app.get("/api/:env/trades", (req, res) => handleGetRequest(req, res, listDemoTrades));
 app.get("/api/trades", (req, res) => handleGetRequest(req, res, listDemoTrades));
+
+app.get("/api/:env/executions", (req, res) => handleGetRequest(req, res, listExecutions));
+app.get("/api/executions", (req, res) => handleGetRequest(req, res, listExecutions));
 
 app.get("/api/:env/wallet", (req, res) => handleGetRequest(req, res, getWalletBalance));
 app.get("/api/wallet", (req, res) => handleGetRequest(req, res, getWalletBalance));
@@ -500,6 +516,9 @@ app.get("/api/closed-pnl", (req, res) => handleGetRequest(req, res, listClosedPn
 // Reconcile
 app.get("/api/:env/reconcile", (req, res) => handleGetRequest(req, res, reconcileState));
 app.get("/api/reconcile", (req, res) => handleGetRequest(req, res, reconcileState));
+
+app.get("/api/:env/dashboard", (req, res) => handleGetRequest(req, res, getDashboardSnapshot));
+app.get("/api/dashboard", (req, res) => handleGetRequest(req, res, getDashboardSnapshot));
 
 // Health
 app.get("/api/health", (req, res) => {

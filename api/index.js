@@ -63,6 +63,11 @@ export default async function handler(req, res) {
             return executionsHandler(req, res);
         }
 
+        if (path === "/api/demo/dashboard") {
+            const { default: dashboardHandler } = await import("./demo/dashboard.js");
+            return dashboardHandler(req, res);
+        }
+
         if (path === "/api/main/order") {
             const { default: orderHandler } = await import("./main/order.js");
             return orderHandler(req, res);
@@ -113,6 +118,11 @@ export default async function handler(req, res) {
         if (path === "/api/main/executions") {
             const { default: executionsHandler } = await import("./main/executions.js");
             return executionsHandler(req, res);
+        }
+
+        if (path === "/api/main/dashboard") {
+            const { default: dashboardHandler } = await import("./main/dashboard.js");
+            return dashboardHandler(req, res);
         }
 
         res.status(404).json({ ok: false, error: "Not found" });
