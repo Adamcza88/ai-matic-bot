@@ -7,7 +7,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import { getUserApiKeys } from "./userCredentials.js";
+import { getUserApiKeys, getUserFromToken } from "./userCredentials.js";
 import {
   createDemoOrder,
   listDemoOrders,
@@ -79,6 +79,20 @@ const getCommonParams = (req) => {
     env = "mainnet";
   }
   return { env, isTestnet: env === "testnet" };
+};
+
+const getRequestUserAndCreds = async (req, env) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    throw new Error("Missing Authorization header");
+  }
+  const token = authHeader.slice("Bearer ".length).trim();
+  if (!token) {
+    throw new Error("Missing auth token");
+  }
+  const user = await getUserFromToken(token);
+  const creds = await getUserApiKeys(user.id, env);
+  return { token, user, creds };
 };
 
 // ===========================================
@@ -206,14 +220,7 @@ app.post("/api/:env/order", async (req, res) => {
   };
 
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return sendError(res, 401, "Missing Authorization header", { env, endpoint });
-    }
-    const userId = authHeader.replace("Bearer ", "");
-
-    // FIX 3: Strict Key Selection
-    const creds = await getUserApiKeys(userId, env);
+    const { creds } = await getRequestUserAndCreds(req, env);
 
     if (!symbol || !side || !qty) {
       return sendError(res, 400, "Missing required fields: symbol, side, qty", { env, endpoint });
@@ -319,15 +326,7 @@ app.post("/api/:env/protection", async (req, res) => {
   const env = req.params.env === "main" ? "mainnet" : "testnet";
 
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return sendError(res, 401, "Missing Authorization header", {
-        env,
-        endpoint,
-      });
-    }
-    const userId = authHeader.replace("Bearer ", "");
-    const creds = await getUserApiKeys(userId, env);
+    const { creds } = await getRequestUserAndCreds(req, env);
 
     const {
       symbol,
@@ -393,15 +392,7 @@ app.post("/api/:env/cancel", async (req, res) => {
   });
 
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return sendError(res, 401, "Missing Authorization header", {
-        env,
-        endpoint,
-      });
-    }
-    const userId = authHeader.replace("Bearer ", "");
-    const creds = await getUserApiKeys(userId, env);
+    const { creds } = await getRequestUserAndCreds(req, env);
 
     const { symbol, orderId, orderLinkId } = req.body || {};
     if (!symbol || (!orderId && !orderLinkId)) {
@@ -449,14 +440,10 @@ const handleGetRequest = async (req, res, fetcher) => {
   const endpoint = req.originalUrl;
 
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) return sendError(res, 401, "Missing Auth", { env, endpoint });
-    const userId = authHeader.replace("Bearer ", "");
+    const { user, creds } = await getRequestUserAndCreds(req, env);
 
     // DEBUG: check env
     if (!env) console.error(`[handleGetRequest] Env is undefined! params=${JSON.stringify(req.params)}, query=${JSON.stringify(req.query)}, path=${req.path}`);
-
-    const creds = await getUserApiKeys(userId, env);
 
     // Pass req.query as filters
     // Some fetchers expect (creds, filters, useTestnet)
@@ -481,7 +468,10 @@ const handleGetRequest = async (req, res, fetcher) => {
     if (fetcher === getDemoPositions || fetcher === getWalletBalance || fetcher === reconcileState) {
       result = await fetcher(creds, isTestnet);
     } else {
-      result = await fetcher(creds, req.query, isTestnet, { env, userId });
+      result = await fetcher(creds, req.query, isTestnet, {
+        env,
+        userId: user.id,
+      });
     }
 
     return sendResponse(res, result, {
