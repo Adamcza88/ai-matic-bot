@@ -13,7 +13,7 @@
     "test:coach": "node --test tests/coachStrategy.test.ts",
     "test:ema50": "node --test tests/ema50Pullback.test.js",
     "preview": "vite preview --config vite.config.cjs",
-    "start": "npm run dev"
+    "start": "node server/index.js"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
