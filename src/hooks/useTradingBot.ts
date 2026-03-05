@@ -150,6 +150,7 @@ const CAPACITY_RECHECK_MS = 30_000;
 const FAST_POLL_INTERVAL_MS = 5_000;
 const SLOW_POLL_INTERVAL_MS = 15_000;
 const POSITION_RECONCILE_INTERVAL_MS = 30_000;
+const USE_BACKEND_ENGINE = true;
 const INTENT_COOLDOWN_MS = 8_000;
 const ENTRY_ORDER_LOCK_MS = 20_000;
 const CORE_V2_EMA_SEP1_MIN = 0.18;
@@ -5000,6 +5001,7 @@ export function useTradingBot(
   const handleDecisionRef = useRef<
     ((symbol: string, decision: PriceFeedDecision) => void) | null
   >(null);
+  const backendDecisionTsRef = useRef<Map<string, number>>(new Map());
   const feedLogRef = useRef<{ env: string; ts: number } | null>(null);
   const logDedupeRef = useRef<Map<string, number>>(new Map());
   const gateOverridesRef = useRef<Record<string, boolean>>({});
@@ -5012,7 +5014,6 @@ export function useTradingBot(
   >(new Map());
   const protectionRetryAtRef = useRef<Map<string, number>>(new Map());
   const protectionRetryLogRef = useRef<Map<string, number>>(new Map());
-  const [feedEpoch, setFeedEpoch] = useState(0);
   const symbolTickRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
@@ -8154,6 +8155,8 @@ export function useTradingBot(
     const [dashboardRes] = await Promise.allSettled([
       fetchJson("/dashboard", {
         scope: "fast",
+        riskMode: settingsRef.current.riskMode,
+        symbols: feedSymbols.join(","),
         ordersLimit: "50",
         executionsLimit: "50",
       }),
@@ -8868,6 +8871,28 @@ export function useTradingBot(
       addLogEntries(newLogs);
     }
 
+    if (dashboardRes.status === "fulfilled") {
+      const enginePayload = dashboardData?.engine ?? {};
+      const decisionList = Array.isArray(enginePayload?.decisions)
+        ? enginePayload.decisions
+        : [];
+      const seenBySymbol = backendDecisionTsRef.current;
+      for (const item of decisionList) {
+        const symbol = String(item?.symbol ?? "").toUpperCase();
+        if (!symbol) continue;
+        if (!activeSymbols.includes(symbol as Symbol)) continue;
+        const ts = toNumber(item?.ts);
+        if (!Number.isFinite(ts)) continue;
+        const prevTs = seenBySymbol.get(symbol) ?? 0;
+        if (ts <= prevTs) continue;
+        seenBySymbol.set(symbol, ts);
+        handleDecisionRef.current?.(
+          symbol,
+          (item?.decision ?? {}) as PriceFeedDecision
+        );
+      }
+    }
+
     const syncState = positionSyncRef.current;
     if (
       syncState.lastEventAt > 0 &&
@@ -8897,10 +8922,12 @@ export function useTradingBot(
 
     fastPollRef.current = false;
   }, [
+    activeSymbols,
     addLogEntries,
     apiBase,
     authToken,
     enforceBtcBiasAlignment,
+    feedSymbols,
     fetchJson,
     queueCapacityRecheck,
     refreshDiagnosticsFromDecisions,
@@ -9644,7 +9671,12 @@ export function useTradingBot(
 
     const now = Date.now();
     const [dashboardRes] = await Promise.allSettled([
-      fetchJson("/dashboard", { scope: "slow", pnlLimit: "200" }),
+      fetchJson("/dashboard", {
+        scope: "slow",
+        riskMode: settingsRef.current.riskMode,
+        symbols: feedSymbols.join(","),
+        pnlLimit: "200",
+      }),
     ]);
     const dashboardData =
       dashboardRes.status === "fulfilled" ? dashboardRes.value ?? {} : null;
@@ -9755,7 +9787,7 @@ export function useTradingBot(
     }
 
     slowPollRef.current = false;
-  }, [addLogEntries, fetchJson]);
+  }, [addLogEntries, feedSymbols, fetchJson]);
 
   useEffect(() => {
     if (!authToken) {
@@ -11848,12 +11880,31 @@ export function useTradingBot(
     lastAtomicSyncAtRef.current = 0;
     trailWatermarkRef.current.clear();
     decisionRef.current = {};
+    backendDecisionTsRef.current.clear();
     portfolioRegimeRef.current = {
       dominanceHistory: [],
       lastSampleAt: 0,
       snapshot: null,
     };
     setScanDiagnostics(null);
+
+    if (USE_BACKEND_ENGINE) {
+      const envLabel = useTestnet ? "testnet" : "mainnet";
+      const lastLog = feedLogRef.current;
+      const now = Date.now();
+      if (!lastLog || lastLog.env !== envLabel || now - lastLog.ts > 5000) {
+        feedLogRef.current = { env: envLabel, ts: now };
+        addLogEntries([
+          {
+            id: `feed:backend:${envLabel}:${now}`,
+            timestamp: new Date(now).toISOString(),
+            action: "STATUS",
+            message: `Backend strategy engine connected (${envLabel})`,
+          },
+        ]);
+      }
+      return;
+    }
 
     const riskMode = settingsRef.current.riskMode;
     const isAiMaticX = riskMode === "ai-matic-x";
@@ -11996,7 +12047,7 @@ export function useTradingBot(
     return () => {
       stop();
     };
-  }, [addLogEntries, authToken, engineConfig, feedEpoch, feedSymbols, useTestnet]);
+  }, [addLogEntries, authToken, engineConfig, feedSymbols, useTestnet]);
 
   useEffect(() => {
     if (!authToken) return;
@@ -12013,10 +12064,9 @@ export function useTradingBot(
               id: `feed:stale:${now}`,
               timestamp: new Date(now).toISOString(),
               action: "ERROR",
-              message: `Price feed stale (${Math.round(staleMs / 1000)}s) - reconnecting`,
+              message: `Engine feed stale (${Math.round(staleMs / 1000)}s)`,
             },
           ]);
-          setFeedEpoch((v) => v + 1);
         }
       }
 

@@ -19,7 +19,7 @@ import {
 } from "./bybitClient.js";
 import { reconcileState } from "./reconcile.js";
 import { getInstrumentInfo } from "./instrumentCache.js";
-import { fetchDashboardSnapshot } from "../api/shared/dashboardSnapshot.js";
+import { getPersistentDashboardSnapshot } from "./persistentAggregator.js";
 
 dotenv.config();
 
@@ -471,7 +471,7 @@ const handleGetRequest = async (req, res, fetcher) => {
     if (fetcher === getDemoPositions || fetcher === getWalletBalance || fetcher === reconcileState) {
       result = await fetcher(creds, isTestnet);
     } else {
-      result = await fetcher(creds, req.query, isTestnet);
+      result = await fetcher(creds, req.query, isTestnet, { env, userId });
     }
 
     return sendResponse(res, result, {
@@ -484,12 +484,16 @@ const handleGetRequest = async (req, res, fetcher) => {
   }
 };
 
-const getDashboardSnapshot = async (creds, query, isTestnet) =>
-  fetchDashboardSnapshot({
+const getDashboardSnapshot = async (creds, query, isTestnet, meta) =>
+  getPersistentDashboardSnapshot({
+    userId: meta?.userId,
+    env: meta?.env,
     apiKey: creds.apiKey,
     apiSecret: creds.apiSecret,
     useTestnet: isTestnet,
     scope: query?.scope,
+    riskMode: query?.riskMode,
+    symbols: query?.symbols,
     ordersLimit: query?.ordersLimit,
     executionsLimit: query?.executionsLimit,
     pnlLimit: query?.pnlLimit,

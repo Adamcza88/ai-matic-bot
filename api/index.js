@@ -11,6 +11,11 @@ export default async function handler(req, res) {
             return healthHandler(req, res);
         }
 
+        if (path === "/api/dashboard") {
+            const { default: dashboardHandler } = await import("./main/dashboard.js");
+            return dashboardHandler(req, res);
+        }
+
         if (path === "/api/demo/order") {
             const { default: orderHandler } = await import("./demo/order.js");
             return orderHandler(req, res);
