@@ -128,14 +128,15 @@ export async function reconcileState(creds, useTestnet = true) {
     };
 
     try {
-        // 1. Fetch World State in parallel
-        const [posRes, ordRes] = await Promise.all([
-            getDemoPositions(creds, useTestnet),
-            listDemoOpenOrders(creds, { limit: 50 }, useTestnet)
-        ]);
-
+        // 1. Fetch positions first; orders only when an active position exists.
+        const posRes = await getDemoPositions(creds, useTestnet);
         const bybitPositions = posRes?.result?.list || [];
-        const bybitOrders = ordRes?.result?.list || [];
+        const hasActivePosition = bybitPositions.some(
+            (bPos) => parseFloat(String(bPos?.size ?? 0)) > 0
+        );
+        const bybitOrders = hasActivePosition
+            ? (await listDemoOpenOrders(creds, { limit: 50 }, useTestnet))?.result?.list || []
+            : [];
 
         // 2. Normalize Positions
         const activePositions = [];

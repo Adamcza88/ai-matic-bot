@@ -60,7 +60,6 @@ export async function getUserApiKeys(userId, env = "testnet") {
       apiSecret: map.get(SERVICE_BYBIT_MAINNET_SECRET) ?? map.get(SERVICE_BYBIT_SECRET) ?? envBybitMainnetSecret
     };
 
-    console.log(`[getUserApiKeys] Resolved MAINNET for ${userId}: ${mainnetKeys.apiKey ? "***" : "MISSING"}`);
     return requireKeys(mainnetKeys, "mainnet");
   }
 
@@ -70,7 +69,6 @@ export async function getUserApiKeys(userId, env = "testnet") {
       apiSecret: map.get(SERVICE_BYBIT_DEMO_SECRET) ?? map.get(SERVICE_BYBIT_TESTNET_SECRET) ?? map.get(SERVICE_BYBIT_SECRET) ?? envBybitTestnetSecret
     };
 
-    console.log(`[getUserApiKeys] Resolved DEMO for ${userId}: ${testnetKeys.apiKey ? "Explicit/Env" : "MISSING"}`);
     return requireKeys(testnetKeys, "testnet");
   }
 }

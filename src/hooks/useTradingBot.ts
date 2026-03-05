@@ -147,7 +147,10 @@ const POSITION_GATE_TTL_MS = 60_000;
 const MAX_POS_GATE_TTL_MS = 30_000;
 const MAX_ORDERS_GATE_TTL_MS = 30_000;
 const CAPACITY_RECHECK_MS = 30_000;
-const POSITION_RECONCILE_INTERVAL_MS = 5_000;
+const FAST_POLL_INTERVAL_MS = 5_000;
+const SLOW_POLL_INTERVAL_MS = 15_000;
+const POSITION_RECONCILE_INTERVAL_MS = 30_000;
+const RECONCILE_POLL_INTERVAL_MS = 30_000;
 const INTENT_COOLDOWN_MS = 8_000;
 const ENTRY_ORDER_LOCK_MS = 20_000;
 const CORE_V2_EMA_SEP1_MIN = 0.18;
@@ -9621,15 +9624,20 @@ export function useTradingBot(
     slowPollRef.current = true;
 
     const now = Date.now();
-    const results = await Promise.allSettled([
+    const shouldRunReconcile =
+      now - positionSyncRef.current.lastReconcileAt >=
+      RECONCILE_POLL_INTERVAL_MS;
+    const [walletRes, closedPnlRes] = await Promise.allSettled([
       fetchJson("/wallet"),
       fetchJson("/closed-pnl", { limit: "200" }),
-      fetchJson("/reconcile"),
     ]);
+    let reconcileRes: PromiseSettledResult<any> | null = null;
+    if (shouldRunReconcile) {
+      [reconcileRes] = await Promise.allSettled([fetchJson("/reconcile")]);
+    }
 
     let sawError = false;
     const newLogs: LogEntry[] = [];
-    const [walletRes, closedPnlRes, reconcileRes] = results;
 
     if (walletRes.status === "fulfilled") {
       const list = extractList(walletRes.value);
@@ -9706,7 +9714,7 @@ export function useTradingBot(
       sawError = true;
     }
 
-    if (reconcileRes.status === "fulfilled") {
+    if (reconcileRes?.status === "fulfilled") {
       positionSyncRef.current.lastReconcileAt = now;
       const payload = reconcileRes.value ?? {};
       const reconDiffs = payload?.diffs ?? [];
@@ -9726,7 +9734,7 @@ export function useTradingBot(
         });
       }
       setLastSuccessAt(now);
-    } else {
+    } else if (shouldRunReconcile && reconcileRes?.status === "rejected") {
       const msg = asErrorMessage(reconcileRes.reason);
       setSystemError(msg);
       setRecentErrors((prev) => [msg, ...prev].slice(0, 5));
@@ -9761,8 +9769,8 @@ export function useTradingBot(
       if (!alive) return;
       await refreshSlow();
     };
-    const fastId = setInterval(tickFast, 1000);
-    const slowId = setInterval(tickSlow, 10000);
+    const fastId = setInterval(tickFast, FAST_POLL_INTERVAL_MS);
+    const slowId = setInterval(tickSlow, SLOW_POLL_INTERVAL_MS);
     const tsId = setInterval(() => {
       void syncTrailingProtection(positionsRef.current);
     }, TS_VERIFY_INTERVAL_MS);

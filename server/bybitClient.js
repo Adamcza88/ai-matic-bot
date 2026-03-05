@@ -527,19 +527,7 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
   const orderPayload = timestamp + creds.apiKey + recvWindow + bodyStr;
   const orderSign = sign(orderPayload, creds.apiSecret);
 
-  // === MANDATORY LOG: PRE-FLIGHT ===
-  const logContext = {
-    env: useTestnet ? "testnet" : "mainnet",
-    endpoint: "/v5/order/create",
-    payload: orderBody,
-    response: null,
-    error: null
-  };
-
-  // FIX 9: Mandatory Audit Log
-  if (!useTestnet) {
-    console.error(`[BYBIT MAINNET] Request:`, JSON.stringify({ endpoint: logContext.endpoint, payload: logContext.payload }, null, 2));
-  }
+  const envLabel = useTestnet ? "testnet" : "mainnet";
 
   let result;
 
@@ -555,28 +543,21 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
       },
     }));
 
-    logContext.response = orderRes.data;
-
-    // FIX 9: Mandatory Audit Log (Response)
-    if (!useTestnet) {
-      console.error(`[BYBIT MAINNET] Response:`, JSON.stringify({ endpoint: logContext.endpoint, response: logContext.response }, null, 2));
-    } else {
-      console.log(JSON.stringify(logContext, null, 2));
-    }
-
     result = orderRes.data;
 
-    metric("order_success", { env: logContext.env, symbol: order.symbol });
+    metric("order_success", { env: envLabel, symbol: order.symbol });
   } catch (error) {
-    metric("order_failure", { env: logContext.env, symbol: order.symbol, error: error.message });
-    logContext.error = error.message || String(error);
-    if (error.response) {
-      logContext.response = error.response.data;
-    }
-
-    // FIX 9: Mandatory Audit Log (Error)
+    const errorMessage = error?.message || String(error);
+    metric("order_failure", {
+      env: envLabel,
+      symbol: order.symbol,
+      error: errorMessage,
+    });
     const logTag = useTestnet ? "[BYBIT DEMO]" : "[BYBIT MAINNET]";
-    console.error(`${logTag} ERROR:`, JSON.stringify(logContext, null, 2));
+    console.error(
+      `${logTag} order create failed:`,
+      error?.response?.data ?? errorMessage
+    );
 
     throw error;
   }
@@ -591,11 +572,7 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
         (p) => String(p?.symbol ?? "") === String(order.symbol) && Number(p?.size ?? 0) > 0
       );
 
-      if (!hasPosition) {
-        console.log(
-          `[createDemoOrder] Trailing stop deferred (no active position yet) for ${order.symbol}.`
-        );
-      } else {
+      if (hasPosition) {
         let trailingPositionIdx = Number.isFinite(resolvedPositionIdx)
           ? resolvedPositionIdx
           : undefined;
@@ -621,8 +598,6 @@ export async function createDemoOrder(order, creds, useTestnet = true) {
           creds,
           useTestnet
         );
-
-        console.log("Bybit TS response:", tsResult);
         result.trailingStop = tsResult;
       }
     } catch (err) {
@@ -695,19 +670,6 @@ export async function setTradingStop(protection, creds, useTestnet = true) {
     }
   ));
 
-  // FIX 9: Mandatory Audit Log
-  const tsLogContext = {
-    endpoint: "/v5/position/trading-stop",
-    payload: tsBody,
-    response: tsRes.data
-  };
-
-  if (!useTestnet) {
-    console.error(`[BYBIT MAINNET] TS Update:`, JSON.stringify(tsLogContext, null, 2));
-  } else {
-    console.log(`[BYBIT DEMO] TS Update:`, JSON.stringify(tsLogContext, null, 2));
-  }
-
   return tsRes.data;
 }
 
@@ -768,7 +730,6 @@ export async function getDemoPositions(creds, useTestnet = true) {
  */
 export async function waitForPosition(creds, symbol, useTestnet = true, timeoutMs = 3000) {
   const start = Date.now();
-  console.log(`[waitForPosition] Polling for ${symbol} position...`);
 
   while (Date.now() - start < timeoutMs) {
     try {
@@ -778,10 +739,7 @@ export async function waitForPosition(creds, symbol, useTestnet = true, timeoutM
       const list = data?.result?.list || [];
       const pos = list.find(p => p.symbol === symbol && Number(p.size) > 0);
 
-      if (pos) {
-        console.log(`[waitForPosition] Position found: ${pos.symbol} size=${pos.size}`);
-        return true;
-      }
+      if (pos) return true;
     } catch (err) {
       console.warn(`[waitForPosition] Poll error: ${err.message}`);
     }
@@ -979,9 +937,6 @@ export async function cancelOrder(
       },
     })
   );
-
-  const logTag = useTestnet ? "[BYBIT DEMO]" : "[BYBIT MAINNET]";
-  console.error(`${logTag} Cancel:`, JSON.stringify({ payload: body, response: res.data }, null, 2));
 
   return res.data;
 }

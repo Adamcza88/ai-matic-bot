@@ -39,10 +39,6 @@ export default async function handler(req, res) {
     const secret = keys.apiSecret;
 
     const envLabel = useTestnet ? "TESTNET" : "MAINNET";
-    const keyFingerprint = key ? `***${key.slice(-4)}` : "NULL";
-    console.log(`[Order API] ${envLabel} Request for user ${user.id}`);
-    console.log(`[Order API] Env=${envLabel} Key=${keyFingerprint} category=linear`);
-
     if (!key || !secret) {
       return res.status(400).json({
         ok: false,
