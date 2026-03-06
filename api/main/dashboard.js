@@ -2,6 +2,28 @@ import { fetchDashboardSnapshot } from "../shared/dashboardSnapshot.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 import { extractRequestToken } from "../../server/requestAuth.js";
 
+function normalizeQueryValue(value) {
+  if (Array.isArray(value)) return value[0] ?? undefined;
+  return value;
+}
+
+function readQuery(req) {
+  if (req?.query && typeof req.query === "object") {
+    const normalized = {};
+    for (const [key, value] of Object.entries(req.query)) {
+      normalized[key] = normalizeQueryValue(value);
+    }
+    return normalized;
+  }
+
+  try {
+    const url = new URL(req?.url ?? "", "http://localhost");
+    return Object.fromEntries(url.searchParams.entries());
+  } catch (_) {
+    return {};
+  }
+}
+
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
@@ -53,7 +75,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const useTestnet = req.query.net === "testnet";
+    const query = readQuery(req);
+    const useTestnet = query.net === "testnet";
     const token = extractRequestToken(req);
 
     if (!token) {
@@ -80,12 +103,12 @@ export default async function handler(req, res) {
       apiKey,
       apiSecret,
       useTestnet,
-      scope: req.query.scope,
-      riskMode: req.query.riskMode,
-      symbols: req.query.symbols,
-      ordersLimit: req.query.ordersLimit,
-      executionsLimit: req.query.executionsLimit,
-      pnlLimit: req.query.pnlLimit,
+      scope: query.scope,
+      riskMode: query.riskMode,
+      symbols: query.symbols,
+      ordersLimit: query.ordersLimit,
+      executionsLimit: query.executionsLimit,
+      pnlLimit: query.pnlLimit,
     });
 
     return res.status(200).json({ ok: true, data });
