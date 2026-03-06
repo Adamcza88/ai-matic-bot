@@ -15,12 +15,9 @@ export function getApiBase(useTestnet) {
     return base;
 }
 export function useNetworkConfig(useTestnet) {
-    const httpBase = useTestnet
-        ? "https://api-demo.bybit.com"
-        : "https://api.bybit.com";
-    const wsBase = useTestnet
-        ? "wss://stream.bybit.com/v5/public/linear"
-        : "wss://stream.bybit.com/v5/public/linear";
+    // Frontend talks only to internal backend API.
+    const httpBase = getApiBase(useTestnet);
+    const wsBase = `${httpBase}/realtime`;
     return {
         httpBase,
         wsBase,

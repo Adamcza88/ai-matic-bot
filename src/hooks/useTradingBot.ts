@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendIntent } from "../api/botApi";
 import { EntryType, Profile, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
-import { startPriceFeed } from "../engine/priceFeed";
 import {
   computeTimeOfDayVolumeGate,
   computeCorrelatedExposureScale,
@@ -151,8 +150,6 @@ const MAX_ORDERS_GATE_TTL_MS = 30_000;
 const CAPACITY_RECHECK_MS = 30_000;
 const FAST_POLL_INTERVAL_MS = 5_000;
 const SLOW_POLL_INTERVAL_MS = 15_000;
-const POSITION_RECONCILE_INTERVAL_MS = 30_000;
-const USE_BACKEND_ENGINE = true;
 const INTENT_COOLDOWN_MS = 8_000;
 const ENTRY_ORDER_LOCK_MS = 20_000;
 const CORE_V2_EMA_SEP1_MIN = 0.18;
@@ -8947,17 +8944,6 @@ export function useTradingBot(
       }
     }
 
-    const syncState = positionSyncRef.current;
-    if (
-      !USE_BACKEND_ENGINE &&
-      syncState.lastEventAt > 0 &&
-      syncState.lastEventAt >= syncState.lastReconcileAt &&
-      now - syncState.lastReconcileAt >= POSITION_RECONCILE_INTERVAL_MS
-    ) {
-      syncState.lastReconcileAt = now;
-      void fetchJson("/reconcile").catch(() => null);
-    }
-
     refreshDiagnosticsFromDecisions();
 
     if (sawPositionClosed) {
@@ -11950,162 +11936,6 @@ export function useTradingBot(
     };
     setScanDiagnostics(null);
 
-    if (USE_BACKEND_ENGINE) {
-      const envLabel = useTestnet ? "testnet" : "mainnet";
-      const lastLog = feedLogRef.current;
-      const now = Date.now();
-      if (!lastLog || lastLog.env !== envLabel || now - lastLog.ts > 5000) {
-        feedLogRef.current = { env: envLabel, ts: now };
-        addLogEntries([
-          {
-            id: `feed:backend:${envLabel}:${now}`,
-            timestamp: new Date(now).toISOString(),
-            action: "STATUS",
-            message: `Backend strategy engine connected (${envLabel})`,
-          },
-        ]);
-      }
-      return;
-    }
-
-    const riskMode = settingsRef.current.riskMode;
-    const isAiMaticX = riskMode === "ai-matic-x";
-    const isAiMatic = riskMode === "ai-matic" || riskMode === "ai-matic-tree";
-    const isAmd = riskMode === "ai-matic-amd";
-    const isAiMaticCore = riskMode === "ai-matic";
-    const isScalp = riskMode === "ai-matic-olikella";
-    const isPro = riskMode === "ai-matic-pro";
-    const decisionFn = (
-      symbol: string,
-      candles: Parameters<typeof evaluateStrategyForSymbol>[1],
-      config?: Partial<BotConfig>,
-      extras?: PriceFeedDecisionExtras
-    ) => {
-      const baseDecision = isPro
-        ? evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin: 5 })
-        : isAmd
-          ? evaluateAiMaticAmdStrategyForSymbol(symbol, candles)
-        : isAiMaticX
-          ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
-          : isScalp
-            ? evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, {
-                h1Candles: extras?.preloadedCandlesByInterval?.["60"],
-                h4Candles: extras?.preloadedCandlesByInterval?.["240"],
-              })
-            : evaluateStrategyForSymbol(symbol, candles, config);
-      const resample = createResampleCache(candles);
-      const emaTrendPeriod = clampEmaTrendPeriod(
-        settingsRef.current.emaTrendPeriod,
-        EMA_TREND_PERIOD
-      );
-      const coreV2 = computeCoreV2Metrics(candles, riskMode, {
-        resample,
-        emaTrendPeriod,
-      });
-      if (isPro) {
-        return { ...baseDecision, coreV2 };
-      }
-      const htfTimeframes = isAiMatic || isAmd
-        ? AI_MATIC_HTF_TIMEFRAMES_MIN
-        : HTF_TIMEFRAMES_MIN;
-      const ltfTimeframes = isAiMatic || isAmd
-        ? AI_MATIC_LTF_TIMEFRAMES_MIN
-        : isScalp
-          ? SCALP_LTF_TIMEFRAMES_MIN
-          : null;
-      const htfTrend = evaluateHTFMultiTrend(candles, {
-        timeframesMin: htfTimeframes,
-        resample,
-      });
-      const ltfTrend = ltfTimeframes
-        ? evaluateHTFMultiTrend(candles, {
-            timeframesMin: ltfTimeframes,
-            resample,
-          })
-        : null;
-      const emaTrend = evaluateEmaMultiTrend(candles, {
-        timeframesMin: EMA_TREND_TIMEFRAMES_MIN,
-        emaPeriod: emaTrendPeriod,
-      });
-      const scalpContext = isScalp ? undefined : buildScalpContext(candles);
-      const aiMaticContext = isAiMaticCore
-        ? buildAiMaticContext(candles, baseDecision, coreV2, {
-            resample,
-            emaTrendPeriod,
-          })
-        : null;
-      const aiMaticOrderflow = isAiMaticCore
-        ? getOrderFlowSnapshot(symbol)
-        : undefined;
-      return {
-        ...baseDecision,
-        htfTrend,
-        ltfTrend,
-        emaTrend,
-        scalpContext,
-        coreV2,
-        ...(aiMaticContext ? { aiMatic: aiMaticContext } : {}),
-        ...(aiMaticOrderflow ? { orderflow: aiMaticOrderflow } : {}),
-      };
-    };
-    const maxCandles = isScalp
-      ? 7000
-      : isPro
-        ? 45_000
-        : isAiMaticX || isAiMatic || isAmd
-          ? 5000
-          : undefined;
-    const backfill = isAiMaticX
-      ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
-      : isAiMatic
-        ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
-        : isAmd
-          ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
-        : isScalp
-          ? {
-              enabled: true,
-              interval: "5",
-              lookbackMinutes: OLIKELLA_BASE_BACKFILL_LOOKBACK_MINUTES,
-              limit: 1000,
-            }
-        : isPro
-          ? {
-              enabled: true,
-              interval: "1",
-              lookbackMinutes: 43_200,
-              limit: 1000,
-            }
-        : undefined;
-    const stop = startPriceFeed(
-      feedSymbols,
-      (symbol, decision) => {
-        handleDecisionRef.current?.(symbol, decision);
-      },
-      {
-        useTestnet,
-        timeframe: isScalp ? "5" : "1",
-        configOverrides: engineConfig,
-        decisionFn,
-        maxCandles,
-        backfill,
-        preloadHigherTimeframes: isScalp
-          ? {
-              enabled: true,
-              intervals: ["60", "240"],
-              lookbackMinutesByInterval: {
-                "60": OLIKELLA_HTF_PRELOAD_LOOKBACK_MINUTES,
-                "240": OLIKELLA_HTF_PRELOAD_LOOKBACK_MINUTES,
-              },
-              limit: 1000,
-            }
-          : undefined,
-        orderflow:
-          isAiMaticCore
-            ? { enabled: true, depth: 50 }
-            : undefined,
-      }
-    );
-
     const envLabel = useTestnet ? "testnet" : "mainnet";
     const lastLog = feedLogRef.current;
     const now = Date.now();
@@ -12116,37 +11946,16 @@ export function useTradingBot(
           id: `feed:start:${envLabel}:${now}`,
           timestamp: new Date(now).toISOString(),
           action: "STATUS",
-          message: `Price feed connected (${envLabel})`,
+          message: `Backend strategy engine connected (${envLabel})`,
         },
       ]);
     }
-
-    return () => {
-      stop();
-    };
-  }, [addLogEntries, appEnabled, authToken, engineConfig, feedSymbols, useTestnet]);
+  }, [addLogEntries, appEnabled, authToken, useTestnet]);
 
   useEffect(() => {
     if (!authToken || !appEnabled) return;
     const heartbeatId = setInterval(() => {
       const now = Date.now();
-      const lastTick = feedLastTickRef.current;
-      const staleMs = lastTick ? now - lastTick : Number.POSITIVE_INFINITY;
-      if (staleMs > 60_000) {
-        const lastRestart = lastRestartRef.current;
-        if (now - lastRestart > 120_000) {
-          lastRestartRef.current = now;
-          addLogEntries([
-            {
-              id: `feed:stale:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "ERROR",
-              message: `Engine feed stale (${Math.round(staleMs / 1000)}s)`,
-            },
-          ]);
-        }
-      }
-
       if (now - lastHeartbeatRef.current < 60_000) return;
       lastHeartbeatRef.current = now;
 
