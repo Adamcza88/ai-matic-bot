@@ -5054,7 +5054,10 @@ export function useTradingBot(
       const url = `${apiBase}${path}${qs}`;
       const started = performance.now();
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${authToken}` },
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          "X-Auth-Token": authToken,
+        },
       });
       const json = await res.json().catch(() => ({}));
       const latency = Math.round(performance.now() - started);
@@ -5079,6 +5082,7 @@ export function useTradingBot(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${authToken}`,
+          "X-Auth-Token": authToken,
         },
         body: JSON.stringify(body ?? {}),
       });
@@ -8678,6 +8682,7 @@ export function useTradingBot(
                 headers: {
                   "Content-Type": "application/json",
                   Authorization: `Bearer ${authToken}`,
+                  "X-Auth-Token": authToken,
                 },
                 body: JSON.stringify({
                   symbol: order.symbol,
@@ -12200,6 +12205,7 @@ export function useTradingBot(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${authToken}`,
+          "X-Auth-Token": authToken,
         },
         body: JSON.stringify(payload),
       });
@@ -12228,6 +12234,7 @@ export function useTradingBot(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${authToken}`,
+          "X-Auth-Token": authToken,
         },
         body: JSON.stringify({
           symbol: order.symbol,

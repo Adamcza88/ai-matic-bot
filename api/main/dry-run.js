@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
+import { extractRequestToken } from "../../server/requestAuth.js";
 
 // Helper to validate payload presence
 function validatePayload(payload) {
@@ -61,8 +62,7 @@ export default async function handler(req, res) {
     }
 
     try {
-        const authHeader = req.headers.authorization || "";
-        const token = authHeader.replace("Bearer ", "");
+        const token = extractRequestToken(req);
 
         if (!token) return res.status(401).json({ ok: false, error: "Missing auth" });
 

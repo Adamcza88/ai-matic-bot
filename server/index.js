@@ -8,6 +8,7 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import { getUserApiKeys, getUserFromToken } from "./userCredentials.js";
+import { extractRequestToken } from "./requestAuth.js";
 import {
   createDemoOrder,
   listDemoOrders,
@@ -84,13 +85,9 @@ const getCommonParams = (req) => {
 };
 
 const getRequestUserAndCreds = async (req, env) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    throw new Error("Missing Authorization header");
-  }
-  const token = authHeader.slice("Bearer ".length).trim();
+  const token = extractRequestToken(req);
   if (!token) {
-    throw new Error("Missing auth token");
+    throw new Error("Missing Authorization header");
   }
   const user = await getUserFromToken(token);
   const creds = await getUserApiKeys(user.id, env);
@@ -482,7 +479,21 @@ const handleGetRequest = async (req, res, fetcher) => {
       endpoint
     });
   } catch (err) {
-    return sendError(res, 500, err.message, { latencyMs: Date.now() - startTs, env, endpoint });
+    const message = err?.message || "Unknown error";
+    const normalized = String(message).toLowerCase();
+    const status =
+      normalized.includes("missing authorization header") ||
+      normalized.includes("missing auth token") ||
+      normalized.includes("failed to validate user token") ||
+      normalized.includes("user not found for provided token") ||
+      normalized.includes("jwt")
+        ? 401
+        : normalized.includes("api key/secret not configured") ||
+            normalized.includes("missing testnet api keys") ||
+            normalized.includes("missing mainnet api keys")
+          ? 400
+          : 500;
+    return sendError(res, status, message, { latencyMs: Date.now() - startTs, env, endpoint });
   }
 };
 

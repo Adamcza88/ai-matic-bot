@@ -20,7 +20,10 @@ export function attachClosedPnlFetcher(client, cfg) {
             });
             try {
                 const res = await fetch(`${cfg.apiBase}${apiPrefix}/closed-pnl?${params.toString()}`, {
-                    headers: { Authorization: `Bearer ${cfg.authToken}` },
+                    headers: {
+                        Authorization: `Bearer ${cfg.authToken}`,
+                        "X-Auth-Token": cfg.authToken,
+                    },
                 });
                 if (!res.ok) {
                     const text = await res.text();

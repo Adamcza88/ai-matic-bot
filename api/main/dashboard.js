@@ -1,10 +1,11 @@
 import { fetchDashboardSnapshot } from "../shared/dashboardSnapshot.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
+import { extractRequestToken } from "../../server/requestAuth.js";
 
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Auth-Token");
 }
 
 function resolveErrorMessage(err) {
@@ -53,10 +54,7 @@ export default async function handler(req, res) {
 
   try {
     const useTestnet = req.query.net === "testnet";
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split(" ")[1]
-      : null;
+    const token = extractRequestToken(req);
 
     if (!token) {
       return res.status(401).json({ ok: false, error: "Missing auth token" });

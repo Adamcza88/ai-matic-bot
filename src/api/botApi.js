@@ -50,6 +50,7 @@ export async function sendIntent(intent, opts) {
         headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${opts.authToken}`,
+            "X-Auth-Token": opts.authToken,
         },
         body: JSON.stringify(payload),
     });
@@ -63,7 +64,10 @@ export async function kill(symbol, opts) {
     requireAuth(opts);
     const base = getApiBase(opts.useTestnet);
     const listRes = await fetch(`${base}/orders?symbol=${symbol}`, {
-        headers: { Authorization: `Bearer ${opts.authToken}` },
+        headers: {
+            Authorization: `Bearer ${opts.authToken}`,
+            "X-Auth-Token": opts.authToken,
+        },
     });
     const listJson = await listRes.json().catch(() => ({}));
     if (!listRes.ok || listJson?.ok === false) {
@@ -80,6 +84,7 @@ export async function kill(symbol, opts) {
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${opts.authToken}`,
+                "X-Auth-Token": opts.authToken,
             },
             body: JSON.stringify({ symbol, orderId }),
         });
