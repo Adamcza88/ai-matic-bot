@@ -33,6 +33,44 @@ function normalizeSymbols(value) {
     .filter(Boolean);
 }
 
+function buildDegradedSnapshot({ env, useTestnet, riskMode, symbols, reason }) {
+  return {
+    wallet: null,
+    positions: null,
+    orders: null,
+    executions: null,
+    pnl: null,
+    protection: { positions: [], orders: [] },
+    errors: {
+      dashboard: toErrorMessage(reason),
+    },
+    ws: {
+      connected: false,
+      lastUpdateAt: 0,
+      updatedAtIso: null,
+      lastError: "dashboard_unavailable",
+      topics: {},
+    },
+    engine: {
+      connected: false,
+      timeframe: "1",
+      riskMode: riskMode || "ai-matic",
+      symbols: normalizeSymbols(symbols),
+      lastDecisionAt: 0,
+      updatedAtIso: null,
+      decisions: [],
+      lastError: "dashboard_unavailable",
+    },
+    meta: {
+      source: "degraded_fallback",
+      env,
+      useTestnet,
+      updatedAt: Date.now(),
+      updatedAtIso: new Date().toISOString(),
+    },
+  };
+}
+
 function buildProtectionSnapshot(positionsData, ordersData) {
   const positions = extractList(positionsData)
     .map((p) => {
@@ -198,16 +236,27 @@ export async function fetchDashboardSnapshot({
     });
   } catch (error) {
     console.error("persistent dashboard snapshot failed, switching to REST fallback:", error);
-    return fetchDashboardSnapshotFallback({
-      creds: { apiKey, apiSecret },
-      useTestnet,
-      ordersLimit,
-      executionsLimit,
-      pnlLimit,
-      scope,
-      env,
-      riskMode,
-      symbols,
-    });
+    try {
+      return await fetchDashboardSnapshotFallback({
+        creds: { apiKey, apiSecret },
+        useTestnet,
+        ordersLimit,
+        executionsLimit,
+        pnlLimit,
+        scope,
+        env,
+        riskMode,
+        symbols,
+      });
+    } catch (fallbackError) {
+      console.error("dashboard REST fallback failed, returning degraded snapshot:", fallbackError);
+      return buildDegradedSnapshot({
+        env,
+        useTestnet,
+        riskMode,
+        symbols,
+        reason: fallbackError,
+      });
+    }
   }
 }

@@ -17,6 +17,7 @@ const SLOW_POLL_MS = 15_000;
 const WS_ACCOUNT_STALE_MS = 20_000;
 const PRIVATE_EXECUTIONS_MAX = 500;
 const STALE_SESSION_TTL_MS = 15 * 60_000;
+const INITIAL_BOOTSTRAP_WAIT_MS = 2_500;
 const REST_URL_MAINNET = "https://api.bybit.com";
 const REST_URL_TESTNET = "https://api-demo.bybit.com";
 const BACKFILL_PAGE_LIMIT = 1000;
@@ -382,6 +383,8 @@ function buildSessionSnapshot(session, scope = "full") {
       source: "persistent_aggregator",
       env: session.env,
       useTestnet: session.useTestnet,
+      bootstrapPending: Boolean(session.initPromise),
+      backfillPending: Boolean(session.backfillPromise),
       updatedAt: session.updatedAt,
       updatedAtIso: session.updatedAt ? new Date(session.updatedAt).toISOString() : nowIso(),
     },
@@ -660,6 +663,7 @@ function createSession(args) {
     lastAccessAt: Date.now(),
     updatedAt: 0,
     initPromise: null,
+    backfillPromise: null,
     stop() {
       if (session.timers.fast) clearInterval(session.timers.fast);
       if (session.timers.slow) clearInterval(session.timers.slow);
@@ -711,10 +715,9 @@ function createSession(args) {
     session.engine.lastError = msg;
   }
 
-  session.initPromise = Promise.allSettled([
+  const bootstrapPromise = Promise.allSettled([
     runFastPoll(session),
     runSlowPoll(session),
-    initEngineBackfill(session),
   ]).finally(() => {
     session.timers.fast = setInterval(() => {
       if (!shouldRefreshFastFromRest(session)) return;
@@ -727,6 +730,22 @@ function createSession(args) {
         session.snapshot.errors.slow = toErrorMessage(err);
       });
     }, SLOW_POLL_MS);
+  });
+  session.initPromise = bootstrapPromise;
+  session.initPromise.finally(() => {
+    if (session.initPromise === bootstrapPromise) {
+      session.initPromise = null;
+    }
+  });
+
+  const backfillPromise = initEngineBackfill(session).catch((err) => {
+    session.engine.lastError = toErrorMessage(err);
+  });
+  session.backfillPromise = backfillPromise;
+  session.backfillPromise.finally(() => {
+    if (session.backfillPromise === backfillPromise) {
+      session.backfillPromise = null;
+    }
   });
 
   return session;
@@ -802,8 +821,10 @@ export async function getPersistentDashboardSnapshot(args) {
   }
 
   if (session.initPromise) {
-    await session.initPromise;
-    session.initPromise = null;
+    await Promise.race([
+      session.initPromise,
+      new Promise((resolve) => setTimeout(resolve, INITIAL_BOOTSTRAP_WAIT_MS)),
+    ]);
   }
 
   session.lastAccessAt = Date.now();
