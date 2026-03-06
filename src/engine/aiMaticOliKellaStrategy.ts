@@ -69,6 +69,11 @@ const EXHAUSTION_VOLUME_MULT = 1.5;
 const BASE_MIN = 4;
 const BASE_MAX = 12;
 
+export type AiMaticOliKellaEvaluationOptions = {
+  h1Candles?: Candle[];
+  h4Candles?: Candle[];
+};
+
 function toTrend(direction: "BUY" | "SELL" | "NONE"): Trend {
   if (direction === "BUY") return Trend.Bull;
   if (direction === "SELL") return Trend.Bear;
@@ -93,6 +98,20 @@ function buildSma(values: number[], period: number): number[] {
     const slice = values.slice(start, index + 1);
     return mean(slice);
   });
+}
+
+function mergeTimeframeCandles(primary: Candle[], supplemental?: Candle[]): Candle[] {
+  if (!Array.isArray(supplemental) || supplemental.length === 0) return primary;
+  const merged = new Map<number, Candle>();
+  for (const candle of supplemental) {
+    if (!Number.isFinite(candle.openTime)) continue;
+    merged.set(candle.openTime, candle);
+  }
+  for (const candle of primary) {
+    if (!Number.isFinite(candle.openTime)) continue;
+    merged.set(candle.openTime, candle);
+  }
+  return Array.from(merged.values()).sort((a, b) => a.openTime - b.openTime);
 }
 
 function detectCrossDirection(ema8: number[], ema16: number[]) {
@@ -486,10 +505,17 @@ function toSignal(args: {
 
 export function evaluateAiMaticOliKellaStrategyForSymbol(
   symbol: string,
-  candles: Candle[]
+  candles: Candle[],
+  options?: AiMaticOliKellaEvaluationOptions
 ): EngineDecision {
-  const h4 = resampleCandles(candles, H4_MINUTES);
-  const h1 = resampleCandles(candles, H1_MINUTES);
+  const h4 = mergeTimeframeCandles(
+    resampleCandles(candles, H4_MINUTES),
+    options?.h4Candles
+  );
+  const h1 = mergeTimeframeCandles(
+    resampleCandles(candles, H1_MINUTES),
+    options?.h1Candles
+  );
   if (h4.length < 40) {
     return {
       state: State.Scan,

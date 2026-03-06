@@ -19,6 +19,9 @@ const PING_INTERVAL = 20000;
 
 // Engine decision – bereme přímo návrat evaluateStrategyForSymbol
 export type PriceFeedDecision = ReturnType<typeof evaluateStrategyForSymbol>;
+export type PriceFeedDecisionExtras = {
+  preloadedCandlesByInterval?: Record<string, Candle[]>;
+};
 
 export type PriceFeedCallback = {
   symbol: string;
@@ -114,13 +117,41 @@ async function fetchBackfillCandles(args: {
   const out: Candle[] = [];
   let end = Date.now();
   let lastEnd = end;
+  const maxAttemptsPerPage = 3;
 
   while (out.length < totalBars) {
     const limit = Math.min(limitPerRequest, totalBars - out.length);
     const url = `${base}/v5/market/kline?category=linear&symbol=${args.symbol}&interval=${args.interval}&limit=${limit}&end=${end}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`backfill_failed:${res.status}`);
-    const json = await res.json();
+    let json: any = null;
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= maxAttemptsPerPage; attempt++) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`backfill_failed_http:${res.status}`);
+        }
+        json = await res.json();
+        const retCode = Number(json?.retCode ?? 0);
+        if (Number.isFinite(retCode) && retCode !== 0) {
+          throw new Error(`backfill_failed_retcode:${retCode}`);
+        }
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (lastError) {
+      if (out.length > 0) {
+        console.warn(
+          `backfill partial for ${args.symbol}: loaded ${out.length}/${totalBars} bars (${String(
+            (lastError as Error)?.message ?? lastError
+          )})`
+        );
+        break;
+      }
+      throw lastError instanceof Error ? lastError : new Error("backfill_failed");
+    }
     const list = json?.result?.list ?? [];
     if (!Array.isArray(list) || list.length === 0) break;
     const parsed = list
@@ -155,13 +186,21 @@ export interface PriceFeedOptions {
   decisionFn?: (
     symbol: string,
     candles: Candle[],
-    config?: Partial<BotConfig>
+    config?: Partial<BotConfig>,
+    extras?: PriceFeedDecisionExtras
   ) => PriceFeedDecision;
   maxCandles?: number;
   backfill?: {
     enabled?: boolean;
     interval?: string;
     lookbackMinutes?: number;
+    limit?: number;
+  };
+  preloadHigherTimeframes?: {
+    enabled?: boolean;
+    intervals?: string[];
+    lookbackMinutes?: number;
+    lookbackMinutesByInterval?: Record<string, number>;
     limit?: number;
   };
   orderflow?: {
@@ -180,11 +219,30 @@ export function startPriceFeed(
   const maxCandles = opts?.maxCandles ?? 500;
   const decisionFn = opts?.decisionFn ?? evaluateStrategyForSymbol;
   const backfill = opts?.backfill;
+  const preloadedBySymbol: Record<string, Record<string, Candle[]>> = {};
 
   // Start Liquidation Feed alongside Price Feed
   const stopLiquidationFeed = startLiquidationFeed(symbols, opts?.useTestnet);
 
   let pingTimer: ReturnType<typeof setInterval> | null = null;
+  const resolveOverrides = (symbol: string) =>
+    typeof opts?.configOverrides === "function"
+      ? opts.configOverrides(symbol)
+      : opts?.configOverrides;
+  const resolveExtras = (symbol: string): PriceFeedDecisionExtras | undefined => {
+    const preloaded = preloadedBySymbol[symbol];
+    if (!preloaded || !Object.keys(preloaded).length) return undefined;
+    return { preloadedCandlesByInterval: preloaded };
+  };
+  const emitDecision = (symbol: string, candles: Candle[]) => {
+    const decision = decisionFn(
+      symbol,
+      candles,
+      resolveOverrides(symbol) ?? {},
+      resolveExtras(symbol)
+    );
+    onDecision(symbol, decision);
+  };
 
   if (backfill?.enabled) {
     const interval = backfill.interval ?? timeframe;
@@ -203,15 +261,51 @@ export function startPriceFeed(
           const buffer = ensureBuffer(symbol);
           const merged = mergeCandles(buffer, candles, maxCandles);
           candleBuffers[symbol] = merged;
-          const overrides =
-            typeof opts?.configOverrides === "function"
-              ? opts.configOverrides(symbol)
-              : opts?.configOverrides;
-          const decision = decisionFn(symbol, merged, overrides ?? {});
-          onDecision(symbol, decision);
+          emitDecision(symbol, merged);
         })
         .catch((err) => {
           console.warn(`backfill failed for ${symbol}:`, err);
+        });
+    }
+  }
+  const preloadHtf = opts?.preloadHigherTimeframes;
+  if (preloadHtf?.enabled) {
+    const intervals = (preloadHtf.intervals ?? [])
+      .map((value) => String(value).trim())
+      .filter((value) => value.length > 0 && value !== timeframe);
+    const fallbackLookback = preloadHtf.lookbackMinutes ?? backfill?.lookbackMinutes ?? 1440;
+    const lookbackByInterval = preloadHtf.lookbackMinutesByInterval ?? {};
+    const limit = preloadHtf.limit ?? 1000;
+    for (const symbol of symbols) {
+      const tasks = intervals.map(async (interval) => {
+        const lookbackMinutes = Math.max(
+          1,
+          Number(lookbackByInterval[interval] ?? fallbackLookback)
+        );
+        const candles = await fetchBackfillCandles({
+          symbol,
+          interval,
+          lookbackMinutes,
+          useTestnet: opts?.useTestnet,
+          limit,
+        });
+        return { interval, candles };
+      });
+      Promise.all(tasks)
+        .then((results) => {
+          const current = preloadedBySymbol[symbol] ?? {};
+          const next: Record<string, Candle[]> = { ...current };
+          for (const { interval, candles } of results) {
+            if (candles.length) next[interval] = candles;
+          }
+          preloadedBySymbol[symbol] = next;
+          const buffer = ensureBuffer(symbol);
+          if (buffer.length > 0) {
+            emitDecision(symbol, buffer);
+          }
+        })
+        .catch((err) => {
+          console.warn(`htf preload failed for ${symbol}:`, err);
         });
     }
   }
@@ -311,12 +405,7 @@ export function startPriceFeed(
       buffer.push(candle);
       if (buffer.length > maxCandles) buffer.shift();
 
-      const overrides =
-        typeof opts?.configOverrides === "function"
-          ? opts.configOverrides(symbol)
-          : opts?.configOverrides;
-      const decision = decisionFn(symbol, buffer, overrides ?? {});
-      onDecision(symbol, decision);
+      emitDecision(symbol, buffer);
     } catch (err) {
       console.error("priceFeed ws error:", err);
     }

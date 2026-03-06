@@ -29,7 +29,7 @@ import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter";
 import { computeEma, computeRsi, findPivotsHigh, findPivotsLow, computeATR } from "../engine/ta";
 import { CandlestickAnalyzer } from "../engine/universal-candlestick-analyzer";
 import { computeMarketProfile, type MarketProfile } from "../engine/marketProfile";
-import type { PriceFeedDecision } from "../engine/priceFeed";
+import type { PriceFeedDecision, PriceFeedDecisionExtras } from "../engine/priceFeed";
 import type {
   AltseasonRegimeSnapshot,
   BotConfig,
@@ -89,6 +89,8 @@ const FEED_TIMEFRAME_MS_BY_RISK_MODE: Record<AISettings["riskMode"], number> = {
   "ai-matic-tree": 60_000,
   "ai-matic-pro": 60_000,
 };
+const OLIKELLA_BASE_BACKFILL_LOOKBACK_MINUTES = 60 * 24 * 5;
+const OLIKELLA_HTF_PRELOAD_LOOKBACK_MINUTES = 60 * 24 * 14;
 const PROTECTION_RETRY_INTERVAL_MS = 5_000;
 const PROTECTION_RETRY_LOG_TTL_MS = 30_000;
 const PROTECTION_ATTACH_GRACE_MS = 8_000;
@@ -11976,7 +11978,8 @@ export function useTradingBot(
     const decisionFn = (
       symbol: string,
       candles: Parameters<typeof evaluateStrategyForSymbol>[1],
-      config?: Partial<BotConfig>
+      config?: Partial<BotConfig>,
+      extras?: PriceFeedDecisionExtras
     ) => {
       const baseDecision = isPro
         ? evaluateAiMaticProStrategyForSymbol(symbol, candles, { entryTfMin: 5 })
@@ -11985,7 +11988,10 @@ export function useTradingBot(
         : isAiMaticX
           ? evaluateAiMaticXStrategyForSymbol(symbol, candles)
           : isScalp
-            ? evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles)
+            ? evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, {
+                h1Candles: extras?.preloadedCandlesByInterval?.["60"],
+                h4Candles: extras?.preloadedCandlesByInterval?.["240"],
+              })
             : evaluateStrategyForSymbol(symbol, candles, config);
       const resample = createResampleCache(candles);
       const emaTrendPeriod = clampEmaTrendPeriod(
@@ -12059,7 +12065,7 @@ export function useTradingBot(
           ? {
               enabled: true,
               interval: "5",
-              lookbackMinutes: 60 * 24 * 60,
+              lookbackMinutes: OLIKELLA_BASE_BACKFILL_LOOKBACK_MINUTES,
               limit: 1000,
             }
         : isPro
@@ -12082,6 +12088,17 @@ export function useTradingBot(
         decisionFn,
         maxCandles,
         backfill,
+        preloadHigherTimeframes: isScalp
+          ? {
+              enabled: true,
+              intervals: ["60", "240"],
+              lookbackMinutesByInterval: {
+                "60": OLIKELLA_HTF_PRELOAD_LOOKBACK_MINUTES,
+                "240": OLIKELLA_HTF_PRELOAD_LOOKBACK_MINUTES,
+              },
+              limit: 1000,
+            }
+          : undefined,
         orderflow:
           isAiMaticCore
             ? { enabled: true, depth: 50 }
