@@ -269,10 +269,10 @@ export default function App() {
     auth.signOut();
   };
 
-  const handleStartRuntime = useCallback(() => {
+  const handleStartRuntime = () => {
     setRuntimeBootId((value) => value + 1);
     setAppEnabled(true);
-  }, []);
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground relative isolate app-shell tva-dashboard">
