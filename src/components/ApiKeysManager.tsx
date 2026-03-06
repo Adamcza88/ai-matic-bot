@@ -212,7 +212,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
             <label htmlFor="api-key-service-trigger" className="sr-only">
               Služba
             </label>
-            <Select value={service} onValueChange={setService}>
+            <Select name="service" value={service} onValueChange={setService}>
               <SelectTrigger
                 id="api-key-service-trigger"
                 aria-label="Služba"
@@ -232,7 +232,6 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
                 ))}
               </SelectContent>
             </Select>
-            <input type="hidden" name="service" value={service} />
           </div>
           <div className="flex-2">
             <label htmlFor="api-key-value" className="sr-only">
