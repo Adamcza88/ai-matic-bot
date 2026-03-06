@@ -19,6 +19,8 @@ const PRIVATE_EXECUTIONS_MAX = 500;
 const STALE_SESSION_TTL_MS = 15 * 60_000;
 const REST_URL_MAINNET = "https://api.bybit.com";
 const REST_URL_TESTNET = "https://api-demo.bybit.com";
+const BACKFILL_PAGE_LIMIT = 1000;
+const BACKFILL_MAX_PAGES = 10;
 
 const sessions = new Map();
 
@@ -299,17 +301,43 @@ function buildProtectionSnapshot(positionsData, ordersData) {
 
 async function fetchBackfillCandles({ symbol, timeframe, useTestnet, limit = 500 }) {
   const base = useTestnet ? REST_URL_TESTNET : REST_URL_MAINNET;
-  const url = `${base}/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeframe}&limit=${limit}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`backfill_failed:${res.status}`);
-  const json = await res.json();
-  const list = json?.result?.list ?? [];
-  if (!Array.isArray(list)) return [];
-  const parsed = list
-    .map((row) => normalizeWsKline(row))
-    .filter(Boolean)
-    .sort((a, b) => a.openTime - b.openTime);
-  return parsed;
+  const wanted = Math.max(1, Math.floor(Number(limit) || 500));
+  let end = Date.now();
+  const merged = new Map();
+
+  for (let page = 0; page < BACKFILL_MAX_PAGES && merged.size < wanted; page += 1) {
+    const remaining = wanted - merged.size;
+    const pageLimit = Math.max(1, Math.min(BACKFILL_PAGE_LIMIT, remaining));
+    const url = `${base}/v5/market/kline?category=linear&symbol=${symbol}&interval=${timeframe}&limit=${pageLimit}&end=${end}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`backfill_failed:${res.status}`);
+    const json = await res.json();
+    const list = json?.result?.list ?? [];
+    if (!Array.isArray(list) || list.length === 0) break;
+
+    const parsed = list
+      .map((row) => normalizeWsKline(row))
+      .filter(Boolean)
+      .sort((a, b) => a.openTime - b.openTime);
+    if (!parsed.length) break;
+
+    for (const candle of parsed) {
+      if (!Number.isFinite(candle?.openTime)) continue;
+      merged.set(candle.openTime, candle);
+    }
+
+    const oldestOpenTime = parsed[0]?.openTime;
+    if (!Number.isFinite(oldestOpenTime) || oldestOpenTime <= 0) break;
+    const nextEnd = oldestOpenTime - 1;
+    if (!Number.isFinite(nextEnd) || nextEnd >= end) break;
+    end = nextEnd;
+
+    if (parsed.length < pageLimit) break;
+  }
+
+  const sorted = Array.from(merged.values()).sort((a, b) => a.openTime - b.openTime);
+  if (sorted.length <= wanted) return sorted;
+  return sorted.slice(-wanted);
 }
 
 function buildSessionSnapshot(session, scope = "full") {
@@ -611,7 +639,7 @@ function createSession(args) {
       riskMode,
       timeframe,
       symbols: engineSymbols,
-      maxCandles: riskMode === "ai-matic-olikella" ? 1500 : 1000,
+      maxCandles: riskMode === "ai-matic-olikella" ? 2500 : 1000,
       decisionFn,
       candlesBySymbol: new Map(),
       decisions: new Map(),
