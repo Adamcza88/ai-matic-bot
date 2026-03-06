@@ -7,6 +7,41 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
+function resolveErrorMessage(err) {
+  const upstream = err?.response?.data;
+  if (upstream?.retMsg) return String(upstream.retMsg);
+  if (upstream?.message) return String(upstream.message);
+  if (typeof upstream === "string" && upstream.trim()) return upstream;
+  if (err?.message) return String(err.message);
+  return "Unknown error";
+}
+
+function resolveErrorStatus(err, message) {
+  const upstreamStatus = Number(err?.status ?? err?.response?.status);
+  if (Number.isFinite(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus < 600) {
+    return upstreamStatus;
+  }
+
+  const text = String(message ?? "").toLowerCase();
+  if (
+    text.includes("missing authorization header") ||
+    text.includes("missing auth token") ||
+    text.includes("failed to validate user token") ||
+    text.includes("user not found for provided token") ||
+    text.includes("jwt")
+  ) {
+    return 401;
+  }
+  if (
+    text.includes("missing testnet api keys") ||
+    text.includes("missing mainnet api keys") ||
+    text.includes("api key/secret not configured")
+  ) {
+    return 400;
+  }
+  return 500;
+}
+
 export default async function handler(req, res) {
   setCors(res);
   if (req.method === "OPTIONS") {
@@ -58,9 +93,11 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, data });
   } catch (err) {
     console.error("GET /api/demo/dashboard error:", err);
-    return res.status(500).json({
+    const errorMessage = resolveErrorMessage(err);
+    const status = resolveErrorStatus(err, errorMessage);
+    return res.status(status).json({
       ok: false,
-      error: err?.response?.data || err?.message || "Unknown error",
+      error: errorMessage,
     });
   }
 }

@@ -668,8 +668,20 @@ function createSession(args) {
   const publicTopics = engineSymbols.map(
     (symbol) => `kline.${timeframe}.${symbol}`
   );
-  ws.subscribeV5(["position", "order", "execution", "wallet"], "linear", true);
-  ws.subscribeV5(publicTopics, "linear");
+  try {
+    ws.subscribeV5(["position", "order", "execution", "wallet"], "linear", true);
+  } catch (err) {
+    const msg = toErrorMessage(err);
+    session.ws.lastError = msg;
+    session.engine.lastError = msg;
+  }
+  try {
+    ws.subscribeV5(publicTopics, "linear");
+  } catch (err) {
+    const msg = toErrorMessage(err);
+    session.ws.lastError = msg;
+    session.engine.lastError = msg;
+  }
 
   session.initPromise = Promise.allSettled([
     runFastPoll(session),

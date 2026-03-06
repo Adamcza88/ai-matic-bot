@@ -833,9 +833,9 @@ const SettingsPanel: React.FC<Props> = ({
           />
 
           <div className="grid gap-2 settings-panel-profile-grid">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+            <p className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Profil
-            </label>
+            </p>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => applyPreset("ai-matic")}
@@ -910,9 +910,9 @@ const SettingsPanel: React.FC<Props> = ({
           </div>
 
           <div className="grid gap-2 settings-panel-gates">
-            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+            <p className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
               Riziko a gate
-            </label>
+            </p>
             <div className="grid gap-2">
               {local.riskMode !== OLIKELLA_RISK_MODE ? (
                 <>
@@ -991,11 +991,16 @@ const SettingsPanel: React.FC<Props> = ({
           local.riskMode !== "ai-matic-pro" &&
           local.riskMode !== "ai-matic-amd" ? (
             <div className="grid gap-2">
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              <label
+                htmlFor="trend-gate-mode"
+                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+              >
                 Režim trend gate
               </label>
               <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
                 <select
+                  id="trend-gate-mode"
+                  name="trendGateMode"
                   value={local.trendGateMode}
                   onChange={(e) =>
                     setLocal({
@@ -1021,11 +1026,13 @@ const SettingsPanel: React.FC<Props> = ({
           local.riskMode !== OLIKELLA_RISK_MODE &&
           local.riskMode !== "ai-matic-amd" ? (
             <div className="grid gap-2">
-              <label className="text-sm font-medium leading-none">
+              <label htmlFor="ema-trend-period" className="text-sm font-medium leading-none">
                 Trend filtr
               </label>
               <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
                 <input
+                  id="ema-trend-period"
+                  name="emaTrendPeriod"
                   type="number"
                   min={MIN_EMA_TREND_PERIOD}
                   max={MAX_EMA_TREND_PERIOD}
@@ -1049,9 +1056,9 @@ const SettingsPanel: React.FC<Props> = ({
 
           {local.riskMode === "ai-matic-tree" ? (
             <div className="grid gap-2">
-              <label className="text-sm font-medium leading-none">
+              <p className="text-sm font-medium leading-none">
                 TREE sizing mode
-              </label>
+              </p>
               <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-secondary-foreground/70">
@@ -1086,11 +1093,16 @@ const SettingsPanel: React.FC<Props> = ({
 
           {local.riskMode !== OLIKELLA_RISK_MODE ? (
             <div className="grid gap-2">
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              <label
+                htmlFor="entry-strictness"
+                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+              >
                 Přísnost vstupu
               </label>
               <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
                 <select
+                  id="entry-strictness"
+                  name="entryStrictness"
                   value={local.entryStrictness ?? "base"}
                   onChange={(e) =>
                     setLocal({
@@ -1117,11 +1129,13 @@ const SettingsPanel: React.FC<Props> = ({
           </div>
 
           <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none">
+            <label htmlFor="max-open-positions" className="text-sm font-medium leading-none">
               Max pozic
             </label>
             <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
               <input
+                id="max-open-positions"
+                name="maxOpenPositions"
                 type="number"
                 min={0}
                 max={MAX_OPEN_POSITIONS_CAP}
@@ -1148,11 +1162,13 @@ const SettingsPanel: React.FC<Props> = ({
           </div>
 
           <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none">
+            <label htmlFor="max-open-orders" className="text-sm font-medium leading-none">
               Max příkazů
             </label>
             <div className="flex items-center gap-3 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
               <input
+                id="max-open-orders"
+                name="maxOpenOrders"
                 type="number"
                 min={0}
                 max={MAX_OPEN_ORDERS_CAP}
@@ -1179,15 +1195,17 @@ const SettingsPanel: React.FC<Props> = ({
           </div>
 
           <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none">
+            <p className="text-sm font-medium leading-none">
               Per-trade limit (USDT)
-            </label>
+            </p>
             <div className="grid grid-cols-1 gap-2 rounded-md border border-input bg-slate-800 px-3 py-3 text-sm md:grid-cols-2">
               <div className="space-y-1">
-                <div className="text-xs text-secondary-foreground/70">
+                <label htmlFor="per-trade-demo-usdt" className="text-xs text-secondary-foreground/70">
                   Demo (testnet)
-                </div>
+                </label>
                 <input
+                  id="per-trade-demo-usdt"
+                  name="perTradeTestnetUsd"
                   type="number"
                   min={MIN_PER_TRADE_USD}
                   max={MAX_PER_TRADE_USD}
@@ -1210,10 +1228,12 @@ const SettingsPanel: React.FC<Props> = ({
                 </div>
               </div>
               <div className="space-y-1">
-                <div className="text-xs text-secondary-foreground/70">
+                <label htmlFor="per-trade-mainnet-usdt" className="text-xs text-secondary-foreground/70">
                   Mainnet
-                </div>
+                </label>
                 <input
+                  id="per-trade-mainnet-usdt"
+                  name="perTradeMainnetUsd"
                   type="number"
                   min={MIN_PER_TRADE_USD}
                   max={MAX_PER_TRADE_USD}
@@ -1239,9 +1259,9 @@ const SettingsPanel: React.FC<Props> = ({
           </div>
 
           <div className="grid gap-2">
-            <label className="text-sm font-medium leading-none">
+            <p className="text-sm font-medium leading-none">
               Obchodované symboly
-            </label>
+            </p>
             <div className="flex flex-wrap gap-2 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
               {SUPPORTED_SYMBOLS.map((symbol) => {
                 const active = local.selectedSymbols.includes(symbol);

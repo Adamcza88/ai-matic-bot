@@ -27,6 +27,27 @@ export function useAuth() {
   const missingSupabaseMsg =
     "Supabase client not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.";
 
+  const clearSensitiveAuthHash = () => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash ?? "";
+    if (!hash) return;
+    const sensitiveParams = [
+      "access_token=",
+      "refresh_token=",
+      "provider_token=",
+      "token_type=",
+      "expires_in=",
+      "expires_at=",
+    ];
+    const hasSensitiveHash = sensitiveParams.some((part) => hash.includes(part));
+    if (!hasSensitiveHash) return;
+    window.history.replaceState(
+      window.history.state,
+      document.title,
+      `${window.location.pathname}${window.location.search}`
+    );
+  };
+
   const evaluateSession = (session: Session | null) => {
     if (!supabase) {
       setState({
@@ -89,6 +110,7 @@ export function useAuth() {
           return;
         }
         evaluateSession(data.session);
+        clearSensitiveAuthHash();
       })
       .catch((err) => {
         setState({
@@ -103,6 +125,7 @@ export function useAuth() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       evaluateSession(newSession);
+      clearSensitiveAuthHash();
     });
 
     return () => {

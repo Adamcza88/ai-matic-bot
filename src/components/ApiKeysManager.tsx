@@ -209,8 +209,15 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
           className="flex flex-col md:flex-row gap-4 mb-6 api-keys-form"
         >
           <div className="flex-1 min-w-[200px]">
+            <label htmlFor="api-key-service-trigger" className="sr-only">
+              Služba
+            </label>
             <Select value={service} onValueChange={setService}>
-              <SelectTrigger className="bg-slate-950 border-white/10 text-white api-keys-select-trigger">
+              <SelectTrigger
+                id="api-key-service-trigger"
+                aria-label="Služba"
+                className="bg-slate-950 border-white/10 text-white api-keys-select-trigger"
+              >
                 <SelectValue placeholder={UI_COPY.apiKeys.selectService} />
               </SelectTrigger>
               <SelectContent className="bg-slate-900 border-white/10 text-white api-keys-select-content">
@@ -225,9 +232,15 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
                 ))}
               </SelectContent>
             </Select>
+            <input type="hidden" name="service" value={service} />
           </div>
           <div className="flex-2">
+            <label htmlFor="api-key-value" className="sr-only">
+              API klíč nebo secret
+            </label>
             <Input
+              id="api-key-value"
+              name="apiKeyValue"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={UI_COPY.apiKeys.secretPlaceholder}

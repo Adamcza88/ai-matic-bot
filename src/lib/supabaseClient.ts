@@ -22,6 +22,7 @@ export const supabase: SupabaseClient | null = missingSupabaseEnv
               persistSession: true,
               autoRefreshToken: true,
               detectSessionInUrl: true,
+              flowType: "pkce",
           },
       });
 
