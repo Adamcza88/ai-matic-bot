@@ -291,11 +291,16 @@ export function startPriceFeed(
         });
         return { interval, candles };
       });
-      Promise.all(tasks)
+      Promise.allSettled(tasks)
         .then((results) => {
           const current = preloadedBySymbol[symbol] ?? {};
           const next: Record<string, Candle[]> = { ...current };
-          for (const { interval, candles } of results) {
+          for (const result of results) {
+            if (result.status !== "fulfilled") {
+              console.warn(`htf preload failed for ${symbol}:`, result.reason);
+              continue;
+            }
+            const { interval, candles } = result.value;
             if (candles.length) next[interval] = candles;
           }
           preloadedBySymbol[symbol] = next;
@@ -303,9 +308,6 @@ export function startPriceFeed(
           if (buffer.length > 0) {
             emitDecision(symbol, buffer);
           }
-        })
-        .catch((err) => {
-          console.warn(`htf preload failed for ${symbol}:`, err);
         });
     }
   }
