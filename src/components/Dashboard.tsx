@@ -23,12 +23,16 @@ import type {
 } from "@/lib/diagnosticsTypes";
 import { UI_COPY } from "@/lib/uiCopy";
 import {
+  AI_MATIC_CORE_CHECKLIST_DEFAULTS,
+  AI_MATIC_CORE_PROFILE_LABEL,
+} from "../lib/aiMaticCoreProfile";
+import {
   OLIKELLA_CHECKLIST_DEFAULTS,
   OLIKELLA_PROFILE_LABEL,
 } from "../lib/oliKellaProfile";
 
 const RISK_PCT_BY_MODE = {
-  "ai-matic": 0.004,
+  "ai-matic": 0.003,
   "ai-matic-x": 0.003,
   "ai-matic-tree": 0.003,
   "ai-matic-pro": 0.003,
@@ -261,16 +265,15 @@ export default function Dashboard({
       };
     }
     return {
-      label: "AI-MATIC",
-      subtitle: "AI-MATIC Core (HTF 1h/15m · LTF 5m)",
+      label: AI_MATIC_CORE_PROFILE_LABEL,
+      subtitle: "Deterministic trend core · low-request execution",
       symbols: SUPPORTED_SYMBOLS,
-      timeframes: "HTF 1h · 15m · LTF 5m",
-      session: "POI priorita: Breaker > OB > FVG > Liquidity",
-      risk: "Risk 0.40% equity/trade · notional cap ~1% equity",
+      timeframes: "HTF 1h/15m · LTF 5m/1m",
+      session: "24/7",
+      risk: "Risk 0.30% equity/trade · bez staged retest fallbacku",
       riskPct: RISK_PCT_BY_MODE["ai-matic"],
-      entry: "Entry 1/2 (60/40): OB reakce/sweep návrat + retest OB/GAP",
-      execution:
-        "SL pod strukturu/OB + ATR buffer · TP1 0.9–1.2% (70%) · TP2 2–3% · trailing +1.0%",
+      entry: "HTF bias + pullback + micro break close",
+      execution: "BBO/maker/SL plan + grouped diagnostics + generic partial/BE",
     };
   }, [bot.settings?.entryStrictness, bot.settings?.maxOpenPositions, riskMode]);
 
@@ -301,13 +304,10 @@ export default function Dashboard({
       "Maker entry": true,
       "SL structural": true,
     };
-    const aiMatic = {
-      "Hard: 3/4 validní Hard gate": true,
-      "Entry: 3 of 4": true,
-      "Checklist: 5 of 8": true,
-    };
     return {
-      "ai-matic": aiMatic,
+      "ai-matic": {
+        ...AI_MATIC_CORE_CHECKLIST_DEFAULTS,
+      },
       "ai-matic-x": base,
       "ai-matic-tree": base,
       "ai-matic-pro": {
@@ -347,14 +347,23 @@ export default function Dashboard({
   const CHECKLIST_ALIASES = useMemo(
     () => ({
       "HTF bias": ["Trend bias", "X setup", "Tree setup", "1h bias"],
-      "Hard: 3/4 validní Hard gate": [
-        "Hard: 3/4 validní pro ENTRY",
-        "Hard: ALL 4",
-        "Hard: 3 of 6",
-        "Hard: 3 of 4",
+      "Signal Checklist (HTF bias + trend confirmation)": [
+        "Signal Checklist",
+        "HTF trend checklist",
+        "Trend confirmation",
       ],
-      "Entry: 3 of 4": ["Entry: Any of 5"],
-      "Checklist: 5 of 8": ["Checklist: 3 of 7"],
+      "Entry Conditions (ATR/volume + pullback trigger)": [
+        "Entry Conditions",
+        "Pullback trigger",
+      ],
+      "Execution Conditions (BBO + maker + SL plan)": [
+        "Execution Conditions",
+        "Exec plan",
+      ],
+      "Risk Rules (capacity + cooldown + protection)": [
+        "Risk Rules",
+        "Protection rules",
+      ],
     }),
     []
   );

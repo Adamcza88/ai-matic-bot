@@ -3,6 +3,10 @@ import type { Symbol } from "../api/types";
 import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../constants/symbols";
 import { AISettings } from "../types";
 import {
+  AI_MATIC_CORE_GATE_NAMES,
+  AI_MATIC_CORE_PROFILE_LABEL,
+} from "../lib/aiMaticCoreProfile";
+import {
   OLIKELLA_GATE_NAMES,
   OLIKELLA_LEGACY_RISK_MODE,
   OLIKELLA_MAX_ORDERS_DEFAULT,
@@ -205,20 +209,19 @@ const SettingsPanel: React.FC<Props> = ({
   }, [settings]);
   const coreProfiles: Record<AISettings["riskMode"], CoreProfile> = {
     "ai-matic": {
-      title: "AI-MATIC Core",
-      summary: "HTF 1h/15m · LTF 5m · OB/POI + EMA 20/50/200",
+      title: AI_MATIC_CORE_PROFILE_LABEL,
+      summary: "HTF 1h/15m · LTF 5m/1m · deterministic trend routing",
       description:
-        "Core multi‑TF trend/POI engine s potvrzením objemem a strukturou.",
+        "Nízkofrekvenční multi‑TF core s grouped observability a exekucí bez retest fallbacku.",
       notes: [
         ORDER_VALUE_NOTE,
-        "Timeframe: 1h kontext (OB/EMA/SR/volume) · 15m potvrzení trendu · 5m vstup.",
-        "Vstup 2 stupně: 60 % první reakce z OB/sweep · 40 % retest OB/GAP/Fibo.",
-        "Typ vstupu: LIMIT preferovaný, CONDITIONAL při breaku, MARKET jen při silné reakci + objem.",
-        "SL: pod strukturu nebo OB knot + ATR buffer.",
-        "TP1: ~0.9–1.2 % (uzavřít 70 %), TP2: 2–3 % nebo HTF struktura.",
-        "Trailing: aktivace +1.0 %, retracement 0.5–0.8 %.",
-        "Exspirace signálu: 2 svíčky bez reakce nebo porušení struktury.",
-        "Filtry: EMA 20/50/200, RSI 14, MACD, Volume.",
+        "Timeframe: 1h bias · 15m potvrzení · 5m trigger · 1m exekuce.",
+        "Signal gate: HTF bias, EMA200 trend, breakout, confirm, trend strength.",
+        "Entry gate: ATR, volume, pullback, micro pivot, micro break close.",
+        "Execution gate: BBO fresh, BBO age, maker entry, structural SL.",
+        "Risk gate: capacity, cooldown, data health, protection.",
+        "Trade flow: bez staged retest fallbacku a bez legacy 3/4 scoringu.",
+        "Observability: grouped gates po vzoru OLIkella.",
       ],
     },
     "ai-matic-x": {
@@ -343,11 +346,6 @@ const SettingsPanel: React.FC<Props> = ({
     "Maker entry",
     "SL structural",
   ];
-  const aiMaticGateNames = [
-    "Hard: 3/4 validní Hard gate",
-    "Entry: 3 of 4",
-    "Checklist: 5 of 8",
-  ];
   const amdGateNames = [
     "AMD: Phase sequence",
     "AMD: Killzone active",
@@ -358,7 +356,7 @@ const SettingsPanel: React.FC<Props> = ({
     "AMD: Target model valid",
   ];
   const checklistGatesByProfile: Record<AISettings["riskMode"], string[]> = {
-    "ai-matic": aiMaticGateNames,
+    "ai-matic": [...AI_MATIC_CORE_GATE_NAMES],
     "ai-matic-x": coreV2GateNames,
     "ai-matic-amd": amdGateNames,
     "ai-matic-tree": coreV2GateNames,

@@ -8,18 +8,19 @@ import {
 
 const makeRule = (name, passed, pending = false) => ({ name, passed, pending });
 
-test("ai-matic: 3/3 -> READY", () => {
+test("ai-matic: 4/4 -> READY", () => {
   const rules = [
-    makeRule("Hard: 3/4 validní Hard gate", true),
-    makeRule("Entry: 3 of 4", true),
-    makeRule("Checklist: 5 of 8", true),
+    makeRule("Signal Checklist (HTF bias + trend confirmation)", true),
+    makeRule("Entry Conditions (ATR/volume + pullback trigger)", true),
+    makeRule("Execution Conditions (BBO + maker + SL plan)", true),
+    makeRule("Risk Rules (capacity + cooldown + protection)", true),
   ];
   const progress = buildEntryGateProgress({
     profile: "ai-matic",
-    passed: 3,
-    required: 3,
-    total: 3,
-    label: "AI-MATIC checkpoints",
+    passed: 4,
+    required: 4,
+    total: 4,
+    label: "AI-MATIC Core gates",
     signalActive: true,
     rules,
   });
@@ -29,39 +30,41 @@ test("ai-matic: 3/3 -> READY", () => {
   assert.equal(progress.pct, 100);
 });
 
-test("ai-matic: 2/3 + no signal -> WAITING", () => {
+test("ai-matic: 3/4 + no signal -> WAITING", () => {
   const rules = [
-    makeRule("Hard: 3/4 validní Hard gate", true),
-    makeRule("Entry: 3 of 4", true),
-    makeRule("Checklist: 5 of 8", false, true),
+    makeRule("Signal Checklist (HTF bias + trend confirmation)", true),
+    makeRule("Entry Conditions (ATR/volume + pullback trigger)", true),
+    makeRule("Execution Conditions (BBO + maker + SL plan)", false, true),
+    makeRule("Risk Rules (capacity + cooldown + protection)", true),
   ];
   const progress = buildEntryGateProgress({
     profile: "ai-matic",
-    passed: 2,
-    required: 3,
-    total: 3,
-    label: "AI-MATIC checkpoints",
+    passed: 3,
+    required: 4,
+    total: 4,
+    label: "AI-MATIC Core gates",
     signalActive: false,
     rules,
   });
 
   assert.equal(progress.valid, false);
   assert.equal(progress.state, "WAITING");
-  assert.equal(progress.pct, 67);
+  assert.equal(progress.pct, 75);
 });
 
-test("ai-matic: 2/3 + signal active -> BLOCKED", () => {
+test("ai-matic: 3/4 + signal active -> BLOCKED", () => {
   const rules = [
-    makeRule("Hard: 3/4 validní Hard gate", true),
-    makeRule("Entry: 3 of 4", true),
-    makeRule("Checklist: 5 of 8", false),
+    makeRule("Signal Checklist (HTF bias + trend confirmation)", true),
+    makeRule("Entry Conditions (ATR/volume + pullback trigger)", true),
+    makeRule("Execution Conditions (BBO + maker + SL plan)", false),
+    makeRule("Risk Rules (capacity + cooldown + protection)", true),
   ];
   const progress = buildEntryGateProgress({
     profile: "ai-matic",
-    passed: 2,
-    required: 3,
-    total: 3,
-    label: "AI-MATIC checkpoints",
+    passed: 3,
+    required: 4,
+    total: 4,
+    label: "AI-MATIC Core gates",
     signalActive: true,
     rules,
   });

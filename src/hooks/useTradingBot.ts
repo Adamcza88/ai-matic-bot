@@ -52,6 +52,12 @@ import type {
   TestnetTrade,
 } from "../types";
 import {
+  AI_MATIC_CORE_GATE_ENTRY_CONDITIONS,
+  AI_MATIC_CORE_GATE_EXECUTION_CONDITIONS,
+  AI_MATIC_CORE_GATE_RISK_RULES,
+  AI_MATIC_CORE_GATE_SIGNAL_CHECKLIST,
+} from "../lib/aiMaticCoreProfile";
+import {
   OLIKELLA_GATE_ENTRY_CONDITIONS,
   OLIKELLA_GATE_EXIT_CONDITIONS,
   OLIKELLA_GATE_RISK_RULES,
@@ -81,7 +87,7 @@ const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
 const DATA_HEALTH_LAG_FACTOR = 2;
 const FEED_TIMEFRAME_MS_BY_RISK_MODE: Record<AISettings["riskMode"], number> = {
-  "ai-matic": 60_000,
+  "ai-matic": 5 * 60_000,
   "ai-matic-x": 60_000,
   "ai-matic-amd": 60_000,
   "ai-matic-olikella": 5 * 60_000,
@@ -101,7 +107,7 @@ const DEFAULT_MAINNET_PER_TRADE_USD = 20;
 const MAJOR_SYMBOLS = new Set<Symbol>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const SUPPORTED_SYMBOL_SET = new Set<Symbol>(SUPPORTED_SYMBOLS);
 const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
-  "ai-matic": 0.12,
+  "ai-matic": 0.003,
   "ai-matic-x": 0.003,
   "ai-matic-amd": 0.003,
   "ai-matic-olikella": OLIKELLA_RISK_PER_TRADE,
@@ -117,7 +123,7 @@ const CORE_V2_COOLDOWN_MS: Record<AISettings["riskMode"], number> = {
   "ai-matic-pro": 0,
 };
 const CORE_V2_VOLUME_PCTL: Record<AISettings["riskMode"], number> = {
-  "ai-matic": 60,
+  "ai-matic": 65,
   "ai-matic-x": 70,
   "ai-matic-amd": 65,
   "ai-matic-olikella": 50,
@@ -130,7 +136,7 @@ const CORE_V2_SCORE_GATE: Record<
   AISettings["riskMode"],
   { major: number; alt: number }
 > = {
-  "ai-matic": { major: 11, alt: 12 },
+  "ai-matic": { major: 11, alt: 13 },
   "ai-matic-x": { major: 12, alt: 13 },
   "ai-matic-amd": { major: 12, alt: 12 },
   "ai-matic-olikella": { major: 10, alt: 99 },
@@ -2316,6 +2322,107 @@ type DecisionTraceEntry = {
   gate: string;
   result: GateResult;
 };
+type GroupedCoreGateEval = {
+  gates: AiMaticGate[];
+  pass: boolean;
+};
+
+const AI_MATIC_CORE_SIGNAL_COMPONENT_NAMES = new Set([
+  "HTF bias",
+  "EMA200 trend",
+  "EMA200 breakout",
+  "EMA200 confirm",
+  "Trend strength",
+]);
+const AI_MATIC_CORE_ENTRY_COMPONENT_NAMES = new Set([
+  "ATR% window",
+  "Volume Pxx",
+  "LTF pullback",
+  "Micro pivot",
+  "Micro break close",
+]);
+const AI_MATIC_CORE_EXEC_COMPONENT_NAMES = new Set([
+  "BBO fresh",
+  "BBO age",
+  "Maker entry",
+  "SL structural",
+]);
+const AI_MATIC_CORE_RISK_TRACE_NAMES = new Set([
+  "PositionCapacity",
+  "OpenOrder",
+  "IntentPending",
+  "EntryLock",
+  "ReentryCooldown",
+  "LossCooldown",
+  "OrderCapacity",
+  "DataHealth",
+  "ProtectionSL",
+  "TreeTrend5m",
+  "RiskOff",
+]);
+
+function formatGroupedGateDetail(
+  selected: { name: string; ok: boolean; pending?: boolean }[],
+  missingLabel: string
+) {
+  if (!selected.length) return missingLabel;
+  const fails = selected.filter((gate) => !gate.ok).map((gate) => gate.name);
+  if (!fails.length) return `${selected.length}/${selected.length}`;
+  return fails.slice(0, 2).join(" | ");
+}
+
+function buildAiMaticCoreGroupedGates(args: {
+  coreGates: AiMaticGate[];
+  trace?: DecisionTraceEntry[];
+}): GroupedCoreGateEval {
+  const coreGates = Array.isArray(args.coreGates) ? args.coreGates : [];
+  const trace = Array.isArray(args.trace) ? args.trace : [];
+  const pickCore = (names: Set<string>) =>
+    coreGates.filter((gate) => names.has(String(gate.name ?? "")));
+  const pickTrace = () =>
+    trace
+      .filter((entry) => AI_MATIC_CORE_RISK_TRACE_NAMES.has(String(entry.gate ?? "")))
+      .map((entry) => ({
+        name: entry.gate,
+        ok: entry.result.ok,
+        pending: false,
+      }));
+  const signalChecklist = pickCore(AI_MATIC_CORE_SIGNAL_COMPONENT_NAMES);
+  const entryConditions = pickCore(AI_MATIC_CORE_ENTRY_COMPONENT_NAMES);
+  const executionConditions = pickCore(AI_MATIC_CORE_EXEC_COMPONENT_NAMES);
+  const riskRules = pickTrace();
+  const gates: AiMaticGate[] = [
+    {
+      name: AI_MATIC_CORE_GATE_SIGNAL_CHECKLIST,
+      ok: signalChecklist.length > 0 && signalChecklist.every((gate) => gate.ok),
+      pending: signalChecklist.some((gate) => gate.pending),
+      detail: formatGroupedGateDetail(signalChecklist, "signal pending"),
+    },
+    {
+      name: AI_MATIC_CORE_GATE_ENTRY_CONDITIONS,
+      ok: entryConditions.length > 0 && entryConditions.every((gate) => gate.ok),
+      pending: entryConditions.some((gate) => gate.pending),
+      detail: formatGroupedGateDetail(entryConditions, "entry pending"),
+    },
+    {
+      name: AI_MATIC_CORE_GATE_EXECUTION_CONDITIONS,
+      ok: executionConditions.length > 0 && executionConditions.every((gate) => gate.ok),
+      pending: executionConditions.some((gate) => gate.pending),
+      detail: formatGroupedGateDetail(executionConditions, "execution pending"),
+    },
+    {
+      name: AI_MATIC_CORE_GATE_RISK_RULES,
+      ok: riskRules.every((gate) => gate.ok),
+      pending: false,
+      detail: formatGroupedGateDetail(riskRules, "risk checks waiting"),
+    },
+  ];
+  return {
+    gates,
+    pass: gates.length > 0 && gates.every((gate) => gate.ok),
+  };
+}
+
 type CapacityReason = "OK" | "MAX_POS" | "MAX_ORDERS" | "MAX_POS+MAX_ORDERS";
 type CapacityStatus = {
   posFull: boolean;
@@ -2775,6 +2882,7 @@ export const __aiMaticTest = {
   resolveAiMaticStopLoss,
   resolveAiMaticTargets,
   evaluateAiMaticGatesCore,
+  buildAiMaticCoreGroupedGates,
   buildAiMaticContext,
 };
 
@@ -4682,9 +4790,11 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
   }
 > = {
   "ai-matic": {
-    activateR: 1.0,
-    lockR: 0.6,
-    retracementRate: AI_MATIC_TRAIL_RETRACE_PCT,
+    activateR: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
+    lockR: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
+    retracementRate: TREE_TRAIL_PCT_MIN,
+    activateAtrMult: TREE_TRAIL_K_ATR,
+    lockAtrMult: TREE_TRAIL_K_ATR,
   },
   "ai-matic-x": { activateR: 0.6, lockR: 0.3, retracementRate: 0.004 },
   "ai-matic-amd": {
@@ -4751,8 +4861,7 @@ export function useTradingBot(
     if (settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree") {
       return {
         ...baseConfig,
-        strategyProfile:
-          settings.riskMode === "ai-matic" ? "ai-matic" : "ai-matic-tree",
+        strategyProfile: "ai-matic-tree",
         baseTimeframe: "1h",
         signalTimeframe: "5m",
         aiMaticMultiTf: true,
@@ -5858,9 +5967,10 @@ export function useTradingBot(
       const activateR = profile.activateR;
       const lockR = profile.lockR;
       const overrideRate = trailOffsetRef.current.get(symbol);
-      const isAiMaticCoreProfile = settings.riskMode === "ai-matic";
+      const isAiMaticCoreProfile = false;
       const isAmdProfile = settings.riskMode === "ai-matic-amd";
-      const isTreeProfile = settings.riskMode === "ai-matic-tree";
+      const isTreeProfile =
+        settings.riskMode === "ai-matic-tree" || settings.riskMode === "ai-matic";
       const usePercentActivation =
         isScalpProfile ||
         isAiMaticCoreProfile ||
@@ -6057,7 +6167,7 @@ export function useTradingBot(
         const settings = settingsRef.current;
         const isScalpProfile = settings.riskMode === "ai-matic-olikella";
         const isProProfile = settings.riskMode === "ai-matic-pro";
-        const isAiMaticProfile = settings.riskMode === "ai-matic";
+        const isAiMaticProfile = false;
         const positionKey = String(
           pos.positionId || pos.id || `${pos.symbol}:${pos.openedAt}`
         );
@@ -6495,7 +6605,9 @@ export function useTradingBot(
           }
         }
         if (Number.isFinite(currentTrail) && currentTrail > 0) {
-          const isTreeProfile = settingsRef.current.riskMode === "ai-matic-tree";
+          const isTreeProfile =
+            settingsRef.current.riskMode === "ai-matic-tree" ||
+            settingsRef.current.riskMode === "ai-matic";
           const price = toNumber(pos.markPrice);
           if (isTreeProfile && Number.isFinite(price) && price > 0) {
             const decisionAtr = toNumber(
@@ -7584,28 +7696,6 @@ export function useTradingBot(
       const signal = decision?.signal ?? null;
       const isAiMaticProfile = context.settings.riskMode === "ai-matic";
       const isAmdProfile = context.settings.riskMode === "ai-matic-amd";
-      const aiMaticContext = (decision as any)?.aiMatic as
-        | AiMaticContext
-        | null;
-      const inferredSide =
-        aiMaticContext?.htf.ema?.bullOk
-          ? "buy"
-          : aiMaticContext?.htf.ema?.bearOk
-            ? "sell"
-            : aiMaticContext?.htf.structureTrend === "BULL"
-              ? "buy"
-              : aiMaticContext?.htf.structureTrend === "BEAR"
-                ? "sell"
-                : null;
-      const signalForEval =
-        signal ??
-        (inferredSide
-          ? ({ intent: { side: inferredSide } } as PriceFeedDecision["signal"])
-          : null);
-      const aiMaticEval =
-        isAiMaticProfile && signalForEval
-          ? evaluateAiMaticGates(symbol, decision, signalForEval)
-          : null;
       const amdEval =
         isAmdProfile ? evaluateAmdGates(symbol, decision, signal) : null;
       const quality = resolveQualityScore(symbol as Symbol, decision, signal, feedAgeMs);
@@ -7838,28 +7928,17 @@ export function useTradingBot(
       }
       const manageReason =
         entryBlockReasons.length > 0 ? entryBlockReasons.join(" • ") : null;
+      const aiMaticCoreEval = isAiMaticProfile
+        ? buildAiMaticCoreGroupedGates({
+            coreGates: coreEval.gates,
+            trace: decisionTrace,
+          })
+        : null;
 
       if (isAiMaticProfile) {
-        if (aiMaticEval) {
-          const hardOkCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
-          addGate(
-            "Hard: 3/4 validní Hard gate",
-            hardOkCount >= AI_MATIC_HARD_MIN,
-            `${hardOkCount}/${AI_MATIC_HARD_TOTAL}`
-          );
-          const entryOkCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
-          addGate(
-            "Entry: 3 of 4",
-            entryOkCount >= AI_MATIC_ENTRY_FACTOR_MIN,
-            `${entryOkCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL}`
-          );
-          const checklistOkCount = aiMaticEval.checklist.filter((g) => g.ok).length;
-          addGate(
-            "Checklist: 5 of 8",
-            checklistOkCount >= AI_MATIC_CHECKLIST_MIN,
-            `${checklistOkCount}/${AI_MATIC_CHECKLIST_TOTAL}`
-          );
-        }
+        aiMaticCoreEval?.gates.forEach((gate) =>
+          addGate(gate.name, gate.ok, gate.detail, gate.pending)
+        );
       } else if (isAmdProfile) {
         if (amdEval) {
           amdEval.gates.forEach((gate) =>
@@ -7891,7 +7970,7 @@ export function useTradingBot(
         coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
       }
 
-      const hardEnabled = isAiMaticProfile || isAmdProfile ? true : false;
+      const hardEnabled = isAmdProfile ? true : false;
       const softEnabled = isAiMaticProfile
         ? false
         : isAmdProfile
@@ -7900,8 +7979,7 @@ export function useTradingBot(
           ? false
         : context.settings.enableSoftGates !== false;
       const hardReasons: string[] = [];
-      const hardBlocked =
-        isAiMaticProfile && aiMaticEval ? !aiMaticEval.hardPass : false;
+      const hardBlocked = false;
       const softBlocked = softEnabled && quality.pass === false;
       const oliChecklist = isScalpProfile
         ? (() => {
@@ -7914,11 +7992,11 @@ export function useTradingBot(
             };
           })()
         : null;
-      const checklist = isAiMaticProfile && aiMaticEval
+      const checklist = isAiMaticProfile && aiMaticCoreEval
         ? {
-            eligibleCount: aiMaticEval.checklist.length,
-            passedCount: aiMaticEval.checklist.filter((g) => g.ok).length,
-            pass: aiMaticEval.checklistPass,
+            eligibleCount: aiMaticCoreEval.gates.length,
+            passedCount: aiMaticCoreEval.gates.filter((g) => g.ok).length,
+            pass: aiMaticCoreEval.pass,
           }
         : isAmdProfile && amdEval
           ? {
@@ -7948,12 +8026,10 @@ export function useTradingBot(
       } else if (!signalActive) {
         executionAllowed = null;
         executionReason = "čeká na signál";
-      } else if (isAiMaticProfile && aiMaticEval && !aiMaticEval.pass) {
-        const hardCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
-        const entryCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
-        const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
+      } else if (isAiMaticProfile && aiMaticCoreEval && !aiMaticCoreEval.pass) {
+        const passCount = aiMaticCoreEval.gates.filter((g) => g.ok).length;
         executionAllowed = false;
-        executionReason = `AI-MATIC gates hard ${hardCount}/${AI_MATIC_HARD_TOTAL} · entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL} (need ${AI_MATIC_ENTRY_FACTOR_MIN}) · checklist ${checklistCount}/${AI_MATIC_CHECKLIST_TOTAL} (need ${AI_MATIC_CHECKLIST_MIN})`;
+        executionReason = `AI-MATIC Core gates ${passCount}/${aiMaticCoreEval.gates.length}`;
       } else if (isAmdProfile && amdEval && !amdEval.pass) {
         const passCount = amdEval.gates.filter((g) => g.ok).length;
         executionAllowed = false;
@@ -7985,33 +8061,41 @@ export function useTradingBot(
         | undefined;
 
       if (isAiMaticProfile) {
-        entryGateRules = aiMaticEval
-          ? [
-              {
-                name: "Hard: 3/4 validní Hard gate",
-                passed: aiMaticEval.hardPass,
-              },
-              {
-                name: "Entry: 3 of 4",
-                passed: aiMaticEval.entryFactorsPass,
-              },
-              {
-                name: "Checklist: 5 of 8",
-                passed: aiMaticEval.checklistPass,
-              },
-            ]
+        entryGateRules = aiMaticCoreEval?.gates.length
+          ? aiMaticCoreEval.gates.map((gate) => ({
+              name: gate.name,
+              passed: gate.ok,
+              pending: gate.pending,
+            }))
           : [
-              { name: "Hard: 3/4 validní Hard gate", passed: false, pending: true },
-              { name: "Entry: 3 of 4", passed: false, pending: true },
-              { name: "Checklist: 5 of 8", passed: false, pending: true },
+              {
+                name: AI_MATIC_CORE_GATE_SIGNAL_CHECKLIST,
+                passed: false,
+                pending: true,
+              },
+              {
+                name: AI_MATIC_CORE_GATE_ENTRY_CONDITIONS,
+                passed: false,
+                pending: true,
+              },
+              {
+                name: AI_MATIC_CORE_GATE_EXECUTION_CONDITIONS,
+                passed: false,
+                pending: true,
+              },
+              {
+                name: AI_MATIC_CORE_GATE_RISK_RULES,
+                passed: false,
+                pending: true,
+              },
             ];
         const passed = entryGateRules.filter((rule) => rule.passed).length;
         entryGateProgress = buildEntryGateProgress({
           profile: profileKey,
           passed,
-          required: 3,
-          total: 3,
-          label: "AI-MATIC checkpoints",
+          required: 4,
+          total: 4,
+          label: "AI-MATIC Core gates",
           reason: executionReason,
           signalActive,
           rules: entryGateRules,
@@ -10441,39 +10525,24 @@ export function useTradingBot(
       if (signalSeenRef.current.has(signalId)) return;
       signalSeenRef.current.add(signalId);
 
-      let aiMaticEval: ReturnType<typeof evaluateAiMaticGates> | null = null;
+      let aiMaticCoreEval: GroupedCoreGateEval | null = null;
       let amdEval: ReturnType<typeof evaluateAmdGates> | null = null;
       if (isAiMaticProfile) {
-        aiMaticEval = evaluateAiMaticGates(symbol, decision, signal);
-        if (!aiMaticEval.pass) {
-          const hardFails = aiMaticEval.hardGates
-            .filter((g) => !g.ok)
-            .map((g) => g.name);
-          const entryFails = aiMaticEval.entryFactors
-            .filter((g) => !g.ok)
-            .map((g) => g.name);
-          const checklistFails = aiMaticEval.checklist
-            .filter((g) => !g.ok)
-            .map((g) => g.name);
-          const hardCount = aiMaticEval.hardGates.filter((g) => g.ok).length;
-          const entryCount = aiMaticEval.entryFactors.filter((g) => g.ok).length;
-          const checklistCount = aiMaticEval.checklist.filter((g) => g.ok).length;
-          const reasons: string[] = [];
-          if (!aiMaticEval.hardPass && hardFails.length) {
-            reasons.push(`hard: ${hardFails.join(", ")}`);
-          }
-          if (!aiMaticEval.entryFactorsPass && entryFails.length) {
-            reasons.push(`entry: ${entryFails.join(", ")}`);
-          }
-          if (!aiMaticEval.checklistPass && checklistFails.length) {
-            reasons.push(`checklist: ${checklistFails.join(", ")}`);
-          }
+        aiMaticCoreEval = buildAiMaticCoreGroupedGates({
+          coreGates: coreEval.gates,
+          trace: decisionTrace,
+        });
+        if (!aiMaticCoreEval.pass) {
+          const fails = aiMaticCoreEval.gates
+            .filter((gate) => !gate.ok)
+            .map((gate) => gate.name);
+          const passCount = aiMaticCoreEval.gates.filter((gate) => gate.ok).length;
           addLogEntries([
             {
               id: `ai-matic-gate:${signalId}`,
               timestamp: new Date(now).toISOString(),
               action: "RISK_BLOCK",
-              message: `${symbol} AI-MATIC gate hard ${hardCount}/${AI_MATIC_HARD_TOTAL} | entry ${entryCount}/${AI_MATIC_ENTRY_FACTOR_TOTAL} (need ${AI_MATIC_ENTRY_FACTOR_MIN}) | checklist ${checklistCount}/${AI_MATIC_CHECKLIST_TOTAL} (need ${AI_MATIC_CHECKLIST_MIN}) -> NO TRADE${reasons.length ? ` (${reasons.join(" | ")})` : ""}`,
+              message: `${symbol} AI-MATIC Core gates ${passCount}/${aiMaticCoreEval.gates.length} -> NO TRADE${fails.length ? ` (${fails.join(" | ")})` : ""}`,
             },
           ]);
           return;
@@ -10496,7 +10565,9 @@ export function useTradingBot(
         }
       }
 
-      const isTreeProfile = settingsRef.current.riskMode === "ai-matic-tree";
+      const isTreeProfile =
+        settingsRef.current.riskMode === "ai-matic-tree" ||
+        settingsRef.current.riskMode === "ai-matic";
 
       const trendGateSetting = settingsRef.current.trendGateMode ?? "adaptive";
       const treeAdaptiveGate = isTreeProfile && trendGateSetting === "adaptive";
@@ -11027,7 +11098,7 @@ export function useTradingBot(
       let aiMaticSwingSetup: AiMaticSwingSideSetup | null = null;
       let aiMaticEma200Setup: AiMaticEma200ScalpSideSetup | null = null;
       let aiMaticSwingTfMin: 5 | 15 | undefined;
-      if (isAiMaticProfile && aiMaticEval?.pass) {
+      if (isAiMaticProfile && aiMaticCoreEval?.pass) {
         const aiMatic = (decision as any)?.aiMatic as AiMaticContext | null;
         if (aiMatic) {
           aiMaticContextForEntry = aiMatic;
@@ -11098,7 +11169,7 @@ export function useTradingBot(
         aiMaticMarketAllowed = false;
         aiMaticTriggerOverride = undefined;
       }
-      if (isAiMaticProfile && aiMaticEval?.pass) {
+      if (isAiMaticProfile && aiMaticCoreEval?.pass) {
         if (entryType === "MARKET") {
           entryType = "CONDITIONAL";
           aiMaticMarketAllowed = false;
@@ -11542,12 +11613,7 @@ export function useTradingBot(
             retestLtfMinutes?: number;
           }
         | undefined;
-      const stagedRetestEnabled =
-        settingsRef.current.riskMode === "ai-matic" &&
-        !aiMaticSwingSetup &&
-        stagedRetestConfig?.enabled !== false &&
-        Number.isFinite(adjustedQty) &&
-        adjustedQty > 0;
+      const stagedRetestEnabled = false;
       const stagedPrimaryRatio = Number.isFinite(stagedRetestConfig?.primaryRatio)
         ? Math.min(0.95, Math.max(0.05, stagedRetestConfig!.primaryRatio as number))
         : AI_MATIC_RETEST_PRIMARY_RATIO;
