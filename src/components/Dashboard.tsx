@@ -49,6 +49,8 @@ type UiToast = {
 };
 
 type DashboardProps = {
+  appEnabled: boolean;
+  setAppEnabled: (v: boolean) => void;
   mode: TradingMode;
   setMode: (m: TradingMode) => void;
   useTestnet: boolean;
@@ -72,6 +74,8 @@ type DashboardProps = {
 };
 
 export default function Dashboard({
+  appEnabled,
+  setAppEnabled,
   mode,
   setMode,
   useTestnet,
@@ -618,8 +622,9 @@ export default function Dashboard({
     }),
     [dailyPnl]
   );
-  const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";
-  const appRunning = mode === TradingMode.AUTO_ON;
+  const engineStatus =
+    appEnabled && mode === TradingMode.AUTO_ON ? "Running" : "Paused";
+  const appRunning = appEnabled;
 
   const handleResetAllGates = useCallback(() => {
     resetChecklist();
@@ -629,13 +634,13 @@ export default function Dashboard({
 
   const handleToggleApp = useCallback(() => {
     if (appRunning) {
-      setMode(TradingMode.OFF);
+      setAppEnabled(false);
       showToast("Aplikace zastavena", "danger");
       return;
     }
-    setMode(TradingMode.AUTO_ON);
+    setAppEnabled(true);
     showToast("Aplikace spuštěna", "success");
-  }, [appRunning, setMode, showToast]);
+  }, [appRunning, setAppEnabled, showToast]);
 
   const handleTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     if (typeof window === "undefined") return;

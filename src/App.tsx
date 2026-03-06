@@ -8,13 +8,105 @@ import { SERVICE_OPTIONS } from "./components/ApiKeysManager";
 import { useAuth } from "./hooks/useAuth";
 import { supabase } from "./lib/supabaseClient";
 import { UI_COPY } from "./lib/uiCopy";
+import { Button } from "./components/ui/button";
 
 // Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
 const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 
+type EnvAvailability = {
+  canUseDemo: boolean;
+  canUseMainnet: boolean;
+  demoReason?: string;
+  mainnetReason?: string;
+};
+
+type DashboardRuntimeProps = {
+  appEnabled: boolean;
+  setAppEnabled: (v: boolean) => void;
+  mode: TradingMode;
+  setMode: (m: TradingMode) => void;
+  useTestnet: boolean;
+  setUseTestnet: (v: boolean) => void;
+  theme: "dark" | "light";
+  envAvailability: EnvAvailability;
+  userEmail: string;
+  isGuest: boolean;
+  missingServices: string[];
+  keysError: string | null;
+  onSignOut: () => void;
+  onToggleTheme: () => void;
+  apiKeysUserId: string;
+  onKeysUpdated: () => void | Promise<void>;
+  authToken?: string;
+};
+
+function DashboardRuntime({
+  appEnabled,
+  setAppEnabled,
+  mode,
+  setMode,
+  useTestnet,
+  setUseTestnet,
+  theme,
+  envAvailability,
+  userEmail,
+  isGuest,
+  missingServices,
+  keysError,
+  onSignOut,
+  onToggleTheme,
+  apiKeysUserId,
+  onKeysUpdated,
+  authToken,
+}: DashboardRuntimeProps) {
+  const bot = useTradingBot(mode, useTestnet, authToken, true);
+
+  useEffect(() => {
+    if (!bot.settings?.autoRefreshEnabled) return;
+    const minutesRaw = Number(bot.settings?.autoRefreshMinutes);
+    const minutes =
+      Number.isFinite(minutesRaw) && minutesRaw > 0
+        ? minutesRaw
+        : DEFAULT_AUTO_REFRESH_MINUTES;
+    const timer = window.setInterval(() => {
+      window.location.reload();
+    }, minutes * 60_000);
+    return () => window.clearInterval(timer);
+  }, [bot.settings?.autoRefreshEnabled, bot.settings?.autoRefreshMinutes]);
+
+  return (
+    <Dashboard
+      appEnabled={appEnabled}
+      setAppEnabled={setAppEnabled}
+      mode={mode}
+      setMode={setMode}
+      useTestnet={useTestnet}
+      setUseTestnet={setUseTestnet}
+      theme={theme}
+      envAvailability={envAvailability}
+      bot={bot}
+      userEmail={userEmail}
+      isGuest={isGuest}
+      missingServices={missingServices}
+      keysError={keysError}
+      onSignOut={onSignOut}
+      onToggleTheme={onToggleTheme}
+      apiKeysUserId={apiKeysUserId}
+      onKeysUpdated={onKeysUpdated}
+    />
+  );
+}
+
 export default function App() {
   const auth = useAuth();
+  const [appEnabled, setAppEnabled] = useState(() => {
+    if (typeof localStorage !== "undefined") {
+      const saved = localStorage.getItem("ai-matic-app-enabled");
+      if (saved !== null) return saved === "true";
+    }
+    return true;
+  });
   const [mode, setMode] = useState<TradingMode>(() => {
     if (typeof localStorage !== "undefined") {
       const saved = localStorage.getItem("ai-matic-mode");
@@ -42,6 +134,10 @@ export default function App() {
   }, [mode]);
 
   useEffect(() => {
+    localStorage.setItem("ai-matic-app-enabled", String(appEnabled));
+  }, [appEnabled]);
+
+  useEffect(() => {
     localStorage.setItem("ai-matic-useTestnet", String(useTestnet));
   }, [useTestnet]);
 
@@ -58,25 +154,12 @@ export default function App() {
   const [missingServices, setMissingServices] = useState<string[]>([]);
   const [keysError, setKeysError] = useState<string | null>(null);
   const [isGuest, setIsGuest] = useState(false);
+  const [runtimeBootId, setRuntimeBootId] = useState(0);
 
-  const bot = useTradingBot(mode, useTestnet, auth.session?.access_token);
   const userEmail = useMemo(() => {
     if (isGuest) return "Guest";
     return auth.user?.email ?? "";
   }, [auth.user, isGuest]);
-
-  useEffect(() => {
-    if (!bot.settings?.autoRefreshEnabled) return;
-    const minutesRaw = Number(bot.settings?.autoRefreshMinutes);
-    const minutes =
-      Number.isFinite(minutesRaw) && minutesRaw > 0
-        ? minutesRaw
-        : DEFAULT_AUTO_REFRESH_MINUTES;
-    const timer = window.setInterval(() => {
-      window.location.reload();
-    }, minutes * 60_000);
-    return () => window.clearInterval(timer);
-  }, [bot.settings?.autoRefreshEnabled, bot.settings?.autoRefreshMinutes]);
 
   const refreshKeyStatus = useCallback(async () => {
     if (!auth.user) return;
@@ -186,6 +269,11 @@ export default function App() {
     auth.signOut();
   };
 
+  const handleStartRuntime = useCallback(() => {
+    setRuntimeBootId((value) => value + 1);
+    setAppEnabled(true);
+  }, []);
+
   return (
     <div className="min-h-screen bg-background text-foreground relative isolate app-shell tva-dashboard">
       <div
@@ -198,25 +286,49 @@ export default function App() {
         }}
       />
 
-      <Dashboard
-        mode={mode}
-        setMode={setMode}
-        useTestnet={useTestnet}
-        setUseTestnet={setUseTestnet}
-        theme={theme}
-        envAvailability={envAvailability}
-        bot={bot}
-        userEmail={userEmail}
-        isGuest={isGuest}
-        missingServices={missingServices}
-        keysError={keysError}
-        onSignOut={handleSignOut}
-        onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
-        apiKeysUserId={isGuest ? "guest" : auth.user?.id ?? ""}
-        onKeysUpdated={() => {
-          void refreshKeyStatus();
-        }}
-      />
+      {appEnabled ? (
+        <DashboardRuntime
+          key={`runtime-${runtimeBootId}`}
+          appEnabled={appEnabled}
+          setAppEnabled={setAppEnabled}
+          mode={mode}
+          setMode={setMode}
+          useTestnet={useTestnet}
+          setUseTestnet={setUseTestnet}
+          theme={theme}
+          envAvailability={envAvailability}
+          userEmail={userEmail}
+          isGuest={isGuest}
+          missingServices={missingServices}
+          keysError={keysError}
+          onSignOut={handleSignOut}
+          onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+          apiKeysUserId={isGuest ? "guest" : auth.user?.id ?? ""}
+          onKeysUpdated={() => {
+            void refreshKeyStatus();
+          }}
+          authToken={auth.session?.access_token}
+        />
+      ) : (
+        <div className="mx-auto flex min-h-[70vh] w-full max-w-xl items-center justify-center px-4">
+          <section className="w-full rounded-2xl border border-border/70 bg-card/90 p-6 text-center shadow-[0_8px_24px_-14px_rgba(0,0,0,0.65)]">
+            <h2 className="text-xl font-semibold">Aplikace je vypnutá</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Hlavní vypínač zastavil všechny procesy a requesty.
+            </p>
+            <div className="mt-5 flex justify-center">
+              <Button
+                type="button"
+                size="lg"
+                onClick={handleStartRuntime}
+                className="h-11 px-6 text-sm font-semibold"
+              >
+                Spustit aplikaci
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

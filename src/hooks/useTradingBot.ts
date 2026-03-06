@@ -4722,7 +4722,8 @@ const PROFILE_BY_RISK_MODE: Record<AISettings["riskMode"], Profile> = {
 export function useTradingBot(
   mode?: TradingMode,
   useTestnet = false,
-  authToken?: string
+  authToken?: string,
+  appEnabled = true
 ) {
   const allowOrderCancel = true;
   const allowPositionClose = true;
@@ -4899,6 +4900,7 @@ export function useTradingBot(
   const fastOkRef = useRef(false);
   const slowOkRef = useRef(false);
   const modeRef = useRef<TradingMode | undefined>(mode);
+  const appEnabledRef = useRef(Boolean(appEnabled));
   const positionsRef = useRef<ActivePosition[]>([]);
   const positionSnapshotIdRef = useRef(0);
   const positionStateSignatureRef = useRef("");
@@ -5015,6 +5017,7 @@ export function useTradingBot(
   const protectionRetryAtRef = useRef<Map<string, number>>(new Map());
   const protectionRetryLogRef = useRef<Map<string, number>>(new Map());
   const symbolTickRef = useRef<Map<string, number>>(new Map());
+  const inflightRequestsRef = useRef<Set<AbortController>>(new Set());
 
   useEffect(() => {
     persistSettings(settings);
@@ -5038,6 +5041,28 @@ export function useTradingBot(
   }, [mode]);
 
   useEffect(() => {
+    appEnabledRef.current = Boolean(appEnabled);
+  }, [appEnabled]);
+
+  const abortInflightRequests = useCallback(() => {
+    for (const controller of inflightRequestsRef.current) {
+      controller.abort();
+    }
+    inflightRequestsRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    if (appEnabled) return;
+    abortInflightRequests();
+  }, [abortInflightRequests, appEnabled]);
+
+  useEffect(() => {
+    return () => {
+      abortInflightRequests();
+    };
+  }, [abortInflightRequests]);
+
+  useEffect(() => {
     if (positions) positionsRef.current = positions;
   }, [positions]);
 
@@ -5050,22 +5075,32 @@ export function useTradingBot(
       if (!authToken) {
         throw new Error("missing_auth_token");
       }
+      if (!appEnabledRef.current) {
+        throw new Error("app_disabled");
+      }
       const qs = params ? `?${new URLSearchParams(params)}` : "";
       const url = `${apiBase}${path}${qs}`;
       const started = performance.now();
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-          "X-Auth-Token": authToken,
-        },
-      });
-      const json = await res.json().catch(() => ({}));
-      const latency = Math.round(performance.now() - started);
-      setLastLatencyMs(latency);
-      if (!res.ok || json?.ok === false) {
-        throw new Error(json?.error || `HTTP_${res.status}`);
+      const controller = new AbortController();
+      inflightRequestsRef.current.add(controller);
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+            "X-Auth-Token": authToken,
+          },
+        });
+        const json = await res.json().catch(() => ({}));
+        const latency = Math.round(performance.now() - started);
+        setLastLatencyMs(latency);
+        if (!res.ok || json?.ok === false) {
+          throw new Error(json?.error || `HTTP_${res.status}`);
+        }
+        return json?.data ?? json;
+      } finally {
+        inflightRequestsRef.current.delete(controller);
       }
-      return json?.data ?? json;
     },
     [apiBase, authToken]
   );
@@ -5075,24 +5110,34 @@ export function useTradingBot(
       if (!authToken) {
         throw new Error("missing_auth_token");
       }
+      if (!appEnabledRef.current) {
+        throw new Error("app_disabled");
+      }
       const url = `${apiBase}${path}`;
       const started = performance.now();
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-          "X-Auth-Token": authToken,
-        },
-        body: JSON.stringify(body ?? {}),
-      });
-      const json = await res.json().catch(() => ({}));
-      const latency = Math.round(performance.now() - started);
-      setLastLatencyMs(latency);
-      if (!res.ok || json?.ok === false) {
-        throw new Error(json?.error || `HTTP_${res.status}`);
+      const controller = new AbortController();
+      inflightRequestsRef.current.add(controller);
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authToken}`,
+            "X-Auth-Token": authToken,
+          },
+          body: JSON.stringify(body ?? {}),
+        });
+        const json = await res.json().catch(() => ({}));
+        const latency = Math.round(performance.now() - started);
+        setLastLatencyMs(latency);
+        if (!res.ok || json?.ok === false) {
+          throw new Error(json?.error || `HTTP_${res.status}`);
+        }
+        return json?.data ?? json;
+      } finally {
+        inflightRequestsRef.current.delete(controller);
       }
-      return json?.data ?? json;
     },
     [apiBase, authToken]
   );
@@ -6630,6 +6675,7 @@ export function useTradingBot(
 
   const queueCapacityRecheck = useCallback(
     (trigger: CapacityPauseTrigger) => {
+      if (!appEnabledRef.current) return false;
       const relay = relayPauseRef.current;
       if (!relay.paused) return false;
       const exposure = getAtomicExposureSnapshot();
@@ -8152,6 +8198,7 @@ export function useTradingBot(
   );
 
   const refreshFast = useCallback(async () => {
+    if (!appEnabledRef.current) return;
     if (fastPollRef.current) return;
     fastPollRef.current = true;
 
@@ -9672,6 +9719,7 @@ export function useTradingBot(
   );
 
   const refreshSlow = useCallback(async () => {
+    if (!appEnabledRef.current) return;
     if (slowPollRef.current) return;
     slowPollRef.current = true;
 
@@ -9800,6 +9848,10 @@ export function useTradingBot(
       setSystemError("missing_auth_token");
       return;
     }
+    if (!appEnabled) {
+      setSystemError(null);
+      return;
+    }
     let alive = true;
     const tickFast = async () => {
       if (!alive) return;
@@ -9822,10 +9874,10 @@ export function useTradingBot(
       clearInterval(slowId);
       clearInterval(tsId);
     };
-  }, [authToken, refreshFast, refreshSlow, syncTrailingProtection]);
+  }, [appEnabled, authToken, refreshFast, refreshSlow, syncTrailingProtection]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken || !appEnabled) return;
     let alive = true;
     const retryMissingSlProtection = async () => {
       if (!alive) return;
@@ -9886,6 +9938,7 @@ export function useTradingBot(
       clearInterval(id);
     };
   }, [
+    appEnabled,
     addLogEntries,
     authToken,
     positionsWithoutActiveSl,
@@ -10105,6 +10158,7 @@ export function useTradingBot(
 
   const handleDecision = useCallback(
     (symbol: string, decision: PriceFeedDecision) => {
+      if (!appEnabledRef.current) return;
       const now = Date.now();
       const isSelected = activeSymbols.includes(symbol as Symbol);
       const scalpActive = settingsRef.current.riskMode === "ai-matic-olikella";
@@ -11843,7 +11897,7 @@ export function useTradingBot(
   }, [handleDecision]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken || !appEnabled) return;
 
     signalSeenRef.current.clear();
     intentPendingRef.current.clear();
@@ -12053,10 +12107,10 @@ export function useTradingBot(
     return () => {
       stop();
     };
-  }, [addLogEntries, authToken, engineConfig, feedSymbols, useTestnet]);
+  }, [addLogEntries, appEnabled, authToken, engineConfig, feedSymbols, useTestnet]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken || !appEnabled) return;
     const heartbeatId = setInterval(() => {
       const now = Date.now();
       const lastTick = feedLastTickRef.current;
@@ -12107,7 +12161,7 @@ export function useTradingBot(
     return () => {
       clearInterval(heartbeatId);
     };
-  }, [activeSymbols, addLogEntries, authToken, resolveSymbolState]);
+  }, [activeSymbols, addLogEntries, appEnabled, authToken, resolveSymbolState]);
 
   const systemState = useMemo<SystemState>(() => {
     const hasSuccess = Boolean(lastSuccessAt);
