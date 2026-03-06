@@ -619,12 +619,23 @@ export default function Dashboard({
     [dailyPnl]
   );
   const engineStatus = mode === TradingMode.AUTO_ON ? "Running" : "Paused";
+  const appRunning = mode === TradingMode.AUTO_ON;
 
   const handleResetAllGates = useCallback(() => {
     resetChecklist();
     setResetRippleKey((value) => value + 1);
     showToast("All gates reset", "neutral");
   }, [resetChecklist, showToast]);
+
+  const handleToggleApp = useCallback(() => {
+    if (appRunning) {
+      setMode(TradingMode.OFF);
+      showToast("Aplikace zastavena", "danger");
+      return;
+    }
+    setMode(TradingMode.AUTO_ON);
+    showToast("Aplikace spuštěna", "success");
+  }, [appRunning, setMode, showToast]);
 
   const handleTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     if (typeof window === "undefined") return;
@@ -714,6 +725,17 @@ export default function Dashboard({
                 className="h-11 px-4 text-sm font-semibold"
               >
                 Reset ALL gates
+              </Button>
+              <Button
+                type="button"
+                variant={appRunning ? "destructive" : "default"}
+                size="sm"
+                onClick={handleToggleApp}
+                aria-pressed={appRunning}
+                aria-label={appRunning ? "Stop aplikace" : "Spustit aplikaci"}
+                className="h-11 px-4 text-sm font-semibold"
+              >
+                {appRunning ? "Stop aplikace" : "Spustit aplikaci"}
               </Button>
             </div>
 
