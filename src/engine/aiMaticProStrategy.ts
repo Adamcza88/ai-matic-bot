@@ -64,6 +64,7 @@ const ATR_FALLBACK_PCT = 0.003;
 const BREAKOUT_LOOKBACK = 10;
 const BREAKOUT_VOLUME_LOOKBACK = 20;
 const ATR_20D_BARS_4H = 20 * 6;
+const ATR_20D_BARS_15M = 20 * 24 * 4;
 
 function last<T>(arr: T[]): T | undefined {
   return arr.length ? arr[arr.length - 1] : undefined;
@@ -353,10 +354,18 @@ export function evaluateAiMaticProStrategyForSymbol(
   const atr4h = computeAtr(h4, 14);
   const atr4hCurrent = last(atr4h) ?? Number.NaN;
   const atr4hAvg20d = mean(atr4h.slice(-ATR_20D_BARS_4H));
-  const volatilityGateOk =
+  const atr15 = computeAtr(m15, 14);
+  const atr15Current = last(atr15) ?? Number.NaN;
+  const atr15Avg20d = mean(atr15.slice(-ATR_20D_BARS_15M));
+  const h4VolatilityOk =
     Number.isFinite(atr4hCurrent) &&
     Number.isFinite(atr4hAvg20d) &&
     atr4hCurrent >= atr4hAvg20d * 0.8;
+  const m15VolatilityOk =
+    !Number.isFinite(atr15Current) ||
+    !Number.isFinite(atr15Avg20d) ||
+    atr15Current >= atr15Avg20d * 0.5;
+  const volatilityGateOk = h4VolatilityOk && m15VolatilityOk;
 
   const trendConfirmed = trendState !== "CONSOLIDATION" && Boolean(impulse) && Boolean(fib);
   const triggerValid =
@@ -367,9 +376,10 @@ export function evaluateAiMaticProStrategyForSymbol(
         : false;
 
   const entry = Number.isFinite(price) ? price : Number.NaN;
-  const atr15 = last(computeAtr(m15, 14)) ?? Number.NaN;
   const atrBuffer =
-    Number.isFinite(atr15) && atr15 > 0 ? atr15 * ATR_BUFFER_MULT : entry * ATR_FALLBACK_PCT;
+    Number.isFinite(atr15Current) && atr15Current > 0
+      ? atr15Current * ATR_BUFFER_MULT
+      : entry * ATR_FALLBACK_PCT;
 
   let sl = Number.NaN;
   let tp1 = Number.NaN;
@@ -426,7 +436,11 @@ export function evaluateAiMaticProStrategyForSymbol(
     {
       name: "Volatility gate ATR >= 0.8x 20d avg",
       ok: volatilityGateOk,
-      detail: `ATR ${Number.isFinite(atr4hCurrent) ? atr4hCurrent.toFixed(4) : "NaN"} / avg ${Number.isFinite(atr4hAvg20d) ? atr4hAvg20d.toFixed(4) : "NaN"}`,
+      detail:
+        `H4 ATR ${Number.isFinite(atr4hCurrent) ? atr4hCurrent.toFixed(4) : "NaN"} / avg ` +
+        `${Number.isFinite(atr4hAvg20d) ? atr4hAvg20d.toFixed(4) : "NaN"} | ` +
+        `15m ATR ${Number.isFinite(atr15Current) ? atr15Current.toFixed(4) : "NaN"} / avg ` +
+        `${Number.isFinite(atr15Avg20d) ? atr15Avg20d.toFixed(4) : "NaN"}`,
     },
     {
       name: "RR gate >= 1.5",

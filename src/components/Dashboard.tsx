@@ -22,7 +22,10 @@ import type {
   SymbolDiagnostic,
 } from "@/lib/diagnosticsTypes";
 import { UI_COPY } from "@/lib/uiCopy";
-import { OLIKELLA_GATE_NAMES, OLIKELLA_PROFILE_LABEL } from "../lib/oliKellaProfile";
+import {
+  OLIKELLA_CHECKLIST_DEFAULTS,
+  OLIKELLA_PROFILE_LABEL,
+} from "../lib/oliKellaProfile";
 
 const RISK_PCT_BY_MODE = {
   "ai-matic": 0.004,
@@ -325,10 +328,7 @@ export default function Dashboard({
         "AMD: Target model valid": true,
       },
       "ai-matic-olikella": {
-        ...OLIKELLA_GATE_NAMES.reduce((acc, name) => {
-          acc[name] = true;
-          return acc;
-        }, {} as Record<string, boolean>),
+        ...OLIKELLA_CHECKLIST_DEFAULTS,
       },
     };
   }, []);
