@@ -14,6 +14,11 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Auth-Token");
 }
 
+function normalizeOrderType(value) {
+  const raw = String(value ?? "").trim().toLowerCase();
+  return raw === "market" ? "Market" : "Limit";
+}
+
 export default async function handler(req, res) {
   setCors(res);
   if (req.method === "OPTIONS") {
@@ -78,6 +83,7 @@ export default async function handler(req, res) {
       reduceOnly,
       leverage,
       orderLinkId,
+      positionIdx,
     } = req.body || {};
 
     const normalizedSide =
@@ -133,22 +139,77 @@ export default async function handler(req, res) {
       });
     }
 
+    const normalizedOrderType = normalizeOrderType(orderType);
+    const triggerPriceNum = Number(triggerPrice);
+    const hasTriggerPrice =
+      Number.isFinite(triggerPriceNum) && triggerPriceNum > 0;
+    const priceNum = Number(price);
+    const normalizedPrice =
+      normalizedOrderType === "Market"
+        ? undefined
+        : Number.isFinite(priceNum) && priceNum > 0
+          ? priceNum
+          : hasTriggerPrice
+            ? triggerPriceNum
+            : undefined;
+    const normalizedTimeInForce =
+      normalizedOrderType === "Market"
+        ? "IOC"
+        : typeof timeInForce === "string" && timeInForce.trim()
+          ? timeInForce.trim()
+          : "GTC";
+
+    if (reduceOnly === true) {
+      try {
+        const posRes = await getDemoPositions({ apiKey: key, apiSecret: secret }, useTestnet);
+        const posList = posRes?.result?.list ?? [];
+        const hasReduciblePosition = posList.some((p) => {
+          if (String(p?.symbol ?? "").toUpperCase() !== String(symbol).toUpperCase()) return false;
+          const size = Number(p?.size ?? p?.qty ?? 0);
+          if (!Number.isFinite(size) || size <= 0) return false;
+          const posSide = String(p?.side ?? "").toLowerCase();
+          if (!posSide) return true;
+          return sideFormatted === "Buy" ? posSide === "sell" : posSide === "buy";
+        });
+        if (!hasReduciblePosition) {
+          return res.status(200).json({
+            ok: true,
+            data: {
+              retCode: 0,
+              retMsg: "reduce_only_skipped_no_open_position",
+              result: {},
+            },
+            meta: {
+              ts: new Date().toISOString(),
+              version: "v1",
+              env: useTestnet ? "testnet" : "mainnet",
+              endpoint: req.url,
+            },
+          });
+        }
+      } catch (_) {
+        // continue, creation call will return upstream detail if needed
+      }
+    }
+
     const payload = {
       symbol,
       side: sideFormatted,
       qty: qtyValue,
-      price: price != null ? Number(price) : undefined,
-      triggerPrice: triggerPrice != null ? Number(triggerPrice) : undefined,
+      price: normalizedPrice,
+      triggerPrice: hasTriggerPrice ? triggerPriceNum : undefined,
       sl: sl != null ? Number(sl) : undefined,
       tp: tp != null ? Number(tp) : undefined,
       trailingStop: trailingStop != null ? Number(trailingStop) : undefined,
       trailingActivePrice: trailingActivePrice != null ? Number(trailingActivePrice) : undefined,
-      orderType,
-      timeInForce,
+      orderType: normalizedOrderType,
+      timeInForce: normalizedTimeInForce,
       reduceOnly,
       category: "linear",
       leverage: leverage != null ? Number(leverage) : undefined,
       orderLinkId: orderLinkId != null ? String(orderLinkId) : undefined,
+      positionIdx:
+        Number.isFinite(Number(positionIdx)) ? Number(positionIdx) : undefined,
     };
 
     const result = await createDemoOrder(
