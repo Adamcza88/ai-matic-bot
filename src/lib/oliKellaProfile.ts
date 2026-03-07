@@ -38,6 +38,7 @@ export function migrateRiskMode(
   | "ai-matic-x"
   | "ai-matic-amd"
   | "ai-matic-olikella"
+  | "ai-matic-bbo"
   | "ai-matic-tree"
   | "ai-matic-pro" {
   const normalized =
@@ -50,6 +51,7 @@ export function migrateRiskMode(
     normalized === "ai-matic-x" ||
     normalized === "ai-matic-amd" ||
     normalized === OLIKELLA_RISK_MODE ||
+    normalized === "ai-matic-bbo" ||
     normalized === "ai-matic-tree" ||
     normalized === "ai-matic-pro"
   ) {

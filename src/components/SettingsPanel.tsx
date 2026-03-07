@@ -292,6 +292,22 @@ const SettingsPanel: React.FC<Props> = ({
         "Default limits: max pozic 5, max příkazů 20.",
       ],
     },
+    "ai-matic-bbo": {
+      title: "AI-MATIC-BBO Tree",
+      summary: "HTF bias 1h/4h · EMA pullback · micro break · BBO filter",
+      description:
+        "Samostatný profil podle HTF_Bias_EMA_Pullback_MicroBreak_BBO specifikace.",
+      notes: [
+        ORDER_VALUE_NOTE,
+        "Timeframe: 1h context · 4h bias · 5m trigger · 1m exekuce.",
+        "Primary setup: Trend Pullback (impuls -> korekce -> pokračování).",
+        "Entry: EMA20 / EMA20-EMA50 pullback + micro break.",
+        "Hard gate: spread/funding/ATR/macro event okno.",
+        "Execution filter: BBO freshness < 1000ms.",
+        "Soft score: threshold >= 60.",
+        "Position management: checklist B (HOLD / PARTIAL / EXIT).",
+      ],
+    },
     "ai-matic-tree": {
       title: "AI-MATIC-TREE Core",
       summary: "HTF 1h/15m · LTF 5m/1m · EMA bias + trend entries",
@@ -355,10 +371,21 @@ const SettingsPanel: React.FC<Props> = ({
     "AMD: Inversion FVG confirm",
     "AMD: Target model valid",
   ];
+  const bboGateNames = [
+    "HTF context 1h trend",
+    "HTF bias 4h EMA50/EMA200",
+    "Trend pullback family",
+    "EMA20/EMA50 pullback valid",
+    "Micro break confirm",
+    "Hard gate (spread/funding/ATR/macro)",
+    "BBO fresh < 1000ms",
+    "Soft score >= 60",
+  ];
   const checklistGatesByProfile: Record<AISettings["riskMode"], string[]> = {
     "ai-matic": [...AI_MATIC_CORE_GATE_NAMES],
     "ai-matic-x": coreV2GateNames,
     "ai-matic-amd": amdGateNames,
+    "ai-matic-bbo": bboGateNames,
     "ai-matic-tree": coreV2GateNames,
     "ai-matic-olikella": [
       ...OLIKELLA_GATE_NAMES,
@@ -553,6 +580,38 @@ const SettingsPanel: React.FC<Props> = ({
     emaTrendPeriod: 200,
   };
 
+  const AI_MATIC_BBO_PRESET_UI: AISettings = {
+    riskMode: "ai-matic-bbo",
+    trendGateMode: "follow",
+    pauseOnHighVolatility: false,
+    avoidLowLiquidity: true,
+    useTrendFollowing: true,
+    smcScalpMode: false,
+    useLiquiditySweeps: true,
+    enableHardGates: true,
+    enableSoftGates: true,
+    maxOpenPositions: 3,
+    maxOpenOrders: 12,
+    selectedSymbols: [...SUPPORTED_SYMBOLS],
+    entryStrictness: "ultra",
+    useDynamicPositionSizing: true,
+    lockProfitsWithTrail: true,
+    autoRefreshEnabled: false,
+    autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
+    requireConfirmationInAuto: false,
+    customInstructions: "",
+    customStrategy: "",
+    min24hVolume: 50,
+    minProfitFactor: 1.2,
+    minWinRate: 68,
+    makerFeePct: 0.01,
+    takerFeePct: 0.06,
+    slippageBufferPct: 0.01,
+    perTradeTestnetUsd: DEFAULT_TESTNET_PER_TRADE_USD,
+    perTradeMainnetUsd: DEFAULT_MAINNET_PER_TRADE_USD,
+    emaTrendPeriod: 200,
+  };
+
   const AI_MATIC_PRO_PRESET_UI: AISettings = {
     riskMode: "ai-matic-pro",
     trendGateMode: "follow",
@@ -590,6 +649,7 @@ const SettingsPanel: React.FC<Props> = ({
     "ai-matic-x": AI_MATIC_X_PRESET_UI,
     "ai-matic-amd": AI_MATIC_AMD_PRESET_UI,
     "ai-matic-olikella": AI_MATIC_OLIKELLA_PRESET_UI,
+    "ai-matic-bbo": AI_MATIC_BBO_PRESET_UI,
     "ai-matic-tree": AI_MATIC_TREE_PRESET_UI,
     "ai-matic-pro": AI_MATIC_PRO_PRESET_UI,
   };
@@ -886,6 +946,16 @@ const SettingsPanel: React.FC<Props> = ({
                 AI-Matic-Tree
               </button>
               <button
+                onClick={() => applyPreset("ai-matic-bbo")}
+                className={`rounded-md border border-input px-3 py-2 text-sm ${
+                  local.riskMode === "ai-matic-bbo"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-800 text-secondary-foreground"
+                }`}
+              >
+                AI-Matic-BBO
+              </button>
+              <button
                 onClick={() => applyPreset("ai-matic-pro")}
                 className={`rounded-md border border-input px-3 py-2 text-sm ${
                   local.riskMode === "ai-matic-pro"
@@ -1052,7 +1122,7 @@ const SettingsPanel: React.FC<Props> = ({
             </div>
           ) : null}
 
-          {local.riskMode === "ai-matic-tree" ? (
+          {local.riskMode === "ai-matic-tree" || local.riskMode === "ai-matic-bbo" ? (
             <div className="grid gap-2">
               <p className="text-sm font-medium leading-none">
                 TREE sizing mode

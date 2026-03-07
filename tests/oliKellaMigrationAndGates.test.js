@@ -13,6 +13,7 @@ test("OLIkella migration maps legacy risk mode to new key", () => {
   assert.equal(migrateRiskMode(OLIKELLA_LEGACY_RISK_MODE), OLIKELLA_RISK_MODE);
   assert.equal(migrateRiskMode("ai-matic"), "ai-matic");
   assert.equal(migrateRiskMode("ai-matic-amd"), "ai-matic-amd");
+  assert.equal(migrateRiskMode("ai-matic-bbo"), "ai-matic-bbo");
   assert.equal(migrateRiskMode("unknown-mode"), "ai-matic");
 });
 

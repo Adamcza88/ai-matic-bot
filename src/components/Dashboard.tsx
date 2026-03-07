@@ -34,6 +34,7 @@ import {
 const RISK_PCT_BY_MODE = {
   "ai-matic": 0.003,
   "ai-matic-x": 0.003,
+  "ai-matic-bbo": 0.003,
   "ai-matic-tree": 0.003,
   "ai-matic-pro": 0.003,
   "ai-matic-amd": 0.003,
@@ -225,6 +226,20 @@ export default function Dashboard({
         execution: "TP 2.2R + partial 1R · time stop ~2h",
       };
     }
+    if (riskMode === "ai-matic-bbo") {
+      const strictness = bot.settings?.entryStrictness ?? "ultra";
+      return {
+        label: "AI-MATIC-BBO",
+        subtitle: "HTF Bias + EMA Pullback + Micro Break + BBO",
+        symbols: SUPPORTED_SYMBOLS,
+        timeframes: "1h context · 4h bias · 5m trigger · 1m exec",
+        session: "24/7",
+        risk: "Risk 0.30% equity/trade · hard gate + score >= 60",
+        riskPct: RISK_PCT_BY_MODE["ai-matic-bbo"],
+        entry: `Strictness: ${strictness.toUpperCase()} · Trend pullback only`,
+        execution: "BBO fresh <1000ms · HOLD/PARTIAL/EXIT checklist",
+      };
+    }
     if (riskMode === "ai-matic-pro") {
       return {
         label: "AI-MATIC-PRO MTF Fibo",
@@ -309,6 +324,16 @@ export default function Dashboard({
         ...AI_MATIC_CORE_CHECKLIST_DEFAULTS,
       },
       "ai-matic-x": base,
+      "ai-matic-bbo": {
+        "HTF context 1h trend": true,
+        "HTF bias 4h EMA50/EMA200": true,
+        "Trend pullback family": true,
+        "EMA20/EMA50 pullback valid": true,
+        "Micro break confirm": true,
+        "Hard gate (spread/funding/ATR/macro)": true,
+        "BBO fresh < 1000ms": true,
+        "Soft score >= 60": true,
+      },
       "ai-matic-tree": base,
       "ai-matic-pro": {
         "4H trend confirmed (SMA50 + swing sequence)": true,

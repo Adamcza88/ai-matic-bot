@@ -14,6 +14,7 @@ export interface AISettings {
     | "ai-matic-x"
     | "ai-matic-amd"
     | "ai-matic-olikella"
+    | "ai-matic-bbo"
     | "ai-matic-tree"
     | "ai-matic-pro";
   trendGateMode: "adaptive" | "follow" | "reverse";

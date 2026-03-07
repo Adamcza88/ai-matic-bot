@@ -21,6 +21,7 @@ export type Profile =
   | "AI-MATIC-X"
   | "AI-MATIC-AMD"
   | "AI-MATIC-OLIkella"
+  | "AI-MATIC-BBO"
   | "AI-MATIC-TREE"
   | "AI-MATIC-PRO";
 

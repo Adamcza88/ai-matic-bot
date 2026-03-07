@@ -91,6 +91,7 @@ const FEED_TIMEFRAME_MS_BY_RISK_MODE: Record<AISettings["riskMode"], number> = {
   "ai-matic-x": 60_000,
   "ai-matic-amd": 60_000,
   "ai-matic-olikella": 5 * 60_000,
+  "ai-matic-bbo": 60_000,
   "ai-matic-tree": 60_000,
   "ai-matic-pro": 60_000,
 };
@@ -111,6 +112,7 @@ const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
   "ai-matic-x": 0.003,
   "ai-matic-amd": 0.003,
   "ai-matic-olikella": OLIKELLA_RISK_PER_TRADE,
+  "ai-matic-bbo": 0.003,
   "ai-matic-tree": 0.003,
   "ai-matic-pro": 0.003,
 };
@@ -119,6 +121,7 @@ const CORE_V2_COOLDOWN_MS: Record<AISettings["riskMode"], number> = {
   "ai-matic-x": 0,
   "ai-matic-amd": 0,
   "ai-matic-olikella": 0,
+  "ai-matic-bbo": 0,
   "ai-matic-tree": 0,
   "ai-matic-pro": 0,
 };
@@ -127,6 +130,7 @@ const CORE_V2_VOLUME_PCTL: Record<AISettings["riskMode"], number> = {
   "ai-matic-x": 70,
   "ai-matic-amd": 65,
   "ai-matic-olikella": 50,
+  "ai-matic-bbo": 65,
   "ai-matic-tree": 65,
   "ai-matic-pro": 65,
 };
@@ -140,6 +144,7 @@ const CORE_V2_SCORE_GATE: Record<
   "ai-matic-x": { major: 12, alt: 13 },
   "ai-matic-amd": { major: 12, alt: 12 },
   "ai-matic-olikella": { major: 10, alt: 99 },
+  "ai-matic-bbo": { major: 11, alt: 13 },
   "ai-matic-tree": { major: 11, alt: 13 },
   "ai-matic-pro": { major: 10, alt: 10 },
 };
@@ -4830,6 +4835,13 @@ const TRAIL_PROFILE_BY_RISK_MODE: Record<
     retracementRate: AI_MATIC_TRAIL_RETRACE_PCT,
   },
   "ai-matic-olikella": { activateR: 0.6, lockR: 0.3 },
+  "ai-matic-bbo": {
+    activateR: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
+    lockR: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
+    retracementRate: TREE_TRAIL_PCT_MIN,
+    activateAtrMult: TREE_TRAIL_K_ATR,
+    lockAtrMult: TREE_TRAIL_K_ATR,
+  },
   "ai-matic-tree": {
     activateR: AI_MATIC_TRAIL_ACTIVATE_ATR_MULT,
     lockR: AI_MATIC_TRAIL_RETRACE_ATR_MULT,
@@ -4850,6 +4862,7 @@ const PROFILE_BY_RISK_MODE: Record<AISettings["riskMode"], Profile> = {
   "ai-matic-x": "AI-MATIC-X",
   "ai-matic-amd": "AI-MATIC-AMD",
   "ai-matic-olikella": OLIKELLA_PROFILE_LABEL,
+  "ai-matic-bbo": "AI-MATIC-BBO",
   "ai-matic-tree": "AI-MATIC-TREE",
   "ai-matic-pro": "AI-MATIC-PRO",
 };
@@ -4885,7 +4898,11 @@ export function useTradingBot(
       settings.entryStrictness === "base"
         ? "ultra"
         : settings.entryStrictness;
-    if (settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree") {
+    if (
+      settings.riskMode === "ai-matic" ||
+      settings.riskMode === "ai-matic-tree" ||
+      settings.riskMode === "ai-matic-bbo"
+    ) {
       return {
         ...baseConfig,
         strategyProfile: "ai-matic-tree",
@@ -5978,6 +5995,7 @@ export function useTradingBot(
         settings.riskMode === "ai-matic" ||
         settings.riskMode === "ai-matic-amd" ||
         settings.riskMode === "ai-matic-x" ||
+        settings.riskMode === "ai-matic-bbo" ||
         settings.riskMode === "ai-matic-tree" ||
         settings.riskMode === "ai-matic-pro";
       if (symbolMode === "off") return null;
@@ -5997,7 +6015,9 @@ export function useTradingBot(
       const isAiMaticCoreProfile = false;
       const isAmdProfile = settings.riskMode === "ai-matic-amd";
       const isTreeProfile =
-        settings.riskMode === "ai-matic-tree" || settings.riskMode === "ai-matic";
+        settings.riskMode === "ai-matic-tree" ||
+        settings.riskMode === "ai-matic-bbo" ||
+        settings.riskMode === "ai-matic";
       const usePercentActivation =
         isScalpProfile ||
         isAiMaticCoreProfile ||
@@ -6655,6 +6675,7 @@ export function useTradingBot(
         if (Number.isFinite(currentTrail) && currentTrail > 0) {
           const isTreeProfile =
             settingsRef.current.riskMode === "ai-matic-tree" ||
+            settingsRef.current.riskMode === "ai-matic-bbo" ||
             settingsRef.current.riskMode === "ai-matic";
           const price = toNumber(pos.markPrice);
           if (isTreeProfile && Number.isFinite(price) && price > 0) {
@@ -6959,7 +6980,9 @@ export function useTradingBot(
       const ltfMatchesSignal = (signalDir: "BULL" | "BEAR") =>
         !hasLtf || (ltfIsTrend && ltfDir === signalDir);
       const isAiMaticProfile =
-        settings.riskMode === "ai-matic" || settings.riskMode === "ai-matic-tree";
+        settings.riskMode === "ai-matic" ||
+        settings.riskMode === "ai-matic-tree" ||
+        settings.riskMode === "ai-matic-bbo";
       const trendLabel = (dir: string) => {
         if (dir === "BULL") return "Bull";
         if (dir === "BEAR") return "Bear";
@@ -7386,7 +7409,7 @@ export function useTradingBot(
       const threshold =
         altseasonGateActive
           ? baseThreshold
-          : settings.riskMode === "ai-matic-tree"
+          : settings.riskMode === "ai-matic-tree" || settings.riskMode === "ai-matic-bbo"
           ? strongTrend
             ? scoreCfg.major
             : scoreCfg.alt
@@ -10559,6 +10582,7 @@ export function useTradingBot(
 
       const isTreeProfile =
         settingsRef.current.riskMode === "ai-matic-tree" ||
+        settingsRef.current.riskMode === "ai-matic-bbo" ||
         settingsRef.current.riskMode === "ai-matic";
 
       const trendGateSetting = settingsRef.current.trendGateMode ?? "adaptive";
