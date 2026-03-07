@@ -49,3 +49,15 @@ test("AMD profile is wired in settings and dashboard", () => {
   assert.ok(dashboard.includes("AI-MATIC-AMD"));
   assert.ok(hook.includes("evaluateAmdGates"));
 });
+
+test("BBO profile is wired in settings, dashboard and hook", () => {
+  const settings = readFileSync("src/components/SettingsPanel.tsx", "utf8");
+  const dashboard = readFileSync("src/components/Dashboard.tsx", "utf8");
+  const hook = readFileSync("src/hooks/useTradingBot.ts", "utf8");
+
+  assert.ok(settings.includes("ai-matic-bbo"));
+  assert.ok(settings.includes("AI-Matic-BBO"));
+  assert.ok(dashboard.includes("ai-matic-bbo"));
+  assert.ok(dashboard.includes("AI-MATIC-BBO"));
+  assert.ok(hook.includes("\"ai-matic-bbo\""));
+});

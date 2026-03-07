@@ -7206,7 +7206,8 @@ export function useTradingBot(
         Number.isFinite(core?.volumeCurrent) &&
         Number.isFinite(volumeThreshold) &&
         core!.volumeCurrent >= volumeThreshold;
-      const requireMicro = settings.riskMode === "ai-matic-x";
+      const requireMicro =
+        settings.riskMode === "ai-matic-x" || settings.riskMode === "ai-matic-bbo";
       const pullbackOk =
         !requireMicro
           ? true

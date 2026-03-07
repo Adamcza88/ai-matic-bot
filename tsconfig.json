@@ -9,6 +9,10 @@
     "strict": false,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "typeRoots": [
+      "./types",
+      "./node_modules/@types"
+    ],
     "baseUrl": ".",
     "paths": {
       "@/*": [
@@ -17,6 +21,7 @@
     }
   },
   "include": [
-    "src"
+    "src",
+    "types"
   ],
 }

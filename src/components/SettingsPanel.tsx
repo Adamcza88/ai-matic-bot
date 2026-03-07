@@ -371,21 +371,11 @@ const SettingsPanel: React.FC<Props> = ({
     "AMD: Inversion FVG confirm",
     "AMD: Target model valid",
   ];
-  const bboGateNames = [
-    "HTF context 1h trend",
-    "HTF bias 4h EMA50/EMA200",
-    "Trend pullback family",
-    "EMA20/EMA50 pullback valid",
-    "Micro break confirm",
-    "Hard gate (spread/funding/ATR/macro)",
-    "BBO fresh < 1000ms",
-    "Soft score >= 60",
-  ];
   const checklistGatesByProfile: Record<AISettings["riskMode"], string[]> = {
     "ai-matic": [...AI_MATIC_CORE_GATE_NAMES],
     "ai-matic-x": coreV2GateNames,
     "ai-matic-amd": amdGateNames,
-    "ai-matic-bbo": bboGateNames,
+    "ai-matic-bbo": coreV2GateNames,
     "ai-matic-tree": coreV2GateNames,
     "ai-matic-olikella": [
       ...OLIKELLA_GATE_NAMES,
@@ -1125,7 +1115,7 @@ const SettingsPanel: React.FC<Props> = ({
           {local.riskMode === "ai-matic-tree" || local.riskMode === "ai-matic-bbo" ? (
             <div className="grid gap-2">
               <p className="text-sm font-medium leading-none">
-                TREE sizing mode
+                TREE/BBO sizing mode
               </p>
               <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
                 <div className="flex items-center justify-between gap-3">

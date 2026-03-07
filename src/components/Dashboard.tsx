@@ -324,16 +324,7 @@ export default function Dashboard({
         ...AI_MATIC_CORE_CHECKLIST_DEFAULTS,
       },
       "ai-matic-x": base,
-      "ai-matic-bbo": {
-        "HTF context 1h trend": true,
-        "HTF bias 4h EMA50/EMA200": true,
-        "Trend pullback family": true,
-        "EMA20/EMA50 pullback valid": true,
-        "Micro break confirm": true,
-        "Hard gate (spread/funding/ATR/macro)": true,
-        "BBO fresh < 1000ms": true,
-        "Soft score >= 60": true,
-      },
+      "ai-matic-bbo": base,
       "ai-matic-tree": base,
       "ai-matic-pro": {
         "4H trend confirmed (SMA50 + swing sequence)": true,
