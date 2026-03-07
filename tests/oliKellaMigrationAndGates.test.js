@@ -70,3 +70,10 @@ test("PRO diagnostics preserve pending gate status", () => {
   const hook = readFileSync("src/hooks/useTradingBot.ts", "utf8");
   assert.ok(hook.includes("addGate(gate.name, gate.ok, gate.detail, gate.pending)"));
 });
+
+test("PRO profile is wired in persistent aggregator", () => {
+  const aggregator = readFileSync("server/persistentAggregator.js", "utf8");
+
+  assert.ok(aggregator.includes("evaluateAiMaticProStrategyForSymbol"));
+  assert.ok(aggregator.includes('if (riskMode === "ai-matic-pro") return evaluateAiMaticProStrategyForSymbol;'));
+});

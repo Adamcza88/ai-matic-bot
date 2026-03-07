@@ -10,6 +10,7 @@ import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../src/constants/symb
 import { evaluateStrategyForSymbol } from "../src/engine/botEngine.js";
 import { evaluateAiMaticXStrategyForSymbol } from "../src/engine/aiMaticXStrategy.js";
 import { evaluateAiMaticAmdStrategyForSymbol } from "../src/engine/aiMaticAmdStrategy.js";
+import { evaluateAiMaticProStrategyForSymbol } from "../src/engine/aiMaticProStrategy.js";
 import { evaluateAiMaticOliKellaStrategyForSymbol } from "../src/engine/aiMaticOliKellaStrategy.js";
 
 const FAST_POLL_MS = 30_000;
@@ -239,6 +240,7 @@ function mergeCandles(existing, incoming, maxCandles) {
 function selectDecisionFn(riskMode) {
   if (riskMode === "ai-matic-x") return evaluateAiMaticXStrategyForSymbol;
   if (riskMode === "ai-matic-amd") return evaluateAiMaticAmdStrategyForSymbol;
+  if (riskMode === "ai-matic-pro") return evaluateAiMaticProStrategyForSymbol;
   if (riskMode === "ai-matic-olikella") return evaluateAiMaticOliKellaStrategyForSymbol;
   return evaluateStrategyForSymbol;
 }
