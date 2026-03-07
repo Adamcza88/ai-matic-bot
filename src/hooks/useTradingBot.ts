@@ -189,7 +189,6 @@ const OLIKELLA_TRAIL_RETRACE_BASE_RATE = 0.004;
 const OLIKELLA_TRAIL_RETRACE_MIN_RATE = 0.002;
 const OLIKELLA_TRAIL_RETRACE_MAX_RATE = 0.01;
 const OLIKELLA_TRAIL_RETRACE_ATR_MULT = 0.8;
-const SCALP_OPEN_POS_SNAPSHOT_TTL_MS = 12_000;
 const SCALP_MIN_POSITION_NOTIONAL_USD = 1;
 const SCALP_MIN_POSITION_SIZE_FALLBACK = 1e-6;
 const PRO_MTF_FIBO_GATE_NAMES = [
@@ -7739,22 +7738,9 @@ export function useTradingBot(
           isWaitingLimitEntryOrder(order) &&
           String(order?.symbol ?? "") === symbol
       );
-      const scalpSnapshotFresh =
-        positionsSnapshotAtRef.current > 0 &&
-        ordersSnapshotAtRef.current > 0 &&
-        now - positionsSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS &&
-        now - ordersSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS;
-      const hasAnyOpenPosition = scalpSnapshotFresh
-        ? positionsRef.current.some((position) => hasMeaningfulOpenPosition(position))
-        : false;
-      const hasAnyWaitingLimitEntryOrder = scalpSnapshotFresh
-        ? ordersRef.current.some((order) => isWaitingLimitEntryOrder(order))
-        : false;
       const scalpOpenPosBlocked =
         isScalpProfile &&
-        !context.hasPosition &&
-        !hasWaitingLimitOrder &&
-        (hasAnyOpenPosition || hasAnyWaitingLimitEntryOrder);
+        (context.hasPosition || hasWaitingLimitOrder);
       const hasPendingIntent = intentPendingRef.current.has(symbol);
       const signalSideRaw = String(signal?.intent?.side ?? "")
         .trim()
@@ -10256,11 +10242,9 @@ export function useTradingBot(
         return;
       }
 
-      const hasPosition = positionsRef.current.some((p) => {
-        if (p.symbol !== symbol) return false;
-        const size = toNumber(p.size ?? p.qty);
-        return Number.isFinite(size) && size > 0;
-      });
+      const hasPosition = positionsRef.current.some(
+        (p) => p.symbol === symbol && hasMeaningfulOpenPosition(p)
+      );
       const hasEntryOrder = ordersRef.current.some(
         (order) =>
           isActiveEntryOrder(order) && String(order?.symbol ?? "") === symbol
@@ -10270,22 +10254,9 @@ export function useTradingBot(
           isWaitingLimitEntryOrder(order) &&
           String(order?.symbol ?? "") === symbol
       );
-      const scalpSnapshotFresh =
-        positionsSnapshotAtRef.current > 0 &&
-        ordersSnapshotAtRef.current > 0 &&
-        now - positionsSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS &&
-        now - ordersSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS;
-      const runtimeHasAnyOpenPosition = scalpSnapshotFresh
-        ? positionsRef.current.some((position) => hasMeaningfulOpenPosition(position))
-        : false;
-      const runtimeHasAnyWaitingLimitEntryOrder = scalpSnapshotFresh
-        ? ordersRef.current.some((order) => isWaitingLimitEntryOrder(order))
-        : false;
       const runtimeScalpOpenPosBlocked =
         scalpActive &&
-        !hasPosition &&
-        !hasWaitingLimitOrder &&
-        (runtimeHasAnyOpenPosition || runtimeHasAnyWaitingLimitEntryOrder);
+        (hasPosition || hasWaitingLimitOrder);
       const hasPendingIntent = intentPendingRef.current.has(symbol);
       const signalSideRaw = String(decision?.signal?.intent?.side ?? "")
         .trim()
@@ -10332,9 +10303,12 @@ export function useTradingBot(
               id: `open-pos-gate:${symbol}:${now}`,
               timestamp: new Date(now).toISOString(),
               action: "RISK_BLOCK",
-              message: `${symbol} OPEN_POS gate: open position or waiting limit order active${scalpSnapshotFresh ? "" : " (snapshot stale)"}`,
+              message: `${symbol} OPEN_POS gate: open position or waiting limit order active`,
             },
           ]);
+        }
+        if (hasPosition && scalpActive) {
+          void handleOliKellaInTrade(symbol, decision, now);
         }
         return;
       }
@@ -10683,22 +10657,9 @@ export function useTradingBot(
           isWaitingLimitEntryOrder(order) &&
           String(order?.symbol ?? "") === symbol
       );
-      const entryScalpSnapshotFresh =
-        positionsSnapshotAtRef.current > 0 &&
-        ordersSnapshotAtRef.current > 0 &&
-        now - positionsSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS &&
-        now - ordersSnapshotAtRef.current <= SCALP_OPEN_POS_SNAPSHOT_TTL_MS;
-      const entryHasAnyOpenPosition = entryScalpSnapshotFresh
-        ? positionsRef.current.some((position) => hasMeaningfulOpenPosition(position))
-        : false;
-      const entryHasAnyWaitingLimitEntryOrder = entryScalpSnapshotFresh
-        ? ordersRef.current.some((order) => isWaitingLimitEntryOrder(order))
-        : false;
       const entryScalpOpenPosBlocked =
         isScalpProfile &&
-        !hasSymbolPosition &&
-        !hasSymbolWaitingLimitOrder &&
-        (entryHasAnyOpenPosition || entryHasAnyWaitingLimitEntryOrder);
+        (hasSymbolPosition || hasSymbolWaitingLimitOrder);
       const decisionTrace: DecisionTraceEntry[] = [];
       const appendTrace = (gate: string, result: GateResult) => {
         decisionTrace.push({ gate, result });
@@ -10721,9 +10682,7 @@ export function useTradingBot(
         appendTrace("OpenPosGate", {
           ok: false,
           code: "OPEN_POS",
-          reason: `open position or waiting limit order active${
-            entryScalpSnapshotFresh ? "" : " (snapshot stale)"
-          }`,
+          reason: "open position or waiting limit order active",
           ttlMs: POSITION_GATE_TTL_MS,
         });
       }
