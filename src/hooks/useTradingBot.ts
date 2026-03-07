@@ -189,7 +189,7 @@ const OLIKELLA_TRAIL_RETRACE_BASE_RATE = 0.004;
 const OLIKELLA_TRAIL_RETRACE_MIN_RATE = 0.002;
 const OLIKELLA_TRAIL_RETRACE_MAX_RATE = 0.01;
 const OLIKELLA_TRAIL_RETRACE_ATR_MULT = 0.8;
-const OLIKELLA_MANUAL_EXITS_ENABLED = false;
+const AUTO_MANUAL_EXITS_ENABLED = false;
 const SCALP_MIN_POSITION_NOTIONAL_USD = 1;
 const SCALP_MIN_POSITION_SIZE_FALLBACK = 1e-6;
 const PRO_MTF_FIBO_GATE_NAMES = [
@@ -6302,40 +6302,51 @@ export function useTradingBot(
           ) {
             aiMaticProgress.lastNoProgressExitAttempt = now;
             aiMaticProgressRef.current.set(positionKey, aiMaticProgress);
-            try {
-              await postJson("/order", {
-                symbol,
-                side: side === "Buy" ? "Sell" : "Buy",
-                qty: sizeRaw,
-                orderType: "Market",
-                reduceOnly: true,
-                timeInForce: "IOC",
-                positionIdx: Number.isFinite(pos.positionIdx)
-                  ? pos.positionIdx
-                  : undefined,
-              });
+            if (!AUTO_MANUAL_EXITS_ENABLED) {
               addLogEntries([
                 {
-                  id: `ai-matic:no-progress:${symbol}:${now}`,
+                  id: `ai-matic:no-progress:disabled:${symbol}:${now}`,
                   timestamp: new Date(now).toISOString(),
                   action: "STATUS",
-                  message: `${symbol} AI-MATIC no-progress exit (${adaptiveRisk.noProgressBars} bars, MFE < ${formatNumber(
-                    adaptiveRisk.noProgressMfeAtr,
-                    2
-                  )} ATR)`,
+                  message: `${symbol} AI-MATIC no-progress auto-exit disabled (TP/SL/TS only)`,
                 },
               ]);
-            } catch (err) {
-              addLogEntries([
-                {
-                  id: `ai-matic:no-progress:error:${symbol}:${now}`,
-                  timestamp: new Date(now).toISOString(),
-                  action: "ERROR",
-                  message: `${symbol} AI-MATIC no-progress exit failed: ${asErrorMessage(err)}`,
-                },
-              ]);
+            } else {
+              try {
+                await postJson("/order", {
+                  symbol,
+                  side: side === "Buy" ? "Sell" : "Buy",
+                  qty: sizeRaw,
+                  orderType: "Market",
+                  reduceOnly: true,
+                  timeInForce: "IOC",
+                  positionIdx: Number.isFinite(pos.positionIdx)
+                    ? pos.positionIdx
+                    : undefined,
+                });
+                addLogEntries([
+                  {
+                    id: `ai-matic:no-progress:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "STATUS",
+                    message: `${symbol} AI-MATIC no-progress exit (${adaptiveRisk.noProgressBars} bars, MFE < ${formatNumber(
+                      adaptiveRisk.noProgressMfeAtr,
+                      2
+                    )} ATR)`,
+                  },
+                ]);
+              } catch (err) {
+                addLogEntries([
+                  {
+                    id: `ai-matic:no-progress:error:${symbol}:${now}`,
+                    timestamp: new Date(now).toISOString(),
+                    action: "ERROR",
+                    message: `${symbol} AI-MATIC no-progress exit failed: ${asErrorMessage(err)}`,
+                  },
+                ]);
+              }
+              continue;
             }
-            continue;
           }
           const mfeR =
             Number.isFinite(aiMaticProgress.entryRisk) &&
@@ -6425,17 +6436,19 @@ export function useTradingBot(
               proState.lastAttempt = now;
               const reduceQty = Math.min(sizeRaw, sizeRaw * 0.6);
               try {
-                await postJson("/order", {
-                  symbol,
-                  side: side === "Buy" ? "Sell" : "Buy",
-                  qty: reduceQty,
-                  orderType: "Market",
-                  reduceOnly: true,
-                  timeInForce: "IOC",
-                  positionIdx: Number.isFinite(pos.positionIdx)
-                    ? pos.positionIdx
-                    : undefined,
-                });
+                if (AUTO_MANUAL_EXITS_ENABLED && Number.isFinite(reduceQty) && reduceQty > 0) {
+                  await postJson("/order", {
+                    symbol,
+                    side: side === "Buy" ? "Sell" : "Buy",
+                    qty: reduceQty,
+                    orderType: "Market",
+                    reduceOnly: true,
+                    timeInForce: "IOC",
+                    positionIdx: Number.isFinite(pos.positionIdx)
+                      ? pos.positionIdx
+                      : undefined,
+                  });
+                }
                 proState.t1Taken = true;
                 proPartialRef.current.set(positionKey, proState);
                 const minDistance = resolveMinProtectionDistance(entry);
@@ -6456,7 +6469,9 @@ export function useTradingBot(
                     id: `pro-t1:${symbol}:${now}`,
                     timestamp: new Date(now).toISOString(),
                     action: "STATUS",
-                    message: `${symbol} PRO T1 partial 60% + BE`,
+                    message: AUTO_MANUAL_EXITS_ENABLED
+                      ? `${symbol} PRO T1 partial 60% + BE`
+                      : `${symbol} PRO T1 partial disabled -> BE only (TP/SL/TS)`,
                   },
                 ]);
               } catch (err) {
@@ -6465,7 +6480,7 @@ export function useTradingBot(
                     id: `pro-t1:error:${symbol}:${now}`,
                     timestamp: new Date(now).toISOString(),
                     action: "ERROR",
-                    message: `${symbol} PRO T1 partial failed: ${asErrorMessage(err)}`,
+                    message: `${symbol} PRO T1 handling failed: ${asErrorMessage(err)}`,
                   },
                 ]);
               }
@@ -6504,17 +6519,19 @@ export function useTradingBot(
             const reduceQty = Math.min(sizeRaw, sizeRaw * tp1Fraction);
             const closeSide = side === "Buy" ? "Sell" : "Buy";
             try {
-              await postJson("/order", {
-                symbol,
-                side: closeSide,
-                qty: reduceQty,
-                orderType: "Market",
-                reduceOnly: true,
-                timeInForce: "IOC",
-                positionIdx: Number.isFinite(pos.positionIdx)
-                  ? pos.positionIdx
-                  : undefined,
-              });
+              if (AUTO_MANUAL_EXITS_ENABLED) {
+                await postJson("/order", {
+                  symbol,
+                  side: closeSide,
+                  qty: reduceQty,
+                  orderType: "Market",
+                  reduceOnly: true,
+                  timeInForce: "IOC",
+                  positionIdx: Number.isFinite(pos.positionIdx)
+                    ? pos.positionIdx
+                    : undefined,
+                });
+              }
               partialExitRef.current.set(positionKey, {
                 taken: true,
                 lastAttempt: now,
@@ -6536,9 +6553,11 @@ export function useTradingBot(
                   id: `partial:ai-matic:${symbol}:${now}`,
                   timestamp: new Date(now).toISOString(),
                   action: "STATUS",
-                  message: `${symbol} AI-MATIC TP1 partial ${Math.round(
-                    tp1Fraction * 100
-                  )}% + BE`,
+                  message: AUTO_MANUAL_EXITS_ENABLED
+                    ? `${symbol} AI-MATIC TP1 partial ${Math.round(
+                        tp1Fraction * 100
+                      )}% + BE`
+                    : `${symbol} AI-MATIC TP1 partial disabled -> BE only (TP/SL/TS)`,
                 },
               ]);
             } catch (err) {
@@ -6547,7 +6566,7 @@ export function useTradingBot(
                   id: `partial:ai-matic:error:${symbol}:${now}`,
                   timestamp: new Date(now).toISOString(),
                   action: "ERROR",
-                  message: `${symbol} AI-MATIC TP1 partial failed: ${asErrorMessage(err)}`,
+                  message: `${symbol} AI-MATIC TP1 handling failed: ${asErrorMessage(err)}`,
                 },
               ]);
             }
@@ -6579,17 +6598,19 @@ export function useTradingBot(
             if (Number.isFinite(reduceQty) && reduceQty > 0) {
               const closeSide = side === "Buy" ? "Sell" : "Buy";
               try {
-                await postJson("/order", {
-                  symbol,
-                  side: closeSide,
-                  qty: reduceQty,
-                  orderType: "Market",
-                  reduceOnly: true,
-                  timeInForce: "IOC",
-                  positionIdx: Number.isFinite(pos.positionIdx)
-                    ? pos.positionIdx
-                    : undefined,
-                });
+                if (AUTO_MANUAL_EXITS_ENABLED) {
+                  await postJson("/order", {
+                    symbol,
+                    side: closeSide,
+                    qty: reduceQty,
+                    orderType: "Market",
+                    reduceOnly: true,
+                    timeInForce: "IOC",
+                    positionIdx: Number.isFinite(pos.positionIdx)
+                      ? pos.positionIdx
+                      : undefined,
+                  });
+                }
                 partialExitRef.current.set(positionKey, {
                   taken: true,
                   lastAttempt: now,
@@ -6611,9 +6632,11 @@ export function useTradingBot(
                     id: `partial:non-scalp:${symbol}:${now}`,
                     timestamp: new Date(now).toISOString(),
                     action: "STATUS",
-                    message: `${symbol} partial ${Math.round(
-                      NONSCALP_PARTIAL_FRACTION * 100
-                    )}% @ ${NONSCALP_PARTIAL_TAKE_R}R + BE`,
+                    message: AUTO_MANUAL_EXITS_ENABLED
+                      ? `${symbol} partial ${Math.round(
+                          NONSCALP_PARTIAL_FRACTION * 100
+                        )}% @ ${NONSCALP_PARTIAL_TAKE_R}R + BE`
+                      : `${symbol} partial exit disabled -> BE only (TP/SL/TS)`,
                   },
                 ]);
               } catch (err) {
@@ -6622,7 +6645,7 @@ export function useTradingBot(
                     id: `partial:non-scalp:error:${symbol}:${now}`,
                     timestamp: new Date(now).toISOString(),
                     action: "ERROR",
-                    message: `${symbol} partial failed: ${asErrorMessage(err)}`,
+                    message: `${symbol} partial handling failed: ${asErrorMessage(err)}`,
                   },
                 ]);
               }
@@ -9378,25 +9401,36 @@ export function useTradingBot(
       }
 
       if (killReasons.length && shouldRun(`${symbol}:kill`, 15_000)) {
-        try {
-          await submitReduceOnlyOrder(pos, Math.abs(sizeRaw));
+        if (!AUTO_MANUAL_EXITS_ENABLED) {
           addLogEntries([
             {
-              id: `scalp-kill:${symbol}:${now}`,
+              id: `scalp-kill:disabled:${symbol}:${now}`,
               timestamp: new Date(now).toISOString(),
-              action: "RISK_BLOCK",
-              message: `${symbol} scalp kill-switch: ${killReasons.join(", ")} -> EXIT`,
+              action: "STATUS",
+              message: `${symbol} scalp kill-switch disabled (TP/SL/TS only)`,
             },
           ]);
-        } catch (err) {
-          addLogEntries([
-            {
-              id: `scalp-kill:error:${symbol}:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "ERROR",
-              message: `${symbol} scalp kill failed: ${asErrorMessage(err)}`,
-            },
-          ]);
+        } else {
+          try {
+            await submitReduceOnlyOrder(pos, Math.abs(sizeRaw));
+            addLogEntries([
+              {
+                id: `scalp-kill:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "RISK_BLOCK",
+                message: `${symbol} scalp kill-switch: ${killReasons.join(", ")} -> EXIT`,
+              },
+            ]);
+          } catch (err) {
+            addLogEntries([
+              {
+                id: `scalp-kill:error:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "ERROR",
+                message: `${symbol} scalp kill failed: ${asErrorMessage(err)}`,
+              },
+            ]);
+          }
         }
         return;
       }
@@ -9409,6 +9443,17 @@ export function useTradingBot(
             Number.isFinite(core.volumeSma) &&
             core.volumeCurrent < core.volumeSma));
       if (timeDecay && shouldRun(`${symbol}:decay`, 30_000)) {
+        if (!AUTO_MANUAL_EXITS_ENABLED) {
+          addLogEntries([
+            {
+              id: `scalp-decay:disabled:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} scalp time-decay exits disabled (TP/SL/TS only)`,
+            },
+          ]);
+          return;
+        }
         if (!Number.isFinite(rMultiple) || rMultiple < 1) {
           try {
             await submitReduceOnlyOrder(pos, Math.abs(sizeRaw));
@@ -9434,6 +9479,17 @@ export function useTradingBot(
         }
         const lastPartial = scalpPartialCooldownRef.current.get(symbol) ?? 0;
         if (now - lastPartial >= 30_000) {
+          if (!AUTO_MANUAL_EXITS_ENABLED) {
+            addLogEntries([
+              {
+                id: `scalp-vol:partial:disabled:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "STATUS",
+                message: `${symbol} scalp vol partial disabled (TP/SL/TS only)`,
+              },
+            ]);
+            return;
+          }
           const partialQty = Math.abs(sizeRaw) * 0.5;
           try {
             await submitReduceOnlyOrder(pos, partialQty);
@@ -9615,7 +9671,7 @@ export function useTradingBot(
         ((side === "Buy" && exhaustionDirection === "BUY") ||
           (side === "Sell" && exhaustionDirection === "SELL"));
       if (
-        !OLIKELLA_MANUAL_EXITS_ENABLED &&
+        !AUTO_MANUAL_EXITS_ENABLED &&
         (oppositeCross || wedgeDrop || exhaustionMatches) &&
         allowAction("olikella-manual-exit-disabled", 60_000)
       ) {
