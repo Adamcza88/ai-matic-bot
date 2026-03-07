@@ -189,6 +189,8 @@ const OLIKELLA_TRAIL_RETRACE_BASE_RATE = 0.004;
 const OLIKELLA_TRAIL_RETRACE_MIN_RATE = 0.002;
 const OLIKELLA_TRAIL_RETRACE_MAX_RATE = 0.01;
 const OLIKELLA_TRAIL_RETRACE_ATR_MULT = 0.8;
+const OLIKELLA_EXIT_WARMUP_MS = 5 * 60_000;
+const OLIKELLA_EXHAUSTION_MIN_R = 0.25;
 const SCALP_MIN_POSITION_NOTIONAL_USD = 1;
 const SCALP_MIN_POSITION_SIZE_FALLBACK = 1e-6;
 const PRO_MTF_FIBO_GATE_NAMES = [
@@ -9594,6 +9596,9 @@ export function useTradingBot(
       } else if (!prevLegId && legId !== "NONE") {
         oliTrendLegRef.current.set(symbol, legId);
       }
+      const openedAtMs = toEpoch(pos.openedAt);
+      const holdMs = Number.isFinite(openedAtMs) ? Math.max(0, now - openedAtMs) : Number.POSITIVE_INFINITY;
+      const inExitWarmup = holdMs < OLIKELLA_EXIT_WARMUP_MS;
 
       const allowAction = (key: string, cooldownMs: number) => {
         const storageKey = `${symbol}:${key}`;
@@ -9607,7 +9612,11 @@ export function useTradingBot(
         side === "Buy" ? context.oppositeCrossbackLong : context.oppositeCrossbackShort;
       const wedgeDrop =
         side === "Buy" ? context.wedgeDrop.againstLong : context.wedgeDrop.againstShort;
-      if ((oppositeCross || wedgeDrop) && allowAction("olikella-hard-exit", 15_000)) {
+      if (
+        !inExitWarmup &&
+        (oppositeCross || wedgeDrop) &&
+        allowAction("olikella-hard-exit", 15_000)
+      ) {
         try {
           await submitReduceOnlyOrder(pos, sizeRaw);
           addLogEntries([
@@ -9638,7 +9647,11 @@ export function useTradingBot(
         context.exhaustion.active &&
         ((side === "Buy" && exhaustionDirection === "BUY") ||
           (side === "Sell" && exhaustionDirection === "SELL"));
-      if (exhaustionMatches && allowAction("olikella-exhaustion", 20_000)) {
+      const exhaustionEligible =
+        !inExitWarmup &&
+        Number.isFinite(rMultiple) &&
+        (rMultiple as number) >= OLIKELLA_EXHAUSTION_MIN_R;
+      if (exhaustionMatches && exhaustionEligible && allowAction("olikella-exhaustion", 20_000)) {
         const extensionCount = oliExtensionCountRef.current.get(symbol) ?? 0;
         try {
           if (extensionCount <= 0) {
