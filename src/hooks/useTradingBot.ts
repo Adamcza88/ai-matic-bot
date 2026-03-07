@@ -10527,27 +10527,6 @@ export function useTradingBot(
 
       let aiMaticCoreEval: GroupedCoreGateEval | null = null;
       let amdEval: ReturnType<typeof evaluateAmdGates> | null = null;
-      if (isAiMaticProfile) {
-        aiMaticCoreEval = buildAiMaticCoreGroupedGates({
-          coreGates: coreEval.gates,
-          trace: decisionTrace,
-        });
-        if (!aiMaticCoreEval.pass) {
-          const fails = aiMaticCoreEval.gates
-            .filter((gate) => !gate.ok)
-            .map((gate) => gate.name);
-          const passCount = aiMaticCoreEval.gates.filter((gate) => gate.ok).length;
-          addLogEntries([
-            {
-              id: `ai-matic-gate:${signalId}`,
-              timestamp: new Date(now).toISOString(),
-              action: "RISK_BLOCK",
-              message: `${symbol} AI-MATIC Core gates ${passCount}/${aiMaticCoreEval.gates.length} -> NO TRADE${fails.length ? ` (${fails.join(" | ")})` : ""}`,
-            },
-          ]);
-          return;
-        }
-      }
       if (isAmdProfile) {
         amdEval = evaluateAmdGates(symbol, decision, signal);
         if (!amdEval.pass) {
@@ -11087,6 +11066,28 @@ export function useTradingBot(
           },
         ]);
         return;
+      }
+
+      if (isAiMaticProfile) {
+        aiMaticCoreEval = buildAiMaticCoreGroupedGates({
+          coreGates: coreEval.gates,
+          trace: decisionTrace,
+        });
+        if (!aiMaticCoreEval.pass) {
+          const fails = aiMaticCoreEval.gates
+            .filter((gate) => !gate.ok)
+            .map((gate) => gate.name);
+          const passCount = aiMaticCoreEval.gates.filter((gate) => gate.ok).length;
+          addLogEntries([
+            {
+              id: `ai-matic-gate:${signalId}`,
+              timestamp: new Date(now).toISOString(),
+              action: "RISK_BLOCK",
+              message: `${symbol} AI-MATIC Core gates ${passCount}/${aiMaticCoreEval.gates.length} -> NO TRADE${fails.length ? ` (${fails.join(" | ")})` : ""}`,
+            },
+          ]);
+          return;
+        }
       }
 
       if (isTreeProfile) {
