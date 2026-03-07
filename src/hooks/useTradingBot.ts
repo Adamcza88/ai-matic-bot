@@ -189,8 +189,7 @@ const OLIKELLA_TRAIL_RETRACE_BASE_RATE = 0.004;
 const OLIKELLA_TRAIL_RETRACE_MIN_RATE = 0.002;
 const OLIKELLA_TRAIL_RETRACE_MAX_RATE = 0.01;
 const OLIKELLA_TRAIL_RETRACE_ATR_MULT = 0.8;
-const OLIKELLA_EXIT_WARMUP_MS = 5 * 60_000;
-const OLIKELLA_EXHAUSTION_MIN_R = 0.25;
+const OLIKELLA_MANUAL_EXITS_ENABLED = false;
 const SCALP_MIN_POSITION_NOTIONAL_USD = 1;
 const SCALP_MIN_POSITION_SIZE_FALLBACK = 1e-6;
 const PRO_MTF_FIBO_GATE_NAMES = [
@@ -9596,9 +9595,6 @@ export function useTradingBot(
       } else if (!prevLegId && legId !== "NONE") {
         oliTrendLegRef.current.set(symbol, legId);
       }
-      const openedAtMs = toEpoch(pos.openedAt);
-      const holdMs = Number.isFinite(openedAtMs) ? Math.max(0, now - openedAtMs) : Number.POSITIVE_INFINITY;
-      const inExitWarmup = holdMs < OLIKELLA_EXIT_WARMUP_MS;
 
       const allowAction = (key: string, cooldownMs: number) => {
         const storageKey = `${symbol}:${key}`;
@@ -9612,81 +9608,25 @@ export function useTradingBot(
         side === "Buy" ? context.oppositeCrossbackLong : context.oppositeCrossbackShort;
       const wedgeDrop =
         side === "Buy" ? context.wedgeDrop.againstLong : context.wedgeDrop.againstShort;
-      if (
-        !inExitWarmup &&
-        (oppositeCross || wedgeDrop) &&
-        allowAction("olikella-hard-exit", 15_000)
-      ) {
-        try {
-          await submitReduceOnlyOrder(pos, sizeRaw);
-          addLogEntries([
-            {
-              id: `olikella:hard-exit:${symbol}:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "RISK_BLOCK",
-              message: `${symbol} OLIkella hard exit: ${
-                wedgeDrop ? "Wedge Drop" : "Opposite EMA8/EMA16 Cross"
-              }`,
-            },
-          ]);
-        } catch (err) {
-          addLogEntries([
-            {
-              id: `olikella:hard-exit:error:${symbol}:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "ERROR",
-              message: `${symbol} OLIkella hard exit failed: ${asErrorMessage(err)}`,
-            },
-          ]);
-        }
-        return;
-      }
 
       const exhaustionDirection = context.exhaustion.direction;
       const exhaustionMatches =
         context.exhaustion.active &&
         ((side === "Buy" && exhaustionDirection === "BUY") ||
           (side === "Sell" && exhaustionDirection === "SELL"));
-      const exhaustionEligible =
-        !inExitWarmup &&
-        Number.isFinite(rMultiple) &&
-        (rMultiple as number) >= OLIKELLA_EXHAUSTION_MIN_R;
-      if (exhaustionMatches && exhaustionEligible && allowAction("olikella-exhaustion", 20_000)) {
-        const extensionCount = oliExtensionCountRef.current.get(symbol) ?? 0;
-        try {
-          if (extensionCount <= 0) {
-            await submitReduceOnlyOrder(pos, sizeRaw * 0.6);
-            oliExtensionCountRef.current.set(symbol, 1);
-            addLogEntries([
-              {
-                id: `olikella:exhaustion:partial:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "STATUS",
-                message: `${symbol} OLIkella exhaustion #1 -> partial 60%`,
-              },
-            ]);
-          } else {
-            await submitReduceOnlyOrder(pos, sizeRaw);
-            oliExtensionCountRef.current.set(symbol, extensionCount + 1);
-            addLogEntries([
-              {
-                id: `olikella:exhaustion:full:${symbol}:${now}`,
-                timestamp: new Date(now).toISOString(),
-                action: "STATUS",
-                message: `${symbol} OLIkella exhaustion #2 -> full exit`,
-              },
-            ]);
-          }
-        } catch (err) {
-          addLogEntries([
-            {
-              id: `olikella:exhaustion:error:${symbol}:${now}`,
-              timestamp: new Date(now).toISOString(),
-              action: "ERROR",
-              message: `${symbol} OLIkella exhaustion handling failed: ${asErrorMessage(err)}`,
-            },
-          ]);
-        }
+      if (
+        !OLIKELLA_MANUAL_EXITS_ENABLED &&
+        (oppositeCross || wedgeDrop || exhaustionMatches) &&
+        allowAction("olikella-manual-exit-disabled", 60_000)
+      ) {
+        addLogEntries([
+          {
+            id: `olikella:manual-exit:disabled:${symbol}:${now}`,
+            timestamp: new Date(now).toISOString(),
+            action: "STATUS",
+            message: `${symbol} OLIkella manual exits disabled (TP/SL/TS only)`,
+          },
+        ]);
       }
 
       if (Number.isFinite(rMultiple) && rMultiple >= 1 && allowAction("olikella-be", 20_000)) {
