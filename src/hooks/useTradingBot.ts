@@ -2883,6 +2883,8 @@ export const __aiMaticTest = {
   evaluateAiMaticGatesCore,
   buildAiMaticCoreGroupedGates,
   buildAiMaticContext,
+  resolveTrailingActivationPrice,
+  resolveOliKellaTrailConfig,
 };
 
 
@@ -4690,19 +4692,18 @@ function resolveMinProtectionDistance(entry: number, atr?: number) {
   return Math.max(pctDistance, atrDistance);
 }
 
-function resolveMinTrailingActivationDistance(entry: number) {
-  if (!Number.isFinite(entry) || entry <= 0) return Number.NaN;
-  return entry * MIN_TRAILING_ACTIVATION_DISTANCE_PCT;
-}
-
 function resolveTrailingActivationPrice(
   entry: number,
   side: "Buy" | "Sell",
-  requestedMove: number
+  requestedMove: number,
+  minActivationDistancePct = MIN_TRAILING_ACTIVATION_DISTANCE_PCT
 ) {
   if (!Number.isFinite(entry) || entry <= 0) return Number.NaN;
   if (!Number.isFinite(requestedMove) || requestedMove <= 0) return Number.NaN;
-  const minMove = resolveMinTrailingActivationDistance(entry);
+  const minMove =
+    Number.isFinite(minActivationDistancePct) && minActivationDistancePct > 0
+      ? entry * minActivationDistancePct
+      : Number.NaN;
   const move =
     Number.isFinite(minMove) && minMove > 0
       ? Math.max(requestedMove, minMove)
@@ -4739,7 +4740,8 @@ function resolveOliKellaTrailConfig(args: {
   const trailingActivePrice = resolveTrailingActivationPrice(
     entry,
     side,
-    riskDistance * OLIKELLA_TRAIL_ACTIVATION_R
+    riskDistance * OLIKELLA_TRAIL_ACTIVATION_R,
+    0
   );
   if (!Number.isFinite(trailingStop) || trailingStop <= 0) return null;
   if (!Number.isFinite(trailingActivePrice) || trailingActivePrice <= 0) return null;

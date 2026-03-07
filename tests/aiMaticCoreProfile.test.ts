@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { __aiMaticTest } from "../src/hooks/useTradingBot";
 
-const { buildAiMaticCoreGroupedGates } = __aiMaticTest;
+const {
+  buildAiMaticCoreGroupedGates,
+  resolveTrailingActivationPrice,
+  resolveOliKellaTrailConfig,
+} = __aiMaticTest;
 
 test("AI-MATIC Core grouped gates pass when all groups pass", () => {
   const grouped = buildAiMaticCoreGroupedGates({
@@ -62,4 +66,20 @@ test("AI-MATIC Core grouped gates fail when one grouped bucket fails", () => {
   assert.equal(grouped.pass, false);
   assert.equal(grouped.gates[2]?.ok, false);
   assert.equal(grouped.gates[3]?.ok, false);
+});
+
+test("trailing activation keeps global minimum distance for generic profiles", () => {
+  const activePrice = resolveTrailingActivationPrice(100, "Buy", 0.2);
+  assert.equal(activePrice, 100.5);
+});
+
+test("OLIkella trail activation stays at 1R even when risk is below 0.5%", () => {
+  const trail = resolveOliKellaTrailConfig({
+    entry: 100,
+    sl: 99.8,
+    side: "Buy",
+    atr: 0.05,
+  });
+  assert.ok(trail);
+  assert.equal(trail?.trailingActivePrice, 100.2);
 });
