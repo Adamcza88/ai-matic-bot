@@ -61,3 +61,8 @@ test("BBO profile is wired in settings, dashboard and hook", () => {
   assert.ok(dashboard.includes("AI-MATIC-BBO"));
   assert.ok(hook.includes("\"ai-matic-bbo\""));
 });
+
+test("PRO diagnostics preserve pending gate status", () => {
+  const hook = readFileSync("src/hooks/useTradingBot.ts", "utf8");
+  assert.ok(hook.includes("addGate(gate.name, gate.ok, gate.detail, gate.pending)"));
+});

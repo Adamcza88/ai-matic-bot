@@ -8026,7 +8026,14 @@ export function useTradingBot(
           oliContext?.gates.riskRulesDetail ?? "risk 1.5% | max positions 5 | max orders 20"
         );
       } else {
-        coreEval.gates.forEach((gate) => addGate(gate.name, gate.ok, gate.detail));
+        coreEval.gates.forEach((gate) =>
+          addGate(
+            gate.name,
+            gate.ok,
+            gate.detail,
+            "pending" in gate ? Boolean(gate.pending) : undefined
+          )
+        );
       }
 
       const hardEnabled = isAmdProfile ? true : false;
