@@ -28,6 +28,8 @@ export type AiMaticOliKellaContext = {
   timeframe: "4h";
   direction: "BUY" | "SELL" | "NONE";
   trendOk: boolean;
+  htfStructureOk: boolean;
+  htfStructureDetail: string;
   trendLegId: string;
   ema10: number;
   atr14: number;
@@ -57,11 +59,22 @@ export type AiMaticOliKellaContext = {
     riskRulesOk: boolean;
     riskRulesDetail: string;
   };
+  missingPatternReasons: string[];
+  gateFailureReasons: string[];
+  dataHealth: {
+    ltfOpenTime: number;
+    h1OpenTime: number;
+    h4OpenTime: number;
+    h4SyncOk: boolean;
+    detail: string;
+  };
   canScaleIn: boolean;
 };
 
 const H1_MINUTES = 60;
 const H4_MINUTES = 240;
+const FIVE_MINUTES_MS = 5 * 60_000;
+const H4_MS = H4_MINUTES * 60_000;
 const BREAKOUT_PCT = 0.004;
 const BREAKOUT_VOLUME_MULT = 1.3;
 const EXHAUSTION_DISTANCE_PCT = 0.09;
@@ -122,6 +135,38 @@ function detectCrossDirection(ema8: number[], ema16: number[]) {
   if (ema8[last] > ema16[last]) return "BUY" as const;
   if (ema8[last] < ema16[last]) return "SELL" as const;
   return "NONE" as const;
+}
+
+function resolveH4TimeframeSync(args: {
+  ltfBars: Candle[];
+  h1Bars: Candle[];
+  h4Bars: Candle[];
+}) {
+  const { ltfBars, h1Bars, h4Bars } = args;
+  const ltfOpenTime = Number(ltfBars[ltfBars.length - 1]?.openTime ?? Number.NaN);
+  const h1OpenTime = Number(h1Bars[h1Bars.length - 1]?.openTime ?? Number.NaN);
+  const h4OpenTime = Number(h4Bars[h4Bars.length - 1]?.openTime ?? Number.NaN);
+  if (!Number.isFinite(ltfOpenTime) || !Number.isFinite(h4OpenTime)) {
+    return {
+      ltfOpenTime,
+      h1OpenTime,
+      h4OpenTime,
+      h4SyncOk: false,
+      detail: "missing timeframe timestamps (H4 vs 5m)",
+    };
+  }
+  const expectedH4Open = Math.floor(ltfOpenTime / H4_MS) * H4_MS;
+  const driftMs = Math.abs(h4OpenTime - expectedH4Open);
+  const h4SyncOk = driftMs <= FIVE_MINUTES_MS;
+  return {
+    ltfOpenTime,
+    h1OpenTime,
+    h4OpenTime,
+    h4SyncOk,
+    detail: h4SyncOk
+      ? `H4 synced to 5m (${Math.round(driftMs / 60_000)}m drift)`
+      : `H4/5m desync ${Math.round(driftMs / 60_000)}m`,
+  };
 }
 
 function detectEma8Ema16Entry(args: {
@@ -529,6 +574,8 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
         timeframe: "4h",
         direction: "NONE",
         trendOk: false,
+        htfStructureOk: false,
+        htfStructureDetail: "missing H4 structure",
         trendLegId: "NONE",
         ema10: Number.NaN,
         atr14: Number.NaN,
@@ -557,6 +604,15 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
           exitConditionsDetail: "insufficient 4h history",
           riskRulesOk: true,
           riskRulesDetail: "1.5% risk | max positions 5 | max orders 20",
+        },
+        missingPatternReasons: ["need >=40 H4 bars"],
+        gateFailureReasons: ["H4_HISTORY_INSUFFICIENT"],
+        dataHealth: {
+          ltfOpenTime: Number(candles[candles.length - 1]?.openTime ?? Number.NaN),
+          h1OpenTime: Number.NaN,
+          h4OpenTime: Number.NaN,
+          h4SyncOk: false,
+          detail: "missing timeframe timestamps (H4 vs 5m)",
         },
         canScaleIn: false,
       } satisfies AiMaticOliKellaContext,
@@ -660,18 +716,23 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
   const h4PriorityShort = [wedgePopShort, baseBreakShort, crossbackShort].filter(
     (item): item is PatternDetection => Boolean(item?.ok)
   );
-  if (structureLong?.ok) h4PriorityLong.push(structureLong);
-  if (structureShort?.ok) h4PriorityShort.push(structureShort);
   const selectedH4Pattern =
     direction === "BUY"
       ? h4PriorityLong[0] ?? null
       : direction === "SELL"
         ? h4PriorityShort[0] ?? null
         : null;
-  const selectedCross =
+  const structurePattern =
     direction === "BUY"
-      ? crossEntryLong ?? continuationLong
+      ? structureLong
       : direction === "SELL"
+        ? structureShort
+        : null;
+  const htfStructureOk = Boolean(structurePattern?.ok);
+  const selectedCross =
+    htfStructureOk && direction === "BUY"
+      ? crossEntryLong ?? continuationLong
+      : htfStructureOk && direction === "SELL"
         ? crossEntryShort ?? continuationShort
         : null;
   const exhaustion = detectExhaustion({
@@ -685,8 +746,14 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     ema20: h4Ema20,
     volumeSma20: h4VolumeSma20,
   });
+  const timeframeSync = resolveH4TimeframeSync({
+    ltfBars: candles,
+    h1Bars: h1,
+    h4Bars: h4,
+  });
 
-  const selected = selectedCross && selectedH4Pattern ? selectedCross : null;
+  const selected =
+    selectedCross && selectedH4Pattern && htfStructureOk ? selectedCross : null;
   const entry = h1Closes[lastH1];
   const signal =
     selected && Number.isFinite(entry)
@@ -715,24 +782,56 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     : "NONE";
 
   const checklistDetail =
-    selectedH4Pattern && selectedCross
-      ? `${selectedH4Pattern.pattern} on H4 + ${selectedCross.detail}`
-      : !selectedH4Pattern
-        ? "no valid H4 pattern on latest candle"
-        : "no valid 1h EMA8/EMA16 state (cross or continuation)";
+    selectedH4Pattern && selectedCross && htfStructureOk
+      ? `${selectedH4Pattern.pattern} on H4 + ${selectedCross.detail} | HTF structure OK`
+      : !htfStructureOk
+        ? "HTF structure filter failed before LTF signal"
+        : !selectedH4Pattern
+          ? "no valid H4 pattern on latest candle"
+          : "no valid 1h EMA8/EMA16 state (cross or continuation)";
   const entryDetail =
-    trendOk && selectedH4Pattern
+    trendOk && selectedH4Pattern && htfStructureOk
       ? `${direction} 1h EMA8/EMA16 | H4 pattern | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)}`
-      : "missing 1h EMA8/EMA16 direction or H4 pattern";
+      : "missing HTF structure filter or 1h EMA8/EMA16 direction or H4 pattern";
   const exitReady = Number.isFinite(h1Ema8[lastH1]) && Number.isFinite(h1Atr[lastH1]);
   const exitDetail = exhaustion.active
     ? `H4 exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
     : "watch H4 exhaustion >=9% + vol>=1.5x, opposite EMA8/EMA16 cross, H4 wedge drop";
+  const directionalPatternOk =
+    direction === "BUY"
+      ? Boolean(wedgePopLong?.ok || baseBreakLong?.ok || crossbackLong?.ok)
+      : direction === "SELL"
+        ? Boolean(wedgePopShort?.ok || baseBreakShort?.ok || crossbackShort?.ok)
+        : false;
+  const missingPatternReasons: string[] = [];
+  if (!trendOk) {
+    missingPatternReasons.push("EMA trend missing");
+  }
+  if (!htfStructureOk) {
+    missingPatternReasons.push("HTF structure missing");
+  }
+  if (trendOk && !directionalPatternOk) {
+    missingPatternReasons.push("EMA trend + breakout 0.4% + volume >=1.3x not met");
+  }
+  if (trendOk && htfStructureOk && !selectedCross) {
+    missingPatternReasons.push("1h EMA8/EMA16 cross or continuation missing");
+  }
+  const gateFailureReasons: string[] = [];
+  if (!trendOk) gateFailureReasons.push("EMA_TREND_MISSING");
+  if (!htfStructureOk) gateFailureReasons.push("HTF_STRUCTURE_MISSING");
+  if (trendOk && !directionalPatternOk) gateFailureReasons.push("H4_PATTERN_MISSING");
+  if (trendOk && htfStructureOk && !selectedCross) {
+    gateFailureReasons.push("LTF_EMA8_16_MISSING");
+  }
 
   const context: AiMaticOliKellaContext = {
     timeframe: "4h",
     direction,
     trendOk,
+    htfStructureOk,
+    htfStructureDetail: htfStructureOk
+      ? structurePattern?.detail ?? "HTF structure filter ok"
+      : "HTF structure filter failed",
     trendLegId,
     ema10: h1Ema8[lastH1],
     atr14: h1Atr[lastH1],
@@ -765,16 +864,26 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     },
     wedgeDrop,
     gates: {
-      signalChecklistOk: Boolean(selectedCross && selectedH4Pattern),
+      signalChecklistOk: Boolean(selectedCross && selectedH4Pattern && htfStructureOk),
       signalChecklistDetail: checklistDetail,
-      entryConditionsOk: trendOk && Boolean(selectedCross && selectedH4Pattern),
+      entryConditionsOk:
+        trendOk && Boolean(selectedCross && selectedH4Pattern && htfStructureOk),
       entryConditionsDetail: entryDetail,
       exitConditionsOk: exitReady,
       exitConditionsDetail: exitDetail,
       riskRulesOk: true,
       riskRulesDetail: "risk 1.5% | max positions 5 | max orders 20",
     },
-    canScaleIn: trendOk && Boolean(selectedCross && selectedH4Pattern),
+    missingPatternReasons,
+    gateFailureReasons,
+    dataHealth: {
+      ltfOpenTime: timeframeSync.ltfOpenTime,
+      h1OpenTime: timeframeSync.h1OpenTime,
+      h4OpenTime: timeframeSync.h4OpenTime,
+      h4SyncOk: timeframeSync.h4SyncOk,
+      detail: timeframeSync.detail,
+    },
+    canScaleIn: trendOk && Boolean(selectedCross && selectedH4Pattern && htfStructureOk),
   };
 
   return {

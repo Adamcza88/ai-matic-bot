@@ -144,6 +144,7 @@ export default function SignalDetailPanel({
     diag?.relayReason ||
     skipReason ||
     entryBlocks[0] ||
+    (Array.isArray(diag?.gateFailureReasons) ? diag?.gateFailureReasons[0] : "") ||
     diag?.executionReason ||
     diag?.manageReason ||
     "Bez aktivního důvodu exekuce.";

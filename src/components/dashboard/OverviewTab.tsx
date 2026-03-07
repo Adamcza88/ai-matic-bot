@@ -10,6 +10,7 @@ type OverviewTabProps = {
   assetPnlHistory: AssetPnlMap | null;
   pnlLoaded: boolean;
   resetPnlHistory: () => void;
+  strategyLabel: string;
   scanDiagnostics: ScanDiagnostics | null;
   scanLoaded: boolean;
   selectedSymbol: string | null;
@@ -30,6 +31,20 @@ function parseRatio(detail?: string) {
   return `${Number(match[1])}/${Number(match[2])}`;
 }
 
+function formatFeedAgeMs(value?: number) {
+  if (!Number.isFinite(value)) return "N/A";
+  const ms = value as number;
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
+function heatColor(netPnl: number, maxAbs: number) {
+  if (!Number.isFinite(netPnl) || maxAbs <= 0) return "rgba(148,163,184,0.18)";
+  const intensity = Math.max(0.12, Math.min(0.9, Math.abs(netPnl) / maxAbs));
+  return netPnl >= 0
+    ? `rgba(0,200,83,${intensity})`
+    : `rgba(211,47,47,${intensity})`;
+}
+
 function gateByPrefix(diag: SymbolDiagnostic | undefined, prefix: string) {
   return (Array.isArray(diag?.gates) ? diag.gates : []).find((gate: DiagnosticGate) =>
     gate.name.toLowerCase().startsWith(prefix.toLowerCase())
@@ -41,6 +56,7 @@ export default function OverviewTab({
   assetPnlHistory,
   pnlLoaded,
   resetPnlHistory,
+  strategyLabel,
   scanDiagnostics,
   scanLoaded,
   selectedSymbol,
@@ -83,9 +99,19 @@ export default function OverviewTab({
     activeDiag?.relayReason ||
     skipReason ||
     (Array.isArray(activeDiag?.entryBlockReasons) ? activeDiag?.entryBlockReasons[0] : "") ||
+    (Array.isArray(activeDiag?.gateFailureReasons) ? activeDiag?.gateFailureReasons[0] : "") ||
       activeDiag?.executionReason ||
       activeDiag?.manageReason
   );
+  const dataHealthStatus = activeDiag?.dataHealthStatus ?? (
+    activeDiag?.feedAgeOk === false ? "UNSAFE" : "SAFE"
+  );
+  const dataHealthReasons = Array.isArray(activeDiag?.dataHealthReasons)
+    ? activeDiag?.dataHealthReasons
+    : [];
+  const feedAgeText = formatFeedAgeMs(Number(activeDiag?.feedAgeMs));
+  const tfSyncDetail = String(activeDiag?.timeframeSyncDetail ?? "N/A");
+  const watchdogFails = Number(activeDiag?.dataIntegrityWatchdogFails ?? 0);
 
   const pnlRows = useMemo(() => {
     if (!assetPnlHistory) return [];
@@ -105,6 +131,12 @@ export default function OverviewTab({
       })
       .sort((a, b) => a.netPnl - b.netPnl);
   }, [allowedSymbols, assetPnlHistory]);
+  const maxAbsNetPnl = useMemo(() => {
+    const values = pnlRows
+      .map((row) => Math.abs(row.netPnl))
+      .filter((value) => Number.isFinite(value));
+    return values.length > 0 ? Math.max(...values) : 0;
+  }, [pnlRows]);
 
   const totalPages = Math.max(1, Math.ceil(pnlRows.length / PNL_HISTORY_PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -173,6 +205,49 @@ export default function OverviewTab({
       </Panel>
 
       <Panel
+        title="Data Health"
+        description={activeSymbol ? `Trh ${activeSymbol}` : "Není vybraný trh"}
+        fileId="DATA HEALTH ID: TR-14-DH"
+      >
+        {!scanLoaded ? (
+          <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
+            Načítám Data Health…
+          </div>
+        ) : !activeSymbol ? (
+          <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
+            Není dostupný žádný trh.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+              <div className="text-xs text-muted-foreground">STAV</div>
+              <div className={`mt-1 text-lg font-semibold ${dataHealthStatus === "SAFE" ? "text-[#00C853]" : "text-[#D32F2F]"}`}>
+                {dataHealthStatus}
+              </div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+              <div className="text-xs text-muted-foreground">Feed latency</div>
+              <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{feedAgeText}</div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+              <div className="text-xs text-muted-foreground">Sync H4 vs 5m</div>
+              <div className="mt-1 text-sm text-foreground">{tfSyncDetail}</div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+              <div className="text-xs text-muted-foreground">Watchdog fails</div>
+              <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{watchdogFails}</div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-background/30 p-3 md:col-span-2">
+              <div className="text-xs text-muted-foreground">Detail</div>
+              <div className="mt-1 text-sm text-foreground">
+                {dataHealthReasons.length > 0 ? dataHealthReasons.join(" | ") : "Bez aktivního data health alertu."}
+              </div>
+            </div>
+          </div>
+        )}
+      </Panel>
+
+      <Panel
         title="Historie PnL podle trhu"
         fileId="LEDGER ARCHIVE ID: TR-10-H"
         action={
@@ -196,6 +271,25 @@ export default function OverviewTab({
           </div>
         ) : (
           <div className="space-y-2">
+            <div className="rounded-lg border border-border/60 bg-background/25 p-3">
+              <div className="text-xs text-muted-foreground">
+                PnL heatmap (strategie: {strategyLabel})
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                {pnlRows.slice(0, 12).map((row) => (
+                  <div
+                    key={`heat-${row.symbol}`}
+                    className="rounded-md border border-border/60 px-2 py-1.5"
+                    style={{ backgroundColor: heatColor(row.netPnl, maxAbsNetPnl) }}
+                    title={`${row.symbol} ${formatSignedMoney(row.netPnl)}`}
+                  >
+                    <div className="text-[11px] font-mono text-foreground">{row.symbol}</div>
+                    <div className="text-xs tabular-nums text-foreground">{formatSignedMoney(row.netPnl)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="h-[320px] overflow-hidden rounded-lg border border-border/60">
               <table className="w-full text-sm">
                 <thead className="text-xs text-muted-foreground">

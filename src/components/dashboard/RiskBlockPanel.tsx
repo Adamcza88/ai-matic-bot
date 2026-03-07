@@ -1,13 +1,14 @@
 import { useMemo } from "react";
 import { formatMoney, formatSignedMoney } from "@/lib/uiFormat";
 import type { ScanDiagnostics } from "@/lib/diagnosticsTypes";
-import type { LogEntry } from "@/types";
+import type { ActivePosition, LogEntry } from "@/types";
 
 type RiskBlockPanelProps = {
   allowedSymbols: string[];
   scanDiagnostics: ScanDiagnostics | null;
   logEntries: LogEntry[] | null;
   logsLoaded: boolean;
+  activePositions?: ActivePosition[];
   riskLevel: "LOW" | "ELEVATED" | "CRITICAL";
   dailyPnl?: number;
   maxDailyLossUsd?: number;
@@ -41,6 +42,7 @@ export default function RiskBlockPanel({
   scanDiagnostics,
   logEntries,
   logsLoaded,
+  activePositions,
   riskLevel,
   dailyPnl,
   maxDailyLossUsd,
@@ -85,6 +87,31 @@ export default function RiskBlockPanel({
       })
       .filter(Boolean) as string[];
   }, [allowedSymbols, scanDiagnostics]);
+
+  const exposureByMarket = useMemo(() => {
+    const rows = Array.isArray(activePositions) ? activePositions : [];
+    const map = new Map<string, number>();
+    for (const position of rows) {
+      const symbol = String(position?.symbol ?? "").toUpperCase();
+      const qty = Number(position?.qty ?? position?.size);
+      const entry = Number(position?.entryPrice);
+      const stop = Number(position?.sl);
+      if (!symbol || !Number.isFinite(qty) || !Number.isFinite(entry) || !Number.isFinite(stop)) {
+        continue;
+      }
+      const riskUsd = Math.abs(entry - stop) * Math.abs(qty);
+      map.set(symbol, (map.get(symbol) ?? 0) + riskUsd);
+    }
+    return Array.from(map.entries())
+      .map(([symbol, riskUsd]) => ({ symbol, riskUsd }))
+      .sort((a, b) => b.riskUsd - a.riskUsd)
+      .slice(0, 6);
+  }, [activePositions]);
+  const marketExposureTotal = exposureByMarket.reduce((sum, row) => sum + row.riskUsd, 0);
+  const marketExposureMax = exposureByMarket.reduce(
+    (max, row) => Math.max(max, row.riskUsd),
+    0
+  );
 
   const shellTone =
     riskLevel === "CRITICAL"
@@ -135,6 +162,36 @@ export default function RiskBlockPanel({
             />
           </div>
         </div>
+      </div>
+
+      <div className="mt-3 rounded-lg border border-border/60 bg-background/35 p-2.5">
+        <div className="text-xs text-muted-foreground">Exposure per market (risk USD)</div>
+        {exposureByMarket.length === 0 ? (
+          <div className="mt-1 text-xs text-muted-foreground">Bez otevřené market exposure.</div>
+        ) : (
+          <div className="mt-1 space-y-1.5 text-xs">
+            {exposureByMarket.map((row) => {
+              const pctOfBook = marketExposureTotal > 0 ? (row.riskUsd / marketExposureTotal) * 100 : 0;
+              const width = marketExposureMax > 0 ? Math.max(8, (row.riskUsd / marketExposureMax) * 100) : 8;
+              return (
+                <div key={row.symbol}>
+                  <div className="flex items-center justify-between gap-2 text-muted-foreground">
+                    <span className="font-mono">{row.symbol}</span>
+                    <span className="tabular-nums">
+                      {formatMoney(row.riskUsd)} · {pctOfBook.toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full rounded-full bg-background/60">
+                    <div
+                      className="h-1.5 rounded-full bg-[#00C853]/80"
+                      style={{ width: `${Math.min(100, width)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="mt-3 rounded-lg border border-border/60 bg-background/35 p-2.5">

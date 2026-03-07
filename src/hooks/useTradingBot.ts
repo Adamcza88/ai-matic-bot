@@ -159,6 +159,8 @@ const SIGNAL_LOG_SIMILAR_THROTTLE_MS = 6_000;
 const SIGNAL_LOG_PRICE_BUCKET_RATIO = 0.0002;
 const SIGNAL_LOG_MIN_PRICE_BUCKET = 0.0005;
 const SKIP_LOG_THROTTLE_MS = 10_000;
+const DATA_INTEGRITY_WATCHDOG_FAILS = 3;
+const DATA_INTEGRITY_WATCHDOG_LOG_TTL_MS = 30_000;
 const POSITION_GATE_TTL_MS = 60_000;
 const MAX_POS_GATE_TTL_MS = 30_000;
 const MAX_ORDERS_GATE_TTL_MS = 30_000;
@@ -2378,6 +2380,58 @@ function formatGroupedGateDetail(
   const fails = selected.filter((gate) => !gate.ok).map((gate) => gate.name);
   if (!fails.length) return `${selected.length}/${selected.length}`;
   return fails.slice(0, 2).join(" | ");
+}
+
+function summarizeOliGateFailures(args: {
+  oliContext?: AiMaticOliKellaContext;
+  gateEnabled?: (name: string) => boolean;
+}) {
+  const { oliContext, gateEnabled } = args;
+  const rows = [
+    {
+      name: OLIKELLA_GATE_SIGNAL_CHECKLIST,
+      ok: Boolean(oliContext?.gates.signalChecklistOk),
+      detail: oliContext?.gates.signalChecklistDetail ?? "no valid OLIkella setup",
+    },
+    {
+      name: OLIKELLA_GATE_ENTRY_CONDITIONS,
+      ok: Boolean(oliContext?.gates.entryConditionsOk),
+      detail: oliContext?.gates.entryConditionsDetail ?? "entry conditions missing",
+    },
+    {
+      name: OLIKELLA_GATE_EXIT_CONDITIONS,
+      ok: Boolean(oliContext?.gates.exitConditionsOk),
+      detail: oliContext?.gates.exitConditionsDetail ?? "exit lifecycle unavailable",
+    },
+    {
+      name: OLIKELLA_GATE_RISK_RULES,
+      ok: Boolean(oliContext?.gates.riskRulesOk),
+      detail: oliContext?.gates.riskRulesDetail ?? "risk 1.5% | max positions 5 | max orders 20",
+    },
+  ];
+  const failedGateRows = rows.filter((row) =>
+    gateEnabled ? gateEnabled(row.name) && !row.ok : !row.ok
+  );
+  const failedGateDetails = failedGateRows.map(
+    (row) => `${row.name}: ${row.detail}`
+  );
+  const explicitFailureReasons = Array.isArray(oliContext?.gateFailureReasons)
+    ? oliContext.gateFailureReasons
+    : [];
+  const missingPatternReasons = Array.isArray(oliContext?.missingPatternReasons)
+    ? oliContext.missingPatternReasons
+    : [];
+  const allReasons = Array.from(
+    new Set([
+      ...failedGateDetails,
+      ...explicitFailureReasons.map((reason) => `FAIL_CODE:${reason}`),
+      ...missingPatternReasons.map((reason) => `PATTERN:${reason}`),
+    ])
+  );
+  return {
+    failedGateNames: failedGateRows.map((row) => row.name),
+    allReasons,
+  };
 }
 
 function buildAiMaticCoreGroupedGates(args: {
@@ -5081,6 +5135,9 @@ export function useTradingBot(
     Map<string, { fingerprint: string; expiresAt: number }>
   >(new Map());
   const entryBlockFingerprintRef = useRef<Map<string, string>>(new Map());
+  const dataIntegrityWatchdogRef = useRef<
+    Map<string, { fails: number; lastLogAt: number }>
+  >(new Map());
   const fastOkRef = useRef(false);
   const slowOkRef = useRef(false);
   const modeRef = useRef<TradingMode | undefined>(mode);
@@ -7864,6 +7921,57 @@ export function useTradingBot(
     return "SCAN";
   }, [isActiveEntryOrder]);
 
+  const updateDataIntegrityWatchdog = useCallback(
+    (
+      symbol: string,
+      diag: {
+        dataHealthStatus?: "SAFE" | "UNSAFE";
+        dataHealthReasons?: string[];
+      },
+      now: number
+    ) => {
+      const status = diag?.dataHealthStatus ?? "UNSAFE";
+      const reasons = Array.isArray(diag?.dataHealthReasons)
+        ? diag.dataHealthReasons
+        : [];
+      const prev = dataIntegrityWatchdogRef.current.get(symbol) ?? {
+        fails: 0,
+        lastLogAt: 0,
+      };
+      if (status === "SAFE") {
+        if (prev.fails !== 0) {
+          dataIntegrityWatchdogRef.current.set(symbol, {
+            fails: 0,
+            lastLogAt: prev.lastLogAt,
+          });
+        }
+        return 0;
+      }
+      const nextFails = prev.fails + 1;
+      let nextLastLogAt = prev.lastLogAt;
+      if (
+        nextFails >= DATA_INTEGRITY_WATCHDOG_FAILS &&
+        now - prev.lastLogAt >= DATA_INTEGRITY_WATCHDOG_LOG_TTL_MS
+      ) {
+        nextLastLogAt = now;
+        addLogEntries([
+          {
+            id: `watchdog:data-integrity:${symbol}:${now}`,
+            timestamp: new Date(now).toISOString(),
+            action: "ERROR",
+            message: `${symbol} DATA_INTEGRITY_WATCHDOG fails=${nextFails} reason=${reasons.join(" | ") || "unknown"}`,
+          },
+        ]);
+      }
+      dataIntegrityWatchdogRef.current.set(symbol, {
+        fails: nextFails,
+        lastLogAt: nextLastLogAt,
+      });
+      return nextFails;
+    },
+    [addLogEntries]
+  );
+
   const buildScanDiagnostics = useCallback(
     (symbol: string, decision: PriceFeedDecision, lastScanTs: number) => {
       const context = getSymbolContext(symbol, decision);
@@ -7883,6 +7991,10 @@ export function useTradingBot(
       });
       const relayPaused = capacityStatus.reason !== "OK";
       if (relayPaused) {
+        const dataHealthReasons =
+          feedAgeOk === false
+            ? [`feed latency ${Math.round(feedAgeMs ?? 0)}ms exceeds max ${Math.round(dataHealth.maxLagMs)}ms`]
+            : [];
         return {
           symbolState,
           manageReason: capacityStatus.reason,
@@ -7899,6 +8011,14 @@ export function useTradingBot(
           qualityScore: null,
           qualityThreshold: null,
           qualityPass: false,
+          dataHealthStatus:
+            dataHealthReasons.length > 0 ? ("UNSAFE" as const) : ("SAFE" as const),
+          dataHealthReasons,
+          timeframeSyncOk: null,
+          timeframeSyncDetail: undefined,
+          dataIntegrityWatchdogFails:
+            dataIntegrityWatchdogRef.current.get(symbol)?.fails ?? 0,
+          gateFailureReasons: [],
           lastScanTs,
           feedAgeMs,
           feedAgeOk,
@@ -7906,6 +8026,10 @@ export function useTradingBot(
       }
       const openPositionPaused = symbolOpenPositionPauseRef.current.has(symbol);
       if (openPositionPaused) {
+        const dataHealthReasons =
+          feedAgeOk === false
+            ? [`feed latency ${Math.round(feedAgeMs ?? 0)}ms exceeds max ${Math.round(dataHealth.maxLagMs)}ms`]
+            : [];
         return {
           symbolState: "HOLD",
           manageReason: "OPEN_POSITION",
@@ -7922,6 +8046,14 @@ export function useTradingBot(
           qualityScore: null,
           qualityThreshold: null,
           qualityPass: false,
+          dataHealthStatus:
+            dataHealthReasons.length > 0 ? ("UNSAFE" as const) : ("SAFE" as const),
+          dataHealthReasons,
+          timeframeSyncOk: null,
+          timeframeSyncDetail: undefined,
+          dataIntegrityWatchdogFails:
+            dataIntegrityWatchdogRef.current.get(symbol)?.fails ?? 0,
+          gateFailureReasons: [],
           lastScanTs,
           feedAgeMs,
           feedAgeOk,
@@ -7964,6 +8096,17 @@ export function useTradingBot(
       const oliContext = (decision as any)?.oliKella as
         | AiMaticOliKellaContext
         | undefined;
+      const oliGateFailureSummary = isScalpProfile
+        ? summarizeOliGateFailures({ oliContext })
+        : { failedGateNames: [] as string[], allReasons: [] as string[] };
+      const timeframeSyncOk = isScalpProfile
+        ? typeof oliContext?.dataHealth?.h4SyncOk === "boolean"
+          ? oliContext.dataHealth.h4SyncOk
+          : null
+        : null;
+      const timeframeSyncDetail = isScalpProfile
+        ? oliContext?.dataHealth?.detail ?? "missing timeframe sync data"
+        : undefined;
       const hasEntryOrder = ordersRef.current.some(
         (order) =>
           isEntryOrder(order) && String(order?.symbol ?? "") === symbol
@@ -8281,6 +8424,21 @@ export function useTradingBot(
           : executionAllowed === false
             ? "BLOCKED"
             : "WAITING";
+      const dataHealthReasons: string[] = [];
+      if (feedAgeOk === false) {
+        dataHealthReasons.push(
+          `feed latency ${Math.round(feedAgeMs ?? 0)}ms exceeds max ${Math.round(
+            dataHealth.maxLagMs
+          )}ms`
+        );
+      }
+      if (timeframeSyncOk === false) {
+        dataHealthReasons.push(timeframeSyncDetail ?? "H4/5m timeframe desync");
+      }
+      const dataHealthStatus: "SAFE" | "UNSAFE" =
+        dataHealthReasons.length > 0 ? "UNSAFE" : "SAFE";
+      const watchdogFails =
+        dataIntegrityWatchdogRef.current.get(symbol)?.fails ?? 0;
 
       const profileKey = String(context.settings.riskMode ?? "ai-matic");
       let entryGateRules: { name: string; passed: boolean; pending?: boolean }[] = [];
@@ -8457,6 +8615,12 @@ export function useTradingBot(
         qualityScore: quality.score,
         qualityThreshold: quality.threshold,
         qualityPass: quality.pass,
+        dataHealthStatus,
+        dataHealthReasons,
+        timeframeSyncOk,
+        timeframeSyncDetail,
+        dataIntegrityWatchdogFails: watchdogFails,
+        gateFailureReasons: oliGateFailureSummary.allReasons,
         proTrend: (decision as any)?.proMtfFibo?.trend ?? null,
         lastScanTs,
         feedAgeMs,
@@ -8486,19 +8650,24 @@ export function useTradingBot(
   const refreshDiagnosticsFromDecisions = useCallback(() => {
     const entries = Object.entries(decisionRef.current);
     if (!entries.length) return;
-    setScanDiagnostics((prev) => {
-      const next = { ...(prev ?? {}) };
-      for (const [symbol, data] of entries) {
-        if (!activeSymbols.includes(symbol as Symbol)) continue;
-        next[symbol] = buildScanDiagnostics(
-          symbol,
-          data.decision,
-          data.ts
-        );
-      }
-      return next;
-    });
-  }, [activeSymbols, buildScanDiagnostics]);
+    const now = Date.now();
+    const prepared: Record<string, any> = {};
+    for (const [symbol, data] of entries) {
+      if (!activeSymbols.includes(symbol as Symbol)) continue;
+      const diag = buildScanDiagnostics(
+        symbol,
+        data.decision,
+        data.ts
+      );
+      updateDataIntegrityWatchdog(symbol, diag, now);
+      prepared[symbol] = diag;
+    }
+    if (!Object.keys(prepared).length) return;
+    setScanDiagnostics((prev) => ({
+      ...(prev ?? {}),
+      ...prepared,
+    }));
+  }, [activeSymbols, buildScanDiagnostics, updateDataIntegrityWatchdog]);
 
   const updateGateOverrides = useCallback(
     (overrides: Record<string, boolean>) => {
@@ -10460,14 +10629,19 @@ export function useTradingBot(
       const skipDiagWhilePaused = relayPaused && !relayForceScan;
       feedLastTickRef.current = now;
       symbolTickRef.current.set(symbol, now);
+      let latestDiag:
+        | ReturnType<typeof buildScanDiagnostics>
+        | null = null;
       if (!skipDiagWhilePaused) {
         decisionRef.current[symbol] = { decision, ts: now };
+        latestDiag = buildScanDiagnostics(symbol, decision, now);
+        updateDataIntegrityWatchdog(symbol, latestDiag, now);
       }
       const portfolioRegime = resolvePortfolioRegime(now);
       if (isSelected && !skipDiagWhilePaused) {
         setScanDiagnostics((prev) => ({
           ...(prev ?? {}),
-          [symbol]: buildScanDiagnostics(symbol, decision, now),
+          [symbol]: latestDiag ?? buildScanDiagnostics(symbol, decision, now),
         }));
       }
       if (!isSelected) {
@@ -10643,9 +10817,11 @@ export function useTradingBot(
             },
           ]);
           if (isSelected) {
+            const diag = buildScanDiagnostics(symbol, decision, now);
+            updateDataIntegrityWatchdog(symbol, diag, now);
             setScanDiagnostics((prev) => ({
               ...(prev ?? {}),
-              [symbol]: buildScanDiagnostics(symbol, decision, now),
+              [symbol]: diag,
             }));
           }
         }
@@ -11179,38 +11355,17 @@ export function useTradingBot(
       const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
       const protectedEntry = false;
       if (isScalpProfile) {
-        const gateFails: string[] = [];
-        if (
-          isGateEnabled(OLIKELLA_GATE_SIGNAL_CHECKLIST) &&
-          !oliContext?.gates.signalChecklistOk
-        ) {
-          gateFails.push(OLIKELLA_GATE_SIGNAL_CHECKLIST);
-        }
-        if (
-          isGateEnabled(OLIKELLA_GATE_ENTRY_CONDITIONS) &&
-          !oliContext?.gates.entryConditionsOk
-        ) {
-          gateFails.push(OLIKELLA_GATE_ENTRY_CONDITIONS);
-        }
-        if (
-          isGateEnabled(OLIKELLA_GATE_EXIT_CONDITIONS) &&
-          !oliContext?.gates.exitConditionsOk
-        ) {
-          gateFails.push(OLIKELLA_GATE_EXIT_CONDITIONS);
-        }
-        if (
-          isGateEnabled(OLIKELLA_GATE_RISK_RULES) &&
-          !oliContext?.gates.riskRulesOk
-        ) {
-          gateFails.push(OLIKELLA_GATE_RISK_RULES);
-        }
-        if (gateFails.length > 0) {
+        const gateFailureSummary = summarizeOliGateFailures({
+          oliContext,
+          gateEnabled: isGateEnabled,
+        });
+        if (gateFailureSummary.failedGateNames.length > 0) {
           addLogEntries([
             {
               id: `signal:olikella-gate:${signalId}`,
               timestamp: new Date(now).toISOString(),
               action: "RISK_BLOCK",
-              message: `${symbol} OLIkella gate failed: ${gateFails.join(", ")} -> NO TRADE`,
+              message: `${symbol} OLIkella gate failed [BACKTEST]: ${gateFailureSummary.allReasons.join(" || ")} -> NO TRADE`,
             },
           ]);
           return;
@@ -12136,6 +12291,7 @@ export function useTradingBot(
       resolveSymbolLeverage,
       shouldEmitBlockLog,
       submitReduceOnlyOrder,
+      updateDataIntegrityWatchdog,
       useTestnet,
     ]
   );
@@ -12180,6 +12336,7 @@ export function useTradingBot(
     leverageBySymbolRef.current.clear();
     blockDecisionCooldownRef.current.clear();
     entryBlockFingerprintRef.current.clear();
+    dataIntegrityWatchdogRef.current.clear();
     positionStateSignatureRef.current = "";
     positionsSnapshotAtRef.current = 0;
     ordersSnapshotAtRef.current = 0;

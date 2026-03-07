@@ -1,6 +1,8 @@
 import { State, Trend, resampleCandles, } from "./botEngine.js";
 import { computeAtr, computeEma } from "./ta.js";
 const H4_MINUTES = 240;
+const FIVE_MINUTES_MS = 5 * 60_000;
+const H4_MS = H4_MINUTES * 60_000;
 const BREAKOUT_PCT = 0.004;
 const BREAKOUT_VOLUME_MULT = 1.3;
 const EXHAUSTION_DISTANCE_PCT = 0.09;
@@ -165,6 +167,37 @@ function detectWedgePop(args) {
         detail: `narrowing wedge | breakout 0.4% | vol>=1.3x`,
     };
 }
+function detectH4StructurePattern(args) {
+    const { bars, side } = args;
+    const last = bars.length - 1;
+    const setupLen = 8;
+    if (last < setupLen + 1)
+        return null;
+    const setup = bars.slice(last - setupLen, last + 1);
+    const half = Math.floor(setup.length / 2);
+    if (half < 2)
+        return null;
+    const first = setup.slice(0, half);
+    const second = setup.slice(half);
+    const firstHigh = Math.max(...first.map((bar) => bar.high));
+    const secondHigh = Math.max(...second.map((bar) => bar.high));
+    const firstLow = Math.min(...first.map((bar) => bar.low));
+    const secondLow = Math.min(...second.map((bar) => bar.low));
+    const narrowing = secondHigh <= firstHigh && secondLow >= firstLow;
+    if (!narrowing)
+        return null;
+    const stop = side === "buy"
+        ? Math.min(...setup.map((bar) => bar.low))
+        : Math.max(...setup.map((bar) => bar.high));
+    return {
+        ok: true,
+        pattern: "H4_STRUCTURE",
+        side,
+        stop,
+        pivot: bars[last].close,
+        detail: "H4 structure compression (higher lows + lower highs)",
+    };
+}
 function detectEmaCrossback(args) {
     const { bars, ema10, ema20, side } = args;
     const last = bars.length - 1;
@@ -240,6 +273,32 @@ function detectWedgeDrop(args) {
             signal.close > ema,
     };
 }
+function resolveH4TimeframeSync(args) {
+    const { sourceBars, h4Bars } = args;
+    const ltfOpenTime = Number(sourceBars[sourceBars.length - 1]?.openTime ?? Number.NaN);
+    const h4OpenTime = Number(h4Bars[h4Bars.length - 1]?.openTime ?? Number.NaN);
+    if (!Number.isFinite(ltfOpenTime) || !Number.isFinite(h4OpenTime)) {
+        return {
+            ltfOpenTime,
+            h1OpenTime: Number.NaN,
+            h4OpenTime,
+            h4SyncOk: false,
+            detail: "missing timeframe timestamps (H4 vs 5m)",
+        };
+    }
+    const expectedH4Open = Math.floor(ltfOpenTime / H4_MS) * H4_MS;
+    const driftMs = Math.abs(h4OpenTime - expectedH4Open);
+    const h4SyncOk = driftMs <= FIVE_MINUTES_MS;
+    return {
+        ltfOpenTime,
+        h1OpenTime: Number.NaN,
+        h4OpenTime,
+        h4SyncOk,
+        detail: h4SyncOk
+            ? `H4 synced to 5m (${Math.round(driftMs / 60_000)}m drift)`
+            : `H4/5m desync ${Math.round(driftMs / 60_000)}m`,
+    };
+}
 function toSignal(args) {
     const { symbol, side, pattern, entry, atr } = args;
     const atrBuffer = Number.isFinite(atr) && atr > 0 ? atr * 0.2 : 0;
@@ -275,6 +334,8 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
                 timeframe: "4h",
                 direction: "NONE",
                 trendOk: false,
+                htfStructureOk: false,
+                htfStructureDetail: "missing H4 structure",
                 trendLegId: "NONE",
                 ema10: Number.NaN,
                 atr14: Number.NaN,
@@ -303,6 +364,15 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
                     exitConditionsDetail: "insufficient 4h history",
                     riskRulesOk: true,
                     riskRulesDetail: "1.5% risk | max positions 5 | max orders 20",
+                },
+                missingPatternReasons: ["need >=40 H4 bars"],
+                gateFailureReasons: ["H4_HISTORY_INSUFFICIENT"],
+                dataHealth: {
+                    ltfOpenTime: Number(candles[candles.length - 1]?.openTime ?? Number.NaN),
+                    h1OpenTime: Number.NaN,
+                    h4OpenTime: Number.NaN,
+                    h4SyncOk: false,
+                    detail: "missing timeframe timestamps (H4 vs 5m)",
                 },
                 canScaleIn: false,
             },
@@ -359,6 +429,14 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
         ema20,
         side: "sell",
     });
+    const structureLong = detectH4StructurePattern({
+        bars: h4,
+        side: "buy",
+    });
+    const structureShort = detectH4StructurePattern({
+        bars: h4,
+        side: "sell",
+    });
     const exhaustion = detectExhaustion({
         close: closes[last],
         ema10: ema10[last],
@@ -370,13 +448,24 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
         ema20,
         volumeSma20,
     });
+    const timeframeSync = resolveH4TimeframeSync({
+        sourceBars: candles,
+        h4Bars: h4,
+    });
     const priorityLong = [wedgePopLong, baseBreakLong, crossbackLong].filter((item) => Boolean(item?.ok));
     const priorityShort = [wedgePopShort, baseBreakShort, crossbackShort].filter((item) => Boolean(item?.ok));
-    const selected = direction === "BUY"
+    const selectedH4Pattern = direction === "BUY"
         ? priorityLong[0] ?? null
         : direction === "SELL"
             ? priorityShort[0] ?? null
             : null;
+    const structurePattern = direction === "BUY"
+        ? structureLong
+        : direction === "SELL"
+            ? structureShort
+            : null;
+    const htfStructureOk = Boolean(structurePattern?.ok);
+    const selected = htfStructureOk ? selectedH4Pattern : null;
     const entry = closes[last];
     const signal = selected && Number.isFinite(entry)
         ? toSignal({
@@ -395,24 +484,50 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
     const trendLegId = Number.isFinite(trendAnchor)
         ? `${direction}:${trendAnchor.toFixed(2)}`
         : "NONE";
-    const checklistDetail = selected
-        ? `${selected.pattern} selected (priority Wedge Pop > Base 'n Break > EMA Crossback)`
-        : "no valid pattern on latest 4h candle";
-    const entryDetail = trendOk
+    const checklistDetail = selected && htfStructureOk
+        ? `${selected.pattern} selected (priority Wedge Pop > Base 'n Break > EMA Crossback) | HTF structure OK`
+        : !htfStructureOk
+            ? "HTF structure filter failed before LTF signal"
+            : "no valid pattern on latest 4h candle";
+    const entryDetail = trendOk && htfStructureOk && selected
         ? `${direction} trend aligned EMA10/20 | breakout 0.4% | volume >=1.3x`
-        : "EMA10/20 trend alignment missing";
+        : "missing HTF structure filter or EMA trend + breakout 0.4% + volume >=1.3x";
     const exitReady = Number.isFinite(ema10[last]) && Number.isFinite(atr[last]);
     const exitDetail = exhaustion.active
         ? `exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
         : "watch exhaustion >=9% + vol>=1.5x, opposite crossback, wedge drop";
+    const directionalPatternOk = direction === "BUY"
+        ? Boolean(wedgePopLong?.ok || baseBreakLong?.ok || crossbackLong?.ok)
+        : direction === "SELL"
+            ? Boolean(wedgePopShort?.ok || baseBreakShort?.ok || crossbackShort?.ok)
+            : false;
+    const missingPatternReasons = [];
+    if (!trendOk)
+        missingPatternReasons.push("EMA trend missing");
+    if (!htfStructureOk)
+        missingPatternReasons.push("HTF structure missing");
+    if (trendOk && !directionalPatternOk) {
+        missingPatternReasons.push("EMA trend + breakout 0.4% + volume >=1.3x not met");
+    }
+    const gateFailureReasons = [];
+    if (!trendOk)
+        gateFailureReasons.push("EMA_TREND_MISSING");
+    if (!htfStructureOk)
+        gateFailureReasons.push("HTF_STRUCTURE_MISSING");
+    if (trendOk && !directionalPatternOk)
+        gateFailureReasons.push("H4_PATTERN_MISSING");
     const context = {
         timeframe: "4h",
         direction,
         trendOk,
+        htfStructureOk,
+        htfStructureDetail: htfStructureOk
+            ? structurePattern?.detail ?? "HTF structure filter ok"
+            : "HTF structure filter failed",
         trendLegId,
         ema10: ema10[last],
         atr14: atr[last],
-        selectedPattern: selected?.pattern ?? null,
+        selectedPattern: selectedH4Pattern?.pattern ?? null,
         baseBreak: direction === "BUY"
             ? baseBreakLong
             : direction === "SELL"
@@ -438,16 +553,19 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
         },
         wedgeDrop,
         gates: {
-            signalChecklistOk: Boolean(selected),
+            signalChecklistOk: Boolean(selected && htfStructureOk),
             signalChecklistDetail: checklistDetail,
-            entryConditionsOk: trendOk && Boolean(selected),
+            entryConditionsOk: trendOk && Boolean(selected && htfStructureOk),
             entryConditionsDetail: entryDetail,
             exitConditionsOk: exitReady,
             exitConditionsDetail: exitDetail,
             riskRulesOk: true,
             riskRulesDetail: "risk 1.5% | max positions 5 | max orders 20",
         },
-        canScaleIn: trendOk && Boolean(selected),
+        missingPatternReasons,
+        gateFailureReasons,
+        dataHealth: timeframeSync,
+        canScaleIn: trendOk && Boolean(selected && htfStructureOk),
     };
     return {
         state: signal ? State.Manage : State.Scan,
@@ -463,6 +581,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
 export const __aiMaticOliKellaTest = {
     detectBaseNBreak,
     detectWedgePop,
+    detectH4StructurePattern,
     detectEmaCrossback,
     detectExhaustion,
     detectWedgeDrop,

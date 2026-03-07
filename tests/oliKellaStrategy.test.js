@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { computeEma } from "../src/engine/ta.js";
-import { __aiMaticOliKellaTest } from "../src/engine/aiMaticOliKellaStrategy.js";
+import {
+  __aiMaticOliKellaTest,
+  evaluateAiMaticOliKellaStrategyForSymbol,
+} from "../src/engine/aiMaticOliKellaStrategy.js";
 
 const {
   detectBaseNBreak,
@@ -221,4 +224,39 @@ test("OLIkella Exhaustion Extension + Wedge Drop detectors support both directio
     volumeSma20: buildVolumeSma(wedgeDropShortBars.map((bar) => bar.volume)),
   });
   assert.equal(wedgeDropShort.againstShort, true);
+});
+
+test("OLIkella blocks signal when HTF structure filter is missing", () => {
+  const bars = [];
+  const baseOpenTime = 1_700_000_000_000;
+  for (let i = 0; i < 60; i++) {
+    const close = 100 + i * 0.9;
+    bars.push(
+      candle(
+        close - 0.6,
+        close + 1.2,
+        close - 1.4,
+        close,
+        130,
+        baseOpenTime + i * 240 * 60_000
+      )
+    );
+  }
+
+  const result = evaluateAiMaticOliKellaStrategyForSymbol("BTCUSDT", bars);
+  const ctx = result?.oliKella;
+
+  assert.equal(Boolean(ctx?.trendOk), true);
+  assert.equal(Boolean(ctx?.htfStructureOk), false);
+  assert.equal(Boolean(ctx?.gates?.signalChecklistOk), false);
+  assert.equal(
+    Array.isArray(ctx?.missingPatternReasons) &&
+      ctx.missingPatternReasons.includes("HTF structure missing"),
+    true
+  );
+  assert.equal(
+    Array.isArray(ctx?.gateFailureReasons) &&
+      ctx.gateFailureReasons.includes("HTF_STRUCTURE_MISSING"),
+    true
+  );
 });

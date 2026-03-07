@@ -890,6 +890,7 @@ export default function Dashboard({
                 scanDiagnostics={scanDiagnostics}
                 logEntries={logEntries}
                 logsLoaded={logsLoaded}
+                activePositions={positionsLoaded ? activePositions : []}
                 riskLevel={riskLevel}
                 dailyPnl={dailyPnl}
                 maxDailyLossUsd={maxDailyLossUsd}
@@ -904,6 +905,7 @@ export default function Dashboard({
                     assetPnlHistory={assetPnlHistory}
                     pnlLoaded={pnlLoaded}
                     resetPnlHistory={resetPnlHistory}
+                    strategyLabel={profileMeta.label}
                     scanDiagnostics={scanDiagnostics}
                     scanLoaded={scanLoaded}
                     selectedSymbol={selectedSignalSymbol}
