@@ -4665,6 +4665,7 @@ function resolveAiMaticAdaptiveRiskParams(args: {
 
 const MIN_PROTECTION_DISTANCE_PCT = 0.0005;
 const MIN_PROTECTION_ATR_FACTOR = 0.05;
+const MIN_TRAILING_ACTIVATION_DISTANCE_PCT = 0.005;
 const TRAIL_ACTIVATION_R_MULTIPLIER = 0.5;
 const TREE_TRAIL_PCT_MIN = 0.006;
 const TREE_TRAIL_K_ATR = 1.2;
@@ -4687,6 +4688,27 @@ function resolveMinProtectionDistance(entry: number, atr?: number) {
     ? (atr as number) * MIN_PROTECTION_ATR_FACTOR
     : 0;
   return Math.max(pctDistance, atrDistance);
+}
+
+function resolveMinTrailingActivationDistance(entry: number) {
+  if (!Number.isFinite(entry) || entry <= 0) return Number.NaN;
+  return entry * MIN_TRAILING_ACTIVATION_DISTANCE_PCT;
+}
+
+function resolveTrailingActivationPrice(
+  entry: number,
+  side: "Buy" | "Sell",
+  requestedMove: number
+) {
+  if (!Number.isFinite(entry) || entry <= 0) return Number.NaN;
+  if (!Number.isFinite(requestedMove) || requestedMove <= 0) return Number.NaN;
+  const minMove = resolveMinTrailingActivationDistance(entry);
+  const move =
+    Number.isFinite(minMove) && minMove > 0
+      ? Math.max(requestedMove, minMove)
+      : requestedMove;
+  const dir = side === "Buy" ? 1 : -1;
+  return entry + dir * move;
 }
 
 function resolveOliKellaTrailConfig(args: {
@@ -4714,8 +4736,11 @@ function resolveOliKellaTrailConfig(args: {
     Math.max(OLIKELLA_TRAIL_RETRACE_MIN_RATE, retraceRateRaw)
   );
   const trailingStop = Math.max(entry * retraceRate, minDistance);
-  const dir = side === "Buy" ? 1 : -1;
-  const trailingActivePrice = entry + dir * riskDistance * OLIKELLA_TRAIL_ACTIVATION_R;
+  const trailingActivePrice = resolveTrailingActivationPrice(
+    entry,
+    side,
+    riskDistance * OLIKELLA_TRAIL_ACTIVATION_R
+  );
   if (!Number.isFinite(trailingStop) || trailingStop <= 0) return null;
   if (!Number.isFinite(trailingActivePrice) || trailingActivePrice <= 0) return null;
   return { trailingStop, trailingActivePrice, retraceRate };
@@ -6001,7 +6026,6 @@ export function useTradingBot(
           : Math.abs(activateR - lockR) * r;
       const distance = Math.max(rawDistance, minDistance);
       if (!Number.isFinite(distance) || distance <= 0) return null;
-      const dir = side === "Buy" ? 1 : -1;
       const aiMaticActivationMove = Math.max(
         entry * AI_MATIC_TRAIL_ACTIVATE_PCT,
         minDistance
@@ -6016,24 +6040,23 @@ export function useTradingBot(
           ? Math.abs((proSeed.t1 as number) - (proSeed.entryPrice as number)) * 0.5
           : Number.NaN;
       const treeActivationMove = Math.max(treePctDistance, minDistance);
-      const activePrice =
+      const activationMove =
         isProProfile &&
         !proTrailArmed &&
         Number.isFinite(proTp1ActivationMove) &&
         proTp1ActivationMove > 0
-          ? entry + dir * (proTp1ActivationMove as number)
+          ? (proTp1ActivationMove as number)
           : isAiMaticCoreProfile
-            ? entry + dir * aiMaticActivationMove
+            ? aiMaticActivationMove
             : isTreeProfile
-              ? entry + dir * treeActivationMove
+              ? treeActivationMove
               : usePercentActivation
-                ? entry + dir * distance
-                : entry +
-                  dir *
-                    Math.max(
-                      activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
-                      minDistance
-                    );
+                ? distance
+                : Math.max(
+                    activateR * TRAIL_ACTIVATION_R_MULTIPLIER * r,
+                    minDistance
+                  );
+      const activePrice = resolveTrailingActivationPrice(entry, side, activationMove);
       if (!Number.isFinite(activePrice) || activePrice <= 0) return null;
       return { trailingStop: distance, trailingActivePrice: activePrice };
     },
@@ -9206,10 +9229,13 @@ export function useTradingBot(
                 core.atr14 * SCALP_EXIT_TRAIL_ATR,
                 resolveMinProtectionDistance(entry, core.atr14)
               );
-              const dir = side === "Buy" ? 1 : -1;
               const riskDistance =
                 Number.isFinite(risk) && risk > 0 ? risk : distance;
-              const activePrice = entry + dir * riskDistance;
+              const activePrice = resolveTrailingActivationPrice(
+                entry,
+                side,
+                riskDistance
+              );
               if (Number.isFinite(activePrice) && activePrice > 0) {
                 try {
                   await updateProtection({
@@ -9284,8 +9310,7 @@ export function useTradingBot(
           core.atr14 * SCALP_EXIT_TRAIL_ATR,
           resolveMinProtectionDistance(entry, core.atr14)
         );
-        const dir = side === "Buy" ? 1 : -1;
-        const activePrice = entry + dir * risk;
+        const activePrice = resolveTrailingActivationPrice(entry, side, risk);
         if (Number.isFinite(activePrice) && activePrice > 0) {
           try {
             await updateProtection({
@@ -9459,8 +9484,11 @@ export function useTradingBot(
             core.atr14 * SCALP_TRAIL_TIGHTEN_ATR,
             resolveMinProtectionDistance(entry, core.atr14)
           );
-          const dir = side === "Buy" ? 1 : -1;
-          const activePrice = entry + dir * distance;
+          const activePrice = resolveTrailingActivationPrice(
+            entry,
+            side,
+            distance
+          );
           if (Number.isFinite(activePrice) && activePrice > 0) {
             try {
               await updateProtection({
