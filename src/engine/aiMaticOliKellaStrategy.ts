@@ -781,22 +781,6 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     ? `${direction}:${trendAnchor.toFixed(2)}`
     : "NONE";
 
-  const checklistDetail =
-    selectedH4Pattern && selectedCross && htfStructureOk
-      ? `${selectedH4Pattern.pattern} on H4 + ${selectedCross.detail} | HTF structure OK`
-      : !htfStructureOk
-        ? "HTF structure filter failed before LTF signal"
-        : !selectedH4Pattern
-          ? "no valid H4 pattern on latest candle"
-          : "no valid 1h EMA8/EMA16 state (cross or continuation)";
-  const entryDetail =
-    trendOk && selectedH4Pattern && htfStructureOk
-      ? `${direction} 1h EMA8/EMA16 | H4 pattern | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)}`
-      : "missing HTF structure filter or 1h EMA8/EMA16 direction or H4 pattern";
-  const exitReady = Number.isFinite(h1Ema8[lastH1]) && Number.isFinite(h1Atr[lastH1]);
-  const exitDetail = exhaustion.active
-    ? `H4 exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
-    : "watch H4 exhaustion >=9% + vol>=1.5x, opposite EMA8/EMA16 cross, H4 wedge drop";
   const directionalPatternOk =
     direction === "BUY"
       ? Boolean(wedgePopLong?.ok || baseBreakLong?.ok || crossbackLong?.ok)
@@ -816,6 +800,22 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
   if (trendOk && htfStructureOk && !selectedCross) {
     missingPatternReasons.push("1h EMA8/EMA16 cross or continuation missing");
   }
+  const checklistDetail =
+    selectedH4Pattern && selectedCross && htfStructureOk
+      ? `${selectedH4Pattern.pattern} on H4 + ${selectedCross.detail} | HTF structure OK`
+      : missingPatternReasons.length > 0
+        ? missingPatternReasons.join(" | ")
+        : !selectedH4Pattern
+          ? "no valid H4 pattern on latest candle"
+          : "no valid 1h EMA8/EMA16 state (cross or continuation)";
+  const entryDetail =
+    trendOk && selectedH4Pattern && htfStructureOk
+      ? `${direction} 1h EMA8/EMA16 | H4 pattern | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)}`
+      : "missing HTF structure filter or 1h EMA8/EMA16 direction or H4 pattern";
+  const exitReady = Number.isFinite(h1Ema8[lastH1]) && Number.isFinite(h1Atr[lastH1]);
+  const exitDetail = exhaustion.active
+    ? `H4 exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
+    : "watch H4 exhaustion >=9% + vol>=1.5x, opposite EMA8/EMA16 cross, H4 wedge drop";
   const gateFailureReasons: string[] = [];
   if (!trendOk) gateFailureReasons.push("EMA_TREND_MISSING");
   if (!htfStructureOk) gateFailureReasons.push("HTF_STRUCTURE_MISSING");

@@ -484,18 +484,6 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
     const trendLegId = Number.isFinite(trendAnchor)
         ? `${direction}:${trendAnchor.toFixed(2)}`
         : "NONE";
-    const checklistDetail = selected && htfStructureOk
-        ? `${selected.pattern} selected (priority Wedge Pop > Base 'n Break > EMA Crossback) | HTF structure OK`
-        : !htfStructureOk
-            ? "HTF structure filter failed before LTF signal"
-            : "no valid pattern on latest 4h candle";
-    const entryDetail = trendOk && htfStructureOk && selected
-        ? `${direction} trend aligned EMA10/20 | breakout 0.4% | volume >=1.3x`
-        : "missing HTF structure filter or EMA trend + breakout 0.4% + volume >=1.3x";
-    const exitReady = Number.isFinite(ema10[last]) && Number.isFinite(atr[last]);
-    const exitDetail = exhaustion.active
-        ? `exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
-        : "watch exhaustion >=9% + vol>=1.5x, opposite crossback, wedge drop";
     const directionalPatternOk = direction === "BUY"
         ? Boolean(wedgePopLong?.ok || baseBreakLong?.ok || crossbackLong?.ok)
         : direction === "SELL"
@@ -509,6 +497,18 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
     if (trendOk && !directionalPatternOk) {
         missingPatternReasons.push("EMA trend + breakout 0.4% + volume >=1.3x not met");
     }
+    const checklistDetail = selected && htfStructureOk
+        ? `${selected.pattern} selected (priority Wedge Pop > Base 'n Break > EMA Crossback) | HTF structure OK`
+        : missingPatternReasons.length > 0
+            ? missingPatternReasons.join(" | ")
+            : "no valid pattern on latest 4h candle";
+    const entryDetail = trendOk && htfStructureOk && selected
+        ? `${direction} trend aligned EMA10/20 | breakout 0.4% | volume >=1.3x`
+        : "missing HTF structure filter or EMA trend + breakout 0.4% + volume >=1.3x";
+    const exitReady = Number.isFinite(ema10[last]) && Number.isFinite(atr[last]);
+    const exitDetail = exhaustion.active
+        ? `exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
+        : "watch exhaustion >=9% + vol>=1.5x, opposite crossback, wedge drop";
     const gateFailureReasons = [];
     if (!trendOk)
         gateFailureReasons.push("EMA_TREND_MISSING");

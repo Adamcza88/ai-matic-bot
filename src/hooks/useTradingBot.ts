@@ -217,6 +217,7 @@ const SKIP_STATUS_SUPPRESSED_CODES = new Set([
   "MAX_POS+MAX_ORDERS",
   "OPEN_POSITION",
 ]);
+const OLIKELLA_RISK_BLOCK_MONITOR_ONLY = true;
 const MAX_OPEN_POSITIONS_CAP = 50000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -2421,12 +2422,15 @@ function summarizeOliGateFailures(args: {
   const missingPatternReasons = Array.isArray(oliContext?.missingPatternReasons)
     ? oliContext.missingPatternReasons
     : [];
+  const humanReasons = missingPatternReasons
+    .map((reason) => String(reason ?? "").trim())
+    .filter((reason) => reason.length > 0);
+  const structuredReasons = explicitFailureReasons
+    .map((reason) => String(reason ?? "").trim())
+    .filter((reason) => reason.length > 0)
+    .map((reason) => `FAIL_CODE:${reason}`);
   const allReasons = Array.from(
-    new Set([
-      ...failedGateDetails,
-      ...explicitFailureReasons.map((reason) => `FAIL_CODE:${reason}`),
-      ...missingPatternReasons.map((reason) => `PATTERN:${reason}`),
-    ])
+    new Set([...humanReasons, ...failedGateDetails, ...structuredReasons])
   );
   return {
     failedGateNames: failedGateRows.map((row) => row.name),
@@ -10663,6 +10667,8 @@ export function useTradingBot(
       const runtimeScalpOpenPosBlocked =
         scalpActive &&
         (hasPosition || hasWaitingLimitOrder);
+      const scalpRiskMonitorOnly =
+        scalpActive && OLIKELLA_RISK_BLOCK_MONITOR_ONLY;
       const hasPendingIntent = intentPendingRef.current.has(symbol);
       const signalSideRaw = String(decision?.signal?.intent?.side ?? "")
         .trim()
@@ -10716,7 +10722,9 @@ export function useTradingBot(
         if (hasPosition && scalpActive) {
           void handleOliKellaInTrade(symbol, decision, now);
         }
-        return;
+        if (!scalpRiskMonitorOnly) {
+          return;
+        }
       }
       if (buySignal && (hasPosition || hasWaitingLimitOrder)) {
         const buyLockKey = `buy-lock:${symbol}`;
@@ -10735,7 +10743,9 @@ export function useTradingBot(
         if (hasPosition && scalpActive) {
           void handleOliKellaInTrade(symbol, decision, now);
         }
-        return;
+        if (!scalpRiskMonitorOnly) {
+          return;
+        }
       }
       if (hasPosition || hasEntryOrder) {
         if (hasPosition && scalpActive) {
@@ -10767,7 +10777,9 @@ export function useTradingBot(
             }
           }
         }
-        return;
+        if (!scalpRiskMonitorOnly) {
+          return;
+        }
       }
       const relayPauseState = relayPauseRef.current;
       if (relayPauseState.paused && !relayPauseState.forceScanSymbols.has(symbol)) {
@@ -11208,6 +11220,8 @@ export function useTradingBot(
       if (!slProtectionGate.ok) {
         entryBlockReasons.push(slProtectionGate.reason);
       }
+      const entryRiskMonitorOnly =
+        isScalpProfile && OLIKELLA_RISK_BLOCK_MONITOR_ONLY;
       if (entryBlockReasons.length > 0) {
         const profileLabel =
           PROFILE_BY_RISK_MODE[context.settings.riskMode] ?? "AI-MATIC";
@@ -11223,10 +11237,10 @@ export function useTradingBot(
           String(signal?.kind ?? ""),
         ].join("::");
         const prevFingerprint = entryBlockFingerprintRef.current.get(symbol);
-        if (prevFingerprint === stateFingerprint) {
-          return;
+        const sameFingerprint = prevFingerprint === stateFingerprint;
+        if (!sameFingerprint) {
+          entryBlockFingerprintRef.current.set(symbol, stateFingerprint);
         }
-        entryBlockFingerprintRef.current.set(symbol, stateFingerprint);
         const ttlMs =
           decisionTrace.find((entry) => !entry.result.ok)?.result.ttlMs ??
           SKIP_LOG_THROTTLE_MS;
@@ -11240,19 +11254,26 @@ export function useTradingBot(
         const shouldEmitSkipStatus =
           !relayCapacityPaused &&
           !SKIP_STATUS_SUPPRESSED_CODES.has(normalizedSkipCode);
-        if (shouldEmitSkipStatus && shouldEmitBlockLog(symbol, skipCode, stateFingerprint, ttlMs, now)) {
+        if (
+          !sameFingerprint &&
+          shouldEmitSkipStatus &&
+          shouldEmitBlockLog(symbol, skipCode, stateFingerprint, ttlMs, now)
+        ) {
           addLogEntries([
             {
               id: `signal:max-pos:${signalId}`,
               timestamp: new Date(now).toISOString(),
               action: "STATUS",
-              message: `${symbol} ${profileLabel} gate [${skipCode}]: ${skipReason} -> skip entry`,
+              message: `${symbol} ${profileLabel} gate [${skipCode}]: ${skipReason} -> ${entryRiskMonitorOnly ? "monitor only" : "skip entry"}`,
             },
           ]);
         }
-        return;
+        if (!entryRiskMonitorOnly) {
+          return;
+        }
+      } else {
+        entryBlockFingerprintRef.current.delete(symbol);
       }
-      entryBlockFingerprintRef.current.delete(symbol);
       if (!isScalpProfile && !isAmdProfile) {
         const trendCore = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
         const trendGate = resolveH1M15TrendGate(trendCore, signal);

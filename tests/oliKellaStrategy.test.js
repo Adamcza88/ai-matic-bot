@@ -250,6 +250,10 @@ test("OLIkella blocks signal when HTF structure filter is missing", () => {
   assert.equal(Boolean(ctx?.htfStructureOk), false);
   assert.equal(Boolean(ctx?.gates?.signalChecklistOk), false);
   assert.equal(
+    String(ctx?.gates?.signalChecklistDetail ?? "").includes("HTF structure missing"),
+    true
+  );
+  assert.equal(
     Array.isArray(ctx?.missingPatternReasons) &&
       ctx.missingPatternReasons.includes("HTF structure missing"),
     true
