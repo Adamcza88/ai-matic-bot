@@ -6,6 +6,7 @@ import {
   AI_MATIC_CORE_GATE_NAMES,
   AI_MATIC_CORE_PROFILE_LABEL,
 } from "../lib/aiMaticCoreProfile";
+import { AI_MATIC_BBO_GATE_NAMES } from "../lib/aiMaticBboProfile";
 import {
   OLIKELLA_GATE_NAMES,
   OLIKELLA_LEGACY_RISK_MODE,
@@ -293,18 +294,18 @@ const SettingsPanel: React.FC<Props> = ({
       ],
     },
     "ai-matic-bbo": {
-      title: "AI-MATIC-BBO Tree",
-      summary: "HTF bias 1h/4h · EMA pullback · micro break · BBO filter",
+      title: "AI-MATIC-BBO",
+      summary: "Standalone BBO engine · 1H regime · 4H bias · 5m pullback/break",
       description:
         "Samostatný profil podle HTF_Bias_EMA_Pullback_MicroBreak_BBO specifikace.",
       notes: [
         ORDER_VALUE_NOTE,
-        "Timeframe: 1h context · 4h bias · 5m trigger · 1m exekuce.",
-        "Primary setup: Trend Pullback (impuls -> korekce -> pokračování).",
-        "Entry: EMA20 / EMA20-EMA50 pullback + micro break.",
-        "Hard gate: spread/funding/ATR/macro event okno.",
-        "Execution filter: BBO freshness < 1000ms.",
-        "Soft score: threshold >= 60.",
+        "1H market regime: directional HH/HL nebo LL/LH a nizky overlap.",
+        "4H bias: EMA50/EMA200 + close v trendu + potvrzena swing struktura.",
+        "Setup family: pouze Trend Pullback, zadny range mode.",
+        "Entry: 5m EMA20/50 pullback + micro pivot + micro break.",
+        "Soft score: trend 25 + pullback 20 + micro break 20 + volume 10 + ATR 10 + BBO 15.",
+        "Execution filter: BBO age < 1000ms, maker entry, strukturalni SL.",
         "Position management: checklist B (HOLD / PARTIAL / EXIT).",
       ],
     },
@@ -362,6 +363,7 @@ const SettingsPanel: React.FC<Props> = ({
     "Maker entry",
     "SL structural",
   ];
+  const bboGateNames = [...AI_MATIC_BBO_GATE_NAMES];
   const amdGateNames = [
     "AMD: Phase sequence",
     "AMD: Killzone active",
@@ -375,7 +377,7 @@ const SettingsPanel: React.FC<Props> = ({
     "ai-matic": [...AI_MATIC_CORE_GATE_NAMES],
     "ai-matic-x": coreV2GateNames,
     "ai-matic-amd": amdGateNames,
-    "ai-matic-bbo": coreV2GateNames,
+    "ai-matic-bbo": bboGateNames,
     "ai-matic-tree": coreV2GateNames,
     "ai-matic-olikella": [
       ...OLIKELLA_GATE_NAMES,

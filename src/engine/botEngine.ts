@@ -1,6 +1,7 @@
 import { computeEma, computeRsi, computeATR, computeADX } from "./ta";
 import { evaluateAiMaticProStrategyForSymbol } from "./aiMaticProStrategy";
 import { evaluateAiMaticAmdStrategyForSymbol } from "./aiMaticAmdStrategy";
+import { evaluateAiMaticBboStrategyForSymbol } from "./aiMaticBboStrategy";
 
 export enum Trend {
   Bull = "bull",
@@ -155,6 +156,7 @@ export interface BotConfig {
     | "ai-matic"
     | "ai-matic-x"
     | "ai-matic-amd"
+    | "ai-matic-bbo"
     | "ai-matic-olikella"
     | "ai-matic-tree"
     | "ai-matic-pro";
@@ -1059,6 +1061,7 @@ export class TradingBot {
     return (
       this.config.strategyProfile === "ai-matic" ||
       this.config.strategyProfile === "ai-matic-amd" ||
+      this.config.strategyProfile === "ai-matic-bbo" ||
       this.config.strategyProfile === "ai-matic-tree"
     );
   }
@@ -1261,6 +1264,8 @@ export class TradingBot {
         ? 0.03  //0.05
         : this.config.strategyProfile === "ai-matic-amd"
           ? 0.03
+        : this.config.strategyProfile === "ai-matic-bbo"
+          ? 0.03
         : this.config.strategyProfile === "ai-matic-olikella"
           ? 0.015
           : this.config.strategyProfile === "ai-matic-x"
@@ -1283,6 +1288,7 @@ export class TradingBot {
     const rrMap: Record<BotConfig["strategyProfile"], number> = {
       "ai-matic": 1.8,  //2.2
       "ai-matic-amd": 1.8,
+      "ai-matic-bbo": 1.6,
       "ai-matic-tree": 1.6, //2.2
       "ai-matic-x": 1.6,
       "ai-matic-olikella": 1.2,  //1.5
@@ -2299,6 +2305,10 @@ export function evaluateStrategyForSymbol(
 
   if (botConfig.strategyProfile === "ai-matic-amd") {
     return evaluateAiMaticAmdStrategyForSymbol(symbol, candles);
+  }
+
+  if (botConfig.strategyProfile === "ai-matic-bbo") {
+    return evaluateAiMaticBboStrategyForSymbol(symbol, candles);
   }
 
   // INTEGRACE AI-MATIC-PRO

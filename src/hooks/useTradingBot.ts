@@ -58,6 +58,10 @@ import {
   AI_MATIC_CORE_GATE_SIGNAL_CHECKLIST,
 } from "../lib/aiMaticCoreProfile";
 import {
+  AI_MATIC_BBO_GATE_NAMES,
+  AI_MATIC_BBO_QUALITY_THRESHOLD,
+} from "../lib/aiMaticBboProfile";
+import {
   OLIKELLA_GATE_ENTRY_CONDITIONS,
   OLIKELLA_GATE_EXIT_CONDITIONS,
   OLIKELLA_GATE_RISK_RULES,
@@ -4900,8 +4904,7 @@ export function useTradingBot(
         : settings.entryStrictness;
     if (
       settings.riskMode === "ai-matic" ||
-      settings.riskMode === "ai-matic-tree" ||
-      settings.riskMode === "ai-matic-bbo"
+      settings.riskMode === "ai-matic-tree"
     ) {
       return {
         ...baseConfig,
@@ -4928,6 +4931,35 @@ export function useTradingBot(
         liquiditySweepVolumeMult: 1.0,
         volExpansionAtrMult: 1.15,
         volExpansionVolMult: 1.1,
+        cooldownBars: 0,
+      };
+    }
+    if (settings.riskMode === "ai-matic-bbo") {
+      return {
+        ...baseConfig,
+        strategyProfile: "ai-matic-bbo",
+        baseTimeframe: "1h",
+        signalTimeframe: "5m",
+        aiMaticMultiTf: true,
+        aiMaticHtfTimeframe: "1h",
+        aiMaticMidTimeframe: "15m",
+        aiMaticEntryTimeframe: "5m",
+        aiMaticExecTimeframe: "1m",
+        entryStrictness: strictness,
+        partialSteps: [
+          { r: 1.0, exitFraction: 0.35 },
+          { r: 2.0, exitFraction: 0.25 },
+        ],
+        adxThreshold: 18,
+        aggressiveAdxThreshold: 25,
+        minAtrFractionOfPrice: 0.0004,
+        atrEntryMultiplier: 1.4,
+        entryStopMode: "swing",
+        entrySwingBackoffAtr: 1.0,
+        swingBackoffAtr: 0.6,
+        liquiditySweepVolumeMult: 1.1,
+        volExpansionAtrMult: 1.15,
+        volExpansionVolMult: 1.2,
         cooldownBars: 0,
       };
     }
@@ -6677,6 +6709,10 @@ export function useTradingBot(
             settingsRef.current.riskMode === "ai-matic-tree" ||
             settingsRef.current.riskMode === "ai-matic-bbo" ||
             settingsRef.current.riskMode === "ai-matic";
+          const profileLabel =
+            settingsRef.current.riskMode === "ai-matic-bbo"
+              ? "AI-MATIC-BBO"
+              : "TREE";
           const price = toNumber(pos.markPrice);
           if (isTreeProfile && Number.isFinite(price) && price > 0) {
             const decisionAtr = toNumber(
@@ -6714,7 +6750,7 @@ export function useTradingBot(
                     id: `trail:widen:${symbol}:${now}`,
                     timestamp: new Date(now).toISOString(),
                     action: "STATUS",
-                    message: `${symbol} TREE trailing widen ${formatNumber(
+                    message: `${symbol} ${profileLabel} trailing widen ${formatNumber(
                       currentTrail,
                       6
                     )} -> ${formatNumber(adaptivePlan.trailingStop, 6)}`,
@@ -6726,7 +6762,7 @@ export function useTradingBot(
                     id: `trail:widen:error:${symbol}:${now}`,
                     timestamp: new Date(now).toISOString(),
                     action: "ERROR",
-                    message: `${symbol} TREE trail widen failed: ${asErrorMessage(err)}`,
+                    message: `${symbol} ${profileLabel} trail widen failed: ${asErrorMessage(err)}`,
                   },
                 ]);
               }
@@ -6925,6 +6961,29 @@ export function useTradingBot(
           Boolean(frame?.confirmed);
         return { ok, detail };
       }
+      if (settings.riskMode === "ai-matic-bbo") {
+        const bbo = (decision as any)?.bboContext as
+          | {
+              h1Context?: string;
+              direction?: string;
+              metrics?: { h1Adx?: number };
+            }
+          | undefined;
+        const m15Dir = String((decision as any)?.coreV2?.ema15mTrend ?? "NONE").toUpperCase();
+        const targetDir = String(bbo?.direction ?? "NONE").toUpperCase();
+        const h1Dir = String(bbo?.h1Context ?? "RANGE").toUpperCase();
+        const adx = toNumber(bbo?.metrics?.h1Adx);
+        const detail = `1h ${h1Dir} | 15m ${m15Dir} | ADX ${formatNumber(adx, 1)}`;
+        if (!signal) return { ok: true, detail };
+        const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
+        const signalDir =
+          sideRaw === "buy" ? "BULL" : sideRaw === "sell" ? "BEAR" : "";
+        const ok =
+          Boolean(signalDir) &&
+          targetDir === signalDir &&
+          (m15Dir === "NONE" || m15Dir === signalDir);
+        return { ok, detail };
+      }
       const htfTrend = (decision as any)?.htfTrend;
       const ltfTrend = (decision as any)?.ltfTrend;
       const emaTrend = (decision as any)?.emaTrend as
@@ -6981,8 +7040,7 @@ export function useTradingBot(
         !hasLtf || (ltfIsTrend && ltfDir === signalDir);
       const isAiMaticProfile =
         settings.riskMode === "ai-matic" ||
-        settings.riskMode === "ai-matic-tree" ||
-        settings.riskMode === "ai-matic-bbo";
+        settings.riskMode === "ai-matic-tree";
       const trendLabel = (dir: string) => {
         if (dir === "BULL") return "Bull";
         if (dir === "BEAR") return "Bear";
@@ -7119,6 +7177,110 @@ export function useTradingBot(
     ) => {
       const settings = settingsRef.current;
       const core = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
+      if (settings.riskMode === "ai-matic-bbo") {
+        const bbo = (decision as any)?.bboContext as
+          | {
+              baseScore?: number;
+              qualityThreshold?: number;
+              hardGatePass?: boolean;
+              gates?: {
+                name?: string;
+                ok?: boolean;
+                detail?: string;
+                hard?: boolean;
+              }[];
+            }
+          | undefined;
+        const signalActive = Boolean(signal);
+        const bboLimit = resolveBboAgeLimit(symbol);
+        const bboFreshOk = feedAgeMs != null;
+        const bboAgeOk = feedAgeMs != null && feedAgeMs <= bboLimit;
+        const entryType = signal?.entryType ?? "LIMIT_MAKER_FIRST";
+        const makerOk =
+          entryType === "LIMIT_MAKER_FIRST" || entryType === "LIMIT";
+        const sl = toNumber(signal?.intent?.sl);
+        const slOk = !signalActive
+          ? true
+          : Number.isFinite(sl) && sl > 0;
+        const baseGates = AI_MATIC_BBO_GATE_NAMES.slice(0, 9).map((name) => {
+          const gate = Array.isArray(bbo?.gates)
+            ? bbo.gates.find((item) => String(item?.name ?? "") === name)
+            : undefined;
+          return {
+            name,
+            ok: gate?.ok === true,
+            detail: String(gate?.detail ?? "missing"),
+            hard: gate?.hard === true,
+          };
+        });
+        const baseScore = Number.isFinite(bbo?.baseScore)
+          ? Number(bbo?.baseScore)
+          : 0;
+        const qualityThreshold = Number.isFinite(bbo?.qualityThreshold)
+          ? Number(bbo?.qualityThreshold)
+          : AI_MATIC_BBO_QUALITY_THRESHOLD;
+        const qualityScore = baseScore + (bboAgeOk ? 15 : 0);
+        const qualityPass = qualityScore >= qualityThreshold;
+        const gates = [
+          ...baseGates,
+          {
+            name: "Score >= 60",
+            ok: qualityPass,
+            detail: `${Math.round(qualityScore)}/${qualityThreshold} (base ${Math.round(
+              baseScore
+            )} + BBO ${bboAgeOk ? 15 : 0})`,
+            hard: false,
+          },
+          {
+            name: "BBO fresh",
+            ok: bboFreshOk,
+            detail:
+              feedAgeMs != null ? `age ${Math.round(feedAgeMs)}ms` : "no feed",
+            hard: true,
+          },
+          {
+            name: "BBO age",
+            ok: bboAgeOk,
+            detail:
+              feedAgeMs != null
+                ? `${Math.round(feedAgeMs)}ms ≤ ${bboLimit}ms`
+                : "no feed",
+            hard: true,
+          },
+          {
+            name: "Maker entry",
+            ok: makerOk,
+            detail: entryType,
+            hard: false,
+          },
+          {
+            name: "SL structural",
+            ok: slOk,
+            detail: Number.isFinite(sl)
+              ? `SL ${formatNumber(sl, 6)}`
+              : signalActive
+                ? "SL missing"
+                : "waiting",
+            hard: true,
+          },
+        ];
+        return {
+          gates,
+          score: gates.filter((gate) => gate.ok).length,
+          scoreTotal: gates.length,
+          threshold: MIN_CHECKLIST_PASS,
+          scorePass: qualityPass,
+          hardFailures: gates
+            .filter((gate) => gate.hard && !gate.ok)
+            .map((gate) => gate.name),
+          atrMin: Number.NaN,
+          volumePct: 0,
+          isMajor: MAJOR_SYMBOLS.has(symbol),
+          qualityScore,
+          qualityThreshold,
+          hardGatePass: bbo?.hardGatePass === true,
+        };
+      }
       const signalActive = Boolean(signal);
       const sideRaw = String(signal?.intent?.side ?? "").toLowerCase();
       const signalDir =
@@ -7207,7 +7369,7 @@ export function useTradingBot(
         Number.isFinite(volumeThreshold) &&
         core!.volumeCurrent >= volumeThreshold;
       const requireMicro =
-        settings.riskMode === "ai-matic-x" || settings.riskMode === "ai-matic-bbo";
+        settings.riskMode === "ai-matic-x";
       const pullbackOk =
         !requireMicro
           ? true
@@ -7410,7 +7572,7 @@ export function useTradingBot(
       const threshold =
         altseasonGateActive
           ? baseThreshold
-          : settings.riskMode === "ai-matic-tree" || settings.riskMode === "ai-matic-bbo"
+          : settings.riskMode === "ai-matic-tree"
           ? strongTrend
             ? scoreCfg.major
             : scoreCfg.alt
@@ -10590,8 +10752,9 @@ export function useTradingBot(
 
       const isTreeProfile =
         settingsRef.current.riskMode === "ai-matic-tree" ||
-        settingsRef.current.riskMode === "ai-matic-bbo" ||
         settingsRef.current.riskMode === "ai-matic";
+      const isBboProfile =
+        settingsRef.current.riskMode === "ai-matic-bbo";
 
       const trendGateSetting = settingsRef.current.trendGateMode ?? "adaptive";
       const treeAdaptiveGate = isTreeProfile && trendGateSetting === "adaptive";
@@ -10627,7 +10790,7 @@ export function useTradingBot(
                 id: `tree-trend-gate:${symbol}:${signalId}`,
                 timestamp: new Date(now).toISOString(),
                 action: "RISK_BLOCK",
-                message: `${symbol} TREE adaptive gate: ADX ${formatNumber(
+                message: `${symbol} ${isBboProfile ? "AI-MATIC-BBO" : "TREE"} adaptive gate: ADX ${formatNumber(
                   trendAdx,
                   1
                 )} → expect ${expectedKind}, got ${kind}`,

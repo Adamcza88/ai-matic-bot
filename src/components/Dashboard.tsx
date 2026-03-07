@@ -26,6 +26,7 @@ import {
   AI_MATIC_CORE_CHECKLIST_DEFAULTS,
   AI_MATIC_CORE_PROFILE_LABEL,
 } from "../lib/aiMaticCoreProfile";
+import { AI_MATIC_BBO_CHECKLIST_DEFAULTS } from "../lib/aiMaticBboProfile";
 import {
   OLIKELLA_CHECKLIST_DEFAULTS,
   OLIKELLA_PROFILE_LABEL,
@@ -230,14 +231,14 @@ export default function Dashboard({
       const strictness = bot.settings?.entryStrictness ?? "ultra";
       return {
         label: "AI-MATIC-BBO",
-        subtitle: "HTF Bias + EMA Pullback + Micro Break + BBO",
+        subtitle: "Standalone BBO engine",
         symbols: SUPPORTED_SYMBOLS,
         timeframes: "1h context · 4h bias · 5m trigger · 1m exec",
         session: "24/7",
-        risk: "Risk 0.30% equity/trade · hard gate + score >= 60",
+        risk: "Risk 0.30% equity/trade · standalone score >= 60",
         riskPct: RISK_PCT_BY_MODE["ai-matic-bbo"],
         entry: `Strictness: ${strictness.toUpperCase()} · Trend pullback only`,
-        execution: "BBO fresh <1000ms · HOLD/PARTIAL/EXIT checklist",
+        execution: "BBO age <1000ms · maker entry · structural SL",
       };
     }
     if (riskMode === "ai-matic-pro") {
@@ -324,7 +325,9 @@ export default function Dashboard({
         ...AI_MATIC_CORE_CHECKLIST_DEFAULTS,
       },
       "ai-matic-x": base,
-      "ai-matic-bbo": base,
+      "ai-matic-bbo": {
+        ...AI_MATIC_BBO_CHECKLIST_DEFAULTS,
+      },
       "ai-matic-tree": base,
       "ai-matic-pro": {
         "4H trend confirmed (SMA50 + swing sequence)": true,
