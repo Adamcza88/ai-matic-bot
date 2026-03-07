@@ -12,6 +12,7 @@ import { evaluateAiMaticXStrategyForSymbol } from "../src/engine/aiMaticXStrateg
 import { evaluateAiMaticAmdStrategyForSymbol } from "../src/engine/aiMaticAmdStrategy.js";
 import { evaluateAiMaticProStrategyForSymbol } from "../src/engine/aiMaticProStrategy.js";
 import { evaluateAiMaticOliKellaStrategyForSymbol } from "../src/engine/aiMaticOliKellaStrategy.js";
+import { evaluateAiMaticBboStrategyForSymbol } from "../src/engine/aiMaticBboStrategy.js";
 
 const FAST_POLL_MS = 30_000;
 const SLOW_POLL_MS = 15_000;
@@ -64,6 +65,7 @@ function normalizeRiskMode(value) {
     "ai-matic-x",
     "ai-matic-amd",
     "ai-matic-olikella",
+    "ai-matic-bbo",
     "ai-matic-tree",
     "ai-matic-pro",
   ]);
@@ -242,6 +244,7 @@ function selectDecisionFn(riskMode) {
   if (riskMode === "ai-matic-amd") return evaluateAiMaticAmdStrategyForSymbol;
   if (riskMode === "ai-matic-pro") return evaluateAiMaticProStrategyForSymbol;
   if (riskMode === "ai-matic-olikella") return evaluateAiMaticOliKellaStrategyForSymbol;
+  if (riskMode === "ai-matic-bbo") return evaluateAiMaticBboStrategyForSymbol;
   return evaluateStrategyForSymbol;
 }
 
