@@ -2429,9 +2429,12 @@ function summarizeOliGateFailures(args: {
     .map((reason) => String(reason ?? "").trim())
     .filter((reason) => reason.length > 0)
     .map((reason) => `FAIL_CODE:${reason}`);
-  const allReasons = Array.from(
-    new Set([...humanReasons, ...failedGateDetails, ...structuredReasons])
-  );
+  const allReasons =
+    failedGateRows.length > 0
+      ? Array.from(
+          new Set([...humanReasons, ...failedGateDetails, ...structuredReasons])
+        )
+      : [];
   return {
     failedGateNames: failedGateRows.map((row) => row.name),
     allReasons,

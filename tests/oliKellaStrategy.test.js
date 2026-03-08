@@ -226,7 +226,7 @@ test("OLIkella Exhaustion Extension + Wedge Drop detectors support both directio
   assert.equal(wedgeDropShort.againstShort, true);
 });
 
-test("OLIkella blocks signal when HTF structure filter is missing", () => {
+test("OLIkella keeps HTF structure as info-only signal context", () => {
   const bars = [];
   const baseOpenTime = 1_700_000_000_000;
   for (let i = 0; i < 60; i++) {
@@ -250,17 +250,12 @@ test("OLIkella blocks signal when HTF structure filter is missing", () => {
   assert.equal(Boolean(ctx?.htfStructureOk), false);
   assert.equal(Boolean(ctx?.gates?.signalChecklistOk), false);
   assert.equal(
-    String(ctx?.gates?.signalChecklistDetail ?? "").includes("HTF structure missing"),
-    true
-  );
-  assert.equal(
-    Array.isArray(ctx?.missingPatternReasons) &&
-      ctx.missingPatternReasons.includes("HTF structure missing"),
+    String(ctx?.htfStructureDetail ?? "").includes("failed"),
     true
   );
   assert.equal(
     Array.isArray(ctx?.gateFailureReasons) &&
-      ctx.gateFailureReasons.includes("HTF_STRUCTURE_MISSING"),
+      !ctx.gateFailureReasons.includes("HTF_STRUCTURE_MISSING"),
     true
   );
 });

@@ -465,7 +465,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
             ? structureShort
             : null;
     const htfStructureOk = Boolean(structurePattern?.ok);
-    const selected = htfStructureOk ? selectedH4Pattern : null;
+    const selected = selectedH4Pattern;
     const entry = closes[last];
     const signal = selected && Number.isFinite(entry)
         ? toSignal({
@@ -492,19 +492,18 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
     const missingPatternReasons = [];
     if (!trendOk)
         missingPatternReasons.push("EMA trend missing");
-    if (!htfStructureOk)
-        missingPatternReasons.push("HTF structure missing");
     if (trendOk && !directionalPatternOk) {
         missingPatternReasons.push("EMA trend + breakout 0.4% + volume >=1.3x not met");
     }
-    const checklistDetail = selected && htfStructureOk
-        ? `${selected.pattern} selected (priority Wedge Pop > Base 'n Break > EMA Crossback) | HTF structure OK`
+    const checklistPass = Boolean(selected);
+    const checklistDetail = checklistPass
+        ? `${selected.pattern} selected (priority Wedge Pop > Base 'n Break > EMA Crossback) | HTF ${htfStructureOk ? "OK" : "missing (info-only)"}`
         : missingPatternReasons.length > 0
             ? missingPatternReasons.join(" | ")
             : "no valid pattern on latest 4h candle";
-    const entryDetail = trendOk && htfStructureOk && selected
-        ? `${direction} trend aligned EMA10/20 | breakout 0.4% | volume >=1.3x`
-        : "missing HTF structure filter or EMA trend + breakout 0.4% + volume >=1.3x";
+    const entryDetail = trendOk && checklistPass
+        ? `${direction} trend aligned EMA10/20 | breakout 0.4% | volume >=1.3x | HTF ${htfStructureOk ? "OK" : "missing (info-only)"}`
+        : "missing EMA trend + breakout 0.4% + volume >=1.3x";
     const exitReady = Number.isFinite(ema10[last]) && Number.isFinite(atr[last]);
     const exitDetail = exhaustion.active
         ? `exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
@@ -512,8 +511,6 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
     const gateFailureReasons = [];
     if (!trendOk)
         gateFailureReasons.push("EMA_TREND_MISSING");
-    if (!htfStructureOk)
-        gateFailureReasons.push("HTF_STRUCTURE_MISSING");
     if (trendOk && !directionalPatternOk)
         gateFailureReasons.push("H4_PATTERN_MISSING");
     const context = {
@@ -553,9 +550,9 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
         },
         wedgeDrop,
         gates: {
-            signalChecklistOk: Boolean(selected && htfStructureOk),
+            signalChecklistOk: checklistPass,
             signalChecklistDetail: checklistDetail,
-            entryConditionsOk: trendOk && Boolean(selected && htfStructureOk),
+            entryConditionsOk: trendOk && checklistPass,
             entryConditionsDetail: entryDetail,
             exitConditionsOk: exitReady,
             exitConditionsDetail: exitDetail,
@@ -565,7 +562,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles) {
         missingPatternReasons,
         gateFailureReasons,
         dataHealth: timeframeSync,
-        canScaleIn: trendOk && Boolean(selected && htfStructureOk),
+        canScaleIn: trendOk && checklistPass,
     };
     return {
         state: signal ? State.Manage : State.Scan,

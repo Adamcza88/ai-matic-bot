@@ -730,9 +730,9 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
         : null;
   const htfStructureOk = Boolean(structurePattern?.ok);
   const selectedCross =
-    htfStructureOk && direction === "BUY"
+    direction === "BUY"
       ? crossEntryLong ?? continuationLong
-      : htfStructureOk && direction === "SELL"
+      : direction === "SELL"
         ? crossEntryShort ?? continuationShort
         : null;
   const exhaustion = detectExhaustion({
@@ -752,8 +752,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     h4Bars: h4,
   });
 
-  const selected =
-    selectedCross && selectedH4Pattern && htfStructureOk ? selectedCross : null;
+  const selected = selectedCross && selectedH4Pattern ? selectedCross : null;
   const entry = h1Closes[lastH1];
   const signal =
     selected && Number.isFinite(entry)
@@ -791,34 +790,31 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
   if (!trendOk) {
     missingPatternReasons.push("EMA trend missing");
   }
-  if (!htfStructureOk) {
-    missingPatternReasons.push("HTF structure missing");
-  }
   if (trendOk && !directionalPatternOk) {
     missingPatternReasons.push("EMA trend + breakout 0.4% + volume >=1.3x not met");
   }
   if (trendOk && htfStructureOk && !selectedCross) {
     missingPatternReasons.push("1h EMA8/EMA16 cross or continuation missing");
   }
+  const checklistPass = Boolean(selectedH4Pattern && selectedCross);
   const checklistDetail =
-    selectedH4Pattern && selectedCross && htfStructureOk
-      ? `${selectedH4Pattern.pattern} on H4 + ${selectedCross.detail} | HTF structure OK`
+    checklistPass
+      ? `${selectedH4Pattern.pattern} on H4 + ${selectedCross.detail} | HTF ${htfStructureOk ? "OK" : "missing (info-only)"}`
       : missingPatternReasons.length > 0
         ? missingPatternReasons.join(" | ")
         : !selectedH4Pattern
           ? "no valid H4 pattern on latest candle"
           : "no valid 1h EMA8/EMA16 state (cross or continuation)";
   const entryDetail =
-    trendOk && selectedH4Pattern && htfStructureOk
-      ? `${direction} 1h EMA8/EMA16 | H4 pattern | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)}`
-      : "missing HTF structure filter or 1h EMA8/EMA16 direction or H4 pattern";
+    trendOk && checklistPass
+      ? `${direction} 1h EMA8/EMA16 | H4 pattern | HTF ${htfStructureOk ? "OK" : "missing (info-only)"} | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)}`
+      : "missing 1h EMA8/EMA16 direction or H4 pattern";
   const exitReady = Number.isFinite(h1Ema8[lastH1]) && Number.isFinite(h1Atr[lastH1]);
   const exitDetail = exhaustion.active
     ? `H4 exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
     : "watch H4 exhaustion >=9% + vol>=1.5x, opposite EMA8/EMA16 cross, H4 wedge drop";
   const gateFailureReasons: string[] = [];
   if (!trendOk) gateFailureReasons.push("EMA_TREND_MISSING");
-  if (!htfStructureOk) gateFailureReasons.push("HTF_STRUCTURE_MISSING");
   if (trendOk && !directionalPatternOk) gateFailureReasons.push("H4_PATTERN_MISSING");
   if (trendOk && htfStructureOk && !selectedCross) {
     gateFailureReasons.push("LTF_EMA8_16_MISSING");
@@ -864,10 +860,10 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     },
     wedgeDrop,
     gates: {
-      signalChecklistOk: Boolean(selectedCross && selectedH4Pattern && htfStructureOk),
+      signalChecklistOk: checklistPass,
       signalChecklistDetail: checklistDetail,
       entryConditionsOk:
-        trendOk && Boolean(selectedCross && selectedH4Pattern && htfStructureOk),
+        trendOk && checklistPass,
       entryConditionsDetail: entryDetail,
       exitConditionsOk: exitReady,
       exitConditionsDetail: exitDetail,
@@ -883,7 +879,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
       h4SyncOk: timeframeSync.h4SyncOk,
       detail: timeframeSync.detail,
     },
-    canScaleIn: trendOk && Boolean(selectedCross && selectedH4Pattern && htfStructureOk),
+    canScaleIn: trendOk && checklistPass,
   };
 
   return {
