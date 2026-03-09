@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Copy } from "lucide-react";
 import type { LogEntry } from "@/types";
 import Panel from "@/components/dashboard/Panel";
 import { formatClock } from "@/lib/uiFormat";
@@ -13,41 +12,67 @@ type LogsPanelProps = {
   isActive: boolean;
 };
 
-type LevelFilter = "all" | "info" | "warn" | "error" | "blocked";
+type LevelFilter = "all" | "error" | "risk" | "signal" | "status" | "system";
+type Tone = "red" | "orange" | "blue" | "gray" | "purple";
+
+function extractSymbol(message: string) {
+  const hit = String(message ?? "").match(/\b[A-Z]{2,10}USDT\b/);
+  return hit?.[0] ?? "—";
+}
+
+function normalizeMessage(message: string) {
+  return String(message ?? "").replace(/\s*\|\s*/g, " — ").trim();
+}
 
 function levelForEntry(entry: LogEntry): LevelFilter {
   if (entry.action === "ERROR") return "error";
-  if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT") {
-    return "blocked";
+  if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT" || entry.action === "REJECT") {
+    return "risk";
   }
-  if (entry.action === "REJECT") return "blocked";
-  if (entry.action === "STATUS") return "warn";
-  if (/\bwarn\b|\bfail(ed)?\b/i.test(entry.message)) return "warn";
-  return "info";
+  if (entry.action === "SIGNAL") return "signal";
+  if (entry.action === "STATUS") return "status";
+  return "system";
 }
 
-function shortId(value?: string | null) {
-  if (!value) return "—";
-  if (value.length <= 12) return value;
-  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+function toneForEntry(entry: LogEntry): Tone {
+  if (entry.action === "ERROR") return "red";
+  if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT" || entry.action === "REJECT") {
+    return "orange";
+  }
+  if (entry.action === "SIGNAL") return "blue";
+  if (entry.action === "STATUS") return "gray";
+  return "purple";
 }
 
-function extractIds(message: string) {
-  const orderMatch = message.match(/\border(?:[_\s-]?id)?\s*[:=]?\s*([a-z0-9_-]{6,})/i);
-  const linkMatch = message.match(/\b(?:order)?link(?:[_\s-]?id)?\s*[:=]?\s*([a-z0-9_-]{6,})/i);
+function toneClasses(tone: Tone) {
+  if (tone === "red") {
+    return {
+      badge: "border-red-500/60 text-red-300",
+      row: "border-red-500/30 bg-red-500/5",
+    };
+  }
+  if (tone === "orange") {
+    return {
+      badge: "border-orange-500/60 text-orange-300",
+      row: "border-orange-500/30 bg-orange-500/5",
+    };
+  }
+  if (tone === "blue") {
+    return {
+      badge: "border-sky-500/60 text-sky-300",
+      row: "border-sky-500/30 bg-sky-500/5",
+    };
+  }
+  if (tone === "gray") {
+    return {
+      badge: "border-border/60 text-slate-300",
+      row: "border-border/60 bg-background/35",
+    };
+  }
   return {
-    orderId: orderMatch?.[1] ?? null,
-    linkId: linkMatch?.[1] ?? null,
+    badge: "border-violet-500/60 text-violet-300",
+    row: "border-violet-500/30 bg-violet-500/5",
   };
-}
-
-async function copyText(value?: string | null) {
-  if (!value) return;
-  try {
-    await navigator.clipboard.writeText(value);
-  } catch {
-    // no-op
-  }
 }
 
 export default function LogsPanel({
@@ -85,72 +110,60 @@ export default function LogsPanel({
 
   return (
     <Panel
-      title="Logy"
-      description={`Live feed a systémové události (${useTestnet ? "DEMO" : "MAINNET"}).`}
-      fileId="AUDIT MODULE ID: TR-07-L"
+      title="AUDIT MODULE"
+      description={`TR-07-L · Strategy decision tracker · ${useTestnet ? "DEMO" : "MAINNET"}`}
+      fileId="AUDIT MODULE"
       action={
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>Filtr</span>
+          <span>Filter</span>
           <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5 dm-surface-elevated dm-border-soft">
             <Button
               variant={levelFilter === "all" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setLevelFilter("all")}
-              className={`dm-button-control ${
-                levelFilter === "all"
-                  ? "bg-muted text-foreground dm-button-control-active"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              className="h-7 px-2 text-xs"
             >
-              Vše
-            </Button>
-            <Button
-              variant={levelFilter === "blocked" ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setLevelFilter("blocked")}
-              className={`dm-button-control ${
-                levelFilter === "blocked"
-                  ? "bg-muted text-foreground dm-button-control-active"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Blokace
+              All
             </Button>
             <Button
               variant={levelFilter === "error" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setLevelFilter("error")}
-              className={`dm-button-control ${
-                levelFilter === "error"
-                  ? "bg-muted text-foreground dm-button-control-active"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              className="h-7 px-2 text-xs"
             >
-              Chyba
+              ERROR
             </Button>
             <Button
-              variant={levelFilter === "warn" ? "secondary" : "ghost"}
+              variant={levelFilter === "risk" ? "secondary" : "ghost"}
               size="sm"
-              onClick={() => setLevelFilter("warn")}
-              className={`dm-button-control ${
-                levelFilter === "warn"
-                  ? "bg-muted text-foreground dm-button-control-active"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              onClick={() => setLevelFilter("risk")}
+              className="h-7 px-2 text-xs"
             >
-              Varování
+              RISK
             </Button>
             <Button
-              variant={levelFilter === "info" ? "secondary" : "ghost"}
+              variant={levelFilter === "signal" ? "secondary" : "ghost"}
               size="sm"
-              onClick={() => setLevelFilter("info")}
-              className={`dm-button-control ${
-                levelFilter === "info"
-                  ? "bg-muted text-foreground dm-button-control-active"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              onClick={() => setLevelFilter("signal")}
+              className="h-7 px-2 text-xs"
             >
-              Info
+              SIGNAL
+            </Button>
+            <Button
+              variant={levelFilter === "status" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setLevelFilter("status")}
+              className="h-7 px-2 text-xs"
+            >
+              STATUS
+            </Button>
+            <Button
+              variant={levelFilter === "system" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setLevelFilter("system")}
+              className="h-7 px-2 text-xs"
+            >
+              SYSTEM
             </Button>
           </div>
         </div>
@@ -168,68 +181,29 @@ export default function LogsPanel({
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="max-h-[520px] overflow-y-auto pr-2"
+          className="max-h-[520px] overflow-y-auto pr-1"
         >
-          <div className="space-y-3">
+          <div className="space-y-2">
             {filteredEntries.map((entry) => {
-              const level = levelForEntry(entry);
-              const ids = extractIds(entry.message);
-              const orderId = ids.orderId;
-              const linkId = ids.linkId;
+              const tone = toneForEntry(entry);
+              const classes = toneClasses(tone);
+              const symbol = extractSymbol(entry.message);
               return (
                 <div
                   key={entry.id}
-                  className="rounded-lg border border-border/70 bg-card/96 px-3 py-3 text-xs dm-surface-elevated"
+                  className={`rounded-lg border px-3 py-2 font-mono-ui text-[12px] leading-[1.6] ${classes.row}`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="w-[52px] tabular-nums text-[11px] text-muted-foreground">
+                    <span className="w-[48px] tabular-nums text-muted-foreground">
                       {formatClock(entry.timestamp)}
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className={
-                        level === "error"
-                          ? "border-red-500/50 text-red-400 dm-status-sell"
-                          : level === "blocked"
-                            ? "border-orange-500/50 text-orange-400 dm-status-warn"
-                            : level === "warn"
-                              ? "border-amber-500/50 text-amber-400 dm-status-warn"
-                              : "border-border/60 text-muted-foreground dm-status-muted"
-                      }
-                    >
+                    </span>
+                    <Badge variant="outline" className={`${classes.badge} h-5 px-1.5 text-[10px]`}>
                       {entry.action}
                     </Badge>
-                    <div className="min-w-0 flex-1 text-foreground">{entry.message}</div>
+                    <span className="font-semibold text-foreground">{symbol}</span>
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] font-mono text-muted-foreground">
-                    <div className="flex items-center gap-1">
-                      <span>order: {shortId(orderId)}</span>
-                      {orderId ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 dm-button-control"
-                          onClick={() => copyText(orderId)}
-                          title="Kopírovat order id"
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
-                      ) : null}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span>link: {shortId(linkId)}</span>
-                      {linkId ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 dm-button-control"
-                          onClick={() => copyText(linkId)}
-                          title="Kopírovat link id"
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
-                      ) : null}
-                    </div>
+                  <div className="mt-1 pl-[56px] text-foreground">
+                    {normalizeMessage(entry.message)}
                   </div>
                 </div>
               );
@@ -240,3 +214,4 @@ export default function LogsPanel({
     </Panel>
   );
 }
+

@@ -86,12 +86,14 @@
       "Roboto Condensed",
       sans-serif;
     --lm-font-body:
+      "Inter",
       "Avenir Next",
       "Segoe UI",
       "Helvetica Neue",
       "Arial",
       sans-serif;
     --lm-font-data:
+      "JetBrains Mono",
       "IBM Plex Mono",
       "SFMono-Regular",
       "Menlo",
@@ -208,6 +210,14 @@
 @layer utilities {
   .tabular-nums {
     font-variant-numeric: tabular-nums;
+  }
+
+  .font-ui {
+    font-family: "Inter", var(--lm-font-body);
+  }
+
+  .font-mono-ui {
+    font-family: "JetBrains Mono", var(--lm-font-data);
   }
 
   html.dark .dm-surface {

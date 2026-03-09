@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { formatMoney, formatSignedMoney } from "@/lib/uiFormat";
 import type { ScanDiagnostics } from "@/lib/diagnosticsTypes";
 import type { ActivePosition, LogEntry } from "@/types";
 
@@ -35,6 +34,16 @@ function normalizeRiskReason(message: string) {
   }
   if (text.includes("exec off")) return "execution off";
   return String(message ?? "blokováno").replace(/\s+/g, " ").trim();
+}
+
+function formatUsdt(value?: number, signed = false) {
+  if (!Number.isFinite(value)) return "—";
+  const amount = value as number;
+  const sign = signed && amount > 0 ? "+" : "";
+  return `${sign}${amount.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} USDT`;
 }
 
 export default function RiskBlockPanel({
@@ -133,7 +142,7 @@ export default function RiskBlockPanel({
         <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
           <div className="text-xs text-muted-foreground">Max denní ztráta</div>
           <div className={`mt-1 font-semibold tabular-nums ${maxDailyLossBreach ? "text-[#D32F2F]" : "text-foreground"}`}>
-            {formatSignedMoney(maxDailyLossUsd)}
+            {formatUsdt(maxDailyLossUsd, true)}
           </div>
           <div className={`text-[11px] ${maxDailyLossBreach ? "text-[#D32F2F]" : "text-[#00C853]"}`}>
             {maxDailyLossBreach ? "Breach" : "Within limit"}
@@ -153,7 +162,7 @@ export default function RiskBlockPanel({
         <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
           <div className="text-xs text-muted-foreground">Risk exposure vs limit</div>
           <div className="mt-1 font-semibold tabular-nums text-foreground">
-            {formatMoney(riskExposureUsd)} / {formatMoney(riskExposureLimitUsd)}
+            {formatUsdt(riskExposureUsd)} / {formatUsdt(riskExposureLimitUsd)}
           </div>
           <div className="mt-2 h-1.5 w-full rounded-full bg-background/60">
             <div
@@ -178,7 +187,7 @@ export default function RiskBlockPanel({
                   <div className="flex items-center justify-between gap-2 text-muted-foreground">
                     <span className="font-mono">{row.symbol}</span>
                     <span className="tabular-nums">
-                      {formatMoney(row.riskUsd)} · {pctOfBook.toFixed(0)}%
+                      {formatUsdt(row.riskUsd)} · {pctOfBook.toFixed(0)}%
                     </span>
                   </div>
                   <div className="mt-1 h-1.5 w-full rounded-full bg-background/60">

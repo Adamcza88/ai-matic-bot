@@ -51,6 +51,13 @@ function modeLabel(value: TradingMode) {
     : UI_COPY.statusBar.manual;
 }
 
+function compactLabel(value: string, max = 44) {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "N/A";
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1)}…`;
+}
+
 type UiToast = {
   id: number;
   tone: "success" | "neutral" | "danger";
@@ -488,6 +495,7 @@ export default function Dashboard({
   const maxOpenOrders = bot.settings?.maxOpenOrders ?? 0;
   const totalCapital =
     portfolioState?.totalCapital ?? portfolioState?.totalEquity;
+  const availableBalance = portfolioState?.availableBalance;
   const allocated = portfolioState?.allocatedCapital;
   const riskPerTradePct = profileMeta.riskPct;
   const riskPerTradeUsd =
@@ -650,6 +658,38 @@ export default function Dashboard({
     }),
     [dailyPnl]
   );
+  const strategyHeader = useMemo(() => {
+    if (riskMode === "ai-matic-olikella") {
+      return {
+        htf: "H4 structure",
+        entry: "1h EMA cross",
+        feed: "5m execution",
+      };
+    }
+    if (riskMode === "ai-matic-pro") {
+      return {
+        htf: "4H trend filter",
+        entry: "15m fib trigger",
+        feed: "1m execution",
+      };
+    }
+    if (riskMode === "ai-matic-amd") {
+      return {
+        htf: "1h bias",
+        entry: "15m/5m AMD confirm",
+        feed: "5m execution",
+      };
+    }
+    return {
+      htf: compactLabel(profileMeta.timeframes.split("·")[0] ?? profileMeta.timeframes),
+      entry: compactLabel(profileMeta.entry),
+      feed: compactLabel(
+        profileMeta.timeframes
+          .split("·")
+          .find((part) => part.toLowerCase().includes("feed")) ?? "1m execution"
+      ),
+    };
+  }, [profileMeta.entry, profileMeta.timeframes, riskMode]);
   const engineStatus =
     appEnabled && mode === TradingMode.AUTO_ON ? "Running" : "Paused";
   const appRunning = appEnabled;
@@ -699,7 +739,7 @@ export default function Dashboard({
 
   return (
     <div
-      className="mx-auto max-w-[1560px] space-y-6 px-4 py-4 lg:px-6"
+      className="mx-auto max-w-[1560px] space-y-6 px-4 py-4 lg:px-6 font-ui"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -729,6 +769,7 @@ export default function Dashboard({
         dailyPnl={dailyPnl}
         openPositionsPnl={openPositionsPnl}
         totalCapital={totalCapital}
+        strategyHeader={strategyHeader}
       />
 
       <Tabs
@@ -749,83 +790,100 @@ export default function Dashboard({
             />
           ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleResetAllGates}
-                className="h-11 px-4 text-sm font-semibold"
-              >
-                Reset ALL gates
-              </Button>
-              <Button
-                type="button"
-                variant={appRunning ? "destructive" : "default"}
-                size="sm"
-                onClick={handleToggleApp}
-                aria-pressed={appRunning}
-                aria-label={appRunning ? "Stop aplikace" : "Spustit aplikaci"}
-                className="h-11 px-4 text-sm font-semibold"
-              >
-                {appRunning ? "Stop aplikace" : "Spustit aplikaci"}
-              </Button>
+            <div className="grid flex-1 grid-cols-1 gap-2 lg:grid-cols-3">
+              <div className="rounded-lg border border-border/60 bg-background/40 p-2">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+                  Environment
+                </div>
+                <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
+                  <Button
+                    variant={useTestnet ? "default" : "ghost"}
+                    size="sm"
+                    data-testid="env-demo-button"
+                    onClick={() => setUseTestnet(true)}
+                    aria-pressed={useTestnet}
+                    aria-label="Přepnout na demo prostředí"
+                    disabled={envAvailability ? !envAvailability.canUseDemo : false}
+                    title={
+                      envAvailability && !envAvailability.canUseDemo
+                        ? envAvailability.demoReason ?? "Demo prostředí není dostupné"
+                        : "Použít demo prostředí"
+                    }
+                    className={useTestnet ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
+                  >
+                    {UI_COPY.statusBar.demo}
+                  </Button>
+                  <Button
+                    variant={!useTestnet ? "default" : "ghost"}
+                    size="sm"
+                    data-testid="env-mainnet-button"
+                    onClick={() => setUseTestnet(false)}
+                    aria-pressed={!useTestnet}
+                    aria-label="Přepnout na mainnet prostředí"
+                    disabled={envAvailability ? !envAvailability.canUseMainnet : false}
+                    title={
+                      envAvailability && !envAvailability.canUseMainnet
+                        ? envAvailability.mainnetReason ?? "Mainnet prostředí není dostupné"
+                        : "Použít mainnet prostředí"
+                    }
+                    className={!useTestnet ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
+                  >
+                    {UI_COPY.statusBar.mainnet}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border/60 bg-background/40 p-2">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+                  Execution Mode
+                </div>
+                <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
+                  {MODE_OPTIONS.map((value) => (
+                    <Button
+                      key={value}
+                      variant={mode === value ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setMode(value)}
+                      aria-pressed={mode === value}
+                      aria-label={`Nastavit režim ${modeLabel(value)}`}
+                      className={mode === value ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
+                    >
+                      {modeLabel(value)}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#D32F2F]/50 bg-[#D32F2F]/5 p-2">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.1em] text-[#D32F2F]">
+                  Emergency
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleResetAllGates}
+                    className="h-11 px-4 text-sm font-semibold text-[#D32F2F] border-[#D32F2F]/50 hover:bg-[#D32F2F]/10"
+                  >
+                    Reset Gates
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={appRunning ? "destructive" : "default"}
+                    size="sm"
+                    onClick={handleToggleApp}
+                    aria-pressed={appRunning}
+                    aria-label={appRunning ? "Stop Engine" : "Start Engine"}
+                    className="h-11 px-4 text-sm font-semibold"
+                  >
+                    {appRunning ? "Stop Engine" : "Start Engine"}
+                  </Button>
+                </div>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
-                <Button
-                  variant={useTestnet ? "default" : "ghost"}
-                  size="sm"
-                  data-testid="env-demo-button"
-                  onClick={() => setUseTestnet(true)}
-                  aria-pressed={useTestnet}
-                  aria-label="Přepnout na demo prostředí"
-                  disabled={envAvailability ? !envAvailability.canUseDemo : false}
-                  title={
-                    envAvailability && !envAvailability.canUseDemo
-                      ? envAvailability.demoReason ?? "Demo prostředí není dostupné"
-                      : "Použít demo prostředí"
-                  }
-                  className={useTestnet ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
-                >
-                  {UI_COPY.statusBar.demo}
-                </Button>
-                <Button
-                  variant={!useTestnet ? "default" : "ghost"}
-                  size="sm"
-                  data-testid="env-mainnet-button"
-                  onClick={() => setUseTestnet(false)}
-                  aria-pressed={!useTestnet}
-                  aria-label="Přepnout na mainnet prostředí"
-                  disabled={envAvailability ? !envAvailability.canUseMainnet : false}
-                  title={
-                    envAvailability && !envAvailability.canUseMainnet
-                      ? envAvailability.mainnetReason ?? "Mainnet prostředí není dostupné"
-                      : "Použít mainnet prostředí"
-                  }
-                  className={!useTestnet ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
-                >
-                  {UI_COPY.statusBar.mainnet}
-                </Button>
-              </div>
-
-              <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
-                {MODE_OPTIONS.map((value) => (
-                  <Button
-                    key={value}
-                    variant={mode === value ? "default" : "ghost"}
-                    size="sm"
-                    onClick={() => setMode(value)}
-                    aria-pressed={mode === value}
-                    aria-label={`Nastavit režim ${modeLabel(value)}`}
-                    className={mode === value ? "h-11 min-w-24 text-sm font-semibold" : "h-11 min-w-24 text-sm font-semibold text-muted-foreground"}
-                  >
-                    {modeLabel(value)}
-                  </Button>
-                ))}
-              </div>
-
               <Button
                 variant="outline"
                 size="sm"
@@ -860,25 +918,16 @@ export default function Dashboard({
         </section>
 
         <KpiRow
-          dataHealthSafe={dataHealthSafe}
-          latencyMs={systemState.latency}
-          feedAgeRangeMs={liveFeedRange}
-          gatesPassCount={gateStats.pass}
-          gatesTotal={gateStats.total}
-          blockedSignals={blockedSignalsCount}
           totalCapital={totalCapital}
-          capitalRange={capitalRange}
-          allocated={allocated}
-          dailyPnl={dailyPnl}
-          dailyPnlBreakdown={dailyPnlBreakdown}
-          openPositionsPnl={openPositionsPnl}
-          openPositionsPnlRange={openPositionsPnlRange}
+          availableBalance={availableBalance}
           openPositions={openPositionsCount}
           maxOpenPositions={maxOpenPositions}
           openOrders={openOrdersCount}
           maxOpenOrders={maxOpenOrders}
           riskPerTradePct={riskPerTradePct}
           riskPerTradeUsd={riskPerTradeUsd}
+          riskExposureUsd={riskExposureUsd}
+          riskExposureLimitUsd={riskExposureLimitUsd}
           loading={dashboardLoading}
         />
 

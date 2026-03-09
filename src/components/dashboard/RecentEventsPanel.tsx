@@ -11,68 +11,65 @@ type RecentEventsPanelProps = {
 };
 
 type EventFilter = "all" | "risk" | "orders" | "engine";
+type EventStage = "SCAN" | "SIGNAL" | "RISK CHECK" | "ORDER" | "POSITION";
 
 type EventRow = {
   id: string;
   timestamp: string;
-  action: LogEntry["action"];
   symbol: string;
-  verdict: string;
+  action: LogEntry["action"];
+  stage: EventStage;
   message: string;
-  count: number;
 };
-const EVENT_TRACE_PAGE_SIZE = 10;
 
-function isRiskLikeStatus(entry: LogEntry) {
-  if (entry.action !== "STATUS") return false;
-  const text = String(entry.message ?? "").toLowerCase();
-  return (
-    text.includes("skip entry") ||
-    text.includes("entry blocked") ||
-    text.includes("signal_relay_paused") ||
-    text.includes("gate [max_")
-  );
+const EVENT_TRACE_PAGE_SIZE = 12;
+
+function compactMessage(message: string, max = 140) {
+  const normalized = String(message ?? "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1)}…`;
+}
+
+function extractSymbol(message: string) {
+  const hit = String(message ?? "").match(/\b[A-Z]{2,10}USDT\b/);
+  return hit?.[0] ?? "—";
 }
 
 function eventGroup(entry: LogEntry): EventFilter {
-  if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT" || isRiskLikeStatus(entry)) return "risk";
+  if (entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT" || entry.action === "REJECT") {
+    return "risk";
+  }
   if (entry.action === "OPEN" || entry.action === "CLOSE" || entry.action === "AUTO_CLOSE") {
     return "orders";
   }
   return "engine";
 }
 
-function extractSymbol(message: string) {
-  const hit = message.match(/\b[A-Z]{2,10}USDT\b/);
-  return hit?.[0] ?? "—";
-}
-
-function verdictFor(entry: LogEntry) {
-  if (entry.action === "RISK_BLOCK" || isRiskLikeStatus(entry)) return "NO TRADE";
-  if (entry.action === "RISK_HALT") return "HALTED";
-  if (entry.action === "OPEN") return "OPENED";
-  if (entry.action === "CLOSE" || entry.action === "AUTO_CLOSE") return "CLOSED";
-  if (entry.action === "ERROR") return "ERROR";
-  return "INFO";
-}
-
-function compactMessage(message: string, max = 120) {
-  const normalized = message.replace(/\s+/g, " ").trim();
-  if (normalized.length <= max) return normalized;
-  return `${normalized.slice(0, max - 1)}…`;
-}
-
-function riskReason(message: string) {
-  const text = String(message ?? "").toLowerCase();
-  const gateMatch = message.match(/gate\s+\[([A-Z_+]+)\]:\s*(.+?)\s*->\s*skip entry/i);
-  if (gateMatch) return `${gateMatch[1]} ${compactMessage(gateMatch[2], 50)}`;
-  if (text.includes("max_pos") || text.includes("max pozic")) return "max positions reached";
-  if (text.includes("max_orders") || text.includes("max order")) return "max orders reached";
-  if (text.includes("open pos/order") || text.includes("open position") || text.includes("pozice")) {
-    return "open position";
+function stageFor(entry: LogEntry): EventStage {
+  const msg = String(entry.message ?? "").toLowerCase();
+  if (entry.action === "SIGNAL" || msg.includes("signal")) return "SIGNAL";
+  if (
+    entry.action === "RISK_BLOCK" ||
+    entry.action === "RISK_HALT" ||
+    entry.action === "REJECT" ||
+    msg.includes("risk") ||
+    msg.includes("gate")
+  ) {
+    return "RISK CHECK";
   }
-  if (text.includes("exec off")) return "execution off";
-  return compactMessage(message, 70);
+  if (entry.action === "OPEN" || entry.action === "CLOSE" || entry.action === "AUTO_CLOSE" || msg.includes("position")) {
+    return "POSITION";
+  }
+  if (msg.includes("order")) return "ORDER";
+  return "SCAN";
+}
+
+function stageTone(stage: EventStage) {
+  if (stage === "SIGNAL") return "border-sky-500/60 text-sky-300";
+  if (stage === "RISK CHECK") return "border-orange-500/60 text-orange-300";
+  if (stage === "ORDER") return "border-indigo-500/60 text-indigo-300";
+  if (stage === "POSITION") return "border-emerald-500/60 text-emerald-300";
+  return "border-border/60 text-muted-foreground";
 }
 
 export default function RecentEventsPanel({
@@ -81,54 +78,20 @@ export default function RecentEventsPanel({
 }: RecentEventsPanelProps) {
   const [eventFilter, setEventFilter] = useState<EventFilter>("all");
   const [page, setPage] = useState(0);
+
   const filtered = useMemo(() => {
-    const list = (logEntries ?? []).slice(0, 200);
+    const list = (logEntries ?? []).slice(0, 240);
     const scoped = eventFilter === "all" ? list : list.filter((entry) => eventGroup(entry) === eventFilter);
-
-    const rows: EventRow[] = [];
-    const byKey = new Map<string, EventRow>();
-
-    for (const entry of scoped) {
-      const symbol = extractSymbol(entry.message);
-      const verdict = verdictFor(entry);
-      const normalized = compactMessage(entry.message);
-      const riskLike = entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT" || isRiskLikeStatus(entry);
-
-      if (riskLike) {
-        const reason = riskReason(entry.message);
-        const key = `${symbol}|${reason}`;
-        const existing = byKey.get(key);
-        if (existing) {
-          existing.count += 1;
-          continue;
-        }
-        const row: EventRow = {
-          id: key,
-          timestamp: entry.timestamp,
-          action: "RISK_BLOCK",
-          symbol,
-          verdict,
-          message: reason,
-          count: 1,
-        };
-        byKey.set(key, row);
-        rows.push(row);
-        continue;
-      }
-
-      rows.push({
-        id: entry.id,
-        timestamp: entry.timestamp,
-        action: entry.action,
-        symbol,
-        verdict,
-        message: normalized,
-        count: 1,
-      });
-    }
-
-    return rows;
+    return scoped.map((entry) => ({
+      id: entry.id,
+      timestamp: entry.timestamp,
+      symbol: extractSymbol(entry.message),
+      action: entry.action,
+      stage: stageFor(entry),
+      message: compactMessage(entry.message),
+    })) as EventRow[];
   }, [eventFilter, logEntries]);
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / EVENT_TRACE_PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = useMemo(() => {
@@ -140,11 +103,7 @@ export default function RecentEventsPanel({
 
   useEffect(() => {
     setPage(0);
-  }, [filtered.length]);
-
-  useEffect(() => {
-    setPage(0);
-  }, [eventFilter]);
+  }, [filtered.length, eventFilter]);
 
   useEffect(() => {
     setPage((prev) => Math.min(prev, totalPages - 1));
@@ -152,8 +111,8 @@ export default function RecentEventsPanel({
 
   return (
     <Panel
-      title="Poslední události"
-      description="Agregovaný stream riziko, příkazy a engine."
+      title="Event Trace"
+      description="Timeline flow: SCAN → SIGNAL → RISK CHECK → ORDER → POSITION"
       fileId="EVENT TRACE ID: TR-11-E"
       action={
         <div className="flex items-center gap-1 rounded-md border border-border/60 bg-card/80 p-0.5">
@@ -201,35 +160,40 @@ export default function RecentEventsPanel({
           Pro tento filtr nejsou události.
         </div>
       ) : (
-        <div className="space-y-2">
-          <div className="h-[320px] overflow-hidden rounded-lg border border-border/60">
-            <div className="divide-y divide-border/60">
-              {pageRows.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="grid h-8 grid-cols-[54px_106px_126px_minmax(0,1fr)] items-center gap-2 bg-card/80 px-2 text-xs"
-                  title={entry.message}
-                >
-                  <div className="tabular-nums leading-6 text-muted-foreground">
-                    {formatClock(entry.timestamp)}
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className="h-5 justify-center border-border/60 px-1.5 text-[10px] leading-4"
-                  >
-                    {entry.action}
-                  </Badge>
-                  <div className="min-w-0 font-mono text-foreground leading-6 truncate">
-                    {entry.symbol} · {entry.verdict}
-                    {entry.count > 1 ? ` ×${entry.count}` : ""}
-                  </div>
-                  <div className="min-w-0 text-muted-foreground leading-6 truncate">
-                    {entry.action === "RISK_BLOCK" || entry.action === "RISK_HALT"
-                      ? `(${entry.message})`
-                      : entry.message}
-                  </div>
-                </div>
-              ))}
+        <div className="space-y-3">
+          <div className="rounded-lg border border-border/60 bg-background/30 p-2">
+            <div className="max-h-[360px] overflow-y-auto pr-1">
+              <div className="space-y-0">
+                {pageRows.map((entry, index) => {
+                  const isLast = index === pageRows.length - 1;
+                  return (
+                    <div key={entry.id} className="grid grid-cols-[28px_minmax(0,1fr)] gap-2">
+                      <div className="relative flex justify-center">
+                        <span className="mt-3 h-2.5 w-2.5 rounded-full bg-primary/80" />
+                        {!isLast ? (
+                          <span className="absolute top-6 h-[calc(100%-8px)] w-px bg-border/70" />
+                        ) : null}
+                      </div>
+                      <div className="pb-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono-ui text-xs tabular-nums text-muted-foreground">
+                            {formatClock(entry.timestamp)}
+                          </span>
+                          <Badge variant="outline" className={`text-[10px] ${stageTone(entry.stage)}`}>
+                            {entry.stage}
+                          </Badge>
+                          <span className="font-mono-ui text-xs text-foreground">
+                            {entry.action} {entry.symbol}
+                          </span>
+                        </div>
+                        <div className="mt-1 font-mono-ui text-xs leading-[1.6] text-muted-foreground">
+                          {entry.message}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -261,3 +225,4 @@ export default function RecentEventsPanel({
     </Panel>
   );
 }
+
