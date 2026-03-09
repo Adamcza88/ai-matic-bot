@@ -43,73 +43,77 @@ export default function PositionsTable({
   const showActions = allowClose !== false;
 
   const rows = useMemo(() => {
-    return positions.map((p) => {
-      const size = Number(p.size ?? p.qty);
-      const sideLower = String(p.side ?? "").toLowerCase();
-      const isBuy = sideLower === "buy";
-      const trail = Number(p.trailingDistance ?? p.currentTrailingStop ?? p.trailingStop);
-      const trailStopPrice = Number(p.trailStopPrice);
-      const trailingActivePrice = Number(p.trailingActivePrice);
-      const markPrice = Number(p.markPrice);
-      const slValue = Number(p.sl);
-      const sl = Number.isFinite(slValue) ? slValue : undefined;
-      const tpValue = Number(p.tp);
-      const tp = Number.isFinite(tpValue) ? tpValue : undefined;
-      const upnl = Number(p.unrealizedPnl ?? p.pnl ?? p.pnlValue);
-      const slMissing = !Number.isFinite(sl) || (sl as number) <= 0;
-      const tpMissing = !Number.isFinite(tp) || tp <= 0;
-      const entryValue = Number.isFinite(p.entryPrice)
-        ? p.entryPrice
-        : Number.isFinite(p.triggerPrice)
-          ? p.triggerPrice
-          : Number.NaN;
-      const protectionLabel =
-        slMissing && tpMissing
-          ? "Čeká na TP/SL"
-          : slMissing
-            ? "Chybí SL"
-            : tpMissing
-              ? "Chybí TP"
-              : "Zajištěno";
-      const protectionClass =
-        slMissing || tpMissing
-          ? "border-amber-500/50 text-amber-300"
-          : "border-emerald-500/50 text-emerald-400";
-      const updateLabel = (() => {
-        if (p.lastUpdateReason) return p.lastUpdateReason;
-        if (!p.timestamp) return "—";
-        const parsed = Date.parse(p.timestamp);
-        return Number.isFinite(parsed)
-          ? new Date(parsed).toLocaleString()
-          : "—";
-      })();
-      const hasTrailing =
-        Boolean(p.trailPlanned) ||
-        (Number.isFinite(trail) && trail > 0) ||
-        (Number.isFinite(trailingActivePrice) && trailingActivePrice > 0);
-      const activationHit =
-        Number.isFinite(trailingActivePrice) &&
-        trailingActivePrice > 0 &&
-        Number.isFinite(markPrice) &&
-        (isBuy ? markPrice >= trailingActivePrice : markPrice <= trailingActivePrice);
-      return {
-        key: p.positionId || p.id || p.symbol,
-        raw: p,
-        size,
-        isBuy,
-        trail,
-        trailStopPrice,
-        sl,
-        tp,
-        upnl,
-        entryValue,
-        updateLabel,
-        protectionLabel,
-        protectionClass,
-        hasTrailing,
-        activationHit,
-      };
-    });
+    return positions
+      .map((p) => {
+        const size = Number(p.size ?? p.qty);
+        const sideLower = String(p.side ?? "").toLowerCase();
+        const isBuy = sideLower === "buy";
+        const trail = Number(p.trailingDistance ?? p.currentTrailingStop ?? p.trailingStop);
+        const trailStopPrice = Number(p.trailStopPrice);
+        const trailingActivePrice = Number(p.trailingActivePrice);
+        const markPrice = Number(p.markPrice);
+        const slValue = Number(p.sl);
+        const sl = Number.isFinite(slValue) ? slValue : undefined;
+        const tpValue = Number(p.tp);
+        const tp = Number.isFinite(tpValue) ? tpValue : undefined;
+        const upnl = Number(p.unrealizedPnl ?? p.pnl ?? p.pnlValue);
+        const slMissing = !Number.isFinite(sl) || (sl as number) <= 0;
+        const tpMissing = !Number.isFinite(tp) || tp <= 0;
+        const entryValue = Number.isFinite(p.entryPrice)
+          ? p.entryPrice
+          : Number.isFinite(p.triggerPrice)
+            ? p.triggerPrice
+            : Number.NaN;
+        const protectionLabel =
+          slMissing && tpMissing
+            ? "Čeká na TP/SL"
+            : slMissing
+              ? "Chybí SL"
+              : tpMissing
+                ? "Chybí TP"
+                : "Zajištěno";
+        const protectionClass =
+          slMissing || tpMissing
+            ? "border-amber-500/50 text-amber-300"
+            : "border-emerald-500/50 text-emerald-400";
+        const updateLabel = (() => {
+          if (p.lastUpdateReason) return p.lastUpdateReason;
+          if (!p.timestamp) return "—";
+          const parsed = Date.parse(p.timestamp);
+          return Number.isFinite(parsed)
+            ? new Date(parsed).toLocaleString()
+            : "—";
+        })();
+        const hasTrailing =
+          Boolean(p.trailPlanned) ||
+          (Number.isFinite(trail) && trail > 0) ||
+          (Number.isFinite(trailingActivePrice) && trailingActivePrice > 0);
+        const activationHit =
+          Number.isFinite(trailingActivePrice) &&
+          trailingActivePrice > 0 &&
+          Number.isFinite(markPrice) &&
+          (isBuy ? markPrice >= trailingActivePrice : markPrice <= trailingActivePrice);
+        return {
+          key: p.positionId || p.id || p.symbol,
+          raw: p,
+          size,
+          isBuy,
+          trail,
+          trailStopPrice,
+          sl,
+          tp,
+          upnl,
+          entryValue,
+          updateLabel,
+          protectionLabel,
+          protectionClass,
+          hasTrailing,
+          activationHit,
+        };
+      })
+      .sort((a, b) =>
+        String(a.raw.symbol ?? "").localeCompare(String(b.raw.symbol ?? ""), "cs")
+      );
   }, [positions]);
 
   const toggleRow = (key: string) => {
