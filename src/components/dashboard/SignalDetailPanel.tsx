@@ -57,6 +57,13 @@ function formatFeedAge(feedAgeMs?: number) {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
+function statusLabelCz(value: string) {
+  if (value === "PAUSED") return "POZASTAVENO";
+  if (value === "PASS") return "OK";
+  if (value === "HOLD") return "HOLD";
+  return "NEAKTIVNÍ";
+}
+
 function feedToneClass(feedAgeMs?: number) {
   if (!Number.isFinite(feedAgeMs)) return "text-muted-foreground";
   const ms = feedAgeMs as number;
@@ -91,7 +98,7 @@ function GateList({
                 type="button"
                 onClick={() => toggleChecklist(gate.name)}
                 className="flex w-full items-center justify-between gap-3 rounded-md border border-border/50 bg-background/30 px-2 py-1 text-left text-xs"
-                title="Toggle gate enforcement"
+                title="Přepnout vynucení gate"
               >
                 <span className={enabled ? "text-foreground" : "text-muted-foreground"}>
                   {gate.name}
@@ -179,14 +186,14 @@ export default function SignalDetailPanel({
             <div className="rounded-lg border border-border/60 bg-card/70 p-2">
               <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Trend</div>
               <div className="mt-1 text-sm font-medium">
-                {String(diag?.trendBias ?? diag?.symbolState ?? "UNRESOLVED")}
+                {String(diag?.trendBias ?? diag?.symbolState ?? "NEURČENO")}
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-card/70 p-2">
               <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Exekuce</div>
               <div className="mt-1">
                 <span className="inline-flex rounded-md border border-border/60 px-2 py-0.5 text-[11px] font-semibold text-foreground">
-                  {statusLabel}
+                  {statusLabelCz(statusLabel)}
                 </span>
               </div>
             </div>
@@ -194,16 +201,16 @@ export default function SignalDetailPanel({
 
           <div className="rounded-lg border border-border/60 bg-card/70 p-2 text-xs">
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
-              Feed age
+              Stáří feedu
             </div>
             <div className={`mt-1 tabular-nums ${feedToneClass(diag?.feedAgeMs)}`}>
-              {formatFeedAge(diag?.feedAgeMs)} (OK &lt; 2.0s, WARN 2.0–10.0s, BAD &gt; 10.0s)
+              {formatFeedAge(diag?.feedAgeMs)} (OK &lt; 2.0s, WARN 2.0–10.0s, ŠPATNÉ &gt; 10.0s)
             </div>
           </div>
 
           <div className="rounded-lg border border-border/60 bg-card/70 p-2 text-xs">
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
-              Checklist / důvod
+              Kontrolní seznam / důvod
             </div>
             <div className="mt-1 text-foreground">{reason}</div>
           </div>
@@ -221,7 +228,7 @@ export default function SignalDetailPanel({
             toggleChecklist={toggleChecklist}
           />
           <GateList
-            title="Checklist / gate"
+            title="Kontrolní seznam / gate"
             gates={execution}
             checklistEnabled={checklistEnabled}
             toggleChecklist={toggleChecklist}

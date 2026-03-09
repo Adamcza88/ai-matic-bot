@@ -83,23 +83,23 @@ export default function KpiRow({
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         <div className="rounded-xl border border-border/70 bg-card/96 p-4 dm-surface-elevated">
           <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
-            Risk Panel
+            Rizikový panel
           </div>
           <div className="mt-3 space-y-2 text-sm">
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Risk / trade</div>
+              <div className="text-xs text-muted-foreground">Riziko / obchod</div>
               <div className="mt-1 font-mono-ui text-lg font-semibold tabular-nums text-foreground">
                 {formatPercent(riskPerTradePct)}
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Position risk</div>
+              <div className="text-xs text-muted-foreground">Riziko pozice</div>
               <div className="mt-1 font-mono-ui text-lg font-semibold tabular-nums text-foreground">
                 {formatUsdt(riskPerTradeUsd)}
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Max add-ons</div>
+              <div className="text-xs text-muted-foreground">Max add-ony</div>
               <div className="mt-1 font-mono-ui text-lg font-semibold tabular-nums text-foreground">1</div>
             </div>
           </div>
@@ -107,12 +107,12 @@ export default function KpiRow({
 
         <div className="rounded-xl border border-border/70 bg-card/96 p-4 dm-surface-elevated">
           <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
-            Positions & Exposure
+            Pozice a expozice
           </div>
           <div className="mt-3 space-y-3 text-sm">
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">POSITIONS</span>
+                <span className="text-muted-foreground">POZICE</span>
                 <span className={`font-mono-ui tabular-nums ${usageTone(positionUsagePct)}`}>
                   {openPositions} / {maxOpenPositions}
                 </span>
@@ -130,7 +130,7 @@ export default function KpiRow({
 
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">ORDERS</span>
+                <span className="text-muted-foreground">PŘÍKAZY</span>
                 <span className={`font-mono-ui tabular-nums ${usageTone(orderUsagePct)}`}>
                   {openOrders} / {maxOpenOrders}
                 </span>
@@ -147,7 +147,7 @@ export default function KpiRow({
             </div>
 
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Exposure / limit</div>
+              <div className="text-xs text-muted-foreground">Expozice / limit</div>
               <div className="mt-1 font-mono-ui text-xs tabular-nums text-foreground">
                 {formatUsdt(riskExposureUsd)} / {formatUsdt(riskExposureLimitUsd)}
               </div>
@@ -157,29 +157,29 @@ export default function KpiRow({
 
         <div className="rounded-xl border border-border/70 bg-card/96 p-4 dm-surface-elevated">
           <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
-            Margin
+            Marže
           </div>
           <div className="mt-3 space-y-2 text-sm">
             <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Free margin</span>
+              <span className="text-muted-foreground">Volná marže</span>
               <span className="font-mono-ui font-semibold tabular-nums text-foreground">
                 {formatUsdt(availableBalance)}
               </span>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Used margin</span>
+              <span className="text-muted-foreground">Použitá marže</span>
               <span className="font-mono-ui font-semibold tabular-nums text-foreground">
                 {formatUsdt(usedMargin)}
               </span>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Leverage exposure</span>
+              <span className="text-muted-foreground">Páková expozice</span>
               <span className="font-mono-ui font-semibold tabular-nums text-foreground">
                 {formatPercent(leverageExposure)}
               </span>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Liquidation buffer</span>
+              <span className="text-muted-foreground">Likvidační buffer</span>
               <span className="font-mono-ui font-semibold tabular-nums text-foreground">
                 {formatPercent(liquidationBuffer)}
               </span>
@@ -190,4 +190,3 @@ export default function KpiRow({
     </section>
   );
 }
-

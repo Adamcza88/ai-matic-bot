@@ -111,8 +111,8 @@ export default function RecentEventsPanel({
 
   return (
     <Panel
-      title="Event Trace"
-      description="Timeline flow: SCAN → SIGNAL → RISK CHECK → ORDER → POSITION"
+      title="Trace událostí"
+      description="Tok událostí: SCAN → SIGNAL → RISK CHECK → ORDER → POSITION"
       fileId="EVENT TRACE ID: TR-11-E"
       action={
         <div className="flex items-center gap-1 rounded-md border border-border/60 bg-card/80 p-0.5">
@@ -205,7 +205,7 @@ export default function RecentEventsPanel({
               disabled={!canPrev}
               onClick={() => setPage((prev) => Math.max(0, prev - 1))}
             >
-              Prev
+              Předchozí
             </Button>
             <div className="tabular-nums text-muted-foreground">
               {safePage + 1} / {totalPages}
@@ -217,7 +217,7 @@ export default function RecentEventsPanel({
               disabled={!canNext}
               onClick={() => setPage((prev) => Math.min(totalPages - 1, prev + 1))}
             >
-              Next
+              Další
             </Button>
           </div>
         </div>
@@ -225,4 +225,3 @@ export default function RecentEventsPanel({
     </Panel>
   );
 }
-

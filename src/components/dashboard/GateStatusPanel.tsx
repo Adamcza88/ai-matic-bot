@@ -155,7 +155,7 @@ export default function GateStatusPanel({
   const progress = diag?.entryGateProgress;
   const progressState: EntryGateState = progress?.state ?? "WAITING";
   const progressPct = Number.isFinite(progress?.pct) ? Number(progress?.pct) : 0;
-  const progressLabel = progress?.label ?? "Checklist";
+  const progressLabel = progress?.label ?? "Kontrolní seznam";
   const progressPassed = Number.isFinite(progress?.passed) ? Number(progress?.passed) : 0;
   const progressRequired = Number.isFinite(progress?.required) ? Number(progress?.required) : 0;
 
@@ -165,7 +165,7 @@ export default function GateStatusPanel({
 
   return (
     <Panel
-      title="Checklist Gate Stavy"
+      title="Stavy gate kontrolního seznamu"
       description={selectedSymbol ? `Trh ${selectedSymbol}` : "Není vybraný trh"}
       fileId="CHECKLIST STATUS ID: TR-13-GS"
     >
@@ -359,7 +359,7 @@ export default function GateStatusPanel({
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground">
                 <tr className="[&>th]:h-9 [&>th]:px-3 [&>th]:text-left border-b border-border/60">
-                  <th>Gate</th>
+                  <th>Pravidlo</th>
                   <th>Stav</th>
                   <th>Detail</th>
                 </tr>

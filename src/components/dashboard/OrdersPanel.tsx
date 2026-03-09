@@ -103,12 +103,12 @@ function formatSigned(value?: number) {
 }
 
 function formatLatency(value?: number) {
-  if (!Number.isFinite(value)) return "N/A";
+  if (!Number.isFinite(value)) return "—";
   return `${Math.round(value as number)} ms`;
 }
 
 function formatBasisPoints(value?: number) {
-  if (!Number.isFinite(value)) return "N/A";
+  if (!Number.isFinite(value)) return "—";
   return `${(value as number).toFixed(2)} bps`;
 }
 
@@ -457,19 +457,19 @@ export default function OrdersPanel({
           <div className="space-y-3">
             <div className="grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
               <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-                Fill count:{" "}
+                Počet fillů:{" "}
                 <span className="font-semibold tabular-nums">
                   {executionAnalytics.totals.trades}
                 </span>
               </div>
               <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-                Total fee:{" "}
+                Celkové poplatky:{" "}
                 <span className="font-semibold tabular-nums">
                   {formatMoney(executionAnalytics.totals.totalFee, "USD")}
                 </span>
               </div>
               <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-                Reconstructed realized:{" "}
+                Rekonstruované realizované:{" "}
                 <span className="font-semibold tabular-nums">
                   {formatSigned(executionAnalytics.totals.netResult)}
                 </span>
@@ -491,13 +491,13 @@ export default function OrdersPanel({
                   <tr className="border-b border-border/60">
                     <th className="py-2 text-left font-medium">Symbol</th>
                     <th className="py-2 text-left font-medium">Směr</th>
-                    <th className="py-2 text-left font-medium">Lifecycle</th>
+                    <th className="py-2 text-left font-medium">Životní cyklus</th>
                     <th className="py-2 text-right font-medium">Objem</th>
                     <th className="py-2 text-right font-medium">Cena</th>
                     <th className="py-2 text-right font-medium">Poplatek</th>
-                    <th className="py-2 text-right font-medium">Realized PnL</th>
-                    <th className="py-2 text-left font-medium">Liquidity</th>
-                    <th className="py-2 text-left font-medium">Reduce</th>
+                    <th className="py-2 text-right font-medium">Realizované PnL</th>
+                    <th className="py-2 text-left font-medium">Likvidita</th>
+                    <th className="py-2 text-left font-medium">Pouze reduce</th>
                     <th className="py-2 text-left font-medium">Order ID</th>
                     <th className="py-2 text-left font-medium">Trade ID</th>
                     <th className="py-2 text-right font-medium">Čas</th>
@@ -551,10 +551,10 @@ export default function OrdersPanel({
                         {formatSigned(trade.realizedPnlDelta)}
                       </td>
                       <td className="py-3 text-left text-xs font-medium uppercase text-muted-foreground">
-                        {trade.liquidity ?? "unknown"}
+                        {trade.liquidity ?? "neznámá"}
                       </td>
                       <td className="py-3 text-left text-xs text-muted-foreground">
-                        {trade.reduceOnly ? "YES" : "—"}
+                        {trade.reduceOnly ? "ANO" : "—"}
                       </td>
                       <td
                         className="py-3 font-mono text-xs text-muted-foreground"
@@ -606,7 +606,7 @@ export default function OrdersPanel({
         )}
       </Panel>
 
-      <Panel title="Fee Burn a Audit" fileId="EXECUTION AUDIT ID: TR-06-F-AUDIT">
+      <Panel title="Poplatky a audit" fileId="EXECUTION AUDIT ID: TR-06-F-AUDIT">
         {!tradesLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
             Načítám fee audit…
@@ -621,10 +621,10 @@ export default function OrdersPanel({
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b border-border/60">
                   <th className="py-2 text-left font-medium">Symbol</th>
-                  <th className="py-2 text-right font-medium">Trades</th>
-                  <th className="py-2 text-right font-medium">Total fee</th>
-                  <th className="py-2 text-right font-medium">Fee / trade</th>
-                  <th className="py-2 text-right font-medium">Net result</th>
+                  <th className="py-2 text-right font-medium">Obchody</th>
+                  <th className="py-2 text-right font-medium">Celkové poplatky</th>
+                  <th className="py-2 text-right font-medium">Poplatek / obchod</th>
+                  <th className="py-2 text-right font-medium">Čistý výsledek</th>
                   <th className="py-2 text-right font-medium">ENTRY</th>
                   <th className="py-2 text-right font-medium">PARTIAL</th>
                   <th className="py-2 text-right font-medium">EXIT</th>
@@ -680,10 +680,10 @@ export default function OrdersPanel({
                     <thead className="text-xs text-muted-foreground">
                       <tr className="border-b border-border/60">
                         <th className="py-2 text-left font-medium">Symbol</th>
-                        <th className="py-2 text-right font-medium">Fill count</th>
-                        <th className="py-2 text-right font-medium">Avg fill size</th>
-                        <th className="py-2 text-right font-medium">Target size</th>
-                        <th className="py-2 text-right font-medium">Fee</th>
+                        <th className="py-2 text-right font-medium">Počet fillů</th>
+                        <th className="py-2 text-right font-medium">Prům. velikost fillu</th>
+                        <th className="py-2 text-right font-medium">Cílová velikost</th>
+                        <th className="py-2 text-right font-medium">Poplatek</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -722,7 +722,7 @@ export default function OrdersPanel({
                       <tr className="border-b border-border/60">
                         <th className="py-2 text-left font-medium">Symbol</th>
                         <th className="py-2 text-right font-medium">Cena</th>
-                        <th className="py-2 text-right font-medium">Fill count</th>
+                        <th className="py-2 text-right font-medium">Počet fillů</th>
                         <th className="py-2 text-right font-medium">Objem</th>
                         <th className="py-2 text-right font-medium">Čas</th>
                       </tr>
@@ -752,7 +752,7 @@ export default function OrdersPanel({
         )}
       </Panel>
 
-      <Panel title="Execution Heatmap" fileId="EXECUTION HEATMAP ID: TR-06-F-H">
+      <Panel title="Exekuční heatmapa" fileId="EXECUTION HEATMAP ID: TR-06-F-H">
         {!tradesLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
             Načítám heatmapu…
@@ -783,7 +783,7 @@ export default function OrdersPanel({
 
       <Panel
         title="Diagnostika exekučního modulu"
-        description="execution_latency a slippage jsou odhad z fill sekvencí ve stejném burstu."
+        description="Latence exekuce a slippage jsou odhad z fill sekvencí ve stejném burstu."
         fileId="MODULE ID: TR-06-F"
       >
         {!tradesLoaded ? (

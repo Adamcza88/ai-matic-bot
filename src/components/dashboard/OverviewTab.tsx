@@ -37,6 +37,24 @@ function formatFeedAgeMs(value?: number) {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
 }
 
+function hardStatusLabel(value: "PASS" | "FAIL" | "N/A") {
+  if (value === "PASS") return "OK";
+  if (value === "FAIL") return "SELHÁNÍ";
+  return "N/A";
+}
+
+function entryStatusLabel(value: "PAUSED" | "READY" | "BLOCKED") {
+  if (value === "PAUSED") return "POZASTAVENO";
+  if (value === "READY") return "PŘIPRAVENO";
+  return "BLOKOVÁNO";
+}
+
+function dataHealthStatusLabel(value: string) {
+  if (value === "SAFE") return "BEZPEČNÁ";
+  if (value === "UNSAFE") return "RIZIKOVÁ";
+  return value;
+}
+
 function heatColor(netPnl: number, maxAbs: number) {
   if (!Number.isFinite(netPnl) || maxAbs <= 0) return "rgba(148,163,184,0.18)";
   const intensity = Math.max(0.12, Math.min(0.9, Math.abs(netPnl) / maxAbs));
@@ -158,13 +176,13 @@ export default function OverviewTab({
   return (
     <div className="space-y-4">
       <Panel
-        title="Gate Engine"
+        title="Gate modul"
         description={activeSymbol ? `Trh ${activeSymbol}` : "Není vybraný trh"}
         fileId="GATE ENGINE ID: TR-01-G"
       >
         {!scanLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            Načítám Gate Engine…
+            Načítám gate modul…
           </div>
         ) : !activeSymbol ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
@@ -175,7 +193,7 @@ export default function OverviewTab({
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
               <div className="text-xs text-muted-foreground">HARD</div>
               <div className={`mt-1 text-lg font-semibold ${hardStatus === "PASS" ? "text-[#00C853]" : "text-[#D32F2F]"}`}>
-                {hardStatus}
+                {hardStatusLabel(hardStatus)}
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
@@ -193,11 +211,11 @@ export default function OverviewTab({
                       : "text-[#D32F2F]"
                 }`}
               >
-                {entryStatus}
+                {entryStatusLabel(entryStatus)}
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
-              <div className="text-xs text-muted-foreground">BLOCK důvod</div>
+              <div className="text-xs text-muted-foreground">Důvod blokace</div>
               <div className="mt-1 text-sm text-foreground">{entryStatus === "READY" ? "Bez blokace." : blockReason}</div>
             </div>
           </div>
@@ -205,13 +223,13 @@ export default function OverviewTab({
       </Panel>
 
       <Panel
-        title="Data Health"
+        title="Zdraví dat"
         description={activeSymbol ? `Trh ${activeSymbol}` : "Není vybraný trh"}
         fileId="DATA HEALTH ID: TR-14-DH"
       >
         {!scanLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            Načítám Data Health…
+            Načítám zdraví dat…
           </div>
         ) : !activeSymbol ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
@@ -222,19 +240,19 @@ export default function OverviewTab({
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
               <div className="text-xs text-muted-foreground">STAV</div>
               <div className={`mt-1 text-lg font-semibold ${dataHealthStatus === "SAFE" ? "text-[#00C853]" : "text-[#D32F2F]"}`}>
-                {dataHealthStatus}
+                {dataHealthStatusLabel(dataHealthStatus)}
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
-              <div className="text-xs text-muted-foreground">Feed latency</div>
+              <div className="text-xs text-muted-foreground">Latence feedu</div>
               <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{feedAgeText}</div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
-              <div className="text-xs text-muted-foreground">Sync H4 vs 5m</div>
+              <div className="text-xs text-muted-foreground">Synchronizace H4 vs 5m</div>
               <div className="mt-1 text-sm text-foreground">{tfSyncDetail}</div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
-              <div className="text-xs text-muted-foreground">Watchdog fails</div>
+              <div className="text-xs text-muted-foreground">Selhání watchdogu</div>
               <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{watchdogFails}</div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3 md:col-span-2">
@@ -257,7 +275,7 @@ export default function OverviewTab({
             onClick={resetPnlHistory}
             className="h-8 text-xs dm-button-control"
           >
-            Reset
+            Resetovat
           </Button>
         }
       >
@@ -273,7 +291,7 @@ export default function OverviewTab({
           <div className="space-y-2">
             <div className="rounded-lg border border-border/60 bg-background/25 p-3">
               <div className="text-xs text-muted-foreground">
-                PnL heatmap (strategie: {strategyLabel})
+                PnL heatmapa (strategie: {strategyLabel})
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                 {pnlRows.slice(0, 12).map((row) => (
@@ -335,7 +353,7 @@ export default function OverviewTab({
                 disabled={!canPrev}
                 onClick={() => setPage((prev) => Math.max(0, prev - 1))}
               >
-                Prev
+                Předchozí
               </Button>
               <div className="tabular-nums text-muted-foreground">
                 {safePage + 1} / {totalPages}
@@ -347,7 +365,7 @@ export default function OverviewTab({
                 disabled={!canNext}
                 onClick={() => setPage((prev) => Math.min(totalPages - 1, prev + 1))}
               >
-                Next
+                Další
               </Button>
             </div>
           </div>

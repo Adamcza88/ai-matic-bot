@@ -218,8 +218,8 @@ export default function App() {
     () => ({
       canUseMainnet: !missingMainnet,
       canUseDemo: !missingDemo,
-      mainnetReason: missingMainnet ? "Missing mainnet API keys" : undefined,
-      demoReason: missingDemo ? "Missing demo API keys" : undefined,
+      mainnetReason: missingMainnet ? "Chybí API klíče pro mainnet" : undefined,
+      demoReason: missingDemo ? "Chybí API klíče pro demo" : undefined,
     }),
     [missingDemo, missingMainnet]
   );

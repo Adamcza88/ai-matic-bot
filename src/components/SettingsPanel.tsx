@@ -56,7 +56,7 @@ const MAX_EMA_TREND_PERIOD = 500;
 const DEFAULT_TESTNET_PER_TRADE_USD = 50;
 const DEFAULT_MAINNET_PER_TRADE_USD = 20;
 const ORDER_VALUE_NOTE =
-  "Core v2 sizing: risk % equity + manuální Per-trade limity (testnet/mainnet).";
+  "Velikost pozice core v2: riziko % kapitálu + manuální limity na obchod (testnet/mainnet).";
 
 type ProfileSettingsMap = Partial<Record<AISettings["riskMode"], AISettings>>;
 
@@ -265,7 +265,7 @@ const SettingsPanel: React.FC<Props> = ({
       ],
     },
     "ai-matic-olikella": {
-      title: `${OLIKELLA_PROFILE_LABEL} Core`,
+      title: `${OLIKELLA_PROFILE_LABEL} Jádro`,
       summary: "H4 structure/pattern/SR · 5m feed · long/short symmetry",
       description:
         "Entry cross běží na 1h. Struktura, patterny a silné support/resistance běží na H4.",
@@ -310,7 +310,7 @@ const SettingsPanel: React.FC<Props> = ({
       ],
     },
     "ai-matic-tree": {
-      title: "AI-MATIC-TREE Core",
+      title: "AI-MATIC-TREE Jádro",
       summary: "HTF 1h/15m · LTF 5m/1m · EMA bias + trend entries",
       description: "Multi‑TF trendový engine s R‑based řízením.",
       notes: [
@@ -1032,7 +1032,7 @@ const SettingsPanel: React.FC<Props> = ({
                 </div>
               )}
               <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
-                <div className="text-xs text-secondary-foreground/70">Checklist</div>
+                <div className="text-xs text-secondary-foreground/70">Kontrolní seznam</div>
                 <div className="mt-2 grid grid-cols-2 gap-1.5">
                   {activeGateNames.map((gateName) => (
                     <span
@@ -1070,13 +1070,13 @@ const SettingsPanel: React.FC<Props> = ({
                   }
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
                 >
-                  <option value="follow">Follow</option>
-                  <option value="adaptive">Follow trend Adaptive</option>
+                  <option value="follow">Sledovat trend</option>
+                  <option value="adaptive">Adaptivní sledování trendu</option>
                 </select>
                 <div className="text-xs text-secondary-foreground/70">
                   {local.trendGateMode === "adaptive"
-                    ? "Adaptive režim: přepíná gate podle síly trendu."
-                    : "Follow režim: EMA trend na 5m, průraz a potvrzení směru."}
+                    ? "Adaptivní režim: přepíná gate podle síly trendu."
+                    : "Režim sledování: EMA trend na 5m, průraz a potvrzení směru."}
                 </div>
               </div>
             </div>
@@ -1117,12 +1117,12 @@ const SettingsPanel: React.FC<Props> = ({
           {local.riskMode === "ai-matic-tree" || local.riskMode === "ai-matic-bbo" ? (
             <div className="grid gap-2">
               <p className="text-sm font-medium leading-none">
-                TREE/BBO sizing mode
+                Režim velikosti pozice TREE/BBO
               </p>
               <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-secondary-foreground/70">
-                    Risk-based sizing podle equity*riskPct a vzdálenosti SL.
+                    Výpočet velikosti podle equity*riskPct a vzdálenosti SL.
                   </div>
                   <button
                     type="button"
@@ -1140,12 +1140,12 @@ const SettingsPanel: React.FC<Props> = ({
                     }`}
                   >
                     {local.useDynamicPositionSizing
-                      ? "Dynamic ON"
-                      : "Dynamic OFF"}
+                      ? "Dynamika ZAP"
+                      : "Dynamika VYP"}
                   </button>
                 </div>
                 <div className="text-xs text-secondary-foreground/70">
-                  Dynamic OFF zachová fixed testnet notional sizing.
+                  Dynamika VYP zachová fixní testnet notional sizing.
                 </div>
               </div>
             </div>
@@ -1172,12 +1172,12 @@ const SettingsPanel: React.FC<Props> = ({
                   }
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-200"
                 >
-                  <option value="base">Base (Standard)</option>
-                  <option value="strict">Strict (High Precision)</option>
-                  <option value="ultra">Ultra (Sniper)</option>
+                  <option value="base">Base (standard)</option>
+                  <option value="strict">Strict (vysoká přesnost)</option>
+                  <option value="ultra">Ultra (sniper)</option>
                 </select>
                 <div className="text-xs text-secondary-foreground/70">
-                  Citlivost filtrů. Base = balanced, Strict = precision, Ultra = sniper.
+                  Citlivost filtrů. Base = vyvážené, Strict = přesné, Ultra = sniper.
                 </div>
               </div>
             </div>
@@ -1256,7 +1256,7 @@ const SettingsPanel: React.FC<Props> = ({
 
           <div className="grid gap-2">
             <p className="text-sm font-medium leading-none">
-              Per-trade limit (USDT)
+              Limit na obchod (USDT)
             </p>
             <div className="grid grid-cols-1 gap-2 rounded-md border border-input bg-slate-800 px-3 py-3 text-sm md:grid-cols-2">
               <div className="space-y-1">
@@ -1367,7 +1367,7 @@ const SettingsPanel: React.FC<Props> = ({
                 <div className="text-slate-300">{coreMeta.description}</div>
               </div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                Core
+                Jádro
               </div>
             </div>
             <div className="flex items-center justify-between text-xs text-slate-500">

@@ -110,12 +110,12 @@ export default function LogsPanel({
 
   return (
     <Panel
-      title="AUDIT MODULE"
-      description={`TR-07-L · Strategy decision tracker · ${useTestnet ? "DEMO" : "MAINNET"}`}
-      fileId="AUDIT MODULE"
+      title="AUDIT MODUL"
+      description={`TR-07-L · Sledování rozhodnutí strategie · ${useTestnet ? "DEMO" : "MAINNET"}`}
+      fileId="AUDIT MODUL"
       action={
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>Filter</span>
+          <span>Filtr</span>
           <div className="flex items-center rounded-md border border-border/60 bg-card/95 p-0.5 dm-surface-elevated dm-border-soft">
             <Button
               variant={levelFilter === "all" ? "secondary" : "ghost"}
@@ -123,7 +123,7 @@ export default function LogsPanel({
               onClick={() => setLevelFilter("all")}
               className="h-7 px-2 text-xs"
             >
-              All
+              Vše
             </Button>
             <Button
               variant={levelFilter === "error" ? "secondary" : "ghost"}
@@ -155,7 +155,7 @@ export default function LogsPanel({
               onClick={() => setLevelFilter("status")}
               className="h-7 px-2 text-xs"
             >
-              STATUS
+              STAV
             </Button>
             <Button
               variant={levelFilter === "system" ? "secondary" : "ghost"}
@@ -163,7 +163,7 @@ export default function LogsPanel({
               onClick={() => setLevelFilter("system")}
               className="h-7 px-2 text-xs"
             >
-              SYSTEM
+              SYSTÉM
             </Button>
           </div>
         </div>
@@ -214,4 +214,3 @@ export default function LogsPanel({
     </Panel>
   );
 }
-

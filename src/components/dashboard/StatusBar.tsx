@@ -118,7 +118,7 @@ export default function StatusBar({
       : riskLevel === "ELEVATED"
         ? "text-[#FFB300]"
         : "text-[#00C853]";
-  const healthLabel = dataHealthSafe ? "SAFE" : "UNSAFE";
+  const healthLabel = dataHealthSafe ? "BEZPEČNÁ" : "RIZIKOVÁ";
   const shellTone =
     riskLevel === "CRITICAL"
       ? "border-[#D32F2F]/80 bg-[#D32F2F]/10"
@@ -138,7 +138,7 @@ export default function StatusBar({
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           {statusLabel({
             label: "ENGINE",
-            value: engineStatus === "Running" ? "RUNNING" : "PAUSED",
+            value: engineStatus === "Running" ? "BĚŽÍ" : "PAUZA",
             tone: engineStatus === "Running" ? "ok" : "warn",
           })}
           <button
@@ -160,7 +160,7 @@ export default function StatusBar({
           </button>
           <div className={healthFxClass}>
             {statusLabel({
-              label: "DATA HEALTH",
+              label: "ZDRAVÍ DAT",
               value: healthLabel,
               tone: dataHealthSafe ? "ok" : "danger",
             })}
@@ -170,7 +170,7 @@ export default function StatusBar({
         <div className="grid gap-2 rounded-xl border border-border/70 bg-card/70 p-3 sm:grid-cols-3">
           <div className="rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-right">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-              OPEN PNL
+              OTEVŘENÉ PNL
             </div>
             <div
               className={`mt-1 font-mono-ui text-[30px] font-semibold tabular-nums leading-none ${signedTone(openPositionsPnl)}`}
@@ -180,7 +180,7 @@ export default function StatusBar({
           </div>
           <div className="rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-right">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-              DAY PNL
+              DENNÍ PNL
             </div>
             <div
               className={`mt-1 font-mono-ui text-[30px] font-semibold tabular-nums leading-none ${
@@ -192,7 +192,7 @@ export default function StatusBar({
           </div>
           <div className="rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-right">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-              EQUITY
+              KAPITÁL
             </div>
             <div className="mt-1 font-mono-ui text-[30px] font-semibold tabular-nums leading-none text-foreground">
               {formatUsdt(totalCapital, false)}
@@ -205,9 +205,9 @@ export default function StatusBar({
             <div>
               <div className="text-[22px] font-semibold leading-none">{title}</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                Execution mode:{" "}
+                Režim exekuce:{" "}
                 <span className={riskTone}>
-                  {executionMode === TradingMode.AUTO_ON ? "AUTO" : "MANUAL"}
+                  {executionMode === TradingMode.AUTO_ON ? "AUTO" : "MANUÁL"}
                 </span>
               </div>
             </div>
@@ -226,13 +226,13 @@ export default function StatusBar({
               </div>
             </div>
             <div className="rounded-md border border-border/60 bg-background/25 px-2 py-1.5 text-xs">
-              <div className="uppercase tracking-[0.08em] text-muted-foreground">Entry</div>
+              <div className="uppercase tracking-[0.08em] text-muted-foreground">Vstup</div>
               <div className="mt-0.5 font-medium text-foreground">
                 {strategyHeader?.entry ?? "N/A"}
               </div>
             </div>
             <div className="rounded-md border border-border/60 bg-background/25 px-2 py-1.5 text-xs">
-              <div className="uppercase tracking-[0.08em] text-muted-foreground">Feed</div>
+              <div className="uppercase tracking-[0.08em] text-muted-foreground">Datový feed</div>
               <div className="mt-0.5 font-medium text-foreground">
                 {strategyHeader?.feed ?? "N/A"}
               </div>

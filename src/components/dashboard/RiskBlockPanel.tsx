@@ -150,17 +150,17 @@ export default function RiskBlockPanel({
         </div>
 
         <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-          <div className="text-xs text-muted-foreground">Kill-switch</div>
+          <div className="text-xs text-muted-foreground">Nouzový stop</div>
           <div className={`mt-1 font-semibold ${killSwitchActive ? "text-[#D32F2F]" : "text-[#00C853]"}`}>
-            {killSwitchActive ? "ACTIVE" : "READY"}
+            {killSwitchActive ? "AKTIVNÍ" : "PŘIPRAVEN"}
           </div>
           <div className="text-[11px] text-muted-foreground">
-            {killSwitchActive ? "Trading halted" : "Monitoring only"}
+            {killSwitchActive ? "Obchodování zastaveno" : "Pouze monitoring"}
           </div>
         </div>
 
         <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-          <div className="text-xs text-muted-foreground">Risk exposure vs limit</div>
+          <div className="text-xs text-muted-foreground">Riziková expozice vs limit</div>
           <div className="mt-1 font-semibold tabular-nums text-foreground">
             {formatUsdt(riskExposureUsd)} / {formatUsdt(riskExposureLimitUsd)}
           </div>
@@ -174,9 +174,9 @@ export default function RiskBlockPanel({
       </div>
 
       <div className="mt-3 rounded-lg border border-border/60 bg-background/35 p-2.5">
-        <div className="text-xs text-muted-foreground">Exposure per market (risk USD)</div>
+        <div className="text-xs text-muted-foreground">Expozice podle trhu (riziko v USD)</div>
         {exposureByMarket.length === 0 ? (
-          <div className="mt-1 text-xs text-muted-foreground">Bez otevřené market exposure.</div>
+          <div className="mt-1 text-xs text-muted-foreground">Bez otevřené tržní expozice.</div>
         ) : (
           <div className="mt-1 space-y-1.5 text-xs">
             {exposureByMarket.map((row) => {

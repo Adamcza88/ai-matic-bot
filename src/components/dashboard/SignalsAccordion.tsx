@@ -40,8 +40,15 @@ function feedToneClass(feedAgeMs?: number) {
 function formatFeedAge(feedAgeMs?: number) {
   if (!Number.isFinite(feedAgeMs)) return "N/A";
   const ms = feedAgeMs as number;
-  if (ms > FEED_WARN_MS) return `${(ms / 1000).toFixed(1)} s · STALE`;
+  if (ms > FEED_WARN_MS) return `${(ms / 1000).toFixed(1)} s · ZPOŽDĚNÝ`;
   return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function stateLabel(state: string) {
+  if (state === "PAUSED") return "POZASTAVENO";
+  if (state === "READY") return "PŘIPRAVENO";
+  if (state === "BLOCKED") return "BLOKOVÁNO";
+  return "ČEKÁ";
 }
 
 export default function SignalsAccordion({
@@ -119,8 +126,8 @@ export default function SignalsAccordion({
 
   return (
     <Panel
-      title="Signal Relay"
-      description="Stav relaye podle trhu. Důvod blokace je pouze v Gate Engine."
+      title="Relay signálů"
+      description="Stav relaye podle trhu. Důvod blokace je pouze v modulu gate."
       fileId="SIGNAL RELAY ID: TR-09-S"
     >
       {loading ? (
@@ -148,8 +155,8 @@ export default function SignalsAccordion({
                 <tr className="[&>th]:h-9 [&>th]:px-3 [&>th]:text-left border-b border-border/60">
                   <th>Trh</th>
                   <th>Stav</th>
-                  <th>Feed age</th>
-                  <th className="text-center">Jump</th>
+                  <th>Stáří feedu</th>
+                  <th className="text-center">Skok</th>
                 </tr>
               </thead>
               <tbody className="text-foreground">
@@ -174,7 +181,7 @@ export default function SignalsAccordion({
                                 : "border-[#FFB300]/60 text-[#FFB300]"
                           }`}
                         >
-                          {row.state}
+                          {stateLabel(row.state)}
                         </span>
                       </td>
                       <td className={`px-3 text-xs tabular-nums leading-6 ${feedToneClass(row.feedAgeMs)}`}>
@@ -193,8 +200,8 @@ export default function SignalsAccordion({
                                 ? "border-[#D32F2F]/60 bg-[#D32F2F]/10"
                                 : "border-[#FFB300]/60 bg-[#FFB300]/10"
                             }`}
-                            aria-label={`Jump to ${row.jumpTarget.toLowerCase()} gates for ${row.symbol}`}
-                            title={`Jump to ${row.jumpTarget.toLowerCase()} gates`}
+                            aria-label={`Přeskočit na ${row.jumpTarget.toLowerCase()} gate pro ${row.symbol}`}
+                            title={`Přeskočit na ${row.jumpTarget.toLowerCase()} gate`}
                           >
                             <span
                               className={`h-2.5 w-2.5 rounded-full ${
@@ -223,7 +230,7 @@ export default function SignalsAccordion({
               disabled={!canPrev}
               onClick={() => setPage((prev) => Math.max(0, prev - 1))}
             >
-              Prev
+              Předchozí
             </Button>
             <div className="tabular-nums text-muted-foreground">
               {safePage + 1} / {totalPages}
@@ -235,7 +242,7 @@ export default function SignalsAccordion({
               disabled={!canNext}
               onClick={() => setPage((prev) => Math.min(totalPages - 1, prev + 1))}
             >
-              Next
+              Další
             </Button>
           </div>
         </div>

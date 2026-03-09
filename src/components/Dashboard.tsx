@@ -215,7 +215,7 @@ export default function Dashboard({
         session: "24/7",
         risk: "2 vstupy (60 % / 40 %) · TP1 0.9–1.2 % · TP2 2–3 %",
         riskPct: RISK_PCT_BY_MODE["ai-matic-x"],
-        entry: "Entry 1: reakce z OB/sweep · Entry 2: retest OB/GAP/Fibo",
+        entry: "Vstup 1: reakce z OB/sweep · Vstup 2: retest OB/GAP/Fibo",
         execution: "SL pod strukturu/OB + ATR buffer · trailing 1.0R",
       };
     }
@@ -224,13 +224,13 @@ export default function Dashboard({
       const maxPos = bot.settings?.maxOpenPositions ?? 7;
       return {
         label: "AI-MATIC-TREE",
-        subtitle: `Multi-TF Trend Engine · MaxPos: ${maxPos}`,
+        subtitle: `Multi-TF trend engine · Max pozic: ${maxPos}`,
         symbols: SUPPORTED_SYMBOLS,
         timeframes: "HTF 1h/15m · LTF 5m/1m",
         session: "24/7",
-        risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
+        risk: "Riziko 0.30% kapitálu/obchod · strop notionalu ~1% kapitálu",
         riskPct: RISK_PCT_BY_MODE["ai-matic-tree"],
-        entry: `Strictness: ${strictness.toUpperCase()} · Momentum/Pullback/Breakout`,
+        entry: `Přísnost: ${strictness.toUpperCase()} · momentum/pullback/breakout`,
         execution: "TP 2.2R + partial 1R · time stop ~2h",
       };
     }
@@ -238,13 +238,13 @@ export default function Dashboard({
       const strictness = bot.settings?.entryStrictness ?? "ultra";
       return {
         label: "AI-MATIC-BBO",
-        subtitle: "Standalone BBO engine",
+        subtitle: "Samostatný BBO engine",
         symbols: SUPPORTED_SYMBOLS,
-        timeframes: "1h context · 4h bias · 5m trigger · 1m exec",
+        timeframes: "1h kontext · 4h bias · 5m trigger · 1m exekuce",
         session: "24/7",
-        risk: "Risk 0.30% equity/trade · standalone score >= 60",
+        risk: "Riziko 0.30% kapitálu/obchod · standalone skóre >= 60",
         riskPct: RISK_PCT_BY_MODE["ai-matic-bbo"],
-        entry: `Strictness: ${strictness.toUpperCase()} · Trend pullback only`,
+        entry: `Přísnost: ${strictness.toUpperCase()} · pouze trend pullback`,
         execution: "BBO age <1000ms · maker entry · structural SL",
       };
     }
@@ -255,7 +255,7 @@ export default function Dashboard({
         symbols: SUPPORTED_SYMBOLS,
         timeframes: "HTF 4h · LTF 15m · feed 1m",
         session: "24/7",
-        risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
+        risk: "Riziko 0.30% kapitálu/obchod · strop notionalu ~1% kapitálu",
         riskPct: RISK_PCT_BY_MODE["ai-matic-pro"],
         entry: "Fib 38.2/61.8 proximity + engulfing/pin/breakout trigger",
         execution: "TP1 Fib 127.2 (60% + BE) · TP2 Fib 161.8 · trailing after TP1",
@@ -268,7 +268,7 @@ export default function Dashboard({
         symbols: SUPPORTED_SYMBOLS,
         timeframes: "1h bias · 15m/5m entry",
         session: "London / NY AM only",
-        risk: "Risk 0.30% equity/trade · notional cap ~1% equity",
+        risk: "Riziko 0.30% kapitálu/obchod · strop notionalu ~1% kapitálu",
         riskPct: RISK_PCT_BY_MODE["ai-matic-amd"],
         entry: "AMD sequence + Inversion FVG",
         execution: "TP1/TP2 based on manipulation range",
@@ -281,7 +281,7 @@ export default function Dashboard({
         symbols: SUPPORTED_SYMBOLS,
         timeframes: "H4 structure/pattern · 1h cross entry · 5m feed",
         session: "24/7",
-        risk: "Risk 1.5% equity/trade · max 1 add-on",
+        risk: "Riziko 1.5% kapitálu/obchod · max 1 add-on",
         riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
         entry: "1h EMA8/EMA16 crossover + H4 pattern alignment",
         execution: "Exhaustion exit / Trailing stop 5m (activate 1R · retrace by volatility)",
@@ -293,7 +293,7 @@ export default function Dashboard({
       symbols: SUPPORTED_SYMBOLS,
       timeframes: "HTF 1h/15m · LTF 5m/1m",
       session: "24/7",
-      risk: "Risk 0.30% equity/trade · bez staged retest fallbacku",
+      risk: "Riziko 0.30% kapitálu/obchod · bez staged retest fallbacku",
       riskPct: RISK_PCT_BY_MODE["ai-matic"],
       entry: "HTF bias + pullback + micro break close",
       execution: "BBO/maker/SL plan + grouped diagnostics + generic partial/BE",
@@ -697,7 +697,7 @@ export default function Dashboard({
   const handleResetAllGates = useCallback(() => {
     resetChecklist();
     setResetRippleKey((value) => value + 1);
-    showToast("All gates reset", "neutral");
+    showToast("Všechny gate byly resetovány", "neutral");
   }, [resetChecklist, showToast]);
 
   const handleToggleApp = useCallback(() => {
@@ -733,7 +733,7 @@ export default function Dashboard({
     if (!shouldRefresh) return;
     setPullRefreshing(true);
     void refreshTestnetOrders();
-    showToast("Data refreshed", "neutral");
+    showToast("Data byla obnovena", "neutral");
     window.setTimeout(() => setPullRefreshing(false), 1_000);
   }, [pullDistance, pullRefreshing, refreshTestnetOrders, showToast]);
 
@@ -748,10 +748,10 @@ export default function Dashboard({
         <div className="fixed inset-x-0 top-2 z-40 flex justify-center">
           <div className="rounded-full border border-border/70 bg-card/90 px-3 py-1 text-xs text-muted-foreground shadow-md">
             {pullRefreshing
-              ? "Refreshing…"
+              ? "Obnovuji…"
               : pullDistance >= 80
-                ? "Release to refresh"
-                : "Pull to refresh"}
+                ? "Uvolněte pro obnovení"
+                : "Tahem obnovíte"}
           </div>
         </div>
       ) : null}
@@ -793,7 +793,7 @@ export default function Dashboard({
             <div className="grid flex-1 grid-cols-1 gap-2 lg:grid-cols-3">
               <div className="rounded-lg border border-border/60 bg-background/40 p-2">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-                  Environment
+                  Prostředí
                 </div>
                 <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
                   <Button
@@ -835,7 +835,7 @@ export default function Dashboard({
 
               <div className="rounded-lg border border-border/60 bg-background/40 p-2">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-                  Execution Mode
+                  Režim exekuce
                 </div>
                 <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
                   {MODE_OPTIONS.map((value) => (
@@ -856,7 +856,7 @@ export default function Dashboard({
 
               <div className="rounded-lg border border-[#D32F2F]/50 bg-[#D32F2F]/5 p-2">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.1em] text-[#D32F2F]">
-                  Emergency
+                  Nouzové
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
@@ -866,7 +866,7 @@ export default function Dashboard({
                     onClick={handleResetAllGates}
                     className="h-11 px-4 text-sm font-semibold text-[#D32F2F] border-[#D32F2F]/50 hover:bg-[#D32F2F]/10"
                   >
-                    Reset Gates
+                    Resetovat gate
                   </Button>
                   <Button
                     type="button"
@@ -874,10 +874,10 @@ export default function Dashboard({
                     size="sm"
                     onClick={handleToggleApp}
                     aria-pressed={appRunning}
-                    aria-label={appRunning ? "Stop Engine" : "Start Engine"}
+                    aria-label={appRunning ? "Zastavit engine" : "Spustit engine"}
                     className="h-11 px-4 text-sm font-semibold"
                   >
-                    {appRunning ? "Stop Engine" : "Start Engine"}
+                    {appRunning ? "Zastavit engine" : "Spustit engine"}
                   </Button>
                 </div>
               </div>
@@ -899,7 +899,7 @@ export default function Dashboard({
                 onClick={() => setMobileDetailsOpen((value) => !value)}
                 className="h-11 px-4 text-sm font-semibold xl:hidden"
               >
-                {mobileDetailsOpen ? "Hide details" : "Details"}
+                {mobileDetailsOpen ? "Skrýt detaily" : "Detaily"}
               </Button>
             </div>
           </div>
