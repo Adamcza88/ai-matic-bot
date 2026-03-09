@@ -8417,11 +8417,13 @@ export function useTradingBot(
         : isAmdProfile
           ? Boolean(signal)
         : Boolean(signal) || checklist.pass;
+      const riskEntryMonitorOnly =
+        RISK_ENTRY_BLOCK_MONITOR_ONLY && !isScalpProfile;
       let executionAllowed: boolean | null = null;
       let executionReason: string | undefined;
       if (entryBlockReasons.length > 0) {
-        executionAllowed = RISK_ENTRY_BLOCK_MONITOR_ONLY ? true : false;
-        executionReason = RISK_ENTRY_BLOCK_MONITOR_ONLY
+        executionAllowed = riskEntryMonitorOnly ? true : false;
+        executionReason = riskEntryMonitorOnly
           ? `monitor only: ${entryBlockReasons.join(", ")}`
           : entryBlockReasons.join(", ");
       } else if (!signalActive) {
@@ -10728,7 +10730,8 @@ export function useTradingBot(
       const runtimeScalpOpenPosBlocked =
         scalpActive &&
         (hasPosition || hasWaitingLimitOrder);
-      const riskEntryMonitorOnly = RISK_ENTRY_BLOCK_MONITOR_ONLY;
+      const riskEntryMonitorOnly =
+        RISK_ENTRY_BLOCK_MONITOR_ONLY && !scalpActive;
       const hasPendingIntent = intentPendingRef.current.has(symbol);
       const signalSideRaw = String(decision?.signal?.intent?.side ?? "")
         .trim()
@@ -11280,7 +11283,8 @@ export function useTradingBot(
       if (!slProtectionGate.ok) {
         entryBlockReasons.push(slProtectionGate.reason);
       }
-      const entryRiskMonitorOnly = RISK_ENTRY_BLOCK_MONITOR_ONLY;
+      const entryRiskMonitorOnly =
+        RISK_ENTRY_BLOCK_MONITOR_ONLY && !isScalpProfile;
       if (entryBlockReasons.length > 0) {
         const profileLabel =
           PROFILE_BY_RISK_MODE[context.settings.riskMode] ?? "AI-MATIC";
