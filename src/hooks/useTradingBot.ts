@@ -109,6 +109,8 @@ const MIN_POSITION_NOTIONAL_USD = 5;
 const MAX_POSITION_NOTIONAL_USD = 50000;
 const DEFAULT_TESTNET_PER_TRADE_USD = 50;
 const DEFAULT_MAINNET_PER_TRADE_USD = 20;
+const TESTNET_MARGIN_MIN_USDT = 50;
+const TESTNET_MARGIN_MAX_USDT = 100;
 const MAJOR_SYMBOLS = new Set<Symbol>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
 const SUPPORTED_SYMBOL_SET = new Set<Symbol>(SUPPORTED_SYMBOLS);
 const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
@@ -217,7 +219,7 @@ const SKIP_STATUS_SUPPRESSED_CODES = new Set([
   "MAX_POS+MAX_ORDERS",
   "OPEN_POSITION",
 ]);
-const RISK_ENTRY_BLOCK_MONITOR_ONLY = true;
+const RISK_ENTRY_BLOCK_MONITOR_ONLY = false;
 const MAX_OPEN_POSITIONS_CAP = 50000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -503,6 +505,14 @@ function clampPerTradeUsd(value: unknown, fallback: number) {
   return Math.min(
     MAX_POSITION_NOTIONAL_USD,
     Math.max(MIN_POSITION_NOTIONAL_USD, n)
+  );
+}
+
+function clampTestnetMarginUsd(value: unknown, fallback: number) {
+  const base = clampPerTradeUsd(value, fallback);
+  return Math.min(
+    TESTNET_MARGIN_MAX_USDT,
+    Math.max(TESTNET_MARGIN_MIN_USDT, base)
   );
 }
 
@@ -5984,17 +5994,31 @@ export function useTradingBot(
       }
 
       if (useTestnet) {
-        const perTradeTestnetUsd = clampPerTradeUsd(
+        const perTradeTestnetUsd = clampTestnetMarginUsd(
           settings.perTradeTestnetUsd,
           DEFAULT_TESTNET_PER_TRADE_USD
         );
+        const leverage = resolveSymbolLeverage(symbol);
+        const leverageMultiplier =
+          Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
+        const minNotionalByMargin = TESTNET_MARGIN_MIN_USDT * leverageMultiplier;
+        const maxNotionalByMargin = perTradeTestnetUsd * leverageMultiplier;
         if (
-          Number.isFinite(perTradeTestnetUsd) &&
-          perTradeTestnetUsd > 0 &&
+          Number.isFinite(minNotionalByMargin) &&
+          minNotionalByMargin > 0 &&
           Number.isFinite(notional) &&
-          notional > perTradeTestnetUsd
+          notional < minNotionalByMargin
         ) {
-          notional = perTradeTestnetUsd;
+          notional = minNotionalByMargin;
+          qty = notional / entry;
+        }
+        if (
+          Number.isFinite(maxNotionalByMargin) &&
+          maxNotionalByMargin > 0 &&
+          Number.isFinite(notional) &&
+          notional > maxNotionalByMargin
+        ) {
+          notional = maxNotionalByMargin;
           qty = notional / entry;
         }
       }
@@ -6045,17 +6069,18 @@ export function useTradingBot(
         return { ok: false as const, reason: "invalid_entry" as const };
       }
       const settings = settingsRef.current;
-      const perTradeUsd = clampPerTradeUsd(
-        useTestnet ? settings.perTradeTestnetUsd : settings.perTradeMainnetUsd,
-        useTestnet ? DEFAULT_TESTNET_PER_TRADE_USD : DEFAULT_MAINNET_PER_TRADE_USD
-      );
+      const perTradeUsd = useTestnet
+        ? clampTestnetMarginUsd(
+            settings.perTradeTestnetUsd,
+            DEFAULT_TESTNET_PER_TRADE_USD
+          )
+        : clampPerTradeUsd(
+            settings.perTradeMainnetUsd,
+            DEFAULT_MAINNET_PER_TRADE_USD
+          );
       const leverage = resolveSymbolLeverage(symbol);
       const leverageMultiplier =
-        useTestnet
-          ? 1
-          : Number.isFinite(leverage) && leverage > 0
-            ? leverage
-            : 1;
+        Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
       const targetNotional = Math.min(
         Math.max(
           perTradeUsd * leverageMultiplier,
@@ -12027,17 +12052,31 @@ export function useTradingBot(
         adjustedQty = adjustedNotional / entry;
       }
       if (useTestnet && Number.isFinite(entry) && entry > 0) {
-        const perTradeTestnetUsd = clampPerTradeUsd(
+        const perTradeTestnetUsd = clampTestnetMarginUsd(
           settingsRef.current.perTradeTestnetUsd,
           DEFAULT_TESTNET_PER_TRADE_USD
         );
+        const leverage = resolveSymbolLeverage(symbol as Symbol);
+        const leverageMultiplier =
+          Number.isFinite(leverage) && leverage > 0 ? leverage : 1;
+        const minNotionalByMargin = TESTNET_MARGIN_MIN_USDT * leverageMultiplier;
+        const maxNotionalByMargin = perTradeTestnetUsd * leverageMultiplier;
         if (
-          Number.isFinite(perTradeTestnetUsd) &&
-          perTradeTestnetUsd > 0 &&
+          Number.isFinite(minNotionalByMargin) &&
+          minNotionalByMargin > 0 &&
           Number.isFinite(adjustedNotional) &&
-          adjustedNotional > perTradeTestnetUsd
+          adjustedNotional < minNotionalByMargin
         ) {
-          adjustedNotional = perTradeTestnetUsd;
+          adjustedNotional = minNotionalByMargin;
+          adjustedQty = adjustedNotional / entry;
+        }
+        if (
+          Number.isFinite(maxNotionalByMargin) &&
+          maxNotionalByMargin > 0 &&
+          Number.isFinite(adjustedNotional) &&
+          adjustedNotional > maxNotionalByMargin
+        ) {
+          adjustedNotional = maxNotionalByMargin;
           adjustedQty = adjustedNotional / entry;
         }
       }

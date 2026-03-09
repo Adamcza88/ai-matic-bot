@@ -51,6 +51,8 @@ const MIN_AUTO_REFRESH_MINUTES = 1;
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const MIN_PER_TRADE_USD = 5;
 const MAX_PER_TRADE_USD = 50000;
+const MIN_TESTNET_PER_TRADE_USD = 50;
+const MAX_TESTNET_PER_TRADE_USD = 100;
 const MIN_EMA_TREND_PERIOD = 10;
 const MAX_EMA_TREND_PERIOD = 500;
 const DEFAULT_TESTNET_PER_TRADE_USD = 50;
@@ -177,6 +179,14 @@ function clampPerTradeUsd(value: unknown, fallback: number) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(MAX_PER_TRADE_USD, Math.max(MIN_PER_TRADE_USD, n));
+}
+
+function clampPerTradeTestnetUsd(value: unknown, fallback: number) {
+  const base = clampPerTradeUsd(value, fallback);
+  return Math.min(
+    MAX_TESTNET_PER_TRADE_USD,
+    Math.max(MIN_TESTNET_PER_TRADE_USD, base)
+  );
 }
 
 function clampEmaTrendPeriod(value: unknown, fallback: number) {
@@ -702,7 +712,7 @@ const SettingsPanel: React.FC<Props> = ({
       merged.emaTrendPeriod,
       preset.emaTrendPeriod ?? 200
     );
-    merged.perTradeTestnetUsd = clampPerTradeUsd(
+    merged.perTradeTestnetUsd = clampPerTradeTestnetUsd(
       merged.perTradeTestnetUsd,
       preset.perTradeTestnetUsd
     );
@@ -1267,15 +1277,15 @@ const SettingsPanel: React.FC<Props> = ({
                   id="per-trade-demo-usdt"
                   name="perTradeTestnetUsd"
                   type="number"
-                  min={MIN_PER_TRADE_USD}
-                  max={MAX_PER_TRADE_USD}
+                  min={MIN_TESTNET_PER_TRADE_USD}
+                  max={MAX_TESTNET_PER_TRADE_USD}
                   step={1}
                   value={local.perTradeTestnetUsd}
                   onChange={(event) => {
                     const next = event.currentTarget.valueAsNumber;
                     setLocal({
                       ...local,
-                      perTradeTestnetUsd: clampPerTradeUsd(
+                      perTradeTestnetUsd: clampPerTradeTestnetUsd(
                         next,
                         DEFAULT_TESTNET_PER_TRADE_USD
                       ),
@@ -1284,7 +1294,7 @@ const SettingsPanel: React.FC<Props> = ({
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
                 />
                 <div className="text-[11px] text-secondary-foreground/70">
-                  Na demo se použije přímo tento max notional na pozici.
+                  Na demo je to marže 50-100 USDT. Notional = marže × páka.
                 </div>
               </div>
               <div className="space-y-1">
