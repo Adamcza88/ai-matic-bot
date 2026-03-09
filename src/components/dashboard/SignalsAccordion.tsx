@@ -86,18 +86,7 @@ export default function SignalsAccordion({
             jumpTarget,
           };
         })
-        .sort((a, b) => {
-          const aAge = Number.isFinite(a.feedAgeMs) ? a.feedAgeMs : -1;
-          const bAge = Number.isFinite(b.feedAgeMs) ? b.feedAgeMs : -1;
-          if (bAge !== aAge) return bAge - aAge;
-          if (a.state !== b.state) {
-            if (a.state === "PAUSED") return -1;
-            if (b.state === "PAUSED") return 1;
-            if (a.state === "BLOCKED") return -1;
-            if (b.state === "BLOCKED") return 1;
-          }
-          return a.symbol.localeCompare(b.symbol);
-        }),
+        .sort((a, b) => a.symbol.localeCompare(b.symbol, "cs")),
     [
       allowedSymbols,
       checklistEnabled,
