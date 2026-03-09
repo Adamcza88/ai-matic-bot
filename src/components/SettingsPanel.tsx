@@ -1284,7 +1284,7 @@ const SettingsPanel: React.FC<Props> = ({
                   className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200"
                 />
                 <div className="text-[11px] text-secondary-foreground/70">
-                  Na demo se použije: per-trade * leverage.
+                  Na demo se použije přímo tento max notional na pozici.
                 </div>
               </div>
               <div className="space-y-1">

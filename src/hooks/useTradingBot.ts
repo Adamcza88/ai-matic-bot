@@ -5983,6 +5983,22 @@ export function useTradingBot(
         qty = notional / entry;
       }
 
+      if (useTestnet) {
+        const perTradeTestnetUsd = clampPerTradeUsd(
+          settings.perTradeTestnetUsd,
+          DEFAULT_TESTNET_PER_TRADE_USD
+        );
+        if (
+          Number.isFinite(perTradeTestnetUsd) &&
+          perTradeTestnetUsd > 0 &&
+          Number.isFinite(notional) &&
+          notional > perTradeTestnetUsd
+        ) {
+          notional = perTradeTestnetUsd;
+          qty = notional / entry;
+        }
+      }
+
       if (!useTestnet) {
         const perTradeMainnetUsd = clampPerTradeUsd(
           settings.perTradeMainnetUsd,
@@ -6034,10 +6050,15 @@ export function useTradingBot(
         useTestnet ? DEFAULT_TESTNET_PER_TRADE_USD : DEFAULT_MAINNET_PER_TRADE_USD
       );
       const leverage = resolveSymbolLeverage(symbol);
+      const leverageMultiplier =
+        useTestnet
+          ? 1
+          : Number.isFinite(leverage) && leverage > 0
+            ? leverage
+            : 1;
       const targetNotional = Math.min(
         Math.max(
-          perTradeUsd *
-            (Number.isFinite(leverage) && leverage > 0 ? leverage : 1),
+          perTradeUsd * leverageMultiplier,
           MIN_POSITION_NOTIONAL_USD
         ),
         MAX_POSITION_NOTIONAL_USD
@@ -12000,6 +12021,21 @@ export function useTradingBot(
       ) {
         adjustedNotional = Math.max(adjustedNotional, AI_MATIC_SWING_MIN_NOTIONAL);
         adjustedQty = adjustedNotional / entry;
+      }
+      if (useTestnet && Number.isFinite(entry) && entry > 0) {
+        const perTradeTestnetUsd = clampPerTradeUsd(
+          settingsRef.current.perTradeTestnetUsd,
+          DEFAULT_TESTNET_PER_TRADE_USD
+        );
+        if (
+          Number.isFinite(perTradeTestnetUsd) &&
+          perTradeTestnetUsd > 0 &&
+          Number.isFinite(adjustedNotional) &&
+          adjustedNotional > perTradeTestnetUsd
+        ) {
+          adjustedNotional = perTradeTestnetUsd;
+          adjustedQty = adjustedNotional / entry;
+        }
       }
       if (!useTestnet && Number.isFinite(entry) && entry > 0) {
         const perTradeMainnetUsd = clampPerTradeUsd(
