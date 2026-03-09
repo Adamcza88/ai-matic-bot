@@ -173,7 +173,7 @@ export default function StatusBar({
               Otevřený PnL
             </div>
             <div
-              className={`mt-1 font-mono-ui text-[30px] font-semibold tabular-nums leading-none ${signedTone(openPositionsPnl)}`}
+              className={`mt-1 font-mono-ui text-[32px] font-semibold tabular-nums leading-none ${signedTone(openPositionsPnl)}`}
             >
               {formatUsdt(openPositionsPnl, true)}
             </div>
@@ -183,7 +183,7 @@ export default function StatusBar({
               Denní PnL
             </div>
             <div
-              className={`mt-1 font-mono-ui text-[30px] font-semibold tabular-nums leading-none ${
+              className={`mt-1 font-mono-ui text-[32px] font-semibold tabular-nums leading-none ${
                 Number(dailyPnl) >= 0 ? "text-[#00C853]" : "text-[#D32F2F]"
               }`}
             >
@@ -194,7 +194,7 @@ export default function StatusBar({
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
               Kapitál účtu
             </div>
-            <div className="mt-1 font-mono-ui text-[30px] font-semibold tabular-nums leading-none text-foreground">
+            <div className="mt-1 font-mono-ui text-[32px] font-semibold tabular-nums leading-none text-foreground">
               {formatUsdt(totalCapital, false)}
             </div>
           </div>

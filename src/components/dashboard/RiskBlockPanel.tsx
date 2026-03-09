@@ -134,7 +134,11 @@ export default function RiskBlockPanel({
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-foreground">Kontrola rizika</div>
-          <div className="text-xs text-muted-foreground">Agregace blokací z posledních 200 událostí.</div>
+          <div className="text-xs text-muted-foreground">
+            Agregace blokací
+            <br />
+            posledních 200 událostí
+          </div>
         </div>
       </div>
 
@@ -160,7 +164,7 @@ export default function RiskBlockPanel({
         </div>
 
         <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-          <div className="text-xs text-muted-foreground">Riziková expozice vs limit</div>
+          <div className="text-xs text-muted-foreground">Riziková expozice vůči limitu</div>
           <div className="mt-1 font-semibold tabular-nums text-foreground">
             {formatUsdt(riskExposureUsd)} / {formatUsdt(riskExposureLimitUsd)}
           </div>
@@ -174,7 +178,7 @@ export default function RiskBlockPanel({
       </div>
 
       <div className="mt-3 rounded-lg border border-border/60 bg-background/35 p-2.5">
-        <div className="text-xs text-muted-foreground">Expozice podle trhu (riziko v USD)</div>
+        <div className="text-xs text-muted-foreground">Expozice podle trhu (riziko v USDT)</div>
         {exposureByMarket.length === 0 ? (
           <div className="mt-1 text-xs text-muted-foreground">Bez otevřené tržní expozice.</div>
         ) : (

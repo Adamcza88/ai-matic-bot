@@ -15,7 +15,6 @@ import {
   computeExecutionAnalytics,
   type LifecycleStage,
 } from "@/lib/executionAnalytics";
-import { formatMoney, formatSignedMoney } from "@/lib/uiFormat";
 
 type OrdersPanelProps = {
   orders: TestnetOrder[];
@@ -98,8 +97,17 @@ function formatPrice(value?: number | null) {
 }
 
 function formatSigned(value?: number) {
+  return formatUsdt(value, true);
+}
+
+function formatUsdt(value?: number, signed = false) {
   if (!Number.isFinite(value)) return "—";
-  return formatSignedMoney(value, "USD");
+  const amount = value as number;
+  const sign = signed && amount > 0 ? "+" : "";
+  return `${sign}${amount.toLocaleString("cs-CZ", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} USDT`;
 }
 
 function formatLatency(value?: number) {
@@ -465,7 +473,7 @@ export default function OrdersPanel({
               <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
                 Celkové poplatky:{" "}
                 <span className="font-semibold tabular-nums">
-                  {formatMoney(executionAnalytics.totals.totalFee, "USD")}
+                  {formatUsdt(executionAnalytics.totals.totalFee)}
                 </span>
               </div>
               <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
@@ -636,10 +644,10 @@ export default function OrdersPanel({
                     <td className="py-3 font-mono">{row.symbol}</td>
                     <td className="py-3 text-right font-mono tabular-nums">{row.trades}</td>
                     <td className="py-3 text-right font-mono tabular-nums">
-                      {formatMoney(row.totalFee, "USD")}
+                      {formatUsdt(row.totalFee)}
                     </td>
                     <td className="py-3 text-right font-mono tabular-nums">
-                      {formatMoney(row.feePerTrade, "USD")}
+                      {formatUsdt(row.feePerTrade)}
                     </td>
                     <td
                       className={`py-3 text-right font-mono tabular-nums ${
@@ -698,7 +706,7 @@ export default function OrdersPanel({
                             {formatQty(row.targetPositionSize)}
                           </td>
                           <td className="py-3 text-right font-mono tabular-nums">
-                            {formatMoney(row.totalFee, "USD")}
+                            {formatUsdt(row.totalFee)}
                           </td>
                         </tr>
                       ))}

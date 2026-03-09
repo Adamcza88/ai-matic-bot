@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { AssetPnlMap } from "@/lib/pnlHistory";
 import Panel from "@/components/dashboard/Panel";
-import { formatSignedMoney } from "@/lib/uiFormat";
 import type { DiagnosticGate, ScanDiagnostics, SymbolDiagnostic } from "@/lib/diagnosticsTypes";
 
 type OverviewTabProps = {
@@ -61,6 +60,16 @@ function heatColor(netPnl: number, maxAbs: number) {
   return netPnl >= 0
     ? `rgba(0,200,83,${intensity})`
     : `rgba(211,47,47,${intensity})`;
+}
+
+function formatSignedUsdt(value?: number) {
+  if (!Number.isFinite(value)) return "—";
+  const amount = value as number;
+  const sign = amount >= 0 ? "+" : "";
+  return `${sign}${amount.toLocaleString("cs-CZ", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} USDT`;
 }
 
 function gateByPrefix(diag: SymbolDiagnostic | undefined, prefix: string) {
@@ -197,11 +206,11 @@ export default function OverviewTab({
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
-              <div className="text-xs text-muted-foreground">CHECKLIST</div>
+              <div className="text-xs text-muted-foreground">ENTRY FILTRY</div>
               <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{checklistScore}</div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
-              <div className="text-xs text-muted-foreground">ENTRY</div>
+              <div className="text-xs text-muted-foreground">STAV</div>
               <div
                 className={`mt-1 text-lg font-semibold ${
                   entryStatus === "READY"
@@ -299,10 +308,10 @@ export default function OverviewTab({
                     key={`heat-${row.symbol}`}
                     className="rounded-md border border-border/60 px-2 py-1.5"
                     style={{ backgroundColor: heatColor(row.netPnl, maxAbsNetPnl) }}
-                    title={`${row.symbol} ${formatSignedMoney(row.netPnl)}`}
+                    title={`${row.symbol} ${formatSignedUsdt(row.netPnl)}`}
                   >
                     <div className="text-[11px] font-mono text-foreground">{row.symbol}</div>
-                    <div className="text-xs tabular-nums text-foreground">{formatSignedMoney(row.netPnl)}</div>
+                    <div className="text-xs tabular-nums text-foreground">{formatSignedUsdt(row.netPnl)}</div>
                   </div>
                 ))}
               </div>
@@ -328,7 +337,7 @@ export default function OverviewTab({
                             : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
                         }`}
                       >
-                        {formatSignedMoney(row.netPnl)}
+                        {formatSignedUsdt(row.netPnl)}
                       </td>
                       <td
                         className={`px-3 text-right tabular-nums leading-6 ${
@@ -337,7 +346,7 @@ export default function OverviewTab({
                             : "text-[#A94B4B] lm-pnl-negative dm-pnl-negative"
                         }`}
                       >
-                        {formatSignedMoney(row.latestPnl)}
+                        {formatSignedUsdt(row.latestPnl)}
                       </td>
                     </tr>
                   ))}

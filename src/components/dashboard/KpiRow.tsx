@@ -87,19 +87,19 @@ export default function KpiRow({
           </div>
           <div className="mt-3 space-y-2 text-sm">
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Riziko / obchod</div>
+              <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">RIZIKO NA OBCHOD</div>
               <div className="mt-1 font-mono-ui text-lg font-semibold tabular-nums text-foreground">
-                {formatPercent(riskPerTradePct)}
+                {formatPercent(riskPerTradePct, 1)}
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Riziko pozice</div>
+              <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">RIZIKO POZICE</div>
               <div className="mt-1 font-mono-ui text-lg font-semibold tabular-nums text-foreground">
                 {formatUsdt(riskPerTradeUsd)}
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Max přidání pozice</div>
+              <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">MAX PŘIDÁNÍ</div>
               <div className="mt-1 font-mono-ui text-lg font-semibold tabular-nums text-foreground">1</div>
             </div>
           </div>
