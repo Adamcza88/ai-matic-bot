@@ -126,8 +126,8 @@ export default function SignalsAccordion({
 
   return (
     <Panel
-      title="Relay signálů"
-      description="Stav relaye podle trhu. Důvod blokace je pouze v modulu gate."
+      title="Distribuce signálů"
+      description="Stav distribuce podle trhu. Důvod blokace je pouze v modulu filtrů."
       fileId="SIGNAL RELAY ID: TR-09-S"
     >
       {loading ? (
@@ -155,8 +155,8 @@ export default function SignalsAccordion({
                 <tr className="[&>th]:h-9 [&>th]:px-3 [&>th]:text-left border-b border-border/60">
                   <th>Trh</th>
                   <th>Stav</th>
-                  <th>Stáří feedu</th>
-                  <th className="text-center">Skok</th>
+                  <th>Stáří dat</th>
+                  <th className="text-center">Přejít</th>
                 </tr>
               </thead>
               <tbody className="text-foreground">
@@ -200,8 +200,8 @@ export default function SignalsAccordion({
                                 ? "border-[#D32F2F]/60 bg-[#D32F2F]/10"
                                 : "border-[#FFB300]/60 bg-[#FFB300]/10"
                             }`}
-                            aria-label={`Přeskočit na ${row.jumpTarget.toLowerCase()} gate pro ${row.symbol}`}
-                            title={`Přeskočit na ${row.jumpTarget.toLowerCase()} gate`}
+                            aria-label={`Přejít na ${row.jumpTarget.toLowerCase()} filtry pro ${row.symbol}`}
+                            title={`Přejít na ${row.jumpTarget.toLowerCase()} filtry`}
                           >
                             <span
                               className={`h-2.5 w-2.5 rounded-full ${

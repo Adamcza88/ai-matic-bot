@@ -697,7 +697,7 @@ export default function Dashboard({
   const handleResetAllGates = useCallback(() => {
     resetChecklist();
     setResetRippleKey((value) => value + 1);
-    showToast("Všechny gate byly resetovány", "neutral");
+    showToast("Všechny filtry byly resetovány", "neutral");
   }, [resetChecklist, showToast]);
 
   const handleToggleApp = useCallback(() => {
@@ -793,7 +793,7 @@ export default function Dashboard({
             <div className="grid flex-1 grid-cols-1 gap-2 lg:grid-cols-3">
               <div className="rounded-lg border border-border/60 bg-background/40 p-2">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-                  Prostředí
+                  Prostředí obchodování
                 </div>
                 <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
                   <Button
@@ -835,7 +835,7 @@ export default function Dashboard({
 
               <div className="rounded-lg border border-border/60 bg-background/40 p-2">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-                  Režim exekuce
+                  Režim obchodování
                 </div>
                 <div className="flex items-center rounded-md border border-border/60 bg-background/70 p-1">
                   {MODE_OPTIONS.map((value) => (
@@ -856,7 +856,7 @@ export default function Dashboard({
 
               <div className="rounded-lg border border-[#D32F2F]/50 bg-[#D32F2F]/5 p-2">
                 <div className="mb-1 text-[10px] uppercase tracking-[0.1em] text-[#D32F2F]">
-                  Nouzové
+                  Nouzové řízení
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
@@ -866,7 +866,7 @@ export default function Dashboard({
                     onClick={handleResetAllGates}
                     className="h-11 px-4 text-sm font-semibold text-[#D32F2F] border-[#D32F2F]/50 hover:bg-[#D32F2F]/10"
                   >
-                    Resetovat gate
+                    Reset blokací
                   </Button>
                   <Button
                     type="button"

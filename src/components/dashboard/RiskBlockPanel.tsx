@@ -133,7 +133,7 @@ export default function RiskBlockPanel({
     <section className={`rounded-xl border px-4 py-3 ${shellTone}`}>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-foreground">Risk Control</div>
+          <div className="text-sm font-semibold text-foreground">Kontrola rizika</div>
           <div className="text-xs text-muted-foreground">Agregace blokací z posledních 200 událostí.</div>
         </div>
       </div>
@@ -145,7 +145,7 @@ export default function RiskBlockPanel({
             {formatUsdt(maxDailyLossUsd, true)}
           </div>
           <div className={`text-[11px] ${maxDailyLossBreach ? "text-[#D32F2F]" : "text-[#00C853]"}`}>
-            {maxDailyLossBreach ? "Breach" : "Within limit"}
+            {maxDailyLossBreach ? "Porušení limitu" : "V limitu"}
           </div>
         </div>
 
@@ -155,7 +155,7 @@ export default function RiskBlockPanel({
             {killSwitchActive ? "AKTIVNÍ" : "PŘIPRAVEN"}
           </div>
           <div className="text-[11px] text-muted-foreground">
-            {killSwitchActive ? "Obchodování zastaveno" : "Pouze monitoring"}
+            {killSwitchActive ? "Obchodování zastaveno" : "Pouze sledování"}
           </div>
         </div>
 
@@ -204,7 +204,7 @@ export default function RiskBlockPanel({
       </div>
 
       <div className="mt-3 rounded-lg border border-border/60 bg-background/35 p-2.5">
-        <div className="text-xs text-muted-foreground">Blokace (agregace)</div>
+        <div className="text-xs text-muted-foreground">Souhrn blokací</div>
         {!logsLoaded && aggregatedRiskEvents.length === 0 ? (
           <div className="mt-1 text-xs text-muted-foreground">Načítám risk události…</div>
         ) : aggregatedRiskEvents.length === 0 && gateBlocked.length === 0 ? (

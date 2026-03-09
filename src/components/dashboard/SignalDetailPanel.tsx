@@ -88,7 +88,7 @@ function GateList({
       <div className="text-[11px] uppercase tracking-widest text-muted-foreground">{title}</div>
       <div className="mt-2 space-y-1.5">
         {gates.length === 0 ? (
-          <div className="text-xs text-muted-foreground">Bez gate</div>
+          <div className="text-xs text-muted-foreground">Bez filtrů</div>
         ) : (
           gates.map((gate) => {
             const enabled = checklistEnabled[gate.name] ?? true;
@@ -98,7 +98,7 @@ function GateList({
                 type="button"
                 onClick={() => toggleChecklist(gate.name)}
                 className="flex w-full items-center justify-between gap-3 rounded-md border border-border/50 bg-background/30 px-2 py-1 text-left text-xs"
-                title="Přepnout vynucení gate"
+                title="Přepnout vynucení filtru"
               >
                 <span className={enabled ? "text-foreground" : "text-muted-foreground"}>
                   {gate.name}
@@ -201,7 +201,7 @@ export default function SignalDetailPanel({
 
           <div className="rounded-lg border border-border/60 bg-card/70 p-2 text-xs">
             <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
-              Stáří feedu
+              Stáří dat
             </div>
             <div className={`mt-1 tabular-nums ${feedToneClass(diag?.feedAgeMs)}`}>
               {formatFeedAge(diag?.feedAgeMs)} (OK &lt; 2.0s, WARN 2.0–10.0s, ŠPATNÉ &gt; 10.0s)
@@ -228,7 +228,7 @@ export default function SignalDetailPanel({
             toggleChecklist={toggleChecklist}
           />
           <GateList
-            title="Kontrolní seznam / gate"
+            title="Kontrolní seznam / filtr"
             gates={execution}
             checklistEnabled={checklistEnabled}
             toggleChecklist={toggleChecklist}

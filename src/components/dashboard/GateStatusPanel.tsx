@@ -165,13 +165,13 @@ export default function GateStatusPanel({
 
   return (
     <Panel
-      title="Stavy gate kontrolního seznamu"
+      title="Stavy filtrů strategie"
       description={selectedSymbol ? `Trh ${selectedSymbol}` : "Není vybraný trh"}
       fileId="CHECKLIST STATUS ID: TR-13-GS"
     >
       {!scanLoaded ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-          Načítám stavy gate…
+          Načítám stavy filtrů…
         </div>
       ) : !selectedSymbol ? (
         <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
@@ -304,7 +304,7 @@ export default function GateStatusPanel({
             <div className="text-xs text-muted-foreground">
               {activeFilter
                 ? `Filtr: ${statusLabel(activeFilter)} (${filteredRows.length})`
-                : `Všechny gate (${rows.length})`}
+                : `Všechny filtry (${rows.length})`}
             </div>
             {activeFilter ? (
               <button
@@ -359,7 +359,7 @@ export default function GateStatusPanel({
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground">
                 <tr className="[&>th]:h-9 [&>th]:px-3 [&>th]:text-left border-b border-border/60">
-                  <th>Pravidlo</th>
+                  <th>Filtr</th>
                   <th>Stav</th>
                   <th>Detail</th>
                 </tr>
@@ -368,7 +368,7 @@ export default function GateStatusPanel({
                 {filteredRows.length === 0 ? (
                   <tr className="h-14 border-b border-border/40">
                     <td colSpan={3} className="px-3 text-xs text-muted-foreground">
-                      Pro zvolený filtr nejsou dostupné žádné gate.
+                      Pro zvolený filtr nejsou dostupné žádné filtry.
                     </td>
                   </tr>
                 ) : (

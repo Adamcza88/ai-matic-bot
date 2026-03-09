@@ -99,7 +99,7 @@ export default function KpiRow({
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Max add-ony</div>
+              <div className="text-xs text-muted-foreground">Max přidání pozice</div>
               <div className="mt-1 font-mono-ui text-lg font-semibold tabular-nums text-foreground">1</div>
             </div>
           </div>
@@ -130,7 +130,7 @@ export default function KpiRow({
 
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">PŘÍKAZY</span>
+                <span className="text-muted-foreground">OTEVŘENÉ PŘÍKAZY</span>
                 <span className={`font-mono-ui tabular-nums ${usageTone(orderUsagePct)}`}>
                   {openOrders} / {maxOpenOrders}
                 </span>
@@ -147,7 +147,7 @@ export default function KpiRow({
             </div>
 
             <div className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Expozice / limit</div>
+              <div className="text-xs text-muted-foreground">Expozice vůči limitu</div>
               <div className="mt-1 font-mono-ui text-xs tabular-nums text-foreground">
                 {formatUsdt(riskExposureUsd)} / {formatUsdt(riskExposureLimitUsd)}
               </div>
@@ -173,13 +173,13 @@ export default function KpiRow({
               </span>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Páková expozice</span>
+              <span className="text-muted-foreground">Využití páky</span>
               <span className="font-mono-ui font-semibold tabular-nums text-foreground">
                 {formatPercent(leverageExposure)}
               </span>
             </div>
             <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/40 px-3 py-2">
-              <span className="text-muted-foreground">Likvidační buffer</span>
+              <span className="text-muted-foreground">Likvidační rezerva</span>
               <span className="font-mono-ui font-semibold tabular-nums text-foreground">
                 {formatPercent(liquidationBuffer)}
               </span>

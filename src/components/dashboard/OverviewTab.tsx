@@ -39,7 +39,7 @@ function formatFeedAgeMs(value?: number) {
 
 function hardStatusLabel(value: "PASS" | "FAIL" | "N/A") {
   if (value === "PASS") return "OK";
-  if (value === "FAIL") return "SELHÁNÍ";
+  if (value === "FAIL") return "NEPROŠLO";
   return "N/A";
 }
 
@@ -176,13 +176,13 @@ export default function OverviewTab({
   return (
     <div className="space-y-4">
       <Panel
-        title="Gate modul"
+        title="Modul filtrů"
         description={activeSymbol ? `Trh ${activeSymbol}` : "Není vybraný trh"}
         fileId="GATE ENGINE ID: TR-01-G"
       >
         {!scanLoaded ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
-            Načítám gate modul…
+            Načítám modul filtrů…
           </div>
         ) : !activeSymbol ? (
           <div className="rounded-lg border border-dashed border-border/60 py-8 text-center text-xs text-muted-foreground">
@@ -223,7 +223,7 @@ export default function OverviewTab({
       </Panel>
 
       <Panel
-        title="Zdraví dat"
+        title="Stav dat"
         description={activeSymbol ? `Trh ${activeSymbol}` : "Není vybraný trh"}
         fileId="DATA HEALTH ID: TR-14-DH"
       >
@@ -244,7 +244,7 @@ export default function OverviewTab({
               </div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
-              <div className="text-xs text-muted-foreground">Latence feedu</div>
+              <div className="text-xs text-muted-foreground">Stáří dat</div>
               <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{feedAgeText}</div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
@@ -266,7 +266,7 @@ export default function OverviewTab({
       </Panel>
 
       <Panel
-        title="Historie PnL podle trhu"
+        title="Historie PnL podle trhů"
         fileId="LEDGER ARCHIVE ID: TR-10-H"
         action={
           <Button

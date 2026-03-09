@@ -971,7 +971,7 @@ const SettingsPanel: React.FC<Props> = ({
 
           <div className="grid gap-2 settings-panel-gates">
             <p className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-              Riziko a gate
+              Riziko a filtry
             </p>
             <div className="grid gap-2">
               {local.riskMode !== OLIKELLA_RISK_MODE ? (
@@ -1028,7 +1028,7 @@ const SettingsPanel: React.FC<Props> = ({
                 </>
               ) : (
                 <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-xs text-secondary-foreground/80">
-                  OLIkella používá vlastní pattern gates. Vstup je povolen jen přes OLIkella signál.
+                  OLIkella používá vlastní pattern filtry. Vstup je povolen jen přes OLIkella signál.
                 </div>
               )}
               <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
@@ -1055,7 +1055,7 @@ const SettingsPanel: React.FC<Props> = ({
                 htmlFor="trend-gate-mode"
                 className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
               >
-                Režim trend gate
+                Režim trend filtru
               </label>
               <div className="rounded-md border border-input bg-slate-800 text-secondary-foreground px-3 py-2 text-sm space-y-2">
                 <select
@@ -1075,7 +1075,7 @@ const SettingsPanel: React.FC<Props> = ({
                 </select>
                 <div className="text-xs text-secondary-foreground/70">
                   {local.trendGateMode === "adaptive"
-                    ? "Adaptivní režim: přepíná gate podle síly trendu."
+                    ? "Adaptivní režim: přepíná filtr podle síly trendu."
                     : "Režim sledování: EMA trend na 5m, průraz a potvrzení směru."}
                 </div>
               </div>

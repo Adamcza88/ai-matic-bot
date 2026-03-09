@@ -160,7 +160,7 @@ export default function StatusBar({
           </button>
           <div className={healthFxClass}>
             {statusLabel({
-              label: "ZDRAVÍ DAT",
+              label: "STAV DAT",
               value: healthLabel,
               tone: dataHealthSafe ? "ok" : "danger",
             })}
@@ -170,7 +170,7 @@ export default function StatusBar({
         <div className="grid gap-2 rounded-xl border border-border/70 bg-card/70 p-3 sm:grid-cols-3">
           <div className="rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-right">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-              OTEVŘENÉ PNL
+              Otevřený PnL
             </div>
             <div
               className={`mt-1 font-mono-ui text-[30px] font-semibold tabular-nums leading-none ${signedTone(openPositionsPnl)}`}
@@ -180,7 +180,7 @@ export default function StatusBar({
           </div>
           <div className="rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-right">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-              DENNÍ PNL
+              Denní PnL
             </div>
             <div
               className={`mt-1 font-mono-ui text-[30px] font-semibold tabular-nums leading-none ${
@@ -192,7 +192,7 @@ export default function StatusBar({
           </div>
           <div className="rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-right">
             <div className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-              KAPITÁL
+              Kapitál účtu
             </div>
             <div className="mt-1 font-mono-ui text-[30px] font-semibold tabular-nums leading-none text-foreground">
               {formatUsdt(totalCapital, false)}
@@ -205,7 +205,7 @@ export default function StatusBar({
             <div>
               <div className="text-[22px] font-semibold leading-none">{title}</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                Režim exekuce:{" "}
+                Režim obchodování:{" "}
                 <span className={riskTone}>
                   {executionMode === TradingMode.AUTO_ON ? "AUTO" : "MANUÁL"}
                 </span>
