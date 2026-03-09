@@ -264,6 +264,9 @@ export interface AssetPnlRecord {
 
 export interface TestnetTrade {
   id: string;
+  tradeId?: string;
+  orderId?: string;
+  orderLinkId?: string;
   symbol: string;
   side: "Buy" | "Sell";
   price: number;
@@ -271,4 +274,8 @@ export interface TestnetTrade {
   value: number;
   fee: number;
   time: string;
+  execTimeMs?: number;
+  execType?: string;
+  reduceOnly?: boolean;
+  liquidity?: "maker" | "taker" | "unknown";
 }

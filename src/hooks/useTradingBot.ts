@@ -9316,14 +9316,49 @@ export function useTradingBot(
         const qty = toNumber(t?.execQty ?? t?.qty);
         const value = toNumber(t?.execValue ?? t?.value);
         const fee = toNumber(t?.execFee ?? t?.fee);
+        const execTimeMs = toNumber(
+          t?.execTime ?? t?.transactTime ?? t?.createdTime
+        );
+        const tradeId = String(t?.execId ?? t?.tradeId ?? "").trim();
+        const orderId = String(t?.orderId ?? t?.orderID ?? "").trim();
+        const orderLinkId = String(
+          t?.orderLinkId ?? t?.orderLinkID ?? t?.clOrdId ?? ""
+        ).trim();
+        const isMaker =
+          typeof t?.isMaker === "boolean"
+            ? t.isMaker
+            : String(t?.lastLiquidityInd ?? "")
+                .toLowerCase()
+                .includes("maker")
+              ? true
+              : String(t?.lastLiquidityInd ?? "")
+                  .toLowerCase()
+                  .includes("taker")
+                ? false
+                : undefined;
+        const reduceOnly = Boolean(
+          t?.reduceOnly ?? t?.reduce_only ?? t?.reduce
+        );
         return {
-          id: String(t?.execId ?? t?.tradeId ?? ""),
+          id: tradeId || `${orderId || "order"}:${execTimeMs || Date.now()}`,
+          tradeId: tradeId || undefined,
+          orderId: orderId || undefined,
+          orderLinkId: orderLinkId || undefined,
           symbol: String(t?.symbol ?? ""),
           side: (t?.side ?? "Buy") as "Buy" | "Sell",
           price: Number.isFinite(price) ? price : Number.NaN,
           qty: Number.isFinite(qty) ? qty : Number.NaN,
           value: Number.isFinite(value) ? value : Number.NaN,
           fee: Number.isFinite(fee) ? fee : Number.NaN,
+          execType: String(t?.execType ?? t?.exec_type ?? "") || undefined,
+          reduceOnly,
+          liquidity:
+            typeof isMaker === "boolean"
+              ? isMaker
+                ? "maker"
+                : "taker"
+              : "unknown",
+          execTimeMs: Number.isFinite(execTimeMs) ? execTimeMs : undefined,
           time: toIso(t?.execTime ?? t?.transactTime ?? t?.createdTime) || "",
         } as TestnetTrade;
       });
