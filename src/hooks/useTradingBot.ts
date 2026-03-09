@@ -217,7 +217,7 @@ const SKIP_STATUS_SUPPRESSED_CODES = new Set([
   "MAX_POS+MAX_ORDERS",
   "OPEN_POSITION",
 ]);
-const OLIKELLA_RISK_BLOCK_MONITOR_ONLY = true;
+const RISK_ENTRY_BLOCK_MONITOR_ONLY = true;
 const MAX_OPEN_POSITIONS_CAP = 50000;
 const ORDERS_PER_POSITION = 5;
 const MAX_OPEN_ORDERS_CAP = MAX_OPEN_POSITIONS_CAP * ORDERS_PER_POSITION;
@@ -8399,8 +8399,10 @@ export function useTradingBot(
       let executionAllowed: boolean | null = null;
       let executionReason: string | undefined;
       if (entryBlockReasons.length > 0) {
-        executionAllowed = false;
-        executionReason = entryBlockReasons.join(", ");
+        executionAllowed = RISK_ENTRY_BLOCK_MONITOR_ONLY ? true : false;
+        executionReason = RISK_ENTRY_BLOCK_MONITOR_ONLY
+          ? `monitor only: ${entryBlockReasons.join(", ")}`
+          : entryBlockReasons.join(", ");
       } else if (!signalActive) {
         executionAllowed = null;
         executionReason = "čeká na signál";
@@ -10670,8 +10672,7 @@ export function useTradingBot(
       const runtimeScalpOpenPosBlocked =
         scalpActive &&
         (hasPosition || hasWaitingLimitOrder);
-      const scalpRiskMonitorOnly =
-        scalpActive && OLIKELLA_RISK_BLOCK_MONITOR_ONLY;
+      const riskEntryMonitorOnly = RISK_ENTRY_BLOCK_MONITOR_ONLY;
       const hasPendingIntent = intentPendingRef.current.has(symbol);
       const signalSideRaw = String(decision?.signal?.intent?.side ?? "")
         .trim()
@@ -10725,7 +10726,7 @@ export function useTradingBot(
         if (hasPosition && scalpActive) {
           void handleOliKellaInTrade(symbol, decision, now);
         }
-        if (!scalpRiskMonitorOnly) {
+        if (!riskEntryMonitorOnly) {
           return;
         }
       }
@@ -10746,7 +10747,7 @@ export function useTradingBot(
         if (hasPosition && scalpActive) {
           void handleOliKellaInTrade(symbol, decision, now);
         }
-        if (!scalpRiskMonitorOnly) {
+        if (!riskEntryMonitorOnly) {
           return;
         }
       }
@@ -10780,7 +10781,7 @@ export function useTradingBot(
             }
           }
         }
-        if (!scalpRiskMonitorOnly) {
+        if (!riskEntryMonitorOnly) {
           return;
         }
       }
@@ -11223,8 +11224,7 @@ export function useTradingBot(
       if (!slProtectionGate.ok) {
         entryBlockReasons.push(slProtectionGate.reason);
       }
-      const entryRiskMonitorOnly =
-        isScalpProfile && OLIKELLA_RISK_BLOCK_MONITOR_ONLY;
+      const entryRiskMonitorOnly = RISK_ENTRY_BLOCK_MONITOR_ONLY;
       if (entryBlockReasons.length > 0) {
         const profileLabel =
           PROFILE_BY_RISK_MODE[context.settings.riskMode] ?? "AI-MATIC";
@@ -11940,14 +11940,21 @@ export function useTradingBot(
       const useFixedQty = isTreeProfile
         ? !treeUseDynamicSizing && fixedSizing?.ok === true
         : fixedSizing?.ok === true;
+      const lockManualPerTradeSizing =
+        isScalpProfile && useFixedQty && fixedSizing?.ok === true;
+      const effectiveRiskMultiplier = lockManualPerTradeSizing
+        ? 1
+        : riskMultiplier;
       const qtyMode = useFixedQty ? "BASE_QTY" : "USDT_NOTIONAL";
       const baseQty = sizing.qty;
       const baseNotional = sizing.notional;
       let adjustedQty =
-        Number.isFinite(baseQty) && baseQty > 0 ? baseQty * riskMultiplier : baseQty;
+        Number.isFinite(baseQty) && baseQty > 0
+          ? baseQty * effectiveRiskMultiplier
+          : baseQty;
       let adjustedNotional =
         Number.isFinite(baseNotional) && baseNotional > 0
-          ? baseNotional * riskMultiplier
+          ? baseNotional * effectiveRiskMultiplier
           : baseNotional;
       if (
         isAiMaticProfile &&
