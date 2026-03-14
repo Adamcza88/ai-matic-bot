@@ -3184,6 +3184,9 @@ type CoreV2Metrics = {
   htfPivotHigh?: number;
   htfPivotLow?: number;
   m15Close: number;
+  m15Sma20: number;
+  m15Sma50: number;
+  m15SmaTrend: "BULL" | "BEAR" | "NONE";
   m15Atr14: number;
   m15AtrPct: number;
   m15EmaSpreadPct: number;
@@ -3692,6 +3695,24 @@ const computeCoreV2Metrics = (
   const ema15m12 = ema15m12Arr[ema15m12Arr.length - 1] ?? Number.NaN;
   const ema15m26 = ema15m26Arr[ema15m26Arr.length - 1] ?? Number.NaN;
   const m15Close = m15Last ? m15Last.close : Number.NaN;
+  const m15Sma20 =
+    m15Closes.length >= 20
+      ? m15Closes.slice(-20).reduce((sum, value) => sum + value, 0) / 20
+      : Number.NaN;
+  const m15Sma50 =
+    m15Closes.length >= 50
+      ? m15Closes.slice(-50).reduce((sum, value) => sum + value, 0) / 50
+      : Number.NaN;
+  const m15SmaTrend =
+    Number.isFinite(m15Sma20) &&
+    Number.isFinite(m15Sma50) &&
+    Number.isFinite(m15Close)
+      ? m15Sma20 > m15Sma50 && m15Close > m15Sma20
+        ? "BULL"
+        : m15Sma20 < m15Sma50 && m15Close < m15Sma20
+          ? "BEAR"
+          : "NONE"
+      : "NONE";
   const ema15mTrend =
     Number.isFinite(ema15m12) && Number.isFinite(ema15m26)
       ? ema15m12 > ema15m26
@@ -4066,6 +4087,9 @@ const computeCoreV2Metrics = (
     htfPivotHigh,
     htfPivotLow,
     m15Close,
+    m15Sma20,
+    m15Sma50,
+    m15SmaTrend,
     m15Atr14,
     m15AtrPct,
     m15EmaSpreadPct,
@@ -4349,7 +4373,8 @@ function normalizeTrendDir(value: string) {
 
 function resolveH1M15TrendGate(
   core: CoreV2Metrics | undefined,
-  signal: PriceFeedDecision["signal"] | null
+  signal: PriceFeedDecision["signal"] | null,
+  decision?: PriceFeedDecision | null
 ) {
   if (!signal) {
     return { ok: true, detail: "no signal" };
@@ -4360,24 +4385,73 @@ function resolveH1M15TrendGate(
   if (!signalDir) {
     return { ok: false, detail: "signal side missing" };
   }
-  if (!core) {
-    return { ok: false, detail: "trend data missing" };
-  }
-  const h1Dir =
-    core.htfBias === "BULL" || core.htfBias === "BEAR"
-      ? core.htfBias
-      : "NONE";
+
+  const toTrendDir = (value: unknown): "BULL" | "BEAR" | "NONE" => {
+    const dir = normalizeTrendDir(String(value ?? ""));
+    return dir === "BULL" || dir === "BEAR" ? dir : "NONE";
+  };
+  const pickFirstTrend = (
+    ...values: Array<"BULL" | "BEAR" | "NONE">
+  ): "BULL" | "BEAR" | "NONE" => {
+    for (const value of values) {
+      if (value === "BULL" || value === "BEAR") return value;
+    }
+    return "NONE";
+  };
+
+  let h1Dir: "BULL" | "BEAR" | "NONE" = "NONE";
   let m15Dir: "BULL" | "BEAR" | "NONE" = "NONE";
-  if (core.m15TrendLongOk) m15Dir = "BULL";
-  else if (core.m15TrendShortOk) m15Dir = "BEAR";
-  else if (core.ema15mTrend === "BULL" || core.ema15mTrend === "BEAR") {
-    m15Dir = core.ema15mTrend;
+  let fallbackUsed = false;
+
+  if (core) {
+    h1Dir =
+      core.htfBias === "BULL" || core.htfBias === "BEAR"
+        ? core.htfBias
+        : "NONE";
+    if (core.m15SmaTrend === "BULL" || core.m15SmaTrend === "BEAR") {
+      m15Dir = core.m15SmaTrend;
+    } else if (core.m15TrendLongOk) m15Dir = "BULL";
+    else if (core.m15TrendShortOk) m15Dir = "BEAR";
+    else if (core.ema15mTrend === "BULL" || core.ema15mTrend === "BEAR") {
+      m15Dir = core.ema15mTrend;
+    }
+  } else {
+    fallbackUsed = true;
+    const anyDecision = decision as any;
+    h1Dir = pickFirstTrend(
+      toTrendDir(anyDecision?.htfTrend?.consensus),
+      toTrendDir(anyDecision?.trendH1 ?? anyDecision?.trend),
+      toTrendDir(anyDecision?.xContext?.htfTrend)
+    );
+
+    m15Dir = pickFirstTrend(
+      toTrendDir(anyDecision?.coreV2?.m15SmaTrend),
+      toTrendDir(anyDecision?.coreV2?.ema15mTrend)
+    );
+    if (m15Dir === "NONE") {
+      const m15LtfEntry = Array.isArray(anyDecision?.ltfTrend?.byTimeframe)
+        ? anyDecision.ltfTrend.byTimeframe.find(
+            (entry: any) => Number(entry?.timeframeMin) === 15
+          )
+        : undefined;
+      m15Dir = pickFirstTrend(
+        toTrendDir(m15LtfEntry?.result?.direction),
+        toTrendDir(anyDecision?.ltfTrend?.consensus),
+        toTrendDir(anyDecision?.xContext?.ltfTrend)
+      );
+    }
+    if (h1Dir === "NONE" && m15Dir === "NONE") {
+      return {
+        ok: true,
+        detail: "trend context unavailable (fallback skip)",
+      };
+    }
   }
   const againstH1 = (h1Dir === "BULL" || h1Dir === "BEAR") && h1Dir !== signalDir;
   const againstM15 =
     (m15Dir === "BULL" || m15Dir === "BEAR") && m15Dir !== signalDir;
   const ok = !againstH1 && !againstM15;
-  const detail = `1h ${h1Dir} | 15m ${m15Dir}`;
+  const detail = `1h ${h1Dir} | 15m ${m15Dir}${fallbackUsed ? " | fallback" : ""}`;
   return { ok, detail };
 }
 
@@ -11457,7 +11531,7 @@ export function useTradingBot(
       }
       if (!isScalpProfile && !isAmdProfile) {
         const trendCore = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
-        const trendGate = resolveH1M15TrendGate(trendCore, signal);
+        const trendGate = resolveH1M15TrendGate(trendCore, signal, decision);
         appendTrace("Trend1h15m", {
           ok: trendGate.ok,
           code: trendGate.ok ? "OK" : "TREND_GATE",
