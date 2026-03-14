@@ -16,7 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Loader2, Save, Key } from "lucide-react";
+import { Loader2, Save, Key, Trash2 } from "lucide-react";
 import { UI_COPY } from "@/lib/uiCopy";
 import { formatDate } from "@/lib/uiFormat";
 
@@ -55,6 +55,7 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [deletingService, setDeletingService] = useState<string | null>(null);
 
   const maskedRecords = useMemo(() => {
     const labelMap = new Map(
@@ -182,6 +183,58 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
     onKeysUpdated?.();
   };
 
+  const onDelete = async (row: ApiKeyRow) => {
+    if (!row?.service) return;
+    setStatus(null);
+    setDeletingService(row.service);
+
+    if (userId === "guest") {
+      const stored = localStorage.getItem("guest_api_keys");
+      const currentKeys: ApiKeyRow[] = stored ? JSON.parse(stored) : [];
+      const nextKeys = currentKeys.filter((k) => k.service !== row.service);
+      localStorage.setItem("guest_api_keys", JSON.stringify(nextKeys));
+      setRecords(nextKeys);
+      setStatus(`${UI_COPY.apiKeys.removed} (host režim).`);
+      setDeletingService(null);
+      onKeysUpdated?.();
+      return;
+    }
+
+    if (!supabase) {
+      setStatus("Supabase není nakonfigurované. Nelze odstranit klíče.");
+      setDeletingService(null);
+      return;
+    }
+
+    let query = supabase
+      .from("user_api_keys")
+      .delete()
+      .eq("user_id", userId)
+      .eq("service", row.service);
+    if (row.id) {
+      query = query.eq("id", row.id);
+    }
+    const { error } = await query;
+
+    if (error) {
+      setStatus(error.message);
+      setDeletingService(null);
+      return;
+    }
+
+    setStatus(UI_COPY.apiKeys.removed);
+    const refreshed = await supabase
+      .from("user_api_keys")
+      .select("id, service, api_key, updated_at")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false });
+    if (!refreshed.error && refreshed.data) {
+      setRecords(refreshed.data);
+    }
+    setDeletingService(null);
+    onKeysUpdated?.();
+  };
+
   return (
     <Card className="bg-slate-900/50 border-white/10 text-white mb-6 api-keys-card">
       <CardHeader>
@@ -289,11 +342,35 @@ export default function ApiKeysManager({ userId, onKeysUpdated }: Props) {
                       {row.masked}
                     </div>
                   </div>
-                  {row.updated_at && (
-                    <span className="text-xs text-slate-500">
-                      {UI_COPY.apiKeys.updated} {formatDate(row.updated_at)}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {row.updated_at && (
+                      <span className="text-xs text-slate-500">
+                        {UI_COPY.apiKeys.updated} {formatDate(row.updated_at)}
+                      </span>
+                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={deletingService === row.service}
+                      onClick={() => {
+                        void onDelete(row);
+                      }}
+                      className="border-red-400/40 text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                    >
+                      {deletingService === row.service ? (
+                        <>
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          {UI_COPY.apiKeys.removing}
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-3 h-3 mr-1" />
+                          {UI_COPY.apiKeys.remove}
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
