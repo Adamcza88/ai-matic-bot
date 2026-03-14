@@ -291,7 +291,7 @@ export default function Dashboard({
         session: "24/7",
         risk: "Riziko 1.5% kapitálu/obchod · RRR 1.8 · max 1 add-on",
         riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
-        entry: "HTF+sweep+BOS+FVG + corrective pullback + 1-candle confirm",
+        entry: "HTF+sweep/BOS+FVG + corrective pullback + 1-candle confirm (score >=6)",
         execution: "OB/Flow/OI live when available; fallback N/A without hard block",
       };
     }

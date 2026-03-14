@@ -281,7 +281,7 @@ test("OLIkella exposes strict quality score diagnostics", () => {
   const ctx = result?.oliKella;
 
   assert.equal(typeof ctx?.qualityScore, "number");
-  assert.equal(ctx?.qualityThreshold, 7);
+  assert.equal(ctx?.qualityThreshold, 6);
   assert.equal(typeof ctx?.qualityPass, "boolean");
   assert.equal(
     ["HTF_STRONG_TREND", "HTF_WEAK_TREND", "HTF_NO_TRADE"].includes(
