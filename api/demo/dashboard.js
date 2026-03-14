@@ -1,6 +1,7 @@
 import { fetchDashboardSnapshot } from "../shared/dashboardSnapshot.js";
 import { getUserApiKeys, getUserFromToken } from "../../server/userCredentials.js";
 import { extractRequestToken } from "../../server/requestAuth.js";
+import { supabase } from "../../server/supabaseClient.js";
 
 function normalizeQueryValue(value) {
   if (Array.isArray(value)) return value[0] ?? undefined;
@@ -78,27 +79,41 @@ export default async function handler(req, res) {
     const query = readQuery(req);
     const useTestnet = query.net !== "mainnet";
     const token = extractRequestToken(req);
+    const supabaseConfigured = Boolean(supabase);
+    let userId = "env-fallback";
+    let apiKey = "";
+    let apiSecret = "";
 
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "Missing auth token" });
-    }
+    if (supabaseConfigured) {
+      if (!token) {
+        return res.status(401).json({ ok: false, error: "Missing auth token" });
+      }
 
-    const user = await getUserFromToken(token);
-    const keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
-    const apiKey = keys.apiKey;
-    const apiSecret = keys.apiSecret;
+      const user = await getUserFromToken(token);
+      const keys = await getUserApiKeys(user.id, useTestnet ? "testnet" : "mainnet");
+      userId = user.id;
+      apiKey = keys.apiKey ?? "";
+      apiSecret = keys.apiSecret ?? "";
 
-    if (!apiKey || !apiSecret) {
-      return res.status(400).json({
-        ok: false,
-        error: useTestnet
-          ? "Bybit TESTNET API key/secret not configured for this user"
-          : "Bybit MAINNET API key/secret not configured for this user",
-      });
+      if (!apiKey || !apiSecret) {
+        return res.status(400).json({
+          ok: false,
+          error: useTestnet
+            ? "Bybit TESTNET API key/secret not configured for this user"
+            : "Bybit MAINNET API key/secret not configured for this user",
+        });
+      }
+    } else {
+      apiKey = useTestnet
+        ? process.env.BYBIT_TESTNET_API_KEY || process.env.BYBIT_API_KEY || ""
+        : process.env.BYBIT_MAINNET_API_KEY || process.env.BYBIT_API_KEY || "";
+      apiSecret = useTestnet
+        ? process.env.BYBIT_TESTNET_API_SECRET || process.env.BYBIT_API_SECRET || ""
+        : process.env.BYBIT_MAINNET_API_SECRET || process.env.BYBIT_API_SECRET || "";
     }
 
     const data = await fetchDashboardSnapshot({
-      userId: user.id,
+      userId,
       env: useTestnet ? "testnet" : "mainnet",
       apiKey,
       apiSecret,

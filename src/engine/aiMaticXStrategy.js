@@ -2,8 +2,8 @@ import {
     State,
     Trend,
     resampleCandles,
-} from "./botEngine";
-import { computeATR, computeEma } from "./ta";
+} from "./botEngine.js";
+import { computeATR, computeEma } from "./ta.js";
 const ACTIVE_MODE = "SCALPING";
 const MODE_CONFIG = {
     SCALPING: {
