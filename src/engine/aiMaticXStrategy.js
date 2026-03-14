@@ -1,649 +1,268 @@
-import { State, Trend, resampleCandles } from "./botEngine.js";
-import { computeRsi } from "./ta.js";
-
-const strategyConfig = {
-    OVERLAP_BODY_PCT: 0.002,
-    SIMILAR_HILO_PCT: 0.003,
-    IMPULSE_LOOKBACK: 20,
-    IMPULSE_MULT: 1.2,
-    RISK_OFF_OVERLAP: 0.8,
-    RISK_OFF_NO_IMPULSE_MULT: 1.0,
-    RISK_OFF_DUAL_IMPULSE_MULT: 1.4,
-    STRONG_IMPULSE_MULT: 1.5,
-    RETRACE_MAX: 0.6,
-    RANGE_LOOKBACK_BASE: 30,
-    RANGE_LOOKBACK_MIN: 20,
-    RANGE_LOOKBACK_MAX: 50,
-    RANGE_TOUCHES_MIN: 2,
-    TRAIL_OFFSET_BASE: 0.002,
-    TRAIL_OFFSET_STRONG: 0.0025,
-    BREAK_ACCEPT_BPS: 0.0003,
+import {
+    State,
+    Trend,
+    resampleCandles,
+} from "./botEngine";
+import { computeATR, computeEma } from "./ta";
+const ACTIVE_MODE = "SCALPING";
+const MODE_CONFIG = {
+    SCALPING: {
+        htfMinutes: 15,
+        ltfMinutes: 1,
+        toleranceAtrMult: 0.25,
+        ttlBars: 7,
+        m2WindowBars: 20,
+        volumeSmaMult: 1.2,
+        emaFilter: true,
+    },
+    INTRADAY: {
+        htfMinutes: 60,
+        ltfMinutes: 5,
+        toleranceAtrMult: 0.2,
+        ttlBars: 12,
+        m2WindowBars: 40,
+        volumeSmaMult: 1.1,
+        emaFilter: true,
+    },
 };
-
-function candleBody(c) {
-    const bodyHigh = Math.max(c.open, c.close);
-    const bodyLow = Math.min(c.open, c.close);
-    return { bodyHigh, bodyLow };
-}
-function isBodyOverlap(close, prevBodyLow, prevBodyHigh, thresholdPct = strategyConfig.OVERLAP_BODY_PCT) {
-    if (!Number.isFinite(close))
-        return false;
-    if (close >= prevBodyLow && close <= prevBodyHigh)
-        return true;
-    if (close < prevBodyLow) {
-        return (prevBodyLow - close) / close <= thresholdPct;
-    }
-    return (close - prevBodyHigh) / close <= thresholdPct;
-}
-function averageRange(candles, lookback) {
-    const slice = candles.slice(-lookback);
-    if (!slice.length)
+const EMA_FAST_PERIOD = 50;
+const EMA_SLOW_PERIOD = 200;
+const ATR_PERIOD = 14;
+const VOL_SMA_PERIOD = 20;
+const REJECTION_WICK_BODY_MIN = 0.5;
+const SL_ATR_MULT = 1.0;
+const TP1_RR = 1.0;
+const TP2_RR = 2.0;
+const TRAIL_ATR_MULT = 0.5;
+function mean(values) {
+    const clean = values.filter((v) => Number.isFinite(v));
+    if (!clean.length)
         return Number.NaN;
-    const sum = slice.reduce((acc, c) => acc + (c.high - c.low), 0);
-    return sum / slice.length;
+    return clean.reduce((sum, v) => sum + v, 0) / clean.length;
 }
-function median(values) {
-    if (!values.length)
-        return Number.NaN;
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0
-        ? (sorted[mid - 1] + sorted[mid]) / 2
-        : sorted[mid];
+function toTrendLabel(value) {
+    return value === "BULL" ? Trend.Bull : value === "BEAR" ? Trend.Bear : Trend.Range;
 }
-function medianRange(candles, lookback) {
-    const slice = candles.slice(-lookback);
-    if (!slice.length)
-        return Number.NaN;
-    return median(slice.map((c) => c.high - c.low));
-}
-function findSwings(candles, left, right) {
-    const swings = [];
-    for (let i = left; i < candles.length - right; i++) {
-        const c = candles[i];
-        let isHigh = true;
-        let isLow = true;
-        for (let j = 1; j <= left; j++) {
-            if (candles[i - j].high >= c.high)
-                isHigh = false;
-            if (candles[i - j].low <= c.low)
-                isLow = false;
-        }
-        for (let j = 1; j <= right; j++) {
-            if (candles[i + j].high > c.high)
-                isHigh = false;
-            if (candles[i + j].low < c.low)
-                isLow = false;
-        }
-        if (!isHigh && !isLow)
-            continue;
-        const { bodyHigh, bodyLow } = candleBody(c);
-        swings.push({
-            index: i,
-            time: c.openTime ?? c.timestamp ?? Date.now(),
-            type: isHigh ? "high" : "low",
-            high: c.high,
-            low: c.low,
-            bodyHigh,
-            bodyLow,
-            close: c.close,
-        });
+function resolveEmaBias(candles) {
+    const closes = candles.map((c) => c.close);
+    const emaFast = computeEma(closes, EMA_FAST_PERIOD).slice(-1)[0] ?? Number.NaN;
+    const emaSlow = computeEma(closes, EMA_SLOW_PERIOD).slice(-1)[0] ?? Number.NaN;
+    const lastClose = closes[closes.length - 1] ?? Number.NaN;
+    if (Number.isFinite(lastClose) &&
+        Number.isFinite(emaFast) &&
+        Number.isFinite(emaSlow) &&
+        lastClose > emaFast &&
+        emaFast > emaSlow) {
+        return { bias: "BULL", emaFast, emaSlow };
     }
-    return swings;
-}
-function lastAlternating(swings, count) {
-    const out = [];
-    for (let i = swings.length - 1; i >= 0 && out.length < count; i--) {
-        const s = swings[i];
-        if (!out.length || out[out.length - 1].type !== s.type) {
-            out.push(s);
-        }
+    if (Number.isFinite(lastClose) &&
+        Number.isFinite(emaFast) &&
+        Number.isFinite(emaSlow) &&
+        lastClose < emaFast &&
+        emaFast < emaSlow) {
+        return { bias: "BEAR", emaFast, emaSlow };
     }
-    if (out.length < count)
+    return { bias: "RANGE", emaFast, emaSlow };
+}
+function resolveHtfImpulse(candles, bias) {
+    if (bias !== "BULL" && bias !== "BEAR")
         return null;
-    return out.reverse();
-}
-function hasSimilarHighLow(candles, minCount, maxCount, tolerancePct) {
-    const slice = candles.slice(-maxCount);
-    if (slice.length < minCount)
-        return false;
-    const highs = slice.map((c) => c.high);
-    const lows = slice.map((c) => c.low);
-    const highMax = Math.max(...highs);
-    const highMin = Math.min(...highs);
-    const lowMax = Math.max(...lows);
-    const lowMin = Math.min(...lows);
-    const highOk = (highMax - highMin) / highMax <= tolerancePct;
-    const lowOk = (lowMax - lowMin) / lowMax <= tolerancePct;
-    return highOk || lowOk;
-}
-function overlapRatio(candles, lookback, thresholdPct) {
-    const start = Math.max(1, candles.length - lookback);
-    let overlapCount = 0;
-    let total = 0;
-    for (let i = start; i < candles.length; i++) {
-        const prev = candles[i - 1];
-        const cur = candles[i];
-        if (!prev || !cur)
-            continue;
-        const prevBody = candleBody(prev);
-        if (isBodyOverlap(cur.close, prevBody.bodyLow, prevBody.bodyHigh, thresholdPct)) {
-            overlapCount += 1;
-        }
-        total += 1;
-    }
-    return total > 0 ? overlapCount / total : 1;
-}
-function resolveHtfTrend(candles, swings) {
-    const seq = lastAlternating(swings, 3);
-    if (!seq) {
-        return { trend: "RANGE", reason: "insufficient_swings", strong: false, swings };
-    }
-    const [a, b, c] = seq;
-    const prevHigh = [...swings]
-        .reverse()
-        .find((s) => s.type === "high" && s.index < b.index);
-    const prevLow = [...swings]
-        .reverse()
-        .find((s) => s.type === "low" && s.index < b.index);
-    const recentOverlap = seq.length >= 3 &&
-        seq.slice(1).filter((s, idx) => {
-            const prev = seq[idx];
-            return isBodyOverlap(s.close, prev.bodyLow, prev.bodyHigh, strategyConfig.OVERLAP_BODY_PCT);
-        }).length >= 2;
-    const similarHilo = hasSimilarHighLow(candles, 3, 5, strategyConfig.SIMILAR_HILO_PCT);
-    if (a.type === "low" && b.type === "high" && c.type === "low" && prevLow && prevHigh) {
-        const impulse = b.high - a.low;
-        const correction = b.high - c.low;
-        const mid = (a.low + b.high) / 2;
-        const retrace = impulse > 0 ? correction / impulse : 1;
-        const hh = b.high > prevHigh.high;
-        const hl = c.low > prevLow.low;
-        const rangeHit = retrace > 0.7 || c.low <= mid || recentOverlap || similarHilo;
-        if (hh && hl && !rangeHit) {
-            return {
-                trend: "BULL",
-                reason: "hh_hl",
-                strong: swings.length >= 5,
-                swings,
-                impulse: { start: a, end: b, range: impulse, mid },
-                correction: { end: c, retrace },
-            };
-        }
-    }
-    if (a.type === "high" && b.type === "low" && c.type === "high" && prevLow && prevHigh) {
-        const impulse = a.high - b.low;
-        const correction = c.high - b.low;
-        const mid = (a.high + b.low) / 2;
-        const retrace = impulse > 0 ? correction / impulse : 1;
-        const ll = b.low < prevLow.low;
-        const lh = c.high < prevHigh.high;
-        const rangeHit = retrace > 0.7 || c.high >= mid || recentOverlap || similarHilo;
-        if (ll && lh && !rangeHit) {
-            return {
-                trend: "BEAR",
-                reason: "ll_lh",
-                strong: swings.length >= 5,
-                swings,
-                impulse: { start: a, end: b, range: impulse, mid },
-                correction: { end: c, retrace },
-            };
-        }
-    }
-    return { trend: "RANGE", reason: "overlap_or_range", strong: false, swings };
-}
-function resolveLtfTrend(candles, swings, htfTrend) {
-    const seq = lastAlternating(swings, 3);
-    if (!seq) {
-        return { trend: "RANGE", reason: "insufficient_swings", strong: false, swings };
-    }
-    const [a, b, c] = seq;
-    const avgRange = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
-    const similarHilo = hasSimilarHighLow(candles, 3, 5, strategyConfig.SIMILAR_HILO_PCT);
-    if (a.type === "low" && b.type === "high" && c.type === "low") {
-        const impulse = b.high - a.low;
-        const correction = b.high - c.low;
-        const mid = (a.low + b.high) / 2;
-        const retrace = impulse > 0 ? correction / impulse : 1;
-        const impulseBars = b.index - a.index;
-        const impulseOk = Number.isFinite(avgRange) &&
-            impulse >= avgRange * strategyConfig.IMPULSE_MULT &&
-            impulseBars >= 3;
-        const hl = c.low > a.low;
-        const midOk = c.low > mid;
-        const rangeHit = similarHilo || retrace > strategyConfig.RETRACE_MAX || !hl || !midOk;
-        if (impulseOk && !rangeHit && htfTrend !== "RANGE") {
-            return {
-                trend: "BULL",
-                reason: "impulse_pullback",
-                strong: swings.length >= 5,
-                swings,
-                impulse: { start: a, end: b, range: impulse, mid },
-                correction: { end: c, retrace },
-            };
-        }
-    }
-    if (a.type === "high" && b.type === "low" && c.type === "high") {
-        const impulse = a.high - b.low;
-        const correction = c.high - b.low;
-        const mid = (a.high + b.low) / 2;
-        const retrace = impulse > 0 ? correction / impulse : 1;
-        const impulseBars = c.index - b.index;
-        const impulseOk = Number.isFinite(avgRange) &&
-            impulse >= avgRange * strategyConfig.IMPULSE_MULT &&
-            impulseBars >= 3;
-        const lh = c.high < a.high;
-        const midOk = c.high < mid;
-        const rangeHit = similarHilo || retrace > strategyConfig.RETRACE_MAX || !lh || !midOk;
-        if (impulseOk && !rangeHit && htfTrend !== "RANGE") {
-            return {
-                trend: "BEAR",
-                reason: "impulse_pullback",
-                strong: swings.length >= 5,
-                swings,
-                impulse: { start: a, end: b, range: impulse, mid },
-                correction: { end: c, retrace },
-            };
-        }
-    }
-    return { trend: "RANGE", reason: "overlap_or_range", strong: false, swings };
-}
-function resolveRangeInfo(candles) {
-    const avgRange10 = averageRange(candles, 10);
-    const avgRange20 = averageRange(candles, 20);
-    let lookback = strategyConfig.RANGE_LOOKBACK_BASE;
-    if (Number.isFinite(avgRange10) && Number.isFinite(avgRange20)) {
-        if (avgRange10 > avgRange20 * 1.2)
-            lookback = strategyConfig.RANGE_LOOKBACK_MIN;
-        else if (avgRange10 < avgRange20 * 0.8)
-            lookback = strategyConfig.RANGE_LOOKBACK_MAX;
-    }
+    const lookback = Math.min(20, candles.length);
+    if (lookback < 2)
+        return null;
     const slice = candles.slice(-lookback);
-    if (slice.length < lookback / 2) {
-        return { ok: false, high: Number.NaN, low: Number.NaN, mid: Number.NaN, lookback, touchesHigh: 0, touchesLow: 0 };
+    const high = Math.max(...slice.map((c) => c.high));
+    const low = Math.min(...slice.map((c) => c.low));
+    if (!Number.isFinite(high) || !Number.isFinite(low) || high <= low)
+        return null;
+    const mid = (high + low) / 2;
+    return { high, low, mid };
+}
+function isM1Touch(c, m1, tolerance) {
+    if (!Number.isFinite(m1) || !Number.isFinite(tolerance) || tolerance <= 0)
+        return false;
+    return c.low <= m1 + tolerance && c.high >= m1 - tolerance;
+}
+function resolveTouchBarsAgo(ltf, m1, tolerance, ttlBars) {
+    const start = Math.max(0, ltf.length - ttlBars);
+    for (let i = ltf.length - 1; i >= start; i -= 1) {
+        if (isM1Touch(ltf[i], m1, tolerance)) {
+            return ltf.length - 1 - i;
+        }
+    }
+    return null;
+}
+function resolveM2Rejection(ltf, bias, windowBars) {
+    const slice = ltf.slice(-windowBars);
+    if (slice.length < 2 || (bias !== "BULL" && bias !== "BEAR")) {
+        return { ok: false, mid: Number.NaN };
     }
     const high = Math.max(...slice.map((c) => c.high));
     const low = Math.min(...slice.map((c) => c.low));
+    if (!Number.isFinite(high) || !Number.isFinite(low) || high <= low) {
+        return { ok: false, mid: Number.NaN };
+    }
     const mid = (high + low) / 2;
-    const touchesHigh = slice.filter((c) => (high - c.high) / high <= strategyConfig.SIMILAR_HILO_PCT).length;
-    const touchesLow = slice.filter((c) => (c.low - low) / low <= strategyConfig.SIMILAR_HILO_PCT).length;
-    const ok = touchesHigh >= strategyConfig.RANGE_TOUCHES_MIN && touchesLow >= strategyConfig.RANGE_TOUCHES_MIN;
-    return { ok, high, low, mid, lookback, touchesHigh, touchesLow };
+    const last = ltf[ltf.length - 1];
+    const body = Math.max(Math.abs(last.close - last.open), 1e-8);
+    const upperWick = last.high - Math.max(last.open, last.close);
+    const lowerWick = Math.min(last.open, last.close) - last.low;
+    const bullOk = last.low <= mid &&
+        last.close > mid &&
+        lowerWick >= body * REJECTION_WICK_BODY_MIN;
+    const bearOk = last.high >= mid &&
+        last.close < mid &&
+        upperWick >= body * REJECTION_WICK_BODY_MIN;
+    return { ok: bias === "BULL" ? bullOk : bearOk, mid };
 }
-function detectLowVol(candles) {
-    const avg = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
-    const med = medianRange(candles, strategyConfig.IMPULSE_LOOKBACK);
-    if (!Number.isFinite(avg) || !Number.isFinite(med) || avg <= 0)
-        return false;
-    const noImpulse = candles
-        .slice(-strategyConfig.IMPULSE_LOOKBACK)
-        .every((c) => c.high - c.low < avg * strategyConfig.IMPULSE_MULT);
-    const stable = med <= avg * 0.9;
-    return noImpulse && stable;
-}
-function detectStrongTrendExpanse(candles, swings, dir) {
-    if (dir === "RANGE")
-        return false;
-    const avgRange = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
-    const recentImpulse = candles
-        .slice(-strategyConfig.IMPULSE_LOOKBACK)
-        .some((c) => c.high - c.low >= avgRange * strategyConfig.STRONG_IMPULSE_MULT);
-    const minIndex = Math.max(0, candles.length - 12);
-    const dirType = dir === "BULL" ? "high" : "low";
-    let bosCount = 0;
-    let lastSwing = null;
-    for (const swing of swings) {
-        if (swing.index < minIndex || swing.type !== dirType)
-            continue;
-        if (lastSwing) {
-            const isBos = dir === "BULL" ? swing.high > lastSwing.high : swing.low < lastSwing.low;
-            if (isBos)
-                bosCount += 1;
-        }
-        lastSwing = swing;
-    }
-    const overlap = overlapRatio(candles, 10, strategyConfig.OVERLAP_BODY_PCT);
-    return recentImpulse && bosCount >= 2 && overlap <= 0.4;
-}
-function detectRiskOffByStructure(candles) {
-    const overlap = overlapRatio(candles, 10, strategyConfig.OVERLAP_BODY_PCT);
-    if (overlap > strategyConfig.RISK_OFF_OVERLAP)
-        return true;
-    const avg = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
-    if (Number.isFinite(avg)) {
-        const noImpulse = candles
-            .slice(-strategyConfig.IMPULSE_LOOKBACK)
-            .every((c) => c.high - c.low < avg * strategyConfig.RISK_OFF_NO_IMPULSE_MULT);
-        if (noImpulse)
-            return true;
-    }
-    const recent = candles.slice(-8);
-    const avgRecent = averageRange(candles, strategyConfig.IMPULSE_LOOKBACK);
-    const impulseUp = recent.some((c) => c.close > c.open && c.high - c.low >= avgRecent * strategyConfig.RISK_OFF_DUAL_IMPULSE_MULT);
-    const impulseDown = recent.some((c) => c.close < c.open && c.high - c.low >= avgRecent * strategyConfig.RISK_OFF_DUAL_IMPULSE_MULT);
-    return impulseUp && impulseDown;
-}
-function buildTp(entry, stop, rr = 2) {
-    const r = Math.abs(entry - stop);
-    if (!Number.isFinite(r) || r <= 0)
+function resolveStopPrice(ltf, entry, bias, atr) {
+    const micro = ltf.slice(-6);
+    if (!micro.length || !Number.isFinite(entry) || entry <= 0)
         return Number.NaN;
-    return entry + (entry > stop ? 1 : -1) * rr * r;
-}
-function clampBps(value, minBps, maxBps) {
-    return Math.min(Math.max(value, minBps), maxBps);
-}
-function evaluateTrendPullbackSetup({ symbol, htfTrend, ltfTrend, last, prev }) {
-    if (!ltfTrend.impulse || !ltfTrend.correction)
-        return null;
-    const isBull = htfTrend.trend === "BULL";
-    const isBear = htfTrend.trend === "BEAR";
-    const { impulse, correction } = ltfTrend;
-    const retraceOk = correction.retrace <= strategyConfig.RETRACE_MAX;
-    const confirm = (isBull && last.close > prev.high) ||
-        (isBear && last.close < prev.low) ||
-        (isBull && last.close > impulse.end.high) ||
-        (isBear && last.close < impulse.end.low);
-    if (retraceOk && confirm) {
-        const targetNotional = impulse.start.low + (impulse.end.high - impulse.start.low) * 0.55;
-        const entry = isBull
-            ? Math.min(last.close, targetNotional)
-            : Math.max(last.close, targetNotional);
-        const stop = isBull ? correction.end.low : correction.end.high;
-        const tp = buildTp(entry, stop, 2);
-        if (Number.isFinite(tp)) {
-            const signal = {
-                id: `${symbol}-${Date.now()}`,
-                symbol,
-                intent: { side: isBull ? "buy" : "sell", entry, sl: stop, tp },
-                kind: "PULLBACK",
-                entryType: "LIMIT",
-                risk: 0.8,
-                message: `X1 Trend pullback ${htfTrend.trend} | retrace ${(correction.retrace * 100).toFixed(1)}%`,
-                createdAt: new Date().toISOString(),
-            };
-            return { signal };
-        }
+    const atrOffset = Number.isFinite(atr) && atr > 0 ? atr * SL_ATR_MULT : Number.NaN;
+    if (bias === "BULL") {
+        const microLow = Math.min(...micro.map((c) => c.low));
+        const atrStop = Number.isFinite(atrOffset) ? entry - atrOffset : Number.NaN;
+        if (Number.isFinite(microLow) && Number.isFinite(atrStop))
+            return Math.min(microLow, atrStop);
+        return Number.isFinite(microLow) ? microLow : atrStop;
     }
-    return null;
+    if (bias === "BEAR") {
+        const microHigh = Math.max(...micro.map((c) => c.high));
+        const atrStop = Number.isFinite(atrOffset) ? entry + atrOffset : Number.NaN;
+        if (Number.isFinite(microHigh) && Number.isFinite(atrStop))
+            return Math.max(microHigh, atrStop);
+        return Number.isFinite(microHigh) ? microHigh : atrStop;
+    }
+    return Number.NaN;
 }
-function evaluateTrendContinuationSetup({ symbol, htfTrend, ltf, ltfSwings, last }) {
-    if (ltfSwings.length < 2)
-        return { acceptanceCloses: 0 };
-    const isBull = htfTrend.trend === "BULL";
-    const level = isBull
-        ? ltfSwings.filter((s) => s.type === "high").slice(-1)[0]?.high
-        : ltfSwings.filter((s) => s.type === "low").slice(-1)[0]?.low;
-    if (!Number.isFinite(level ?? Number.NaN))
-        return { acceptanceCloses: 0 };
-    const closes = ltf
-        .slice(-3)
-        .filter((c) => (isBull ? c.close > level : c.close < level));
-    const acceptanceCloses = closes.length;
-    if (acceptanceCloses >= 1) {
-        const offset = clampBps(strategyConfig.BREAK_ACCEPT_BPS, 0.0002, 0.0005);
-        const entry = isBull ? last.close * (1 + offset) : last.close * (1 - offset);
-        const stop = isBull ? level * (1 - strategyConfig.TRAIL_OFFSET_BASE) : level * (1 + strategyConfig.TRAIL_OFFSET_BASE);
-        const tp = buildTp(entry, stop, 2);
-        if (Number.isFinite(tp)) {
-            const signal = {
-                id: `${symbol}-${Date.now()}`,
-                symbol,
-                intent: { side: isBull ? "buy" : "sell", entry, sl: stop, tp },
-                kind: "BREAKOUT",
-                entryType: "LIMIT",
-                risk: 0.9,
-                message: `X2 Break+Acceptance ${acceptanceCloses} close`,
-                createdAt: new Date().toISOString(),
-            };
-            return { signal, acceptanceCloses };
-        }
-    }
-    return { acceptanceCloses };
-}
-function evaluateRangeBreakFlipSetup({ symbol, rangeInfo, ltf, last, prev }) {
-    if ((last.close > rangeInfo.high && prev.close > rangeInfo.high) ||
-        (last.close < rangeInfo.low && prev.close < rangeInfo.low)) {
-        const bullBreak = last.close > rangeInfo.high;
-        const retestOk = ltf.slice(-5).some((c) => bullBreak ? c.low <= rangeInfo.high && c.close >= rangeInfo.high : c.high >= rangeInfo.low && c.close <= rangeInfo.low);
-        if (retestOk) {
-            const entry = last.close;
-            const stop = bullBreak
-                ? rangeInfo.high * (1 - strategyConfig.TRAIL_OFFSET_BASE)
-                : rangeInfo.low * (1 + strategyConfig.TRAIL_OFFSET_BASE);
-            const tp = buildTp(entry, stop, 2);
-            if (Number.isFinite(tp)) {
-                const signal = {
-                    id: `${symbol}-${Date.now()}`,
-                    symbol,
-                    intent: { side: bullBreak ? "buy" : "sell", entry, sl: stop, tp },
-                    kind: "BREAKOUT",
-                    entryType: "LIMIT",
-                    risk: 0.8,
-                    message: "X4 Range->Trend break+retest",
-                    createdAt: new Date().toISOString(),
-                };
-                return { signal };
-            }
-        }
-    }
-    return null;
-}
-function evaluateRangeFadeSetup({ symbol, rangeInfo, lowVol, last }) {
-    const nearHigh = Math.abs(rangeInfo.high - last.high) / rangeInfo.high <= strategyConfig.SIMILAR_HILO_PCT;
-    const nearLow = Math.abs(last.low - rangeInfo.low) / rangeInfo.low <= strategyConfig.SIMILAR_HILO_PCT;
-    const rejectionHigh = nearHigh && last.close < rangeInfo.high;
-    const rejectionLow = nearLow && last.close > rangeInfo.low;
-    if (rejectionHigh || rejectionLow) {
-        const entry = last.close;
-        const stop = rejectionHigh
-            ? rangeInfo.high * (1 + strategyConfig.TRAIL_OFFSET_BASE)
-            : rangeInfo.low * (1 - strategyConfig.TRAIL_OFFSET_BASE);
-        const midTp = rangeInfo.mid;
-        const edgeTp = rejectionHigh ? rangeInfo.low : rangeInfo.high;
-        const r = Math.abs(entry - stop);
-        const tpCandidate = Math.abs(edgeTp - entry) >= r ? edgeTp : midTp;
-        const signal = {
-            id: `${symbol}-${Date.now()}`,
-            symbol,
-            intent: {
-                side: rejectionHigh ? "sell" : "buy",
-                entry,
-                sl: stop,
-                tp: tpCandidate,
-            },
-            kind: "MEAN_REVERSION",
-            entryType: lowVol ? "LIMIT_MAKER_FIRST" : "LIMIT",
-            risk: 0.5,
-            message: "X3 Range fade",
-            createdAt: new Date().toISOString(),
-        };
-        return { signal };
-    }
-    return null;
-}
-function evaluateReversalSetup({ symbol, ltf, ltfSwings, last }) {
-    const rsi = computeRsi(ltf.map((c) => c.close), 14);
-    const highs = ltfSwings.filter((s) => s.type === "high");
-    const lows = ltfSwings.filter((s) => s.type === "low");
-    const lastHigh = highs[highs.length - 1];
-    const prevHigh = highs[highs.length - 2];
-    const lastLow = lows[lows.length - 1];
-    const prevLow = lows[lows.length - 2];
-    const bearishDiv = lastHigh &&
-        prevHigh &&
-        lastHigh.high > prevHigh.high &&
-        rsi[lastHigh.index] < rsi[prevHigh.index];
-    const bullishDiv = lastLow &&
-        prevLow &&
-        lastLow.low < prevLow.low &&
-        rsi[lastLow.index] > rsi[prevLow.index];
-    const chochBear = lastHigh && last.close < lastHigh.low;
-    const chochBull = lastLow && last.close > lastLow.high;
-    if (bearishDiv && chochBear) {
-        const entry = last.close;
-        const stop = lastHigh.high * (1 + strategyConfig.TRAIL_OFFSET_BASE);
-        const tp = buildTp(entry, stop, 0.5);
-        if (Number.isFinite(tp)) {
-            return {
-                signal: {
-                    id: `${symbol}-${Date.now()}`,
-                    symbol,
-                    intent: { side: "sell", entry, sl: stop, tp },
-                    kind: "MEAN_REVERSION",
-                    entryType: "LIMIT",
-                    risk: 0.25,
-                    message: "X5 Reversal bearish divergence",
-                    createdAt: new Date().toISOString(),
-                },
-            };
-        }
-    }
-    if (bullishDiv && chochBull) {
-        const entry = last.close;
-        const stop = lastLow.low * (1 - strategyConfig.TRAIL_OFFSET_BASE);
-        const tp = buildTp(entry, stop, 0.5);
-        if (Number.isFinite(tp)) {
-            return {
-                signal: {
-                    id: `${symbol}-${Date.now()}`,
-                    symbol,
-                    intent: { side: "buy", entry, sl: stop, tp },
-                    kind: "MEAN_REVERSION",
-                    entryType: "LIMIT",
-                    risk: 0.25,
-                    message: "X5 Reversal bullish divergence",
-                    createdAt: new Date().toISOString(),
-                },
-            };
-        }
-    }
-    return null;
-}
-function getStrategyContext(symbol, candles) {
-    const ltf = resampleCandles(candles, 5);
-    const htf = resampleCandles(candles, 60);
-    if (ltf.length < 30 || htf.length < 10) {
-        return {
-            halted: true,
-            result: {
-                state: State.Scan,
-                trend: Trend.Range,
-                trendH1: Trend.Range,
-                trendScore: 0,
-                trendAdx: Number.NaN,
-                halted: true,
-                xContext: {
-                    htfTrend: "RANGE",
-                    ltfTrend: "RANGE",
-                    mode: "CHAOS",
-                    setup: "NO_TRADE",
-                    strongTrendExpanse: false,
-                    riskOff: true,
-                    acceptanceCloses: 0,
-                    details: ["insufficient_data"],
-                },
-            },
-        };
-    }
-    const htfSwings = findSwings(htf, 2, 2);
-    const ltfSwings = findSwings(ltf, 1, 1);
-    const htfTrend = resolveHtfTrend(htf, htfSwings);
-    const ltfTrend = resolveLtfTrend(ltf, ltfSwings, htfTrend.trend);
-    const rangeInfo = resolveRangeInfo(ltf);
-    const lowVol = detectLowVol(ltf);
-    const strongTrendExpanse = detectStrongTrendExpanse(ltf, ltfSwings, ltfTrend.trend);
-    const riskOff = detectRiskOffByStructure(ltf);
-    const details = [
-        `1h ${htfTrend.trend}`,
-        `5m ${ltfTrend.trend}`,
-        rangeInfo.ok ? `range ${rangeInfo.lookback}` : "no range",
-    ];
-    return {
-        halted: false,
-        symbol,
-        ltf,
-        htf,
-        ltfSwings,
-        htfSwings,
-        htfTrend,
-        ltfTrend,
-        rangeInfo,
-        lowVol,
-        strongTrendExpanse,
-        riskOff,
-        details,
-        last: ltf[ltf.length - 1],
-        prev: ltf[ltf.length - 2],
-    };
+function resolveLtfTrend(ltf) {
+    const bias = resolveEmaBias(ltf).bias;
+    return bias;
 }
 export function evaluateAiMaticXStrategyForSymbol(symbol, candles) {
-    const context = getStrategyContext(symbol, candles);
-    if (context.halted) {
-        return context.result;
+    const cfg = MODE_CONFIG[ACTIVE_MODE];
+    const ltf = resampleCandles(candles, cfg.ltfMinutes);
+    const htf = resampleCandles(candles, cfg.htfMinutes);
+    if (ltf.length < Math.max(VOL_SMA_PERIOD, cfg.m2WindowBars) + 2 || htf.length < 30) {
+        return {
+            state: State.Scan,
+            trend: Trend.Range,
+            trendH1: Trend.Range,
+            trendScore: 0,
+            trendAdx: Number.NaN,
+            halted: true,
+            xContext: {
+                htfTrend: "RANGE",
+                ltfTrend: "RANGE",
+                mode: "CHAOS",
+                setup: "NO_TRADE",
+                strongTrendExpanse: false,
+                riskOff: true,
+                acceptanceCloses: 0,
+                details: ["insufficient_data"],
+            },
+        };
     }
-    const { htfTrend, ltfTrend, rangeInfo, riskOff, strongTrendExpanse, details } = context;
-    let result = null;
+    const htfBias = resolveEmaBias(htf);
+    const bias = htfBias.bias;
+    const ltfTrend = resolveLtfTrend(ltf);
+    const impulse = resolveHtfImpulse(htf, bias);
+    const highs = ltf.map((c) => c.high);
+    const lows = ltf.map((c) => c.low);
+    const closes = ltf.map((c) => c.close);
+    const atr = computeATR(highs, lows, closes, ATR_PERIOD).slice(-1)[0] ?? Number.NaN;
+    const tolerance = Number.isFinite(atr) && atr > 0 ? atr * cfg.toleranceAtrMult : Number.NaN;
+    const m1 = impulse?.mid ?? Number.NaN;
+    const touchBarsAgo = Number.isFinite(m1) && Number.isFinite(tolerance)
+        ? resolveTouchBarsAgo(ltf, m1, tolerance, cfg.ttlBars)
+        : null;
+    const touchOk = touchBarsAgo != null && touchBarsAgo <= cfg.ttlBars - 1;
+    const m2 = resolveM2Rejection(ltf, bias, cfg.m2WindowBars);
+    const volumeSma20 = mean(ltf.slice(-VOL_SMA_PERIOD).map((c) => Number(c.volume)));
+    const volumeCurrent = Number(ltf[ltf.length - 1].volume);
+    const volumeOk = Number.isFinite(volumeCurrent) &&
+        Number.isFinite(volumeSma20) &&
+        volumeSma20 > 0 &&
+        volumeCurrent >= volumeSma20 * cfg.volumeSmaMult;
+    const emaFilterOk = !cfg.emaFilter || (bias !== "RANGE" && Number.isFinite(htfBias.emaFast));
+    const htfLast = htf[htf.length - 1];
+    const htfCloseInvalid = Number.isFinite(m1) && bias === "BULL"
+        ? htfLast.close < m1
+        : Number.isFinite(m1) && bias === "BEAR"
+            ? htfLast.close > m1
+            : false;
+    const mandatoryA = touchOk;
+    const mandatoryB = m2.ok;
+    const mandatoryC = volumeOk;
+    const mustPassAll = mandatoryA && mandatoryB && mandatoryC;
+    let signal = null;
     let setup = "NO_TRADE";
-    let acceptanceCloses = 0;
-    const isBull = htfTrend.trend === "BULL";
-    const isBear = htfTrend.trend === "BEAR";
-    if (!riskOff) {
-        if ((isBull || isBear) && ltfTrend.trend === htfTrend.trend) {
-            result = evaluateTrendPullbackSetup(context);
-            if (result) {
-                setup = "TREND_PULLBACK";
-            }
-            else {
-                result = evaluateTrendContinuationSetup(context);
-                if (result?.signal) {
-                    setup = "TREND_CONTINUATION";
-                }
-                acceptanceCloses = result?.acceptanceCloses ?? 0;
-            }
-        }
-        else if (htfTrend.trend === "RANGE" && rangeInfo.ok) {
-            result = evaluateRangeBreakFlipSetup(context);
-            if (result) {
-                setup = "RANGE_BREAK_FLIP";
-            }
-            else {
-                result = evaluateRangeFadeSetup(context);
-                if (result) {
-                    setup = "RANGE_FADE";
-                }
-            }
-        }
-        if (!result?.signal) {
-            result = evaluateReversalSetup(context);
-            if (result) {
-                setup = "REVERSAL";
-            }
+    let trailOffsetPct = Number.NaN;
+    const riskOff = !emaFilterOk || htfCloseInvalid || !impulse || bias === "RANGE";
+    if (!riskOff && mustPassAll) {
+        const last = ltf[ltf.length - 1];
+        const entry = last.close;
+        const stop = resolveStopPrice(ltf, entry, bias, atr);
+        const r = Number.isFinite(stop) ? Math.abs(entry - stop) : Number.NaN;
+        const direction = bias === "BULL" ? 1 : -1;
+        const tp = Number.isFinite(r) && r > 0 ? entry + direction * TP2_RR * r : Number.NaN;
+        const tp1 = Number.isFinite(r) && r > 0 ? entry + direction * TP1_RR * r : Number.NaN;
+        trailOffsetPct =
+            Number.isFinite(atr) && Number.isFinite(entry) && entry > 0
+                ? (TRAIL_ATR_MULT * atr) / entry
+                : Number.NaN;
+        if (Number.isFinite(stop) && Number.isFinite(tp) && stop > 0 && tp > 0 && stop !== entry) {
+            signal = {
+                id: `${symbol}-${Date.now()}`,
+                symbol,
+                intent: {
+                    side: bias === "BULL" ? "buy" : "sell",
+                    entry,
+                    sl: stop,
+                    tp,
+                },
+                kind: "PULLBACK",
+                entryType: "LIMIT",
+                risk: 0.6,
+                message: `X ${ACTIVE_MODE} M1+M2+VOL | TP1 ${Number.isFinite(tp1) ? tp1.toFixed(6) : "na"} | TP2 2R | trail 0.5 ATR`,
+                createdAt: new Date().toISOString(),
+            };
+            setup = "TREND_PULLBACK";
         }
     }
-    const signal = result?.signal ?? null;
-    const trend = htfTrend.trend === "BULL" ? Trend.Bull : htfTrend.trend === "BEAR" ? Trend.Bear : Trend.Range;
-    const trendH1 = trend;
-    const xContext = {
-        htfTrend: htfTrend.trend,
-        ltfTrend: ltfTrend.trend,
-        mode: riskOff || htfTrend.trend === "RANGE"
-            ? "RANGE"
-            : "TREND",
+    const details = [
+        `mode ${ACTIVE_MODE}`,
+        `HTF ${cfg.htfMinutes}m LTF ${cfg.ltfMinutes}m`,
+        `A M1 touch ${mandatoryA ? "ok" : "no"}`,
+        `B M2 rejection ${mandatoryB ? "ok" : "no"}`,
+        `C volume ${mandatoryC ? "ok" : "no"} (${Number.isFinite(volumeCurrent) ? volumeCurrent.toFixed(0) : "na"} / ${Number.isFinite(volumeSma20) ? volumeSma20.toFixed(0) : "na"})`,
+        `TTL ${cfg.ttlBars} bars ${touchBarsAgo == null ? "miss" : `${touchBarsAgo} ago`}`,
+        `M1 ${Number.isFinite(m1) ? m1.toFixed(6) : "na"} tol ${Number.isFinite(tolerance) ? tolerance.toFixed(6) : "na"}`,
+        `HTF close invalid ${htfCloseInvalid ? "yes" : "no"}`,
+        `EMA filter ${emaFilterOk ? "ok" : "no"}`,
+        "BTC context via portfolio gate",
+    ];
+    const trend = toTrendLabel(bias);
+    const context = {
+        htfTrend: bias,
+        ltfTrend,
+        mode: bias === "RANGE" ? "RANGE" : "TREND",
         setup,
-        strongTrendExpanse,
+        strongTrendExpanse: mandatoryB && mandatoryC,
         riskOff,
-        acceptanceCloses,
+        acceptanceCloses: 0,
         details,
     };
     return {
         state: State.Scan,
         trend,
-        trendH1,
+        trendH1: trend,
         trendScore: 0,
         trendAdx: Number.NaN,
         signal,
         halted: false,
-        xContext,
-        trailOffsetPct: strongTrendExpanse ? strategyConfig.TRAIL_OFFSET_STRONG : strategyConfig.TRAIL_OFFSET_BASE,
+        xContext: context,
+        trailOffsetPct,
     };
 }

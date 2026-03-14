@@ -217,14 +217,14 @@ export default function Dashboard({
     if (riskMode === "ai-matic-x") {
       return {
         label: "AI-MATIC-X",
-        subtitle: "Swing OB 15m/1h · Volume Profile · BTC filtr",
+        subtitle: "SCALPING aktivni · M1/M2 rejekce · BTC kontext",
         symbols: catalogSymbols,
-        timeframes: "15m vstup · 1h kontext",
-        session: "24/7",
-        risk: "2 vstupy (60 % / 40 %) · TP1 0.9–1.2 % · TP2 2–3 %",
+        timeframes: "SCALPING: HTF 15m · LTF 1-3m | INTRADAY: 60m · 5-15m",
+        session: "24/7 · TTR cil < 60s",
+        risk: "A/B/C povinne · TTL 7 (scalp) / 12 (intraday) LTF baru",
         riskPct: RISK_PCT_BY_MODE["ai-matic-x"],
-        entry: "Vstup 1: reakce z OB/sweep · Vstup 2: retest OB/GAP/Fibo",
-        execution: "SL pod strukturu/OB + ATR buffer · trailing 1.0R",
+        entry: "A) dotyk M1 (50% HTF impuls) + B) M2 rejekce + C) objem >= 1.2x/1.1x SMA20",
+        execution: "SL mikro-swing/OB nebo 1.0x ATR · TP1 1R · TP2 2R · trail 0.5x ATR",
       };
     }
     if (riskMode === "ai-matic-tree") {
