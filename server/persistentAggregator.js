@@ -922,22 +922,51 @@ async function runSlowPoll(session) {
 async function initEngineBackfill(session) {
   await Promise.allSettled(
     session.engine.symbols.map(async (symbol) => {
-      const candles = await fetchBackfillCandles({
-        symbol,
-        timeframe: session.engine.timeframe,
-        useTestnet: session.useTestnet,
-        limit: session.engine.maxCandles,
-      });
-      if (!candles.length) return;
-      session.engine.candlesBySymbol.set(symbol, candles.slice(-session.engine.maxCandles));
+      let candles = [];
+      let fetchError = null;
+      try {
+        candles = await fetchBackfillCandles({
+          symbol,
+          timeframe: session.engine.timeframe,
+          useTestnet: session.useTestnet,
+          limit: session.engine.maxCandles,
+        });
+      } catch (err) {
+        fetchError = err;
+      }
+      const ts = Date.now();
+      if (candles.length > 0) {
+        session.engine.candlesBySymbol.set(
+          symbol,
+          candles.slice(-session.engine.maxCandles)
+        );
+      }
       try {
         const rawDecision = session.engine.decisionFn(symbol, candles);
         const decision = enrichDecisionWithCore(rawDecision, candles);
-        const ts = Date.now();
         session.engine.decisions.set(symbol, { decision, ts });
         session.engine.lastDecisionAt = ts;
+        if (fetchError) {
+          session.engine.lastError = `${symbol} backfill degraded: ${toErrorMessage(
+            fetchError
+          )}`;
+        }
       } catch (err) {
-        session.engine.lastError = toErrorMessage(err);
+        try {
+          const fallbackDecision = enrichDecisionWithCore(
+            session.engine.decisionFn(symbol, []),
+            []
+          );
+          session.engine.decisions.set(symbol, {
+            decision: fallbackDecision,
+            ts,
+          });
+          session.engine.lastDecisionAt = ts;
+        } catch {
+          // ignore fallback decision errors
+        }
+        const reason = fetchError ? toErrorMessage(fetchError) : toErrorMessage(err);
+        session.engine.lastError = `${symbol} backfill failed: ${reason}`;
       }
     })
   );
@@ -1138,6 +1167,22 @@ function createSession(args) {
       }
     },
   };
+
+  const bootstrapTs = Date.now();
+  for (const symbol of engineSymbols) {
+    try {
+      const fallbackDecision = enrichDecisionWithCore(decisionFn(symbol, []), []);
+      session.engine.decisions.set(symbol, {
+        decision: fallbackDecision,
+        ts: bootstrapTs,
+      });
+    } catch {
+      // ignore bootstrap placeholder failures
+    }
+  }
+  if (session.engine.decisions.size > 0) {
+    session.engine.lastDecisionAt = bootstrapTs;
+  }
 
   ws.on("open", () => {
     session.engine.connected = true;
