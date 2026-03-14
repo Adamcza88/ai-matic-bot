@@ -57,6 +57,7 @@ export type SymbolDiagnostic = {
   signalActive?: boolean;
   feedAgeMs?: number;
   feedAgeOk?: boolean;
+  feedLagMaxMs?: number;
   dataHealthStatus?: "SAFE" | "UNSAFE";
   dataHealthReasons?: string[];
   timeframeSyncOk?: boolean | null;

@@ -46,7 +46,6 @@ const RISK_PCT_BY_MODE = {
   "ai-matic-olikella": 0.015,
 } as const;
 
-const HEALTH_OK_MS = 2_000;
 const MODE_OPTIONS: TradingMode[] = [TradingMode.OFF, TradingMode.AUTO_ON];
 
 function modeLabel(value: TradingMode) {
@@ -594,9 +593,8 @@ export default function Dashboard({
   const dataHealthSafe = useMemo(() => {
     if (mode !== TradingMode.AUTO_ON) return false;
     if (systemState.bybitStatus !== "Connected") return false;
-    if (!Number.isFinite(feedStats.maxAge)) return false;
-    return (feedStats.maxAge as number) < HEALTH_OK_MS && feedStats.ok;
-  }, [feedStats.maxAge, feedStats.ok, mode, systemState.bybitStatus]);
+    return feedStats.ok;
+  }, [feedStats.ok, mode, systemState.bybitStatus]);
 
   const criticalByLoss = Number.isFinite(dailyPnl) && Number.isFinite(riskPerTradeUsd)
     ? (dailyPnl as number) <= -2 * (riskPerTradeUsd as number)

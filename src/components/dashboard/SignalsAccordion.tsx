@@ -18,8 +18,8 @@ type SignalsAccordionProps = {
   onJumpToGateFilter: (symbol: string, status: "BLOCKED" | "WAITING") => void;
 };
 
-const FEED_OK_MS = 2_000;
-const FEED_WARN_MS = 10_000;
+const FEED_OK_FALLBACK_MS = 2_000;
+const FEED_WARN_FALLBACK_MS = 10_000;
 const SIGNAL_RELAY_PAGE_SIZE = 7;
 
 function summary(diag: SymbolDiagnostic | undefined, scanLoaded: boolean) {
@@ -30,17 +30,39 @@ function summary(diag: SymbolDiagnostic | undefined, scanLoaded: boolean) {
   return "WAITING";
 }
 
-function feedToneClass(feedAgeMs?: number) {
+function resolveFeedThresholds(feedLagMaxMs?: number) {
+  if (!Number.isFinite(feedLagMaxMs) || (feedLagMaxMs as number) <= 0) {
+    return {
+      okMs: FEED_OK_FALLBACK_MS,
+      warnMs: FEED_WARN_FALLBACK_MS,
+      maxMs: Number.NaN,
+    };
+  }
+  const maxMs = Math.max(1_000, feedLagMaxMs as number);
+  return {
+    okMs: Math.min(FEED_OK_FALLBACK_MS, Math.round(maxMs * 0.2)),
+    warnMs: Math.max(FEED_WARN_FALLBACK_MS, Math.round(maxMs * 0.7)),
+    maxMs,
+  };
+}
+
+function feedToneClass(feedAgeMs?: number, feedLagMaxMs?: number) {
   if (!Number.isFinite(feedAgeMs)) return "text-muted-foreground";
-  if ((feedAgeMs as number) < FEED_OK_MS) return "text-[#00C853]";
-  if ((feedAgeMs as number) <= FEED_WARN_MS) return "text-[#FFB300]";
+  const { okMs, warnMs, maxMs } = resolveFeedThresholds(feedLagMaxMs);
+  const age = feedAgeMs as number;
+  if (Number.isFinite(maxMs) && age > maxMs) return "text-[#D32F2F]";
+  if (age <= okMs) return "text-[#00C853]";
+  if (age <= warnMs) return "text-[#FFB300]";
   return "text-[#D32F2F]";
 }
 
-function formatFeedAge(feedAgeMs?: number) {
+function formatFeedAge(feedAgeMs?: number, feedLagMaxMs?: number) {
   if (!Number.isFinite(feedAgeMs)) return "N/A";
   const ms = feedAgeMs as number;
-  if (ms > FEED_WARN_MS) return `${(ms / 1000).toFixed(1)} s · ZPOŽDĚNÝ`;
+  const { maxMs } = resolveFeedThresholds(feedLagMaxMs);
+  if (Number.isFinite(maxMs) && ms > maxMs) {
+    return `${(ms / 1000).toFixed(1)} s · ZPOŽDĚNÝ`;
+  }
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
@@ -83,6 +105,9 @@ export default function SignalsAccordion({
               Number.isFinite(Number(diag?.feedAgeMs))
                 ? Number(diag?.feedAgeMs) + Math.max(0, scanAgeOffsetMs ?? 0)
                 : Number.NaN,
+            feedLagMaxMs: Number.isFinite(Number(diag?.feedLagMaxMs))
+              ? Number(diag?.feedLagMaxMs)
+              : Number.NaN,
             jumpTarget,
           };
         })
@@ -173,8 +198,13 @@ export default function SignalsAccordion({
                           {stateLabel(row.state)}
                         </span>
                       </td>
-                      <td className={`px-3 text-xs tabular-nums leading-6 ${feedToneClass(row.feedAgeMs)}`}>
-                        {formatFeedAge(row.feedAgeMs)}
+                      <td
+                        className={`px-3 text-xs tabular-nums leading-6 ${feedToneClass(
+                          row.feedAgeMs,
+                          row.feedLagMaxMs
+                        )}`}
+                      >
+                        {formatFeedAge(row.feedAgeMs, row.feedLagMaxMs)}
                       </td>
                       <td className="px-3 text-center">
                         {row.jumpTarget ? (

@@ -645,10 +645,27 @@ function toSignal(args: {
 }): EngineSignal | null {
   const { symbol, side, pattern, entry, atr } = args;
   const atrBuffer = Number.isFinite(atr) && atr > 0 ? atr * 0.2 : 0;
-  const stopRaw = side === "buy" ? pattern.stop - atrBuffer : pattern.stop + atrBuffer;
-  const risk = Math.abs(entry - stopRaw);
+  let stopRaw = side === "buy" ? pattern.stop - atrBuffer : pattern.stop + atrBuffer;
+  if (!Number.isFinite(stopRaw) || stopRaw <= 0) {
+    const fallbackDistance = Number.isFinite(atr) && atr > 0 ? atr * 1.2 : entry * 0.006;
+    if (!Number.isFinite(fallbackDistance) || fallbackDistance <= 0) return null;
+    stopRaw = side === "buy" ? Math.max(entry - fallbackDistance, entry * 0.1) : entry + fallbackDistance;
+  }
+  const rawRisk = Math.abs(entry - stopRaw);
+  const maxRisk = entry * 0.45;
+  const risk = Math.min(rawRisk, maxRisk);
   if (!Number.isFinite(risk) || risk <= 0) return null;
-  const tp = side === "buy" ? entry + risk * OLIKELLA_RRR_TARGET : entry - risk * OLIKELLA_RRR_TARGET;
+  if (side === "buy" && stopRaw >= entry) {
+    stopRaw = entry - risk;
+  }
+  if (side === "sell" && stopRaw <= entry) {
+    stopRaw = entry + risk;
+  }
+  const rawTp =
+    side === "buy" ? entry + risk * OLIKELLA_RRR_TARGET : entry - risk * OLIKELLA_RRR_TARGET;
+  const tp = rawTp > 0 ? rawTp : entry * 0.1;
+  if (!Number.isFinite(stopRaw) || stopRaw <= 0) return null;
+  if (!Number.isFinite(tp) || tp <= 0) return null;
   const kind = pattern.pattern === "EMA_CROSSBACK" ? "PULLBACK" : "BREAKOUT";
   return {
     id: `${symbol}:olikella:${Date.now()}`,

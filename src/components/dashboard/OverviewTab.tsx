@@ -42,9 +42,10 @@ function hardStatusLabel(value: "PASS" | "FAIL" | "N/A") {
   return "N/A";
 }
 
-function entryStatusLabel(value: "PAUSED" | "READY" | "BLOCKED") {
+function entryStatusLabel(value: "PAUSED" | "READY" | "WAITING" | "BLOCKED") {
   if (value === "PAUSED") return "POZASTAVENO";
   if (value === "READY") return "PŘIPRAVENO";
+  if (value === "WAITING") return "ČEKÁ";
   return "BLOKOVÁNO";
 }
 
@@ -114,11 +115,14 @@ export default function OverviewTab({
   const checklistScore =
     parseRatio(checklistGate?.detail) ??
     (activeGates.length > 0 ? `${passedGateCount}/${activeGates.length}` : "N/A");
-  const entryStatus = activeDiag?.relayState === "PAUSED"
-    ? "PAUSED"
-    : activeDiag?.executionAllowed
-      ? "READY"
-      : "BLOCKED";
+  const entryStatus: "PAUSED" | "READY" | "WAITING" | "BLOCKED" =
+    activeDiag?.relayState === "PAUSED"
+      ? "PAUSED"
+      : activeDiag?.executionAllowed === true
+        ? "READY"
+        : activeDiag?.relayState === "WAITING" || activeDiag?.executionAllowed == null
+          ? "WAITING"
+          : "BLOCKED";
   const skipReasonRaw = String(activeDiag?.skipReason ?? "").trim();
   const skipCodeRaw = String(activeDiag?.skipCode ?? "").trim();
   const skipReason = skipReasonRaw && skipCodeRaw ? `[${skipCodeRaw}] ${skipReasonRaw}` : skipReasonRaw;
@@ -215,7 +219,7 @@ export default function OverviewTab({
                 className={`mt-1 text-lg font-semibold ${
                   entryStatus === "READY"
                     ? "text-[#00C853]"
-                    : entryStatus === "PAUSED"
+                    : entryStatus === "PAUSED" || entryStatus === "WAITING"
                       ? "text-[#FFB300]"
                       : "text-[#D32F2F]"
                 }`}
@@ -225,7 +229,9 @@ export default function OverviewTab({
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
               <div className="text-xs text-muted-foreground">Důvod blokace</div>
-              <div className="mt-1 text-sm text-foreground">{entryStatus === "READY" ? "Bez blokace." : blockReason}</div>
+              <div className="mt-1 text-sm text-foreground">
+                {entryStatus === "READY" ? "Bez blokace." : blockReason}
+              </div>
             </div>
           </div>
         )}

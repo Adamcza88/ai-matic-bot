@@ -2079,6 +2079,26 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         if (orders)
             ordersRef.current = orders;
     }, [orders]);
+    const formatApiError = useCallback((method, path, status, payload) => {
+        const json = payload && typeof payload === "object" ? payload : {};
+        const errorTextRaw = json.error;
+        const errorText = typeof errorTextRaw === "string" && errorTextRaw.trim().length > 0
+            ? errorTextRaw.trim()
+            : `HTTP_${status}`;
+        const codeRaw = json.code;
+        const codeText = typeof codeRaw === "number" || typeof codeRaw === "string"
+            ? String(codeRaw)
+            : "";
+        const detailsRaw = json.details;
+        const details = detailsRaw && typeof detailsRaw === "object" ? detailsRaw : null;
+        const detailTextRaw = (details?.retMsg) ?? (details?.message);
+        const detailText = typeof detailTextRaw === "string" && detailTextRaw.trim().length > 0
+            ? detailTextRaw.trim()
+            : "";
+        const detailSuffix = detailText && !errorText.includes(detailText) ? ` (${detailText})` : "";
+        const codeSuffix = codeText ? ` [code=${codeText}]` : "";
+        return `${method} ${path}: ${errorText}${codeSuffix}${detailSuffix}`;
+    }, []);
     const fetchJson = useCallback(async (path, params) => {
         if (!authToken) {
             throw new Error("missing_auth_token");
@@ -2096,10 +2116,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const latency = Math.round(performance.now() - started);
         setLastLatencyMs(latency);
         if (!res.ok || json?.ok === false) {
-            throw new Error(json?.error || `HTTP_${res.status}`);
+            throw new Error(formatApiError("GET", path, res.status, json));
         }
         return json?.data ?? json;
-    }, [apiBase, authToken]);
+    }, [apiBase, authToken, formatApiError]);
     const postJson = useCallback(async (path, body) => {
         if (!authToken) {
             throw new Error("missing_auth_token");
@@ -2119,10 +2139,10 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         const latency = Math.round(performance.now() - started);
         setLastLatencyMs(latency);
         if (!res.ok || json?.ok === false) {
-            throw new Error(json?.error || `HTTP_${res.status}`);
+            throw new Error(formatApiError("POST", path, res.status, json));
         }
         return json?.data ?? json;
-    }, [apiBase, authToken]);
+    }, [apiBase, authToken, formatApiError]);
     const addLogEntries = useCallback((entries) => {
         if (!entries.length)
             return;
@@ -2172,57 +2192,104 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
 
     const buildChecklistSignal = useCallback((symbol, decision, now) => {
         const core = decision?.coreV2;
-        if (!core)
+        const biasCandidates = [
+            core?.htfBias,
+            core?.ema15mTrend,
+            core?.emaCrossDir,
+            decision?.htfTrend?.consensus,
+            decision?.trendH1,
+            decision?.trend,
+        ];
+        const bias = biasCandidates.reduce((acc, value) => {
+            if (acc !== "NONE")
+                return acc;
+            const normalized = normalizeTrendDir(String(value ?? ""));
+            return normalized === "BULL" || normalized === "BEAR" ? normalized : "NONE";
+        }, "NONE");
+        if (bias !== "BULL" && bias !== "BEAR")
             return null;
-        const normalizedEntry = toNumber(core.ltfClose);
-        const normalizedAtr = toNumber(core.atr14);
-        const normalizedPivotLow = toNumber(core.pivotLow);
-        const normalizedPivotHigh = toNumber(core.pivotHigh);
-        if (!Number.isFinite(normalizedEntry) || normalizedEntry <= 0)
-            return null;
-        let scale = 1;
-        if (Number.isFinite(normalizedPivotLow) && normalizedPivotLow > 0) {
-            const ratio = Math.max(normalizedPivotLow, normalizedEntry) /
-                Math.min(normalizedPivotLow, normalizedEntry);
-            if (ratio >= 5)
-                scale = normalizedEntry / normalizedPivotLow;
+        if (core) {
+            const normalizedEntry = toNumber(core.ltfClose);
+            const normalizedAtr = toNumber(core.atr14);
+            const normalizedPivotLow = toNumber(core.pivotLow);
+            const normalizedPivotHigh = toNumber(core.pivotHigh);
+            if (Number.isFinite(normalizedEntry) && normalizedEntry > 0) {
+                let scale = 1;
+                if (Number.isFinite(normalizedPivotLow) && normalizedPivotLow > 0) {
+                    const ratio = Math.max(normalizedPivotLow, normalizedEntry) /
+                        Math.min(normalizedPivotLow, normalizedEntry);
+                    if (ratio >= 5)
+                        scale = normalizedEntry / normalizedPivotLow;
+                }
+                else if (Number.isFinite(normalizedPivotHigh) && normalizedPivotHigh > 0) {
+                    const ratio = Math.max(normalizedPivotHigh, normalizedEntry) /
+                        Math.min(normalizedPivotHigh, normalizedEntry);
+                    if (ratio >= 5)
+                        scale = normalizedEntry / normalizedPivotHigh;
+                }
+                const entry = normalizedEntry;
+                const atr = Number.isFinite(normalizedAtr) ? normalizedAtr * scale : Number.NaN;
+                const fallbackOffset = Number.isFinite(atr) && atr > 0 ? atr * 1.5 : Number.NaN;
+                let sl = bias === "BULL"
+                    ? (Number.isFinite(normalizedPivotLow) ? normalizedPivotLow * scale : Number.NaN)
+                    : (Number.isFinite(normalizedPivotHigh) ? normalizedPivotHigh * scale : Number.NaN);
+                if (!Number.isFinite(sl) || sl <= 0) {
+                    if (Number.isFinite(fallbackOffset) && fallbackOffset > 0) {
+                        sl = bias === "BULL" ? entry - fallbackOffset : entry + fallbackOffset;
+                    }
+                }
+                const risk = Math.abs(entry - sl);
+                const tp = bias === "BULL" ? entry + 2 * risk : entry - 2 * risk;
+                if (Number.isFinite(sl) && sl > 0 && sl !== entry && Number.isFinite(tp) && tp > 0) {
+                    return {
+                        id: `${symbol}-${now}-checklist`,
+                        symbol,
+                        intent: {
+                            side: bias === "BULL" ? "buy" : "sell",
+                            entry,
+                            sl,
+                            tp,
+                        },
+                        entryType: "LIMIT_MAKER_FIRST",
+                        kind: "PULLBACK",
+                        risk: 0.6,
+                        message: "Checklist auto-signal",
+                        createdAt: new Date(now).toISOString(),
+                    };
+                }
+            }
         }
-        else if (Number.isFinite(normalizedPivotHigh) && normalizedPivotHigh > 0) {
-            const ratio = Math.max(normalizedPivotHigh, normalizedEntry) /
-                Math.min(normalizedPivotHigh, normalizedEntry);
-            if (ratio >= 5)
-                scale = normalizedEntry / normalizedPivotHigh;
-        }
-        const bias = core.htfBias !== "NONE"
-            ? core.htfBias
-            : core.ema15mTrend !== "NONE"
-                ? core.ema15mTrend
-                : core.emaCrossDir !== "NONE"
-                    ? core.emaCrossDir
-                    : "NONE";
-        if (bias === "NONE")
-            return null;
-        const entry = normalizedEntry;
+        const entryCandidates = [
+            toNumber(core?.ltfClose),
+            toNumber(decision?.ltfClose),
+            toNumber(decision?.price),
+            toNumber(decision?.close),
+        ];
+        const entry = entryCandidates.find((value) => Number.isFinite(value) && value > 0);
         if (!Number.isFinite(entry) || entry <= 0)
             return null;
-        const atr = Number.isFinite(normalizedAtr) ? normalizedAtr * scale : Number.NaN;
-        const fallbackOffset = Number.isFinite(atr) && atr > 0 ? atr * 1.5 : Number.NaN;
-        let sl = bias === "BULL"
-            ? (Number.isFinite(normalizedPivotLow) ? normalizedPivotLow * scale : Number.NaN)
-            : (Number.isFinite(normalizedPivotHigh) ? normalizedPivotHigh * scale : Number.NaN);
-        if (!Number.isFinite(sl) || sl <= 0) {
-            if (!Number.isFinite(fallbackOffset))
-                return null;
-            sl = bias === "BULL" ? entry - fallbackOffset : entry + fallbackOffset;
-        }
+        const atrCandidates = [
+            toNumber(core?.atr14),
+            toNumber(core?.m15Atr14),
+            toNumber(decision?.atr14),
+        ];
+        const atrRaw = atrCandidates.find((value) => Number.isFinite(value) && value > 0) ?? entry * 0.006;
+        const maxDistance = entry * 0.45;
+        if (!Number.isFinite(maxDistance) || maxDistance <= 0)
+            return null;
+        const minDistance = Math.max(entry * 0.002, atrRaw * 0.8);
+        const distance = Math.min(Math.max(minDistance, atrRaw * 1.5), maxDistance);
+        if (!Number.isFinite(distance) || distance <= 0)
+            return null;
+        const sl = bias === "BULL" ? Math.max(entry - distance, entry * 0.1) : entry + distance;
         if (!Number.isFinite(sl) || sl <= 0 || sl === entry)
             return null;
-        const risk = Math.abs(entry - sl);
-        const tp = bias === "BULL" ? entry + 2 * risk : entry - 2 * risk;
+        const rawTp = bias === "BULL" ? entry + distance * 1.8 : entry - distance * 1.8;
+        const tp = rawTp > 0 ? rawTp : entry * 0.1;
         if (!Number.isFinite(tp) || tp <= 0)
             return null;
         return {
-            id: `${symbol}-${now}-checklist`,
+            id: `${symbol}-${now}-checklist-fallback`,
             symbol,
             intent: {
                 side: bias === "BULL" ? "buy" : "sell",
@@ -2233,7 +2300,7 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             entryType: "LIMIT_MAKER_FIRST",
             kind: "PULLBACK",
             risk: 0.6,
-            message: "Checklist auto-signal",
+            message: "Checklist auto-signal (fallback)",
             createdAt: new Date(now).toISOString(),
         };
     }, []);
@@ -4635,11 +4702,23 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
             : evaluateCoreV2(symbol, decision, rawSignal, feedAgeMs);
         const checklistBase = evaluateChecklistPass(coreEval.gates);
         let signal = rawSignal;
-        if (!signal && checklistBase.pass && !isProProfile && !isAmdProfile) {
+        const checklistAutoEligible = checklistBase.pass && !isProProfile && !isAmdProfile;
+        if (!signal && checklistAutoEligible) {
             signal = buildChecklistSignal(symbol, decision, now);
         }
-        if (!signal)
+        if (!signal) {
+            if (checklistAutoEligible) {
+                addLogEntries([
+                    {
+                        id: `signal:missing:${symbol}:${now}`,
+                        timestamp: new Date(now).toISOString(),
+                        action: "STATUS",
+                        message: `${symbol} checklist ${checklistBase.passedCount}/${Math.max(checklistBase.eligibleCount, MIN_CHECKLIST_PASS)} ready, but signal payload missing`,
+                    },
+                ]);
+            }
             return;
+        }
         const signalId = String(signal.id ?? `${symbol}-${now}`);
         if (signalSeenRef.current.has(signalId))
             return;
