@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Symbol } from "../api/types";
-import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../constants/symbols";
+import {
+  DEFAULT_SELECTED_SYMBOLS,
+  SUPPORTED_SYMBOLS,
+  filterSupportedSymbols,
+  normalizeSymbolInput,
+  resolveSelectedSymbols,
+} from "../constants/symbols";
 import { AISettings } from "../types";
 import {
   AI_MATIC_CORE_GATE_NAMES,
@@ -32,6 +38,12 @@ interface Props {
   onToggleTheme: () => void;
   apiKeysUserId: string;
   onKeysUpdated: () => void | Promise<void>;
+  dynamicSymbols?: {
+    availableSymbols: Symbol[];
+    recommendedSymbols: Symbol[];
+    defaultSelectedSymbols: Symbol[];
+    updatedAt: string;
+  } | null;
 }
 
 type NoteBlock = { title?: string; lines: string[] };
@@ -208,9 +220,15 @@ const SettingsPanel: React.FC<Props> = ({
   apiKeysUserId,
   onKeysUpdated,
   theme,
+  dynamicSymbols,
 }) => {
   const [local, setLocal] = useState(settings);
   const [compactNotes, setCompactNotes] = useState(true);
+  const [symbolSearch, setSymbolSearch] = useState("");
+  const [manualSymbolInput, setManualSymbolInput] = useState("");
+  const [manualSymbolError, setManualSymbolError] = useState<string | null>(
+    null
+  );
   const profileSettingsRef = useRef<ProfileSettingsMap>(
     loadProfileSettingsMap()
   );
@@ -276,20 +294,22 @@ const SettingsPanel: React.FC<Props> = ({
     },
     "ai-matic-olikella": {
       title: `${OLIKELLA_PROFILE_LABEL} Jádro`,
-      summary: "H4 structure/pattern/SR · 5m feed · long/short symmetry",
+      summary: "HTF strong trend + sweep/BOS/FVG + score gate",
       description:
-        "Entry cross běží na 1h. Struktura, patterny a silné support/resistance běží na H4.",
+        "Strict pipeline s potvrzením po 1 svíčce. Orderflow/OI filtry jsou povinné jen při dostupných live datech.",
       notes: [
         ORDER_VALUE_NOTE,
         "SIGNAL CHECKLIST",
         "Minimum historie: 40 H4 svíček.",
-        "Struktura/patterny/silné support-resistance se vyhodnocují na H4 (H4_MINUTES=240).",
-        "Trigger: 1h EMA8 překříží EMA16 (long zespodu nahoru, short shora dolů).",
-        "Pokračování: long drží EMA8 nad EMA16, short drží EMA8 pod EMA16.",
-        "Směr: long + short, mirror pravidla.",
+        "HTF trend: EMA50/EMA200 + cena vůči EMA50 + swing struktura.",
+        "Sweep: knot >= 1.5x ATR + volume > SMA20 + imbalance.",
+        "BOS: close přes strukturu + tělo >= 60% + displacement > 1.2x ATR.",
+        "FVG: velikost >= 0.25 ATR + návrat max 50%.",
         "ENTRY CONDITIONS",
-        "Vstup jen při validním 1h cross + potvrzeném H4 patternu.",
-        "Feed: 5m, entry logika resamplovaná do 1h.",
+        "Pullback musí být korekční (overlap + klesající volume).",
+        "Entry delay: vstup po 1 potvrzovací svíčce.",
+        "Score gate: HTF2 + Sweep2 + BOS2 + FVG1 + OB1 + Flow1 + OI1, průchod >= 7.",
+        "Když chybí live orderflow/OI feed, OB/Flow/OI jsou N/A a nevytváří hard blokaci.",
         "EXIT CONDITIONS",
         "Exhaustion Extension: distance od H4 EMA10 >=9% + volume >=1.5x.",
         "První exhaustion: partial 60%. Druhý exhaustion: full exit.",
@@ -299,6 +319,7 @@ const SettingsPanel: React.FC<Props> = ({
         "BE move při >=1R.",
         "RISK RULES",
         "Risk na trade: 1.5% equity.",
+        "Target RRR: 1.8.",
         "Scale-in: max 1 add-on při >=1R unrealized a fresh setupu.",
         "Default limits: max pozic 5, max příkazů 20.",
       ],
@@ -421,6 +442,33 @@ const SettingsPanel: React.FC<Props> = ({
     { label: "Max příkazů", value: String(local.maxOpenOrders) },
     { label: "Symboly", value: local.selectedSymbols.join(", ") },
   ];
+  const symbolUniverse = useMemo<Symbol[]>(() => {
+    const dynamic = filterSupportedSymbols(
+      dynamicSymbols?.availableSymbols ?? [],
+      dynamicSymbols?.availableSymbols
+    );
+    return dynamic.length > 0 ? dynamic : [...SUPPORTED_SYMBOLS];
+  }, [dynamicSymbols]);
+  const defaultPresetSymbols = useMemo<Symbol[]>(() => {
+    return resolveSelectedSymbols(
+      dynamicSymbols?.defaultSelectedSymbols ?? DEFAULT_SELECTED_SYMBOLS,
+      {
+        allowedSymbols: symbolUniverse,
+        fallbackSymbols: DEFAULT_SELECTED_SYMBOLS,
+      }
+    );
+  }, [dynamicSymbols, symbolUniverse]);
+  const recommendedSymbols = useMemo<Symbol[]>(() => {
+    return filterSupportedSymbols(
+      dynamicSymbols?.recommendedSymbols ?? [],
+      symbolUniverse
+    );
+  }, [dynamicSymbols, symbolUniverse]);
+  const filteredSymbolUniverse = useMemo<Symbol[]>(() => {
+    const query = symbolSearch.trim().toUpperCase();
+    if (!query) return symbolUniverse;
+    return symbolUniverse.filter((symbol) => symbol.includes(query));
+  }, [symbolSearch, symbolUniverse]);
 
   const AI_MATIC_PRESET_UI: AISettings = {
     riskMode: "ai-matic",
@@ -434,7 +482,7 @@ const SettingsPanel: React.FC<Props> = ({
     enableSoftGates: true,
     maxOpenPositions: 3,
     maxOpenOrders: 12,
-    selectedSymbols: [...SUPPORTED_SYMBOLS],
+    selectedSymbols: [...defaultPresetSymbols],
     entryStrictness: "base",
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
@@ -466,7 +514,7 @@ const SettingsPanel: React.FC<Props> = ({
     enableSoftGates: true,
     maxOpenPositions: 1,
     maxOpenOrders: 4,
-    selectedSymbols: [...SUPPORTED_SYMBOLS],
+    selectedSymbols: [...defaultPresetSymbols],
     entryStrictness: "ultra",
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
@@ -498,7 +546,7 @@ const SettingsPanel: React.FC<Props> = ({
     enableSoftGates: true,
     maxOpenPositions: 2,
     maxOpenOrders: 8,
-    selectedSymbols: [...SUPPORTED_SYMBOLS],
+    selectedSymbols: [...defaultPresetSymbols],
     entryStrictness: "ultra",
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
@@ -530,7 +578,7 @@ const SettingsPanel: React.FC<Props> = ({
     enableSoftGates: true,
     maxOpenPositions: OLIKELLA_MAX_POSITIONS_DEFAULT,
     maxOpenOrders: OLIKELLA_MAX_ORDERS_DEFAULT,
-    selectedSymbols: [...SUPPORTED_SYMBOLS],
+    selectedSymbols: [...defaultPresetSymbols],
     entryStrictness: "ultra",
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
@@ -562,7 +610,7 @@ const SettingsPanel: React.FC<Props> = ({
     enableSoftGates: true,
     maxOpenPositions: 7,
     maxOpenOrders: 20,
-    selectedSymbols: [...SUPPORTED_SYMBOLS],
+    selectedSymbols: [...defaultPresetSymbols],
     entryStrictness: "base",
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
@@ -594,7 +642,7 @@ const SettingsPanel: React.FC<Props> = ({
     enableSoftGates: true,
     maxOpenPositions: 3,
     maxOpenOrders: 12,
-    selectedSymbols: [...SUPPORTED_SYMBOLS],
+    selectedSymbols: [...defaultPresetSymbols],
     entryStrictness: "ultra",
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
@@ -626,7 +674,7 @@ const SettingsPanel: React.FC<Props> = ({
     enableSoftGates: true,
     maxOpenPositions: 1,
     maxOpenOrders: 4,
-    selectedSymbols: [...SUPPORTED_SYMBOLS],
+    selectedSymbols: [...defaultPresetSymbols],
     entryStrictness: "base",
     useDynamicPositionSizing: true,
     lockProfitsWithTrail: true,
@@ -720,11 +768,10 @@ const SettingsPanel: React.FC<Props> = ({
       merged.perTradeMainnetUsd,
       preset.perTradeMainnetUsd
     );
-    const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
-    merged.selectedSymbols =
-      selectedSymbols.length > 0
-        ? selectedSymbols
-        : [...preset.selectedSymbols];
+    merged.selectedSymbols = resolveSelectedSymbols(merged.selectedSymbols, {
+      allowedSymbols: symbolUniverse,
+      fallbackSymbols: preset.selectedSymbols,
+    });
     return merged;
   };
 
@@ -743,6 +790,64 @@ const SettingsPanel: React.FC<Props> = ({
     profileSettingsRef.current = nextStorage;
     persistProfileSettingsMap(nextStorage);
     setLocal(preset);
+  };
+
+  const toggleSymbolSelection = (symbol: Symbol) => {
+    setManualSymbolError(null);
+    setLocal((prev) => {
+      const next = new Set<Symbol>(prev.selectedSymbols);
+      if (next.has(symbol)) {
+        if (next.size === 1) return prev;
+        next.delete(symbol);
+      } else {
+        next.add(symbol);
+      }
+      return {
+        ...prev,
+        selectedSymbols: symbolUniverse.filter((candidate) =>
+          next.has(candidate)
+        ),
+      };
+    });
+  };
+
+  const addManualSymbol = () => {
+    const normalized = normalizeSymbolInput(manualSymbolInput);
+    if (!normalized) {
+      setManualSymbolError("Neplatný ticker. Použij formát BTC nebo BTCUSDT.");
+      return;
+    }
+    if (!symbolUniverse.includes(normalized)) {
+      setManualSymbolError(
+        `${normalized} není dostupný na Bybit linear USDT.`
+      );
+      return;
+    }
+    setManualSymbolError(null);
+    setLocal((prev) => {
+      if (prev.selectedSymbols.includes(normalized)) return prev;
+      const next = new Set<Symbol>(prev.selectedSymbols);
+      next.add(normalized);
+      return {
+        ...prev,
+        selectedSymbols: symbolUniverse.filter((symbol) => next.has(symbol)),
+      };
+    });
+    setManualSymbolInput("");
+  };
+
+  const addRecommendedSymbols = () => {
+    setManualSymbolError(null);
+    setLocal((prev) => {
+      const next = new Set<Symbol>(prev.selectedSymbols);
+      for (const symbol of recommendedSymbols) {
+        next.add(symbol);
+      }
+      return {
+        ...prev,
+        selectedSymbols: symbolUniverse.filter((symbol) => next.has(symbol)),
+      };
+    });
   };
 
   const renderNoteBlocks = (blocks: NoteBlock[]) => (
@@ -1038,7 +1143,7 @@ const SettingsPanel: React.FC<Props> = ({
                 </>
               ) : (
                 <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-xs text-secondary-foreground/80">
-                  OLIkella používá vlastní pattern filtry. Vstup je povolen jen přes OLIkella signál.
+                  OLIkella používá vlastní strict pipeline. Pokud chybí live orderflow/OI data, příslušné filtry jsou N/A a neblokují vstup.
                 </div>
               )}
               <div className="rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
@@ -1332,28 +1437,50 @@ const SettingsPanel: React.FC<Props> = ({
             <p className="text-sm font-medium leading-none">
               Obchodované symboly
             </p>
-            <div className="flex flex-wrap gap-2 rounded-md border border-input bg-slate-800 px-3 py-2 text-sm">
-              {SUPPORTED_SYMBOLS.map((symbol) => {
+            <div className="rounded-md border border-input bg-slate-800 px-3 py-3 text-sm space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Hledat symbol (např. SOLUSDT)"
+                  value={symbolSearch}
+                  onChange={(event) => setSymbolSearch(event.currentTarget.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200 md:w-64"
+                />
+                <input
+                  type="text"
+                  placeholder="Přidat ticker (BTC / BTCUSDT)"
+                  value={manualSymbolInput}
+                  onChange={(event) => setManualSymbolInput(event.currentTarget.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200 md:w-64"
+                />
+                <button
+                  type="button"
+                  onClick={addManualSymbol}
+                  className="rounded-md border border-slate-700 bg-slate-900/40 px-3 py-1 text-xs text-slate-200"
+                >
+                  Přidat
+                </button>
+                {recommendedSymbols.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={addRecommendedSymbols}
+                    className="rounded-md border border-emerald-500/40 bg-emerald-900/30 px-3 py-1 text-xs text-emerald-200"
+                  >
+                    Přidat doporučené
+                  </button>
+                ) : null}
+              </div>
+              {manualSymbolError ? (
+                <div className="text-xs text-rose-300">{manualSymbolError}</div>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                {filteredSymbolUniverse.map((symbol) => {
                 const active = local.selectedSymbols.includes(symbol);
                 return (
                   <button
                     key={symbol}
                     type="button"
-                    onClick={() => {
-                      const next = new Set<Symbol>(local.selectedSymbols);
-                      if (next.has(symbol)) {
-                        if (next.size === 1) return;
-                        next.delete(symbol);
-                      } else {
-                        next.add(symbol);
-                      }
-                      setLocal({
-                        ...local,
-                        selectedSymbols: SUPPORTED_SYMBOLS.filter((s) =>
-                          next.has(s)
-                        ),
-                      });
-                    }}
+                    onClick={() => toggleSymbolSelection(symbol)}
                     className={`rounded-md border px-3 py-1 text-xs font-medium ${
                       active
                         ? "border-emerald-500/40 bg-emerald-900/30 text-emerald-200"
@@ -1364,9 +1491,10 @@ const SettingsPanel: React.FC<Props> = ({
                   </button>
                 );
               })}
+              </div>
             </div>
             <span className="text-xs text-secondary-foreground/70">
-              Vyber, které coiny bot skenuje a obchoduje.
+              Vyber symboly pro skenování a obchodování. Nové coiny se zapínají ručně.
             </span>
           </div>
 

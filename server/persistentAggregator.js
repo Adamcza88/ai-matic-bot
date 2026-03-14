@@ -6,13 +6,17 @@ import {
   listDemoOrders,
   listExecutions,
 } from "./bybitClient.js";
-import { SUPPORTED_SYMBOLS, filterSupportedSymbols } from "../src/constants/symbols.js";
+import {
+  DEFAULT_SELECTED_SYMBOLS,
+  resolveSelectedSymbols,
+} from "../src/constants/symbols.js";
 import { evaluateStrategyForSymbol } from "../src/engine/botEngine.js";
 import { evaluateAiMaticXStrategyForSymbol } from "../src/engine/aiMaticXStrategy.js";
 import { evaluateAiMaticAmdStrategyForSymbol } from "../src/engine/aiMaticAmdStrategy.js";
 import { evaluateAiMaticProStrategyForSymbol } from "../src/engine/aiMaticProStrategy.js";
 import { evaluateAiMaticOliKellaStrategyForSymbol } from "../src/engine/aiMaticOliKellaStrategy.js";
 import { evaluateAiMaticBboStrategyForSymbol } from "../src/engine/aiMaticBboStrategy.js";
+import { getSymbolCatalog } from "./symbolCatalog.js";
 
 const FAST_POLL_MS = 30_000;
 const SLOW_POLL_MS = 15_000;
@@ -72,17 +76,11 @@ function normalizeRiskMode(value) {
   return allowed.has(raw) ? raw : "ai-matic";
 }
 
-function normalizeSymbols(value) {
-  if (Array.isArray(value)) return filterSupportedSymbols(value);
-  if (typeof value === "string" && value.trim()) {
-    return filterSupportedSymbols(
-      value
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean)
-    );
-  }
-  return [...SUPPORTED_SYMBOLS];
+function normalizeSymbols(value, allowedSymbols, fallbackSymbols = DEFAULT_SELECTED_SYMBOLS) {
+  return resolveSelectedSymbols(value, {
+    allowedSymbols,
+    fallbackSymbols,
+  });
 }
 
 function extractWsRows(payload) {
@@ -607,7 +605,7 @@ function createSession(args) {
 
   const timeframe = riskMode === "ai-matic-olikella" ? "5" : "1";
   const decisionFn = selectDecisionFn(riskMode);
-  const engineSymbols = symbols.length ? symbols : [...SUPPORTED_SYMBOLS];
+  const engineSymbols = symbols.length ? symbols : [...DEFAULT_SELECTED_SYMBOLS];
   const ws = new WebsocketClient({
     key: creds.apiKey,
     secret: creds.apiSecret,
@@ -787,7 +785,12 @@ export async function getPersistentDashboardSnapshot(args) {
   const useTestnet = Boolean(args.useTestnet);
   const scope = normalizeScope(args.scope);
   const riskMode = normalizeRiskMode(args.riskMode);
-  const symbols = normalizeSymbols(args.symbols);
+  const symbolCatalog = await getSymbolCatalog(useTestnet);
+  const symbols = normalizeSymbols(
+    args.symbols,
+    symbolCatalog.availableSymbols,
+    symbolCatalog.defaultSelectedSymbols
+  );
   const limits = {
     orders: normalizeLimit(args.ordersLimit, 50),
     executions: normalizeLimit(args.executionsLimit, 50),

@@ -7,6 +7,7 @@ import {
   type Candle,
 } from "./botEngine";
 import { computeATR, computeEma } from "./ta";
+import { getOrderFlowSnapshot } from "./orderflow";
 
 export type OliKellaPattern =
   | "WEDGE_POP"
@@ -27,6 +28,7 @@ type PatternDetection = {
 export type AiMaticOliKellaContext = {
   timeframe: "4h";
   direction: "BUY" | "SELL" | "NONE";
+  htfTrendState?: "HTF_STRONG_TREND" | "HTF_WEAK_TREND" | "HTF_NO_TRADE";
   trendOk: boolean;
   htfStructureOk: boolean;
   htfStructureDetail: string;
@@ -59,6 +61,10 @@ export type AiMaticOliKellaContext = {
     riskRulesOk: boolean;
     riskRulesDetail: string;
   };
+  qualityScore?: number;
+  qualityThreshold?: number;
+  qualityPass?: boolean;
+  qualityDetail?: string;
   missingPatternReasons: string[];
   gateFailureReasons: string[];
   dataHealth: {
@@ -81,6 +87,8 @@ const EXHAUSTION_DISTANCE_PCT = 0.09;
 const EXHAUSTION_VOLUME_MULT = 1.5;
 const BASE_MIN = 4;
 const BASE_MAX = 12;
+const OLIKELLA_SCORE_THRESHOLD = 7;
+const OLIKELLA_RRR_TARGET = 1.8;
 
 export type AiMaticOliKellaEvaluationOptions = {
   h1Candles?: Candle[];
@@ -522,6 +530,113 @@ function detectWedgeDrop(args: {
   };
 }
 
+function resolveSwingTrend(bars: Candle[]) {
+  if (bars.length < 10) return "NONE" as const;
+  const highs: { index: number; value: number }[] = [];
+  const lows: { index: number; value: number }[] = [];
+  for (let i = 2; i < bars.length - 2; i += 1) {
+    const high = bars[i].high;
+    const low = bars[i].low;
+    const isPivotHigh =
+      high >= bars[i - 1].high &&
+      high >= bars[i - 2].high &&
+      high >= bars[i + 1].high &&
+      high >= bars[i + 2].high;
+    const isPivotLow =
+      low <= bars[i - 1].low &&
+      low <= bars[i - 2].low &&
+      low <= bars[i + 1].low &&
+      low <= bars[i + 2].low;
+    if (isPivotHigh) highs.push({ index: i, value: high });
+    if (isPivotLow) lows.push({ index: i, value: low });
+  }
+  if (highs.length < 2 || lows.length < 2) return "NONE" as const;
+  const lastHigh = highs[highs.length - 1].value;
+  const prevHigh = highs[highs.length - 2].value;
+  const lastLow = lows[lows.length - 1].value;
+  const prevLow = lows[lows.length - 2].value;
+  if (lastHigh > prevHigh && lastLow > prevLow) return "BULL" as const;
+  if (lastHigh < prevHigh && lastLow < prevLow) return "BEAR" as const;
+  return "NONE" as const;
+}
+
+function resolveHtfTrendState(args: {
+  h4: Candle[];
+  ema50: number[];
+  ema200: number[];
+}) {
+  const { h4, ema50, ema200 } = args;
+  const last = h4.length - 1;
+  const close = h4[last]?.close ?? Number.NaN;
+  const e50 = ema50[last];
+  const e200 = ema200[last];
+  const swing = resolveSwingTrend(h4.slice(-40));
+  const longStrong =
+    Number.isFinite(e50) &&
+    Number.isFinite(e200) &&
+    Number.isFinite(close) &&
+    e50 > e200 &&
+    close > e50 &&
+    swing === "BULL";
+  const shortStrong =
+    Number.isFinite(e50) &&
+    Number.isFinite(e200) &&
+    Number.isFinite(close) &&
+    e50 < e200 &&
+    close < e50 &&
+    swing === "BEAR";
+  const longWeak = Number.isFinite(e50) && Number.isFinite(e200) && e50 > e200;
+  const shortWeak = Number.isFinite(e50) && Number.isFinite(e200) && e50 < e200;
+  if (longStrong) {
+    return {
+      state: "HTF_STRONG_TREND" as const,
+      direction: "BUY" as const,
+      detail: "EMA50>EMA200 | close>EMA50 | HH+HL",
+    };
+  }
+  if (shortStrong) {
+    return {
+      state: "HTF_STRONG_TREND" as const,
+      direction: "SELL" as const,
+      detail: "EMA50<EMA200 | close<EMA50 | LL+LH",
+    };
+  }
+  if (longWeak) {
+    return {
+      state: "HTF_WEAK_TREND" as const,
+      direction: "BUY" as const,
+      detail: "EMA50>EMA200 without full structure confirmation",
+    };
+  }
+  if (shortWeak) {
+    return {
+      state: "HTF_WEAK_TREND" as const,
+      direction: "SELL" as const,
+      detail: "EMA50<EMA200 without full structure confirmation",
+    };
+  }
+  return {
+    state: "HTF_NO_TRADE" as const,
+    direction: "NONE" as const,
+    detail: "EMA trend invalid",
+  };
+}
+
+function resolveConfirmationCandle(args: {
+  bars: Candle[];
+  direction: "BUY" | "SELL" | "NONE";
+}) {
+  const { bars, direction } = args;
+  const last = bars.length - 1;
+  if (last < 1 || direction === "NONE") return false;
+  const prev = bars[last - 1];
+  const curr = bars[last];
+  if (direction === "BUY") {
+    return curr.close > curr.open && curr.close >= prev.close;
+  }
+  return curr.close < curr.open && curr.close <= prev.close;
+}
+
 function toSignal(args: {
   symbol: string;
   side: "buy" | "sell";
@@ -534,7 +649,7 @@ function toSignal(args: {
   const stopRaw = side === "buy" ? pattern.stop - atrBuffer : pattern.stop + atrBuffer;
   const risk = Math.abs(entry - stopRaw);
   if (!Number.isFinite(risk) || risk <= 0) return null;
-  const tp = side === "buy" ? entry + risk * 2 : entry - risk * 2;
+  const tp = side === "buy" ? entry + risk * OLIKELLA_RRR_TARGET : entry - risk * OLIKELLA_RRR_TARGET;
   const kind = pattern.pattern === "EMA_CROSSBACK" ? "PULLBACK" : "BREAKOUT";
   return {
     id: `${symbol}:olikella:${Date.now()}`,
@@ -603,7 +718,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
           exitConditionsOk: false,
           exitConditionsDetail: "insufficient 4h history",
           riskRulesOk: true,
-          riskRulesDetail: "1.5% risk | max positions 5 | max orders 20",
+          riskRulesDetail: "1.5% risk | RRR 1.8 | max positions 5 | max orders 20",
         },
         missingPatternReasons: ["need >=40 H4 bars"],
         gateFailureReasons: ["H4_HISTORY_INSUFFICIENT"],
@@ -622,9 +737,11 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
   const h1Closes = h1.map((bar) => bar.close);
   const h1Highs = h1.map((bar) => bar.high);
   const h1Lows = h1.map((bar) => bar.low);
+  const h1Volumes = h1.map((bar) => bar.volume);
   const h1Ema8 = computeEma(h1Closes, 8);
   const h1Ema16 = computeEma(h1Closes, 16);
   const h1Atr = computeATR(h1Highs, h1Lows, h1Closes, 14);
+  const h1VolumeSma20 = buildSma(h1Volumes, 20);
   const lastH1 = h1.length - 1;
 
   const h4Closes = h4.map((bar) => bar.close);
@@ -633,10 +750,30 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
   const h4Volumes = h4.map((bar) => bar.volume);
   const h4Ema10 = computeEma(h4Closes, 10);
   const h4Ema20 = computeEma(h4Closes, 20);
+  const h4Ema50 = computeEma(h4Closes, 50);
+  const h4Ema200 = computeEma(h4Closes, 200);
   const h4VolumeSma20 = buildSma(h4Volumes, 20);
   const lastH4 = h4.length - 1;
   const direction = detectCrossDirection(h1Ema8, h1Ema16);
   const trendOk = direction !== "NONE";
+  const htfTrend = resolveHtfTrendState({
+    h4,
+    ema50: h4Ema50,
+    ema200: h4Ema200,
+  });
+  const orderflow = getOrderFlowSnapshot(symbol) as {
+    bidAskImbalance?: number;
+    askBidImbalance?: number;
+    topWallRatio?: number;
+    spreadPct?: number;
+    buyVolume?: number;
+    sellVolume?: number;
+    buySellRatio?: number;
+    sellBuyRatio?: number;
+    bestBid?: number;
+    bestAsk?: number;
+    openInterestChangePct?: number;
+  };
 
   const crossEntryLong = detectEma8Ema16Entry({
     bars: h1,
@@ -752,7 +889,204 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     h4Bars: h4,
   });
 
-  const selected = selectedCross && selectedH4Pattern ? selectedCross : null;
+  const signalIdx = lastH1 - 1;
+  const signalBar = signalIdx >= 0 ? h1[signalIdx] : undefined;
+  const prevSignalBar = signalIdx - 1 >= 0 ? h1[signalIdx - 1] : undefined;
+  const twoBackSignalBar = signalIdx - 2 >= 0 ? h1[signalIdx - 2] : undefined;
+  const confirmBar = lastH1 >= 0 ? h1[lastH1] : undefined;
+  const signalAtr = signalIdx >= 0 ? h1Atr[signalIdx] : Number.NaN;
+  const signalVolumeSma = signalIdx >= 0 ? h1VolumeSma20[signalIdx] : Number.NaN;
+  const atrReady = Number.isFinite(signalAtr) && signalAtr > 0;
+  const lookbackStart = Math.max(0, signalIdx - 12);
+  const priorHigh = signalIdx > 0 ? Math.max(...h1Highs.slice(lookbackStart, signalIdx)) : Number.NaN;
+  const priorLow = signalIdx > 0 ? Math.min(...h1Lows.slice(lookbackStart, signalIdx)) : Number.NaN;
+  const sweepWickLong =
+    signalBar ? Math.max(0, Math.min(signalBar.open, signalBar.close) - signalBar.low) : Number.NaN;
+  const sweepWickShort =
+    signalBar ? Math.max(0, signalBar.high - Math.max(signalBar.open, signalBar.close)) : Number.NaN;
+  const bidAskRatio = Number(orderflow.bidAskImbalance ?? Number.NaN);
+  const askBidRatio = Number(orderflow.askBidImbalance ?? Number.NaN);
+  const orderbookDataAvailable = Boolean(
+    Number.isFinite(Number(orderflow.bestBid ?? Number.NaN)) &&
+      Number.isFinite(Number(orderflow.bestAsk ?? Number.NaN)) &&
+      Number.isFinite(Number(orderflow.spreadPct ?? Number.NaN))
+  );
+  const microFlowDataAvailable = Boolean(
+    Number(orderflow.buyVolume ?? 0) + Number(orderflow.sellVolume ?? 0) > 0
+  );
+  const oiDataAvailable = Number.isFinite(
+    Number(orderflow.openInterestChangePct ?? Number.NaN)
+  );
+  const bidDominance = Number.isFinite(bidAskRatio) && bidAskRatio > 0 ? bidAskRatio / (1 + bidAskRatio) : 0;
+  const askDominance = Number.isFinite(askBidRatio) && askBidRatio > 0 ? askBidRatio / (1 + askBidRatio) : 0;
+  const sweepLongOk = Boolean(
+    signalBar &&
+      atrReady &&
+      Number.isFinite(priorLow) &&
+      signalBar.low < priorLow &&
+      signalBar.close > priorLow &&
+      sweepWickLong > signalAtr * 1.5 &&
+      Number.isFinite(signalVolumeSma) &&
+      signalVolumeSma > 0 &&
+      signalBar.volume > signalVolumeSma &&
+      bidDominance >= 0.6
+  );
+  const sweepShortOk = Boolean(
+    signalBar &&
+      atrReady &&
+      Number.isFinite(priorHigh) &&
+      signalBar.high > priorHigh &&
+      signalBar.close < priorHigh &&
+      sweepWickShort > signalAtr * 1.5 &&
+      Number.isFinite(signalVolumeSma) &&
+      signalVolumeSma > 0 &&
+      signalBar.volume > signalVolumeSma &&
+      askDominance >= 0.6
+  );
+  const bodySize =
+    signalBar ? Math.abs(signalBar.close - signalBar.open) : Number.NaN;
+  const candleRange =
+    signalBar ? Math.max(signalBar.high - signalBar.low, 1e-12) : Number.NaN;
+  const bodyPct =
+    Number.isFinite(bodySize) && Number.isFinite(candleRange)
+      ? bodySize / candleRange
+      : Number.NaN;
+  const displacement =
+    signalBar && prevSignalBar
+      ? Math.abs(signalBar.close - prevSignalBar.close)
+      : Number.NaN;
+  const bosLongOk = Boolean(
+    signalBar &&
+      prevSignalBar &&
+      atrReady &&
+      signalBar.close > prevSignalBar.high &&
+      bodyPct >= 0.6 &&
+      Number.isFinite(displacement) &&
+      displacement > signalAtr * 1.2
+  );
+  const bosShortOk = Boolean(
+    signalBar &&
+      prevSignalBar &&
+      atrReady &&
+      signalBar.close < prevSignalBar.low &&
+      bodyPct >= 0.6 &&
+      Number.isFinite(displacement) &&
+      displacement > signalAtr * 1.2
+  );
+  const longFvgSize =
+    signalBar && twoBackSignalBar ? signalBar.low - twoBackSignalBar.high : Number.NaN;
+  const shortFvgSize =
+    signalBar && twoBackSignalBar ? twoBackSignalBar.low - signalBar.high : Number.NaN;
+  const longFvgMid =
+    Number.isFinite(longFvgSize) && signalBar && twoBackSignalBar
+      ? twoBackSignalBar.high + longFvgSize * 0.5
+      : Number.NaN;
+  const shortFvgMid =
+    Number.isFinite(shortFvgSize) && signalBar && twoBackSignalBar
+      ? signalBar.high + shortFvgSize * 0.5
+      : Number.NaN;
+  const fvgLongCore = Boolean(
+    atrReady &&
+      bosLongOk &&
+      Number.isFinite(longFvgSize) &&
+      longFvgSize >= signalAtr * 0.25
+  );
+  const fvgShortCore = Boolean(
+    atrReady &&
+      bosShortOk &&
+      Number.isFinite(shortFvgSize) &&
+      shortFvgSize >= signalAtr * 0.25
+  );
+  const pullbackOverlap = Boolean(
+    signalBar &&
+      confirmBar &&
+      Math.max(signalBar.low, confirmBar.low) <= Math.min(signalBar.high, confirmBar.high)
+  );
+  const pullbackVolumeDown = Boolean(
+    signalBar && confirmBar && confirmBar.volume <= signalBar.volume
+  );
+  const pullbackImpulse = Boolean(
+    signalBar &&
+      confirmBar &&
+      Math.abs(confirmBar.close - confirmBar.open) >= Math.abs(signalBar.close - signalBar.open) * 0.9
+  );
+  const pullbackCorrective = pullbackOverlap && pullbackVolumeDown && !pullbackImpulse;
+  const fvgLongOk = Boolean(
+    fvgLongCore &&
+      confirmBar &&
+      Number.isFinite(longFvgMid) &&
+      confirmBar.low >= longFvgMid
+  );
+  const fvgShortOk = Boolean(
+    fvgShortCore &&
+      confirmBar &&
+      Number.isFinite(shortFvgMid) &&
+      confirmBar.high <= shortFvgMid
+  );
+  const pullbackLongOk = Boolean(fvgLongOk && pullbackCorrective);
+  const pullbackShortOk = Boolean(fvgShortOk && pullbackCorrective);
+  const orderbookLongOk = Boolean(
+    Number.isFinite(bidAskRatio) &&
+      bidAskRatio >= 1.5 &&
+      Number(orderflow.topWallRatio ?? 0) >= 3 &&
+      Number.isFinite(Number(orderflow.spreadPct ?? Number.NaN)) &&
+      Number(orderflow.spreadPct) < 0.03
+  );
+  const orderbookShortOk = Boolean(
+    Number.isFinite(askBidRatio) &&
+      askBidRatio >= 1.5 &&
+      Number(orderflow.topWallRatio ?? 0) >= 3 &&
+      Number.isFinite(Number(orderflow.spreadPct ?? Number.NaN)) &&
+      Number(orderflow.spreadPct) < 0.03
+  );
+  const microLongOk = Number(orderflow.buySellRatio ?? 0) >= 1.8;
+  const microShortOk = Number(orderflow.sellBuyRatio ?? 0) >= 1.8;
+  const oiChangePct = Number(orderflow.openInterestChangePct ?? Number.NaN);
+  const priceAnchorIdx = Math.max(0, lastH1 - 4);
+  const priceDelta = h1Closes[lastH1] - h1Closes[priceAnchorIdx];
+  const oiLongOk = Number.isFinite(oiChangePct) && oiChangePct >= 0.015 && priceDelta > 0;
+  const oiShortOk = Number.isFinite(oiChangePct) && oiChangePct <= -0.015 && priceDelta < 0;
+  const confirmationOk = resolveConfirmationCandle({
+    bars: h1,
+    direction,
+  });
+  const htfStrongAligned =
+    htfTrend.state === "HTF_STRONG_TREND" &&
+    htfTrend.direction === direction;
+  const directionSweepOk = direction === "BUY" ? sweepLongOk : direction === "SELL" ? sweepShortOk : false;
+  const directionBosOk = direction === "BUY" ? bosLongOk : direction === "SELL" ? bosShortOk : false;
+  const directionFvgOk = direction === "BUY" ? fvgLongOk : direction === "SELL" ? fvgShortOk : false;
+  const directionPullbackOk =
+    direction === "BUY" ? pullbackLongOk : direction === "SELL" ? pullbackShortOk : false;
+  const directionOrderbookOk =
+    direction === "BUY" ? orderbookLongOk : direction === "SELL" ? orderbookShortOk : false;
+  const directionMicroOk = direction === "BUY" ? microLongOk : direction === "SELL" ? microShortOk : false;
+  const directionOiOk = direction === "BUY" ? oiLongOk : direction === "SELL" ? oiShortOk : false;
+  const directionOrderbookPass = !orderbookDataAvailable || directionOrderbookOk;
+  const directionMicroPass = !microFlowDataAvailable || directionMicroOk;
+  const directionOiPass = !oiDataAvailable || directionOiOk;
+  const qualityScore =
+    (htfStrongAligned ? 2 : 0) +
+    (directionSweepOk ? 2 : 0) +
+    (directionBosOk ? 2 : 0) +
+    (directionFvgOk ? 1 : 0) +
+    (directionOrderbookOk ? 1 : 0) +
+    (directionMicroOk ? 1 : 0) +
+    (directionOiOk ? 1 : 0);
+  const scorePass = qualityScore >= OLIKELLA_SCORE_THRESHOLD;
+  const strictPipelinePass =
+    htfStrongAligned &&
+    atrReady &&
+    directionSweepOk &&
+    directionBosOk &&
+    directionFvgOk &&
+    directionPullbackOk &&
+    directionOrderbookPass &&
+    directionMicroPass &&
+    directionOiPass &&
+    scorePass &&
+    confirmationOk;
+  const selected = selectedCross && selectedH4Pattern && strictPipelinePass ? selectedCross : null;
   const entry = h1Closes[lastH1];
   const signal =
     selected && Number.isFinite(entry)
@@ -761,7 +1095,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
           side: selected.side,
           pattern: {
             ...selected,
-            detail: `${selected.detail} | H4 ${selectedH4Pattern?.pattern ?? "NO_PATTERN"}`,
+            detail: `${selected.detail} | H4 ${selectedH4Pattern?.pattern ?? "NO_PATTERN"} | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD}`,
           },
           entry,
           atr: h1Atr[lastH1],
@@ -790,31 +1124,72 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
   if (!trendOk) {
     missingPatternReasons.push("EMA trend missing");
   }
+  if (!htfStrongAligned) {
+    missingPatternReasons.push(`HTF filter: ${htfTrend.state} (${htfTrend.detail})`);
+  }
+  if (!directionSweepOk) {
+    missingPatternReasons.push("sweep invalid: wick/volume/imbalance gate failed");
+  }
+  if (!directionBosOk) {
+    missingPatternReasons.push("BOS invalid: close/body/displacement gate failed");
+  }
+  if (!directionFvgOk) {
+    missingPatternReasons.push("FVG invalid: size/displacement/retrace gate failed");
+  }
+  if (!directionPullbackOk) {
+    missingPatternReasons.push("pullback invalid: corrective overlap + falling volume required");
+  }
+  if (orderbookDataAvailable && !directionOrderbookOk) {
+    missingPatternReasons.push("orderbook invalid: imbalance/top-wall/spread");
+  }
+  if (microFlowDataAvailable && !directionMicroOk) {
+    missingPatternReasons.push("micro-flow invalid: buy/sell ratio below 1.8");
+  }
+  if (oiDataAvailable && !directionOiOk) {
+    missingPatternReasons.push("OI invalid: >=1.5% aligned move missing");
+  }
+  if (!scorePass) {
+    missingPatternReasons.push(`score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD}`);
+  }
+  if (!confirmationOk) {
+    missingPatternReasons.push("entry delay: 1-candle confirmation missing");
+  }
   if (trendOk && !directionalPatternOk) {
     missingPatternReasons.push("EMA trend + breakout 0.4% + volume >=1.3x not met");
   }
   if (trendOk && htfStructureOk && !selectedCross) {
     missingPatternReasons.push("1h EMA8/EMA16 cross or continuation missing");
   }
-  const checklistPass = Boolean(selectedH4Pattern && selectedCross);
+  const flowDataState = `flow data: OB ${orderbookDataAvailable ? "live" : "N/A"}, Micro ${microFlowDataAvailable ? "live" : "N/A"}, OI ${oiDataAvailable ? "live" : "N/A"}`;
+  const checklistPass = Boolean(selectedH4Pattern && selectedCross && strictPipelinePass);
   const checklistDetail =
     checklistPass
-      ? `${selectedH4Pattern.pattern} on H4 + ${selectedCross.detail} | HTF ${htfStructureOk ? "OK" : "missing (info-only)"}`
+      ? `${selectedH4Pattern.pattern} on H4 + ${selectedCross.detail} | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | ${flowDataState}`
       : missingPatternReasons.length > 0
-        ? missingPatternReasons.join(" | ")
+        ? `${missingPatternReasons.join(" | ")} | ${flowDataState}`
         : !selectedH4Pattern
-          ? "no valid H4 pattern on latest candle"
+          ? `no valid H4 pattern on latest candle | ${flowDataState}`
           : "no valid 1h EMA8/EMA16 state (cross or continuation)";
   const entryDetail =
     trendOk && checklistPass
-      ? `${direction} 1h EMA8/EMA16 | H4 pattern | HTF ${htfStructureOk ? "OK" : "missing (info-only)"} | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)}`
-      : "missing 1h EMA8/EMA16 direction or H4 pattern";
+      ? `${direction} strict pipeline pass | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)} | ${flowDataState}`
+      : `strict pipeline blocked | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | ${flowDataState}`;
   const exitReady = Number.isFinite(h1Ema8[lastH1]) && Number.isFinite(h1Atr[lastH1]);
   const exitDetail = exhaustion.active
     ? `H4 exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
     : "watch H4 exhaustion >=9% + vol>=1.5x, opposite EMA8/EMA16 cross, H4 wedge drop";
   const gateFailureReasons: string[] = [];
   if (!trendOk) gateFailureReasons.push("EMA_TREND_MISSING");
+  if (!htfStrongAligned) gateFailureReasons.push("HTF_STRONG_TREND_REQUIRED");
+  if (!directionSweepOk) gateFailureReasons.push("SWEEP_QUALITY_FAILED");
+  if (!directionBosOk) gateFailureReasons.push("BOS_VALIDATION_FAILED");
+  if (!directionFvgOk) gateFailureReasons.push("FVG_FILTER_FAILED");
+  if (!directionPullbackOk) gateFailureReasons.push("PULLBACK_FILTER_FAILED");
+  if (orderbookDataAvailable && !directionOrderbookOk) gateFailureReasons.push("ORDERBOOK_VALIDATION_FAILED");
+  if (microFlowDataAvailable && !directionMicroOk) gateFailureReasons.push("MICRO_FLOW_FAILED");
+  if (oiDataAvailable && !directionOiOk) gateFailureReasons.push("OI_FILTER_FAILED");
+  if (!scorePass) gateFailureReasons.push("SCORE_GATE_FAILED");
+  if (!confirmationOk) gateFailureReasons.push("ENTRY_CONFIRMATION_MISSING");
   if (trendOk && !directionalPatternOk) gateFailureReasons.push("H4_PATTERN_MISSING");
   if (trendOk && htfStructureOk && !selectedCross) {
     gateFailureReasons.push("LTF_EMA8_16_MISSING");
@@ -823,6 +1198,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
   const context: AiMaticOliKellaContext = {
     timeframe: "4h",
     direction,
+    htfTrendState: htfTrend.state,
     trendOk,
     htfStructureOk,
     htfStructureDetail: htfStructureOk
@@ -868,8 +1244,12 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
       exitConditionsOk: exitReady,
       exitConditionsDetail: exitDetail,
       riskRulesOk: true,
-      riskRulesDetail: "risk 1.5% | max positions 5 | max orders 20",
+      riskRulesDetail: "risk 1.5% | RRR 1.8 | max positions 5 | max orders 20",
     },
+    qualityScore,
+    qualityThreshold: OLIKELLA_SCORE_THRESHOLD,
+    qualityPass: strictPipelinePass,
+    qualityDetail: `htf ${htfStrongAligned ? 2 : 0}, sweep ${directionSweepOk ? 2 : 0}, bos ${directionBosOk ? 2 : 0}, fvg ${directionFvgOk ? 1 : 0}, ob ${orderbookDataAvailable ? (directionOrderbookOk ? 1 : 0) : "N/A"}, flow ${microFlowDataAvailable ? (directionMicroOk ? 1 : 0) : "N/A"}, oi ${oiDataAvailable ? (directionOiOk ? 1 : 0) : "N/A"}`,
     missingPatternReasons,
     gateFailureReasons,
     dataHealth: {

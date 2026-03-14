@@ -26,6 +26,7 @@ import {
   getPersistentAggregatorHealth,
   getPersistentDashboardSnapshot,
 } from "./persistentAggregator.js";
+import { getSymbolCatalog } from "./symbolCatalog.js";
 
 dotenv.config();
 
@@ -125,7 +126,7 @@ app.post("/api/:env/order", async (req, res) => {
   const resolveLeverage = (sym, requested) => {
     const requestedLev = Number(requested);
     if (Number.isFinite(requestedLev) && requestedLev > 0) return requestedLev;
-    return leverageMap[sym] || 1;
+    return leverageMap[sym] || 50;
   };
 
   const applyRoiStops = (sym, entry, dir, curTp, curSl, leverageValue) => {
@@ -536,6 +537,62 @@ app.get("/api/reconcile", (req, res) => handleGetRequest(req, res, reconcileStat
 
 app.get("/api/:env/dashboard", (req, res) => handleGetRequest(req, res, getDashboardSnapshot));
 app.get("/api/dashboard", (req, res) => handleGetRequest(req, res, getDashboardSnapshot));
+app.get("/api/:env/symbols", async (req, res) => {
+  const startTs = Date.now();
+  const endpoint = req.originalUrl;
+  const { env, isTestnet } = getCommonParams(req);
+  try {
+    const token = extractRequestToken(req);
+    if (!token) {
+      return sendError(res, 401, "Missing Authorization header", {
+        latencyMs: Date.now() - startTs,
+        env,
+        endpoint,
+      });
+    }
+    await getUserFromToken(token);
+    const data = await getSymbolCatalog(isTestnet);
+    return sendResponse(res, data, {
+      latencyMs: Date.now() - startTs,
+      env,
+      endpoint,
+    });
+  } catch (err) {
+    return sendError(res, 500, err?.message || "Unknown error", {
+      latencyMs: Date.now() - startTs,
+      env,
+      endpoint,
+    });
+  }
+});
+app.get("/api/symbols", async (req, res) => {
+  const startTs = Date.now();
+  const endpoint = req.originalUrl;
+  const { env, isTestnet } = getCommonParams(req);
+  try {
+    const token = extractRequestToken(req);
+    if (!token) {
+      return sendError(res, 401, "Missing Authorization header", {
+        latencyMs: Date.now() - startTs,
+        env,
+        endpoint,
+      });
+    }
+    await getUserFromToken(token);
+    const data = await getSymbolCatalog(isTestnet);
+    return sendResponse(res, data, {
+      latencyMs: Date.now() - startTs,
+      env,
+      endpoint,
+    });
+  } catch (err) {
+    return sendError(res, 500, err?.message || "Unknown error", {
+      latencyMs: Date.now() - startTs,
+      env,
+      endpoint,
+    });
+  }
+});
 
 // Health
 app.get("/api/health", (req, res) => {

@@ -1,13 +1,4 @@
-export type Symbol =
-  | "BTCUSDT"
-  | "ETHUSDT"
-  | "SOLUSDT"
-  | "ADAUSDT"
-  | "XRPUSDT"
-  | "DOGEUSDT"
-  | "AVAXUSDT"
-  | "XAUTUSDT"
-  | "OPUSDT";
+export type Symbol = string;
 export type Side = "Buy" | "Sell";
 export type EntryType =
   | "LIMIT_MAKER_FIRST"

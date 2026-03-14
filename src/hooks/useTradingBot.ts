@@ -39,8 +39,10 @@ import { TradingMode } from "../types";
 import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy";
 import { getOrderFlowSnapshot } from "../engine/orderflow";
 import {
+  DEFAULT_SELECTED_SYMBOLS,
   SUPPORTED_SYMBOLS,
   filterSupportedSymbols,
+  resolveSelectedSymbols,
 } from "../constants/symbols";
 import type {
   AISettings,
@@ -86,6 +88,12 @@ import type { AssetPnlMap } from "../lib/pnlHistory";
 import { buildEntryGateProgress } from "../lib/entryGateProgressModel";
 
 export type ActivePosition = BaseActivePosition & { isBreakeven?: boolean };
+type DynamicSymbolsCatalog = {
+  availableSymbols: Symbol[];
+  recommendedSymbols: Symbol[];
+  defaultSelectedSymbols: Symbol[];
+  updatedAt: string;
+};
 
 const SETTINGS_STORAGE_KEY = "ai-matic-settings";
 const LOG_DEDUPE_WINDOW_MS = 1500;
@@ -112,7 +120,6 @@ const DEFAULT_MAINNET_PER_TRADE_USD = 20;
 const TESTNET_MARGIN_MIN_USDT = 50;
 const TESTNET_MARGIN_MAX_USDT = 100;
 const MAJOR_SYMBOLS = new Set<Symbol>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
-const SUPPORTED_SYMBOL_SET = new Set<Symbol>(SUPPORTED_SYMBOLS);
 const CORE_V2_RISK_PCT: Record<AISettings["riskMode"], number> = {
   "ai-matic": 0.003,
   "ai-matic-x": 0.003,
@@ -393,7 +400,7 @@ const DEFAULT_SETTINGS: AISettings = {
   autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
   maxOpenPositions: 5,
   maxOpenOrders: 16,
-  selectedSymbols: [...SUPPORTED_SYMBOLS],
+  selectedSymbols: [...DEFAULT_SELECTED_SYMBOLS],
   requireConfirmationInAuto: false,
   customInstructions: "",
   customStrategy: "",
@@ -408,7 +415,10 @@ const DEFAULT_SETTINGS: AISettings = {
   emaTrendPeriod: EMA_TREND_PERIOD,
 };
 
-function loadStoredSettings(): AISettings | null {
+function loadStoredSettings(args?: {
+  allowedSymbols?: Iterable<string> | null;
+  fallbackSymbols?: Iterable<string> | null;
+}): AISettings | null {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return null;
@@ -467,11 +477,11 @@ function loadStoredSettings(): AISettings | null {
       merged.emaTrendPeriod,
       DEFAULT_SETTINGS.emaTrendPeriod ?? EMA_TREND_PERIOD
     );
-    const selectedSymbols = filterSupportedSymbols(merged.selectedSymbols);
-    merged.selectedSymbols =
-      selectedSymbols.length > 0
-        ? selectedSymbols
-        : [...DEFAULT_SETTINGS.selectedSymbols];
+    merged.selectedSymbols = resolveSelectedSymbols(merged.selectedSymbols, {
+      allowedSymbols: args?.allowedSymbols ?? SUPPORTED_SYMBOLS,
+      fallbackSymbols:
+        args?.fallbackSymbols ?? DEFAULT_SETTINGS.selectedSymbols,
+    });
     return merged;
   } catch {
     return null;
@@ -2417,7 +2427,7 @@ function summarizeOliGateFailures(args: {
     {
       name: OLIKELLA_GATE_RISK_RULES,
       ok: Boolean(oliContext?.gates.riskRulesOk),
-      detail: oliContext?.gates.riskRulesDetail ?? "risk 1.5% | max positions 5 | max orders 20",
+      detail: oliContext?.gates.riskRulesDetail ?? "risk 1.5% | RRR 1.8 | max positions 5 | max orders 20",
     },
   ];
   const failedGateRows = rows.filter((row) =>
@@ -4954,11 +4964,36 @@ export function useTradingBot(
   const [settings, setSettings] = useState<AISettings>(
     () => loadStoredSettings() ?? DEFAULT_SETTINGS
   );
+  const [dynamicSymbols, setDynamicSymbols] = useState<DynamicSymbolsCatalog | null>(null);
   const apiBase = useMemo(() => getApiBase(Boolean(useTestnet)), [useTestnet]);
+  const availableSymbols = useMemo<Symbol[]>(() => {
+    const dynamicAvailable = filterSupportedSymbols(
+      dynamicSymbols?.availableSymbols ?? [],
+      dynamicSymbols?.availableSymbols
+    );
+    return dynamicAvailable.length > 0
+      ? dynamicAvailable
+      : [...SUPPORTED_SYMBOLS];
+  }, [dynamicSymbols]);
+  const defaultSelectedSymbols = useMemo<Symbol[]>(() => {
+    const dynamicDefaults = filterSupportedSymbols(
+      dynamicSymbols?.defaultSelectedSymbols ?? [],
+      availableSymbols
+    );
+    return dynamicDefaults.length > 0
+      ? dynamicDefaults
+      : [...DEFAULT_SELECTED_SYMBOLS];
+  }, [availableSymbols, dynamicSymbols]);
   const activeSymbols = useMemo<Symbol[]>(() => {
-    const next = filterSupportedSymbols(settings.selectedSymbols);
-    return next.length > 0 ? next : [...SUPPORTED_SYMBOLS];
-  }, [settings.selectedSymbols]);
+    return resolveSelectedSymbols(settings.selectedSymbols, {
+      allowedSymbols: availableSymbols,
+      fallbackSymbols: defaultSelectedSymbols,
+    });
+  }, [availableSymbols, defaultSelectedSymbols, settings.selectedSymbols]);
+  const availableSymbolSetRef = useRef<Set<string>>(new Set(availableSymbols));
+  useEffect(() => {
+    availableSymbolSetRef.current = new Set(availableSymbols);
+  }, [availableSymbols]);
   const feedSymbols = useMemo<Symbol[]>(() => {
     if (activeSymbols.includes("BTCUSDT")) return activeSymbols;
     return ["BTCUSDT", ...activeSymbols];
@@ -5362,6 +5397,64 @@ export function useTradingBot(
     },
     [apiBase, authToken]
   );
+
+  useEffect(() => {
+    if (!authToken || !appEnabled) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const payload = await fetchJson("/symbols");
+        if (cancelled) return;
+        const availableSymbols = filterSupportedSymbols(
+          payload?.availableSymbols ?? [],
+          payload?.availableSymbols
+        );
+        const resolvedAvailable =
+          availableSymbols.length > 0 ? availableSymbols : [...SUPPORTED_SYMBOLS];
+        const defaultSelectedSymbols = resolveSelectedSymbols(
+          payload?.defaultSelectedSymbols ?? [],
+          {
+            allowedSymbols: resolvedAvailable,
+            fallbackSymbols: DEFAULT_SELECTED_SYMBOLS,
+          }
+        );
+        const recommendedSymbols = filterSupportedSymbols(
+          payload?.recommendedSymbols ?? [],
+          resolvedAvailable
+        );
+        const catalog: DynamicSymbolsCatalog = {
+          availableSymbols: resolvedAvailable,
+          recommendedSymbols,
+          defaultSelectedSymbols,
+          updatedAt: String(payload?.updatedAt ?? new Date().toISOString()),
+        };
+        setDynamicSymbols(catalog);
+        setSettings((prev) => ({
+          ...prev,
+          selectedSymbols: resolveSelectedSymbols(prev.selectedSymbols, {
+            allowedSymbols: catalog.availableSymbols,
+            fallbackSymbols:
+              prev.selectedSymbols?.length > 0
+                ? prev.selectedSymbols
+                : catalog.defaultSelectedSymbols,
+          }),
+        }));
+      } catch {
+        if (cancelled) return;
+        setDynamicSymbols(null);
+        setSettings((prev) => ({
+          ...prev,
+          selectedSymbols: resolveSelectedSymbols(prev.selectedSymbols, {
+            allowedSymbols: SUPPORTED_SYMBOLS,
+            fallbackSymbols: DEFAULT_SELECTED_SYMBOLS,
+          }),
+        }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [appEnabled, authToken, fetchJson]);
 
   const postJson = useCallback(
     async (path: string, body?: Record<string, unknown>) => {
@@ -8381,7 +8474,7 @@ export function useTradingBot(
         addGate(
           OLIKELLA_GATE_RISK_RULES,
           Boolean(oliContext?.gates.riskRulesOk),
-          oliContext?.gates.riskRulesDetail ?? "risk 1.5% | max positions 5 | max orders 20"
+          oliContext?.gates.riskRulesDetail ?? "risk 1.5% | RRR 1.8 | max positions 5 | max orders 20"
         );
       } else {
         coreEval.gates.forEach((gate) =>
@@ -10337,7 +10430,7 @@ export function useTradingBot(
           const symbol = String(r?.symbol ?? "").toUpperCase();
           if (!symbol || !Number.isFinite(ts) || !Number.isFinite(pnl))
             return null;
-          if (!SUPPORTED_SYMBOL_SET.has(symbol as Symbol)) return null;
+          if (!availableSymbolSetRef.current.has(symbol)) return null;
           return { symbol, pnl, ts };
         })
         .filter((r: ClosedPnlRecord | null): r is ClosedPnlRecord =>
@@ -11670,7 +11763,7 @@ export function useTradingBot(
           ok: Boolean(oliContext?.gates.riskRulesOk),
           detail:
             oliContext?.gates.riskRulesDetail ??
-            "risk 1.5% | max positions 5 | max orders 20",
+            "risk 1.5% | RRR 1.8 | max positions 5 | max orders 20",
         });
       }
       const checklistExec = isProProfile
@@ -12694,9 +12787,18 @@ export function useTradingBot(
     [allowOrderCancel, apiBase, authToken, refreshFast]
   );
 
-  const updateSettings = useCallback((next: AISettings) => {
-    setSettings(next);
-  }, []);
+  const updateSettings = useCallback(
+    (next: AISettings) => {
+      setSettings({
+        ...next,
+        selectedSymbols: resolveSelectedSymbols(next.selectedSymbols, {
+          allowedSymbols: availableSymbols,
+          fallbackSymbols: defaultSelectedSymbols,
+        }),
+      });
+    },
+    [availableSymbols, defaultSelectedSymbols]
+  );
 
   return {
     autoTrade,
@@ -12715,7 +12817,7 @@ export function useTradingBot(
     cancelOrder,
     allowPositionClose,
     allowOrderCancel,
-    dynamicSymbols: null,
+    dynamicSymbols,
     settings,
     updateSettings,
     updateGateOverrides,

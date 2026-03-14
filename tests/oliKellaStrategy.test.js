@@ -259,3 +259,61 @@ test("OLIkella keeps HTF structure as info-only signal context", () => {
     true
   );
 });
+
+test("OLIkella exposes strict quality score diagnostics", () => {
+  const bars = [];
+  const baseOpenTime = 1_700_000_000_000;
+  for (let i = 0; i < 60; i++) {
+    const close = 100 + i * 0.7;
+    bars.push(
+      candle(
+        close - 0.7,
+        close + 1.0,
+        close - 1.2,
+        close,
+        120 + (i % 5),
+        baseOpenTime + i * 240 * 60_000
+      )
+    );
+  }
+
+  const result = evaluateAiMaticOliKellaStrategyForSymbol("ETHUSDT", bars);
+  const ctx = result?.oliKella;
+
+  assert.equal(typeof ctx?.qualityScore, "number");
+  assert.equal(ctx?.qualityThreshold, 7);
+  assert.equal(typeof ctx?.qualityPass, "boolean");
+  assert.equal(
+    ["HTF_STRONG_TREND", "HTF_WEAK_TREND", "HTF_NO_TRADE"].includes(
+      String(ctx?.htfTrendState ?? "")
+    ),
+    true
+  );
+});
+
+test("OLIkella does not hard-fail OB/Flow/OI when live feed is unavailable", () => {
+  const bars = [];
+  const baseOpenTime = 1_700_000_000_000;
+  for (let i = 0; i < 60; i++) {
+    const close = 90 + i * 0.8;
+    bars.push(
+      candle(
+        close - 0.8,
+        close + 1.1,
+        close - 1.3,
+        close,
+        110,
+        baseOpenTime + i * 240 * 60_000
+      )
+    );
+  }
+
+  const result = evaluateAiMaticOliKellaStrategyForSymbol("XRPUSDT", bars);
+  const reasons = Array.isArray(result?.oliKella?.gateFailureReasons)
+    ? result.oliKella.gateFailureReasons
+    : [];
+
+  assert.equal(reasons.includes("ORDERBOOK_VALIDATION_FAILED"), false);
+  assert.equal(reasons.includes("MICRO_FLOW_FAILED"), false);
+  assert.equal(reasons.includes("OI_FILTER_FAILED"), false);
+});

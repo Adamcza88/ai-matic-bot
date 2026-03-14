@@ -33,6 +33,8 @@ type OrderFlowState = {
   cvdSeries: { ts: number; value: number }[];
   cumulativeDelta: number;
   openInterestTrend?: "rising" | "falling" | "flat";
+  openInterest?: number;
+  openInterestChangePct?: number;
   liqProximityPct?: number;
   oiHistory: { ts: number; value: number }[];
   liquidationLevels: { price: number; size: number }[];
@@ -223,6 +225,25 @@ export function updateTrades(symbol: string, trades: any[]) {
   recalcLiqProximity(state);
 }
 
+function mean(values: number[]): number {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function topLevelSizes(
+  levels: Map<number, number>,
+  side: "bids" | "asks",
+  depth: number
+): number[] {
+  const entries = Array.from(levels.entries()).sort((a, b) =>
+    side === "bids" ? b[0] - a[0] : a[0] - b[0]
+  );
+  return entries
+    .slice(0, depth)
+    .map(([, size]) => size)
+    .filter((size) => Number.isFinite(size) && size > 0);
+}
+
 export function getOrderFlowSnapshot(symbol: string) {
   const state = stateBySymbol.get(symbol);
   if (!state) {
@@ -239,6 +260,16 @@ export function getOrderFlowSnapshot(symbol: string) {
       icebergDetected: false,
       absorptionScore: 0,
       cvdSeries: [],
+      bidAskImbalance: 0,
+      askBidImbalance: 0,
+      topWallRatio: 0,
+      spreadPct: Number.NaN,
+      buyVolume: 0,
+      sellVolume: 0,
+      buySellRatio: 0,
+      sellBuyRatio: 0,
+      openInterest: undefined,
+      openInterestChangePct: Number.NaN,
       openInterestTrend: undefined,
       liqProximityPct: undefined,
     };
@@ -262,6 +293,30 @@ export function getOrderFlowSnapshot(symbol: string) {
   for (const t of prevTrades) {
     deltaPrev += t.side === "Buy" ? t.size : -t.size;
   }
+  const buyVolume = recentTrades
+    .filter((t) => t.side === "Buy")
+    .reduce((sum, t) => sum + t.size, 0);
+  const sellVolume = recentTrades
+    .filter((t) => t.side === "Sell")
+    .reduce((sum, t) => sum + t.size, 0);
+  const buySellRatio = sellVolume > 0 ? buyVolume / sellVolume : 0;
+  const sellBuyRatio = buyVolume > 0 ? sellVolume / buyVolume : 0;
+  const bestBidSize = state.bestBidSize ?? 0;
+  const bestAskSize = state.bestAskSize ?? 0;
+  const bidAskImbalance = bestAskSize > 0 ? bestBidSize / bestAskSize : 0;
+  const askBidImbalance = bestBidSize > 0 ? bestAskSize / bestBidSize : 0;
+  const bidTop = topLevelSizes(state.bids, "bids", 5);
+  const askTop = topLevelSizes(state.asks, "asks", 5);
+  const averageTopDepth = mean([...bidTop, ...askTop]);
+  const topWall = Math.max(bestBidSize, bestAskSize);
+  const topWallRatio = averageTopDepth > 0 ? topWall / averageTopDepth : 0;
+  const spreadPct =
+    Number.isFinite(state.bestBid) &&
+    Number.isFinite(state.bestAsk) &&
+    Number.isFinite(state.bestAsk! - state.bestBid!) &&
+    state.bestAsk! > 0
+      ? ((state.bestAsk! - state.bestBid!) / state.bestAsk!) * 100
+      : Number.NaN;
   const lastTradeTs = recentTrades.length
     ? recentTrades[recentTrades.length - 1].ts
     : 0;
@@ -278,6 +333,16 @@ export function getOrderFlowSnapshot(symbol: string) {
     icebergDetected: state.icebergDetected,
     absorptionScore: state.absorptionScore,
     cvdSeries: state.cvdSeries,
+    bidAskImbalance,
+    askBidImbalance,
+    topWallRatio,
+    spreadPct,
+    buyVolume,
+    sellVolume,
+    buySellRatio,
+    sellBuyRatio,
+    openInterest: state.openInterest,
+    openInterestChangePct: state.openInterestChangePct ?? Number.NaN,
     openInterestTrend: state.openInterestTrend,
     liqProximityPct: state.liqProximityPct,
   };
@@ -308,11 +373,13 @@ function recalcLiqProximity(state: OrderFlowState) {
 
 export function updateOpenInterest(symbol: string, openInterest: number, ts: number = Date.now()) {
   const state = getState(symbol);
+  state.openInterest = openInterest;
   state.oiHistory.push({ ts, value: openInterest });
   if (state.oiHistory.length > 60) state.oiHistory.shift();
 
   if (state.oiHistory.length < 5) {
     state.openInterestTrend = "flat";
+    state.openInterestChangePct = Number.NaN;
     return;
   }
 
@@ -321,6 +388,7 @@ export function updateOpenInterest(symbol: string, openInterest: number, ts: num
   const startAvg = window.slice(0, 3).reduce((s, x) => s + x.value, 0) / 3;
   const endAvg = window.slice(-3).reduce((s, x) => s + x.value, 0) / 3;
   const changePct = (endAvg - startAvg) / startAvg;
+  state.openInterestChangePct = changePct;
 
   if (changePct > 0.0005) state.openInterestTrend = "rising";
   else if (changePct < -0.0005) state.openInterestTrend = "falling";

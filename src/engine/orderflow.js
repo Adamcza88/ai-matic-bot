@@ -90,6 +90,21 @@ function resolveTradeSide(raw) {
   return null;
 }
 
+function mean(values) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function topLevelSizes(levels, side, depth) {
+  const entries = Array.from(levels.entries()).sort((a, b) =>
+    side === "bids" ? b[0] - a[0] : a[0] - b[0]
+  );
+  return entries
+    .slice(0, depth)
+    .map(([, size]) => size)
+    .filter((size) => Number.isFinite(size) && size > 0);
+}
+
 export function updateTrades(symbol, trades) {
   const state = getState(symbol);
   for (const raw of trades ?? []) {
@@ -186,6 +201,7 @@ export function updateOpenInterest(symbol, oiValue) {
   const first = state.oiHistory[0]?.value ?? oiValue;
   const last = state.oiHistory[state.oiHistory.length - 1]?.value ?? oiValue;
   const delta = last - first;
+  state.openInterestChangePct = first > 0 ? delta / first : Number.NaN;
   if (Math.abs(delta) / Math.max(1, first) < 0.002) {
     state.openInterestTrend = "flat";
   } else {
@@ -210,7 +226,16 @@ export function getOrderFlowSnapshot(symbol) {
       liqClusters: [],
       liqProximityPct: null,
       openInterest: 0,
+      openInterestChangePct: Number.NaN,
       openInterestTrend: "flat",
+      bidAskImbalance: 0,
+      askBidImbalance: 0,
+      topWallRatio: 0,
+      spreadPct: Number.NaN,
+      buyVolume: 0,
+      sellVolume: 0,
+      buySellRatio: 0,
+      sellBuyRatio: 0,
       bestBid: undefined,
       bestAsk: undefined,
       lastTradeTs: 0,
@@ -236,6 +261,29 @@ export function getOrderFlowSnapshot(symbol) {
   for (const t of prevTrades) {
     deltaPrev += t.side === "Buy" ? t.size : -t.size;
   }
+  const buyVolume = recentTrades
+    .filter((t) => t.side === "Buy")
+    .reduce((sum, t) => sum + t.size, 0);
+  const sellVolume = recentTrades
+    .filter((t) => t.side === "Sell")
+    .reduce((sum, t) => sum + t.size, 0);
+  const buySellRatio = sellVolume > 0 ? buyVolume / sellVolume : 0;
+  const sellBuyRatio = buyVolume > 0 ? sellVolume / buyVolume : 0;
+  const bestBidSize = state.bestBidSize ?? 0;
+  const bestAskSize = state.bestAskSize ?? 0;
+  const bidAskImbalance = bestAskSize > 0 ? bestBidSize / bestAskSize : 0;
+  const askBidImbalance = bestBidSize > 0 ? bestAskSize / bestBidSize : 0;
+  const bidTop = topLevelSizes(state.bids, "bids", 5);
+  const askTop = topLevelSizes(state.asks, "asks", 5);
+  const averageTopDepth = mean([...bidTop, ...askTop]);
+  const topWall = Math.max(bestBidSize, bestAskSize);
+  const topWallRatio = averageTopDepth > 0 ? topWall / averageTopDepth : 0;
+  const spreadPct =
+    Number.isFinite(state.bestBid) &&
+    Number.isFinite(state.bestAsk) &&
+    state.bestAsk > 0
+      ? ((state.bestAsk - state.bestBid) / state.bestAsk) * 100
+      : Number.NaN;
   const lastTradeTs = recentTrades.length
     ? recentTrades[recentTrades.length - 1].ts
     : 0;
@@ -275,7 +323,16 @@ export function getOrderFlowSnapshot(symbol) {
     liqClusters,
     liqProximityPct,
     openInterest: state.openInterest ?? 0,
+    openInterestChangePct: state.openInterestChangePct ?? Number.NaN,
     openInterestTrend: state.openInterestTrend ?? "flat",
+    bidAskImbalance,
+    askBidImbalance,
+    topWallRatio,
+    spreadPct,
+    buyVolume,
+    sellVolume,
+    buySellRatio,
+    sellBuyRatio,
     bestBid: state.bestBid,
     bestAsk: state.bestAsk,
     lastTradeTs,

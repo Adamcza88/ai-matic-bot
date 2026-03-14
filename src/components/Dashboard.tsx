@@ -29,6 +29,10 @@ import {
 import { AI_MATIC_BBO_CHECKLIST_DEFAULTS } from "../lib/aiMaticBboProfile";
 import {
   OLIKELLA_CHECKLIST_DEFAULTS,
+  OLIKELLA_GATE_ENTRY_CONDITIONS,
+  OLIKELLA_GATE_EXIT_CONDITIONS,
+  OLIKELLA_GATE_RISK_RULES,
+  OLIKELLA_GATE_SIGNAL_CHECKLIST,
   OLIKELLA_PROFILE_LABEL,
 } from "../lib/oliKellaProfile";
 
@@ -205,12 +209,16 @@ export default function Dashboard({
   }, [toast]);
 
   const riskMode = bot.settings?.riskMode ?? "ai-matic";
+  const catalogSymbols =
+    bot.dynamicSymbols?.availableSymbols?.length
+      ? bot.dynamicSymbols.availableSymbols
+      : SUPPORTED_SYMBOLS;
   const profileMeta = useMemo(() => {
     if (riskMode === "ai-matic-x") {
       return {
         label: "AI-MATIC-X",
         subtitle: "Swing OB 15m/1h · Volume Profile · BTC filtr",
-        symbols: SUPPORTED_SYMBOLS,
+        symbols: catalogSymbols,
         timeframes: "15m vstup · 1h kontext",
         session: "24/7",
         risk: "2 vstupy (60 % / 40 %) · TP1 0.9–1.2 % · TP2 2–3 %",
@@ -225,7 +233,7 @@ export default function Dashboard({
       return {
         label: "AI-MATIC-TREE",
         subtitle: `Multi-TF trend engine · Max pozic: ${maxPos}`,
-        symbols: SUPPORTED_SYMBOLS,
+        symbols: catalogSymbols,
         timeframes: "HTF 1h/15m · LTF 5m/1m",
         session: "24/7",
         risk: "Riziko 0.30% kapitálu/obchod · strop notionalu ~1% kapitálu",
@@ -239,7 +247,7 @@ export default function Dashboard({
       return {
         label: "AI-MATIC-BBO",
         subtitle: "Samostatný BBO engine",
-        symbols: SUPPORTED_SYMBOLS,
+        symbols: catalogSymbols,
         timeframes: "1h kontext · 4h bias · 5m trigger · 1m exekuce",
         session: "24/7",
         risk: "Riziko 0.30% kapitálu/obchod · standalone skóre >= 60",
@@ -252,7 +260,7 @@ export default function Dashboard({
       return {
         label: "AI-MATIC-PRO MTF Fibo",
         subtitle: "4H trend filter + 15m confirmations",
-        symbols: SUPPORTED_SYMBOLS,
+        symbols: catalogSymbols,
         timeframes: "HTF 4h · LTF 15m · feed 1m",
         session: "24/7",
         risk: "Riziko 0.30% kapitálu/obchod · strop notionalu ~1% kapitálu",
@@ -265,7 +273,7 @@ export default function Dashboard({
       return {
         label: "AI-MATIC-AMD",
         subtitle: "PO3 / AMD · Killzones NY",
-        symbols: SUPPORTED_SYMBOLS,
+        symbols: catalogSymbols,
         timeframes: "1h bias · 15m/5m entry",
         session: "London / NY AM only",
         risk: "Riziko 0.30% kapitálu/obchod · strop notionalu ~1% kapitálu",
@@ -277,20 +285,20 @@ export default function Dashboard({
     if (riskMode === "ai-matic-olikella") {
       return {
         label: OLIKELLA_PROFILE_LABEL,
-        subtitle: "H4 structure/pattern/SR · 5m feed",
-        symbols: SUPPORTED_SYMBOLS,
-        timeframes: "H4 structure/pattern · 1h cross entry · 5m feed",
+        subtitle: "HTF strong trend · sweep/BOS/FVG · score gate",
+        symbols: catalogSymbols,
+        timeframes: "H4 trend/structure · 1h trigger · 5m feed",
         session: "24/7",
-        risk: "Riziko 1.5% kapitálu/obchod · max 1 add-on",
+        risk: "Riziko 1.5% kapitálu/obchod · RRR 1.8 · max 1 add-on",
         riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
-        entry: "1h EMA8/EMA16 crossover + H4 pattern alignment",
-        execution: "Exhaustion exit / Trailing stop 5m (activate 1R · retrace by volatility)",
+        entry: "HTF+sweep+BOS+FVG + corrective pullback + 1-candle confirm",
+        execution: "OB/Flow/OI live when available; fallback N/A without hard block",
       };
     }
     return {
       label: AI_MATIC_CORE_PROFILE_LABEL,
       subtitle: "Deterministic trend core · low-request execution",
-      symbols: SUPPORTED_SYMBOLS,
+      symbols: catalogSymbols,
       timeframes: "HTF 1h/15m · LTF 5m/1m",
       session: "24/7",
       risk: "Riziko 0.30% kapitálu/obchod · bez staged retest fallbacku",
@@ -298,7 +306,12 @@ export default function Dashboard({
       entry: "HTF bias + pullback + micro break close",
       execution: "BBO/maker/SL plan + grouped diagnostics + generic partial/BE",
     };
-  }, [bot.settings?.entryStrictness, bot.settings?.maxOpenPositions, riskMode]);
+  }, [
+    bot.settings?.entryStrictness,
+    bot.settings?.maxOpenPositions,
+    catalogSymbols,
+    riskMode,
+  ]);
 
   const selectedSymbols =
     bot.settings?.selectedSymbols?.length ? bot.settings.selectedSymbols : null;
@@ -373,12 +386,12 @@ export default function Dashboard({
   const CHECKLIST_ALIASES = useMemo(
     () => ({
       "HTF bias": ["Trend bias", "X setup", "Tree setup", "1h bias"],
-      "Signal Checklist (HTF bias + trend confirmation)": [
+      [OLIKELLA_GATE_SIGNAL_CHECKLIST]: [
         "Signal Checklist",
         "HTF trend checklist",
         "Trend confirmation",
       ],
-      "Entry Conditions (ATR/volume + pullback trigger)": [
+      [OLIKELLA_GATE_ENTRY_CONDITIONS]: [
         "Entry Conditions",
         "Pullback trigger",
       ],
@@ -386,7 +399,11 @@ export default function Dashboard({
         "Execution Conditions",
         "Exec plan",
       ],
-      "Risk Rules (capacity + cooldown + protection)": [
+      [OLIKELLA_GATE_EXIT_CONDITIONS]: [
+        "Exit Conditions",
+        "Exhaustion",
+      ],
+      [OLIKELLA_GATE_RISK_RULES]: [
         "Risk Rules",
         "Protection rules",
       ],
@@ -1064,6 +1081,7 @@ export default function Dashboard({
           theme={theme}
           lang="en"
           settings={bot.settings}
+          dynamicSymbols={bot.dynamicSymbols}
           onUpdateSettings={bot.updateSettings}
           onClose={() => setShowSettings(false)}
           userEmail={userEmail}
