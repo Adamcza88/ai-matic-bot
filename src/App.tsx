@@ -13,6 +13,12 @@ import { Button } from "./components/ui/button";
 // Guest mode je povolen, pokud explicitně nenastavíme VITE_ALLOW_GUESTS="false"
 const ALLOW_GUESTS = import.meta.env.VITE_ALLOW_GUESTS !== "false";
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
+const REQUIRED_KEY_SERVICES = new Set([
+  "bybit demo api key",
+  "bybit demo api secret",
+  "bybit mainnet api key",
+  "bybit mainnet api secret",
+]);
 
 type EnvAvailability = {
   canUseDemo: boolean;
@@ -161,14 +167,21 @@ export default function App() {
     return auth.user?.email ?? "";
   }, [auth.user, isGuest]);
 
+  const requiredServiceLabels = useMemo(
+    () =>
+      SERVICE_OPTIONS.filter((s) => REQUIRED_KEY_SERVICES.has(s.value)).map(
+        (s) => s.label
+      ),
+    []
+  );
+
   const refreshKeyStatus = useCallback(async () => {
     if (!auth.user) return;
     if (!supabase) {
-      const missing = SERVICE_OPTIONS.map((s) => s.label);
       setKeysError(
         "Supabase is not configured (VITE_SUPABASE_URL/KEY). Unable to load API keys."
       );
-      setMissingServices(missing);
+      setMissingServices(requiredServiceLabels);
       return;
     }
     setKeysError(null);
@@ -179,7 +192,7 @@ export default function App() {
 
     if (error) {
       setKeysError(error.message);
-      setMissingServices(SERVICE_OPTIONS.map((s) => s.label));
+      setMissingServices(requiredServiceLabels);
       return;
     }
 
@@ -194,11 +207,19 @@ export default function App() {
     if (have.has("bybit testnet api secret")) {
       have.add("bybit demo api secret");
     }
-    const missing = SERVICE_OPTIONS.filter((opt) => !have.has(opt.value)).map(
-      (opt) => opt.label
-    );
+    if (have.has("bybit api key")) {
+      have.add("bybit demo api key");
+      have.add("bybit mainnet api key");
+    }
+    if (have.has("bybit api secret")) {
+      have.add("bybit demo api secret");
+      have.add("bybit mainnet api secret");
+    }
+    const missing = SERVICE_OPTIONS.filter(
+      (opt) => REQUIRED_KEY_SERVICES.has(opt.value) && !have.has(opt.value)
+    ).map((opt) => opt.label);
     setMissingServices(missing);
-  }, [auth.user]);
+  }, [auth.user, requiredServiceLabels]);
 
   useEffect(() => {
     if (auth.status === "ready" && auth.user) {
