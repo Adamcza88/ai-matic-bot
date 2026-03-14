@@ -294,7 +294,7 @@ const SettingsPanel: React.FC<Props> = ({
     },
     "ai-matic-olikella": {
       title: `${OLIKELLA_PROFILE_LABEL} Jádro`,
-      summary: "HTF strong trend + sweep/BOS/FVG + score gate",
+      summary: "HTF aligned trend + sweep/BOS/FVG + score gate",
       description:
         "Strict pipeline s potvrzením po 1 svíčce. Orderflow/OI filtry jsou povinné jen při dostupných live datech.",
       notes: [
@@ -308,7 +308,7 @@ const SettingsPanel: React.FC<Props> = ({
         "ENTRY CONDITIONS",
         "Pullback musí být korekční (overlap + klesající volume).",
         "Entry delay: vstup po 1 potvrzovací svíčce.",
-        "Score gate: HTF2 + Sweep2 + BOS2 + FVG1 + OB1 + Flow1 + OI1, průchod >= 6.",
+        "Score gate: HTF2/1 + Sweep2 + BOS2 + FVG1 + OB1 + Flow1 + OI1, průchod >= 5.",
         "Když chybí live orderflow/OI feed, OB/Flow/OI jsou N/A a nevytváří hard blokaci.",
         "EXIT CONDITIONS",
         "Exhaustion Extension: distance od H4 EMA10 >=9% + volume >=1.5x.",

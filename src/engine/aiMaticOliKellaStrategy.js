@@ -11,7 +11,7 @@ const EXHAUSTION_DISTANCE_PCT = 0.09;
 const EXHAUSTION_VOLUME_MULT = 1.5;
 const BASE_MIN = 4;
 const BASE_MAX = 12;
-const OLIKELLA_SCORE_THRESHOLD = 6;
+const OLIKELLA_SCORE_THRESHOLD = 5;
 const OLIKELLA_RRR_TARGET = 1.8;
 function toTrend(direction) {
     if (direction === "BUY")
@@ -755,14 +755,14 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
         prevSignalBar &&
         atrReady &&
         signalBar.close > prevSignalBar.high &&
-        bodyPct >= 0.6 &&
+        bodyPct >= 0.55 &&
         Number.isFinite(displacement) &&
         displacement > signalAtr);
     const bosShortOk = Boolean(signalBar &&
         prevSignalBar &&
         atrReady &&
         signalBar.close < prevSignalBar.low &&
-        bodyPct >= 0.6 &&
+        bodyPct >= 0.55 &&
         Number.isFinite(displacement) &&
         displacement > signalAtr);
     const longFvgSize = signalBar && twoBackSignalBar ? signalBar.low - twoBackSignalBar.high : Number.NaN;
@@ -820,8 +820,13 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
         bars: h1,
         direction,
     });
-    const htfStrongAligned = htfTrend.state === "HTF_STRONG_TREND" &&
+    const htfAligned = htfTrend.state !== "HTF_NO_TRADE" &&
         htfTrend.direction === direction;
+    const htfScore = htfTrend.state === "HTF_STRONG_TREND" && htfTrend.direction === direction
+        ? 2
+        : htfTrend.state === "HTF_WEAK_TREND" && htfTrend.direction === direction
+            ? 1
+            : 0;
     const directionSweepOk = direction === "BUY" ? sweepLongOk : direction === "SELL" ? sweepShortOk : false;
     const directionBosOk = direction === "BUY" ? bosLongOk : direction === "SELL" ? bosShortOk : false;
     const directionFvgOk = direction === "BUY" ? fvgLongOk : direction === "SELL" ? fvgShortOk : false;
@@ -832,7 +837,9 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
     const directionOrderbookPass = !orderbookDataAvailable || directionOrderbookOk;
     const directionMicroPass = !microFlowDataAvailable || directionMicroOk;
     const directionOiPass = !oiDataAvailable || directionOiOk;
-    const qualityScore = (htfStrongAligned ? 2 : 0) +
+    const structureImpulseOk = directionBosOk || directionFvgOk;
+    const pullbackOrConfirmOk = directionPullbackOk || confirmationOk;
+    const qualityScore = htfScore +
         (directionSweepOk ? 2 : 0) +
         (directionBosOk ? 2 : 0) +
         (directionFvgOk ? 1 : 0) +
@@ -840,16 +847,14 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
         (directionMicroOk ? 1 : 0) +
         (directionOiOk ? 1 : 0);
     const scorePass = qualityScore >= OLIKELLA_SCORE_THRESHOLD;
-    const strictPipelinePass = htfStrongAligned &&
+    const strictPipelinePass = htfAligned &&
         atrReady &&
-        directionBosOk &&
-        directionFvgOk &&
-        directionPullbackOk &&
+        structureImpulseOk &&
+        pullbackOrConfirmOk &&
         directionOrderbookPass &&
         directionMicroPass &&
         directionOiPass &&
-        scorePass &&
-        confirmationOk;
+        scorePass;
     const selectedBase = selectedCross ?? selectedH4Pattern;
     const selected = selectedBase && strictPipelinePass ? selectedBase : null;
     const entry = h1Closes[lastH1];
@@ -884,20 +889,17 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
     if (!trendOk) {
         missingPatternReasons.push("EMA trend missing");
     }
-    if (!htfStrongAligned) {
+    if (!htfAligned) {
         missingPatternReasons.push(`HTF filter: ${htfTrend.state} (${htfTrend.detail})`);
     }
     if (!directionSweepOk) {
         missingPatternReasons.push("sweep weak: optional confluence not met");
     }
-    if (!directionBosOk) {
-        missingPatternReasons.push("BOS invalid: close/body/displacement gate failed");
+    if (!structureImpulseOk) {
+        missingPatternReasons.push("BOS/FVG impulse missing");
     }
-    if (!directionFvgOk) {
-        missingPatternReasons.push("FVG invalid: size/displacement/retrace gate failed");
-    }
-    if (!directionPullbackOk) {
-        missingPatternReasons.push("pullback invalid: corrective overlap + falling volume required");
+    if (!pullbackOrConfirmOk) {
+        missingPatternReasons.push("pullback or confirmation missing");
     }
     if (orderbookDataAvailable && !directionOrderbookOk) {
         missingPatternReasons.push("orderbook invalid: imbalance/top-wall/spread");
@@ -910,9 +912,6 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
     }
     if (!scorePass) {
         missingPatternReasons.push(`score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD}`);
-    }
-    if (!confirmationOk) {
-        missingPatternReasons.push("entry delay: 1-candle confirmation missing");
     }
     if (trendOk && !directionalPatternOk) {
         missingPatternReasons.push("EMA trend + breakout 0.4% + volume >=1.3x not met");
@@ -930,8 +929,8 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
                 ? `no valid H4 pattern on latest candle | ${flowDataState}`
                 : "no valid 1h EMA8/EMA16 state (cross or continuation)";
     const entryDetail = trendOk && checklistPass
-        ? `${direction} strict pipeline pass | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)} | ${flowDataState}`
-        : `strict pipeline blocked | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | ${flowDataState}`;
+        ? `${direction} relaxed pipeline pass | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)} | ${flowDataState}`
+        : `relaxed pipeline blocked | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | ${flowDataState}`;
     const exitReady = Number.isFinite(h1Ema8[lastH1]) && Number.isFinite(h1Atr[lastH1]);
     const exitDetail = exhaustion.active
         ? `H4 exhaustion ${Math.round(exhaustion.distancePct * 100)}% from EMA10 | vol ${exhaustion.volumeRatio.toFixed(2)}x`
@@ -939,16 +938,14 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
     const gateFailureReasons = [];
     if (!trendOk)
         gateFailureReasons.push("EMA_TREND_MISSING");
-    if (!htfStrongAligned)
-        gateFailureReasons.push("HTF_STRONG_TREND_REQUIRED");
+    if (!htfAligned)
+        gateFailureReasons.push("HTF_ALIGNMENT_REQUIRED");
     if (!directionSweepOk)
         gateFailureReasons.push("SWEEP_WEAK_OPTIONAL");
-    if (!directionBosOk)
-        gateFailureReasons.push("BOS_VALIDATION_FAILED");
-    if (!directionFvgOk)
-        gateFailureReasons.push("FVG_FILTER_FAILED");
-    if (!directionPullbackOk)
-        gateFailureReasons.push("PULLBACK_FILTER_FAILED");
+    if (!structureImpulseOk)
+        gateFailureReasons.push("IMPULSE_STRUCTURE_MISSING");
+    if (!pullbackOrConfirmOk)
+        gateFailureReasons.push("ENTRY_PULLBACK_OR_CONFIRM_MISSING");
     if (orderbookDataAvailable && !directionOrderbookOk)
         gateFailureReasons.push("ORDERBOOK_VALIDATION_FAILED");
     if (microFlowDataAvailable && !directionMicroOk)
@@ -957,8 +954,6 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
         gateFailureReasons.push("OI_FILTER_FAILED");
     if (!scorePass)
         gateFailureReasons.push("SCORE_GATE_FAILED");
-    if (!confirmationOk)
-        gateFailureReasons.push("ENTRY_CONFIRMATION_MISSING");
     if (trendOk && !directionalPatternOk)
         gateFailureReasons.push("H4_PATTERN_MISSING");
     if (trendOk && htfStructureOk && !selectedCross) {
@@ -1014,7 +1009,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
         qualityScore,
         qualityThreshold: OLIKELLA_SCORE_THRESHOLD,
         qualityPass: strictPipelinePass,
-        qualityDetail: `htf ${htfStrongAligned ? 2 : 0}, sweep ${directionSweepOk ? 2 : 0}, bos ${directionBosOk ? 2 : 0}, fvg ${directionFvgOk ? 1 : 0}, ob ${orderbookDataAvailable ? (directionOrderbookOk ? 1 : 0) : "N/A"}, flow ${microFlowDataAvailable ? (directionMicroOk ? 1 : 0) : "N/A"}, oi ${oiDataAvailable ? (directionOiOk ? 1 : 0) : "N/A"}`,
+        qualityDetail: `htf ${htfScore}, sweep ${directionSweepOk ? 2 : 0}, bos ${directionBosOk ? 2 : 0}, fvg ${directionFvgOk ? 1 : 0}, ob ${orderbookDataAvailable ? (directionOrderbookOk ? 1 : 0) : "N/A"}, flow ${microFlowDataAvailable ? (directionMicroOk ? 1 : 0) : "N/A"}, oi ${oiDataAvailable ? (directionOiOk ? 1 : 0) : "N/A"}`,
         missingPatternReasons,
         gateFailureReasons,
         dataHealth: {

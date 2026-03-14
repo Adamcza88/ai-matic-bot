@@ -3,7 +3,7 @@ export const OLIKELLA_LEGACY_RISK_MODE = "ai-matic-scalp";
 export const OLIKELLA_PROFILE_LABEL = "AI-MATIC-OLIkella";
 
 export const OLIKELLA_GATE_SIGNAL_CHECKLIST =
-  "Signal Checklist (HTF+sweep/BOS+FVG score >=6)";
+  "Signal Checklist (HTF aligned + sweep/BOS/FVG score >=5)";
 export const OLIKELLA_GATE_ENTRY_CONDITIONS =
   "Entry Conditions (corrective pullback + 1-candle confirm)";
 export const OLIKELLA_GATE_EXIT_CONDITIONS =

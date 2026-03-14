@@ -285,13 +285,13 @@ export default function Dashboard({
     if (riskMode === "ai-matic-olikella") {
       return {
         label: OLIKELLA_PROFILE_LABEL,
-        subtitle: "HTF strong trend · sweep/BOS/FVG · score gate",
+        subtitle: "HTF aligned trend · sweep/BOS/FVG · score gate",
         symbols: catalogSymbols,
         timeframes: "H4 trend/structure · 1h trigger · 5m feed",
         session: "24/7",
         risk: "Riziko 1.5% kapitálu/obchod · RRR 1.8 · max 1 add-on",
         riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
-        entry: "HTF+sweep/BOS+FVG + corrective pullback + 1-candle confirm (score >=6)",
+        entry: "HTF aligned + sweep/BOS/FVG + pullback/confirm (score >=5)",
         execution: "OB/Flow/OI live when available; fallback N/A without hard block",
       };
     }
