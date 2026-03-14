@@ -435,7 +435,7 @@ const SettingsPanel: React.FC<Props> = ({
           : local.riskMode === "ai-matic-amd"
             ? "PO3/AMD bias (1h EMA50/200)"
           : local.riskMode === OLIKELLA_RISK_MODE
-            ? "1h EMA8/16 cross"
+            ? "15m EMA8/16 cross"
           : local.trendGateMode,
     },
     { label: "Max pozic", value: String(local.maxOpenPositions) },

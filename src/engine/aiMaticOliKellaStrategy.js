@@ -1,7 +1,7 @@
 import { State, Trend, resampleCandles, } from "./botEngine.js";
 import { computeATR, computeEma } from "./ta.js";
 import { getOrderFlowSnapshot } from "./orderflow.js";
-const H1_MINUTES = 60;
+const H1_MINUTES = 15;
 const H4_MINUTES = 240;
 const FIVE_MINUTES_MS = 5 * 60000;
 const H4_MS = H4_MINUTES * 60000;
@@ -123,8 +123,8 @@ function detectEma8Ema16Entry(args) {
         stop,
         pivot: bars[last].close,
         detail: side === "buy"
-            ? "1h EMA8 crossed above EMA16"
-            : "1h EMA8 crossed below EMA16",
+            ? "15m EMA8 crossed above EMA16"
+            : "15m EMA8 crossed below EMA16",
     };
 }
 function detectEma8Ema16Continuation(args) {
@@ -157,8 +157,8 @@ function detectEma8Ema16Continuation(args) {
         stop,
         pivot: bars[last].close,
         detail: side === "buy"
-            ? "1h EMA8 stays above EMA16"
-            : "1h EMA8 stays below EMA16",
+            ? "15m EMA8 stays above EMA16"
+            : "15m EMA8 stays below EMA16",
     };
 }
 function detectBaseNBreak(args) {
@@ -917,7 +917,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
         missingPatternReasons.push("EMA trend + breakout 0.4% + volume >=1.3x not met");
     }
     if (trendOk && htfStructureOk && !selectedCross) {
-        missingPatternReasons.push("1h EMA8/EMA16 cross or continuation missing");
+        missingPatternReasons.push("15m EMA8/EMA16 cross or continuation missing");
     }
     const flowDataState = `flow data: OB ${orderbookDataAvailable ? "live" : "N/A"}, Micro ${microFlowDataAvailable ? "live" : "N/A"}, OI ${oiDataAvailable ? "live" : "N/A"}`;
     const checklistPass = Boolean(selectedBase && strictPipelinePass);
@@ -927,7 +927,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(symbol, candles, option
             ? `${missingPatternReasons.join(" | ")} | ${flowDataState}`
             : !selectedH4Pattern
                 ? `no valid H4 pattern on latest candle | ${flowDataState}`
-                : "no valid 1h EMA8/EMA16 state (cross or continuation)";
+                : "no valid 15m EMA8/EMA16 state (cross or continuation)";
     const entryDetail = trendOk && checklistPass
         ? `${direction} relaxed pipeline pass | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)} | ${flowDataState}`
         : `relaxed pipeline blocked | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | ${flowDataState}`;

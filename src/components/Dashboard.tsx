@@ -287,7 +287,7 @@ export default function Dashboard({
         label: OLIKELLA_PROFILE_LABEL,
         subtitle: "HTF aligned trend · sweep/BOS/FVG · score gate",
         symbols: catalogSymbols,
-        timeframes: "H4 trend/structure · 1h trigger · 5m feed",
+        timeframes: "H4 trend/structure · 15m trigger · 5m feed",
         session: "24/7",
         risk: "Riziko 1.5% kapitálu/obchod · RRR 1.8 · max 1 add-on",
         riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],

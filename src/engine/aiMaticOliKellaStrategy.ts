@@ -77,7 +77,7 @@ export type AiMaticOliKellaContext = {
   canScaleIn: boolean;
 };
 
-const H1_MINUTES = 60;
+const H1_MINUTES = 15;
 const H4_MINUTES = 240;
 const FIVE_MINUTES_MS = 5 * 60_000;
 const H4_MS = H4_MINUTES * 60_000;
@@ -215,8 +215,8 @@ function detectEma8Ema16Entry(args: {
     pivot: bars[last].close,
     detail:
       side === "buy"
-        ? "1h EMA8 crossed above EMA16"
-        : "1h EMA8 crossed below EMA16",
+        ? "15m EMA8 crossed above EMA16"
+        : "15m EMA8 crossed below EMA16",
   };
 }
 
@@ -257,8 +257,8 @@ function detectEma8Ema16Continuation(args: {
     pivot: bars[last].close,
     detail:
       side === "buy"
-        ? "1h EMA8 stays above EMA16"
-        : "1h EMA8 stays below EMA16",
+        ? "15m EMA8 stays above EMA16"
+        : "15m EMA8 stays below EMA16",
   };
 }
 
@@ -1157,7 +1157,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
     missingPatternReasons.push("EMA trend + breakout 0.4% + volume >=1.3x not met");
   }
   if (trendOk && htfStructureOk && !selectedCross) {
-    missingPatternReasons.push("1h EMA8/EMA16 cross or continuation missing");
+    missingPatternReasons.push("15m EMA8/EMA16 cross or continuation missing");
   }
   const flowDataState = `flow data: OB ${orderbookDataAvailable ? "live" : "N/A"}, Micro ${microFlowDataAvailable ? "live" : "N/A"}, OI ${oiDataAvailable ? "live" : "N/A"}`;
   const checklistPass = Boolean(selectedBase && strictPipelinePass);
@@ -1168,7 +1168,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
         ? `${missingPatternReasons.join(" | ")} | ${flowDataState}`
         : !selectedH4Pattern
           ? `no valid H4 pattern on latest candle | ${flowDataState}`
-          : "no valid 1h EMA8/EMA16 state (cross or continuation)";
+          : "no valid 15m EMA8/EMA16 state (cross or continuation)";
   const entryDetail =
     trendOk && checklistPass
       ? `${direction} relaxed pipeline pass | score ${qualityScore}/${OLIKELLA_SCORE_THRESHOLD} | H4 S ${strongSupport.toFixed(2)} / R ${strongResistance.toFixed(2)} | ${flowDataState}`
