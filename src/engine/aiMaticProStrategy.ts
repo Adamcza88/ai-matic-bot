@@ -63,8 +63,8 @@ const ATR_BUFFER_MULT = 1.2;
 const ATR_FALLBACK_PCT = 0.003;
 const BREAKOUT_LOOKBACK = 10;
 const BREAKOUT_VOLUME_LOOKBACK = 20;
-const ATR_20D_BARS_4H = 20 * 6;
-const ATR_20D_BARS_15M = 20 * 24 * 4;
+const ATR_20D_BARS_4H = 20 * 24;
+const ATR_20D_BARS_15M = 20 * 24 * 12;
 
 function last<T>(arr: T[]): T | undefined {
   return arr.length ? arr[arr.length - 1] : undefined;
@@ -310,8 +310,8 @@ export function evaluateAiMaticProStrategyForSymbol(
     } as EngineDecision;
   }
 
-  const h4 = resampleCandles(candles, 240);
-  const m15 = resampleCandles(candles, 15);
+  const h4 = resampleCandles(candles, 60);
+  const m15 = resampleCandles(candles, 5);
 
   const h4Highs = findPivotsHigh(h4, SWING_LOOKBACK_LEFT, SWING_LOOKBACK_RIGHT);
   const h4Lows = findPivotsLow(h4, SWING_LOOKBACK_LEFT, SWING_LOOKBACK_RIGHT);
@@ -409,7 +409,7 @@ export function evaluateAiMaticProStrategyForSymbol(
 
   const gates: ProMtfFiboGate[] = [
     {
-      name: "4H trend confirmed (SMA50 + swing sequence)",
+      name: "1H trend confirmed (SMA50 + swing sequence)",
       ok: trendConfirmed,
       detail: `trend ${trendState}`,
     },
@@ -419,7 +419,7 @@ export function evaluateAiMaticProStrategyForSymbol(
       detail: `dist ${(keyFibDistance.distance * 100).toFixed(2)}%`,
     },
     {
-      name: "15m swing near Fib <= 0.50%",
+      name: "5m swing near Fib <= 0.50%",
       ok: swingNearFibOk,
       detail:
         trendState === "UP"
@@ -429,7 +429,7 @@ export function evaluateAiMaticProStrategyForSymbol(
             : "n/a",
     },
     {
-      name: "15m trigger valid (engulfing/pin/breakout+vol)",
+      name: "5m trigger valid (engulfing/pin/breakout+vol)",
       ok: triggerValid,
       detail: `long ${ltfTriggers.longTrigger ? "Y" : "N"} | short ${ltfTriggers.shortTrigger ? "Y" : "N"}`,
     },
@@ -437,9 +437,9 @@ export function evaluateAiMaticProStrategyForSymbol(
       name: "Volatility gate ATR >= 0.8x 20d avg",
       ok: volatilityGateOk,
       detail:
-        `H4 ATR ${Number.isFinite(atr4hCurrent) ? atr4hCurrent.toFixed(4) : "NaN"} / avg ` +
+        `1H ATR ${Number.isFinite(atr4hCurrent) ? atr4hCurrent.toFixed(4) : "NaN"} / avg ` +
         `${Number.isFinite(atr4hAvg20d) ? atr4hAvg20d.toFixed(4) : "NaN"} | ` +
-        `15m ATR ${Number.isFinite(atr15Current) ? atr15Current.toFixed(4) : "NaN"} / avg ` +
+        `5m ATR ${Number.isFinite(atr15Current) ? atr15Current.toFixed(4) : "NaN"} / avg ` +
         `${Number.isFinite(atr15Avg20d) ? atr15Avg20d.toFixed(4) : "NaN"}`,
     },
     {

@@ -107,11 +107,11 @@ const resolveTimeframePair = (riskMode) => {
     case 'ai-matic-scalp':
       return { ltfMin: 3, htfMin: 60 };
     case 'ai-matic-olikella':
-      return { ltfMin: 15, htfMin: 240 };
+      return { ltfMin: 5, htfMin: 60 };
     case 'ai-matic-bbo':
-      return { ltfMin: 5, htfMin: 240 };
+      return { ltfMin: 5, htfMin: 60 };
     case 'ai-matic-pro':
-      return { ltfMin: 15, htfMin: 240 };
+      return { ltfMin: 5, htfMin: 60 };
     case 'ai-matic-amd':
     case 'ai-matic-tree':
     case 'ai-matic':

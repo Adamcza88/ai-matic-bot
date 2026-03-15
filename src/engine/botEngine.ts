@@ -1230,7 +1230,7 @@ export class TradingBot {
       const htfTf = this.config.aiMaticHtfTimeframe ?? "60m"; //this.config.baseTimeframe;
       const midTf = this.config.aiMaticMidTimeframe ?? "15m";
       const ltfTf = this.config.aiMaticEntryTimeframe ?? "5m";  //this.config.signalTimeframe;
-      const execTf = this.config.aiMaticExecTimeframe ?? "1m";  //this.config.signalTimeframe;
+      const execTf = this.config.aiMaticExecTimeframe ?? "5m";  //this.config.signalTimeframe;
       const ht = await this.fetchOHLCV(htfTf);
       const mid = await this.fetchOHLCV(midTf);
       const lt = await this.fetchOHLCV(ltfTf);
@@ -2291,7 +2291,7 @@ function ensureBot(symbol: string, config?: Partial<BotConfig>): TradingBot {
 }
 
 /**
- * Hlavní vstup pro UI / feed: z nižšího TF (např. 1m) resampluje na
+ * Hlavní vstup pro UI / feed: z nižšího TF (např. 5m) resampluje na
  * baseTimeframe/signalTimeframe (nebo AI‑MATIC multi‑TF), spustí stavový
  * automat a vrátí signál.
  */
@@ -2343,7 +2343,7 @@ export function evaluateStrategyForSymbol(
       botConfig.aiMaticEntryTimeframe ?? "5m"//botConfig.signalTimeframe
     );
     const tfExecMin = timeframeToMinutes(
-      botConfig.aiMaticExecTimeframe ?? "1m"//botConfig.signalTimeframe
+      botConfig.aiMaticExecTimeframe ?? "5m"//botConfig.signalTimeframe
     );
     const mid = resampleCandles(candles, tfMidMin);
     const lt = resampleCandles(candles, tfLtfMin);

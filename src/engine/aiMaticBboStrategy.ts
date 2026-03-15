@@ -361,11 +361,9 @@ export function evaluateAiMaticBboStrategyForSymbol(
     } as EngineDecision;
   }
 
-  const h4 = resampleCandles(candles, 240);
   const h1 = resampleCandles(candles, 60);
-  const m15 = resampleCandles(candles, 15);
   const m5 = resampleCandles(candles, 5);
-  if (!h4.length || !h1.length || !m15.length || !m5.length) {
+  if (!h1.length || !m5.length) {
     return {
       state: State.Scan,
       trend: Trend.Range,
@@ -378,7 +376,7 @@ export function evaluateAiMaticBboStrategyForSymbol(
   }
 
   const h1Context = resolveH1Context(h1);
-  const bias4h = resolve4HBias(h4);
+  const bias4h = resolve4HBias(h1);
   const direction: Direction =
     h1Context.direction === "BULL" && bias4h.bias === "LONG"
       ? "BULL"
@@ -387,11 +385,9 @@ export function evaluateAiMaticBboStrategyForSymbol(
         : "NONE";
   const family: SetupFamily = direction === "NONE" ? "NO_TRADE" : "TREND_PULLBACK";
 
-  const m15Trend = resolveMtfTrendDirection(m15, 20, 50);
   const m5Trend = resolveMtfTrendDirection(m5, 20, 50);
   const trendAligned =
     direction !== "NONE" &&
-    m15Trend.direction === direction &&
     m5Trend.direction === direction;
 
   const m5Closes = m5.map((candle) => candle.close);
@@ -421,9 +417,9 @@ export function evaluateAiMaticBboStrategyForSymbol(
   const atrExpansionOk =
     Number.isFinite(atrExpansionRatio) && atrExpansionRatio >= ATR_EXPANSION_MIN;
 
-  const h4Closes = h4.map((candle) => candle.close);
-  const h4Highs = h4.map((candle) => candle.high);
-  const h4Lows = h4.map((candle) => candle.low);
+  const h4Closes = h1.map((candle) => candle.close);
+  const h4Highs = h1.map((candle) => candle.high);
+  const h4Lows = h1.map((candle) => candle.low);
   const atr4Arr = computeATR(h4Highs, h4Lows, h4Closes, 14);
   const atr4 = last(atr4Arr) ?? Number.NaN;
   const h4Close = last(h4Closes) ?? Number.NaN;
@@ -502,7 +498,7 @@ export function evaluateAiMaticBboStrategyForSymbol(
       hard: true,
     },
     {
-      name: "4H bias",
+      name: "1H bias",
       ok: bias4h.bias !== "NEUTRAL" && direction !== "NONE",
       detail: `bias ${bias4h.bias} | EMA50 ${Number.isFinite(bias4h.ema50) ? bias4h.ema50.toFixed(4) : "NaN"} | EMA200 ${Number.isFinite(bias4h.ema200) ? bias4h.ema200.toFixed(4) : "NaN"} | structure ${bias4h.structure}`,
       hard: true,
@@ -516,7 +512,7 @@ export function evaluateAiMaticBboStrategyForSymbol(
     {
       name: "5m trend alignment",
       ok: trendAligned,
-      detail: `15m ${m15Trend.direction} | 5m ${m5Trend.direction} | target ${direction}`,
+      detail: `5m ${m5Trend.direction} | target ${direction}`,
       hard: true,
     },
     {
@@ -553,7 +549,7 @@ export function evaluateAiMaticBboStrategyForSymbol(
       name: "ATR expansion",
       ok: atrExpansionOk,
       detail: Number.isFinite(atrExpansionRatio)
-        ? `ratio ${atrExpansionRatio.toFixed(2)}x | 4H ATR ${(h4AtrPct * 100).toFixed(2)}%`
+        ? `ratio ${atrExpansionRatio.toFixed(2)}x | 1H ATR ${(h4AtrPct * 100).toFixed(2)}%`
         : "missing",
     },
   ];

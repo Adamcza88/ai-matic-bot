@@ -239,12 +239,12 @@ const SettingsPanel: React.FC<Props> = ({
   const coreProfiles: Record<AISettings["riskMode"], CoreProfile> = {
     "ai-matic": {
       title: AI_MATIC_CORE_PROFILE_LABEL,
-      summary: "HTF 1h/15m · LTF 5m/1m · deterministic trend routing",
+      summary: "HTF 60m · LTF 5m · deterministic trend routing",
       description:
         "Nízkofrekvenční multi‑TF core s grouped observability a exekucí bez retest fallbacku.",
       notes: [
         ORDER_VALUE_NOTE,
-        "Timeframe: 1h bias · 15m potvrzení · 5m trigger · 1m exekuce.",
+        "Timeframe: 1h bias · 5m trigger · 5m exekuce.",
         "Signal gate: HTF bias, EMA200 trend, breakout, confirm, trend strength.",
         "Entry gate: ATR, volume, pullback, micro pivot, micro break close.",
         "Execution gate: BBO fresh, BBO age, maker entry, structural SL.",
@@ -255,15 +255,16 @@ const SettingsPanel: React.FC<Props> = ({
     },
     "ai-matic-x": {
       title: "AI-MATIC-X (M1/M2 Rejection)",
-      summary: "SCALPING aktivni · HTF 15m · LTF 1-3m · M1/M2 + volume",
+      summary: "SCALPING aktivni · HTF 60m · LTF 5m · M1/M2 + volume",
       description:
         "Rule-based M1/M2 strategie s pevnou validaci dotyku, rejekce a objemu.",
       notes: [
         ORDER_VALUE_NOTE,
-        "SCALPING (aktivni): HTF 15m, LTF 1-3m, tolerance 0.25x ATR, TTL 7 LTF baru.",
+        "SCALPING (aktivni): HTF 60m, LTF 5m, tolerance 0.25x ATR, TTL 7 LTF baru.",
         "SCALPING (aktivni): M2 okno 20 baru, objem >= 1.2x SMA20, EMA filtr zapnuty.",
-        "INTRADAY: HTF 60m, LTF 5-15m, tolerance 0.20x ATR, TTL 12 LTF baru.",
+        "INTRADAY: HTF 240m, LTF 15m, tolerance 0.20x ATR, TTL 12 LTF baru.",
         "INTRADAY: M2 okno 40 baru, objem >= 1.1x SMA20, EMA filtr zapnuty.",
+        "Legacy scalp (kompat): HTF 60m, LTF 3m.",
         "Cil: chytit odraz od 50% posledniho HTF impulzu (M1).",
         "Potvrzeni: rejekce na M2 (LTF mid) ve smeru biasu.",
         "Povinne podminky: A) dotyk M1 v toleranci, B) rejekce na M2, C) objemovy filtr.",
@@ -299,13 +300,13 @@ const SettingsPanel: React.FC<Props> = ({
     },
     "ai-matic-olikella": {
       title: `${OLIKELLA_PROFILE_LABEL} Jádro`,
-      summary: "HTF aligned trend + sweep/BOS/FVG + score gate",
+      summary: "HTF 60m aligned trend + sweep/BOS/FVG + score gate",
       description:
         "Strict pipeline s potvrzením po 1 svíčce. Orderflow/OI filtry jsou povinné jen při dostupných live datech.",
       notes: [
         ORDER_VALUE_NOTE,
         "SIGNAL CHECKLIST",
-        "Minimum historie: 40 H4 svíček.",
+        "Minimum historie: 250 HTF 60m svíček.",
         "HTF trend: EMA50/EMA200 + cena vůči EMA50 + swing struktura.",
         "Sweep: knot >= 1.2x ATR + volume > SMA20 + imbalance.",
         "BOS: close přes strukturu + tělo >= 60% + displacement > 1.0x ATR.",
@@ -316,7 +317,7 @@ const SettingsPanel: React.FC<Props> = ({
         "Score gate: HTF2/1 + Sweep2 + BOS2 + FVG1 + OB1 + Flow1 + OI1, průchod >= 5.",
         "Když chybí live orderflow/OI feed, OB/Flow/OI jsou N/A a nevytváří hard blokaci.",
         "EXIT CONDITIONS",
-        "Exhaustion Extension: distance od H4 EMA10 >=9% + volume >=1.5x.",
+        "Exhaustion Extension: distance od 1H EMA10 >=9% + volume >=1.5x.",
         "První exhaustion: partial 60%. Druhý exhaustion: full exit.",
         "Protective exit: opposite EMA8/EMA16 cross.",
         "Trail stop: 5m timeframe, aktivace při RRR 1:1 od entry.",
@@ -331,13 +332,13 @@ const SettingsPanel: React.FC<Props> = ({
     },
     "ai-matic-bbo": {
       title: "AI-MATIC-BBO",
-      summary: "Standalone BBO engine · 1H regime · 4H bias · 5m pullback/break",
+      summary: "Standalone BBO engine · 1H regime/bias · 5m pullback/break",
       description:
         "Samostatný profil podle HTF_Bias_EMA_Pullback_MicroBreak_BBO specifikace.",
       notes: [
         ORDER_VALUE_NOTE,
         "1H market regime: directional HH/HL nebo LL/LH a nizky overlap.",
-        "4H bias: EMA50/EMA200 + close v trendu + potvrzena swing struktura.",
+        "1H bias: EMA50/EMA200 + close v trendu + potvrzena swing struktura.",
         "Setup family: pouze Trend Pullback, zadny range mode.",
         "Entry: 5m EMA20/50 pullback + micro pivot + micro break.",
         "Soft score: trend 25 + pullback 20 + micro break 20 + volume 10 + ATR 10 + BBO 15.",
@@ -347,7 +348,7 @@ const SettingsPanel: React.FC<Props> = ({
     },
     "ai-matic-tree": {
       title: "AI-MATIC-TREE Jádro",
-      summary: "HTF 1h/15m · LTF 5m/1m · EMA bias + trend entries",
+      summary: "HTF 60m · LTF 5m · EMA bias + trend entries",
       description: "Multi‑TF trendový engine s R‑based řízením.",
       notes: [
         ORDER_VALUE_NOTE,
@@ -361,16 +362,16 @@ const SettingsPanel: React.FC<Props> = ({
     },
     "ai-matic-pro": {
       title: "AI-MATIC-PRO MTF Fibo",
-      summary: "4H trend + swings · 15m confirmations · Fib levels",
+      summary: "1H trend + swings · 5m confirmations · Fib levels",
       description:
         "Multi-timeframe Fibonacci strategie s HTF trend filtrem a LTF potvrzenim triggeru.",
       notes: [
         ORDER_VALUE_NOTE,
-        "HTF 4H: trend je validni pri close nad/pod SMA50 a sekvenci swingu (HL/LH).",
+        "HTF 1H: trend je validni pri close nad/pod SMA50 a sekvenci swingu (HL/LH).",
         "Swing body: pivot 2-2 pro high/low, anchor je posledni potvrzeny impuls.",
         "Fib retracement: 23.6 / 38.2 / 50 / 61.8 / 78.6.",
         "Fib extension: TP1 127.2 (partial 60%), TP2 161.8.",
-        "LTF 15m: trigger je alespon 1 z 3 (engulfing, pin bar, breakout+volume).",
+        "LTF 5m: trigger je alespon 1 z 3 (engulfing, pin bar, breakout+volume).",
         "Breakout trigger: close pres lokalni swing + volume > 1.0x 20-bar avg.",
         "Filtry: cena do 1% od Fib 38.2/61.8, swing do 0.50%, ATR gate >= 0.8x 20d avg.",
         "Risk gate: RR k TP2 >= 1.5, SL za swing + ATR buffer, po TP1 presun na BE + trailing.",
@@ -419,10 +420,10 @@ const SettingsPanel: React.FC<Props> = ({
       ...OLIKELLA_GATE_NAMES,
     ],
     "ai-matic-pro": [
-      "4H trend confirmed (SMA50 + swing sequence)",
+      "1H trend confirmed (SMA50 + swing sequence)",
       "Fib proximity <= 1% (38.2/61.8)",
-      "15m swing near Fib <= 0.50%",
-      "15m trigger valid (engulfing/pin/breakout+vol)",
+      "5m swing near Fib <= 0.50%",
+      "5m trigger valid (engulfing/pin/breakout+vol)",
       "Volatility gate ATR >= 0.8x 20d avg",
       "RR gate >= 1.5",
     ],
@@ -440,8 +441,8 @@ const SettingsPanel: React.FC<Props> = ({
           : local.riskMode === "ai-matic-amd"
             ? "PO3/AMD bias (1h EMA50/200)"
           : local.riskMode === OLIKELLA_RISK_MODE
-            ? "15m SMA20/50 + price vs SMA20"
-          : local.trendGateMode,
+            ? "5m SMA20/50 + price vs SMA20"
+            : local.trendGateMode,
     },
     { label: "Max pozic", value: String(local.maxOpenPositions) },
     { label: "Max příkazů", value: String(local.maxOpenOrders) },
@@ -1546,6 +1547,7 @@ const SettingsPanel: React.FC<Props> = ({
           </button>
           <button
             onClick={() => {
+              stashProfileSettings(local.riskMode, local);
               onUpdateSettings(local);
               onClose();
             }}

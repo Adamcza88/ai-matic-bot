@@ -218,7 +218,7 @@ export default function Dashboard({
         label: "AI-MATIC-X",
         subtitle: "SCALPING aktivni · M1/M2 rejekce · BTC kontext",
         symbols: catalogSymbols,
-        timeframes: "SCALPING: HTF 15m · LTF 1-3m | INTRADAY: 60m · 5-15m",
+        timeframes: "SCALPING: HTF 60m · LTF 5m | INTRADAY: HTF 240m · LTF 15m",
         session: "24/7 · TTR cil < 60s",
         risk: "A/B/C povinne · TTL 7 (scalp) / 12 (intraday) LTF baru",
         riskPct: RISK_PCT_BY_MODE["ai-matic-x"],
@@ -233,7 +233,7 @@ export default function Dashboard({
         label: "AI-MATIC-TREE",
         subtitle: `Multi-TF trend engine · Max pozic: ${maxPos}`,
         symbols: catalogSymbols,
-        timeframes: "HTF 1h/15m · LTF 5m/1m",
+        timeframes: "HTF 60m · LTF 5m",
         session: "24/7",
         risk: "Riziko 0.30% kapitálu/obchod · strop notionalu ~1% kapitálu",
         riskPct: RISK_PCT_BY_MODE["ai-matic-tree"],
@@ -247,7 +247,7 @@ export default function Dashboard({
         label: "AI-MATIC-BBO",
         subtitle: "Samostatný BBO engine",
         symbols: catalogSymbols,
-        timeframes: "1h kontext · 4h bias · 5m trigger · 1m exekuce",
+        timeframes: "1h kontext/bias · 5m trigger · 5m exekuce",
         session: "24/7",
         risk: "Riziko 0.30% kapitálu/obchod · standalone skóre >= 60",
         riskPct: RISK_PCT_BY_MODE["ai-matic-bbo"],
@@ -258,9 +258,9 @@ export default function Dashboard({
     if (riskMode === "ai-matic-pro") {
       return {
         label: "AI-MATIC-PRO MTF Fibo",
-        subtitle: "4H trend filter + 15m confirmations",
+        subtitle: "1H trend filter + 5m confirmations",
         symbols: catalogSymbols,
-        timeframes: "HTF 4h · LTF 15m · feed 1m",
+        timeframes: "HTF 1h · LTF 5m · feed 5m",
         session: "24/7",
         risk: "Riziko 0.30% kapitálu/obchod · strop notionalu ~1% kapitálu",
         riskPct: RISK_PCT_BY_MODE["ai-matic-pro"],
@@ -273,7 +273,7 @@ export default function Dashboard({
         label: "AI-MATIC-AMD",
         subtitle: "PO3 / AMD · Killzones NY",
         symbols: catalogSymbols,
-        timeframes: "1h bias · 15m/5m entry",
+        timeframes: "1h bias · 5m entry",
         session: "London / NY AM only",
         risk: "Riziko 0.30% kapitálu/obchod · strop notionalu ~1% kapitálu",
         riskPct: RISK_PCT_BY_MODE["ai-matic-amd"],
@@ -286,7 +286,7 @@ export default function Dashboard({
         label: OLIKELLA_PROFILE_LABEL,
         subtitle: "HTF aligned trend · sweep/BOS/FVG · score gate",
         symbols: catalogSymbols,
-        timeframes: "H4 trend/structure · 15m trigger · 5m feed",
+        timeframes: "1h trend/structure · 5m trigger · 5m feed",
         session: "24/7",
         risk: "Riziko 1.5% kapitálu/obchod · RRR 1.8 · max 1 add-on",
         riskPct: RISK_PCT_BY_MODE["ai-matic-olikella"],
@@ -298,7 +298,7 @@ export default function Dashboard({
       label: AI_MATIC_CORE_PROFILE_LABEL,
       subtitle: "Deterministic trend core · low-request execution",
       symbols: catalogSymbols,
-      timeframes: "HTF 1h/15m · LTF 5m/1m",
+      timeframes: "HTF 60m · LTF 5m",
       session: "24/7",
       risk: "Riziko 0.30% kapitálu/obchod · bez staged retest fallbacku",
       riskPct: RISK_PCT_BY_MODE["ai-matic"],
@@ -349,10 +349,10 @@ export default function Dashboard({
       },
       "ai-matic-tree": base,
       "ai-matic-pro": {
-        "4H trend confirmed (SMA50 + swing sequence)": true,
+        "1H trend confirmed (SMA50 + swing sequence)": true,
         "Fib proximity <= 1% (38.2/61.8)": true,
-        "15m swing near Fib <= 0.50%": true,
-        "15m trigger valid (engulfing/pin/breakout+vol)": true,
+        "5m swing near Fib <= 0.50%": true,
+        "5m trigger valid (engulfing/pin/breakout+vol)": true,
         "Volatility gate ATR >= 0.8x 20d avg": true,
         "RR gate >= 1.5": true,
       },
@@ -676,22 +676,22 @@ export default function Dashboard({
   const strategyHeader = useMemo(() => {
     if (riskMode === "ai-matic-olikella") {
       return {
-        htf: "H4 structure",
-        entry: "1h EMA cross",
+        htf: "1H structure",
+        entry: "5m EMA cross",
         feed: "5m execution",
       };
     }
     if (riskMode === "ai-matic-pro") {
       return {
-        htf: "4H trend filter",
-        entry: "15m fib trigger",
-        feed: "1m execution",
+        htf: "1H trend filter",
+        entry: "5m fib trigger",
+        feed: "5m execution",
       };
     }
     if (riskMode === "ai-matic-amd") {
       return {
         htf: "1h bias",
-        entry: "15m/5m AMD confirm",
+        entry: "5m AMD confirm",
         feed: "5m execution",
       };
     }
@@ -701,7 +701,7 @@ export default function Dashboard({
       feed: compactLabel(
         profileMeta.timeframes
           .split("·")
-          .find((part) => part.toLowerCase().includes("feed")) ?? "1m execution"
+          .find((part) => part.toLowerCase().includes("feed")) ?? "5m execution"
       ),
     };
   }, [profileMeta.entry, profileMeta.timeframes, riskMode]);

@@ -39,9 +39,9 @@ test('coreV2 params map all strategy profiles to expected timeframe pairs', () =
     'ai-matic': { ltf: 5, htf: 60 },
     'ai-matic-tree': { ltf: 5, htf: 60 },
     'ai-matic-amd': { ltf: 5, htf: 60 },
-    'ai-matic-olikella': { ltf: 15, htf: 240 },
-    'ai-matic-bbo': { ltf: 5, htf: 240 },
-    'ai-matic-pro': { ltf: 15, htf: 240 },
+    'ai-matic-olikella': { ltf: 5, htf: 60 },
+    'ai-matic-bbo': { ltf: 5, htf: 60 },
+    'ai-matic-pro': { ltf: 5, htf: 60 },
     'ai-matic-scalp': { ltf: 3, htf: 60 },
   };
   for (const [riskMode, pair] of Object.entries(expected)) {
@@ -58,7 +58,7 @@ test('computeCoreV2 uses mapped timeframe in output snapshot', () => {
   assert.equal(x.ltfTimeframeMin, 5);
   assert.equal(x.htfTimeframeMin, 60);
   assert.equal(bbo.ltfTimeframeMin, 5);
-  assert.equal(bbo.htfTimeframeMin, 240);
+  assert.equal(bbo.htfTimeframeMin, 60);
 });
 
 test('computeCoreV2 builds ToD baseline without fallback when 20d slot history exists', () => {

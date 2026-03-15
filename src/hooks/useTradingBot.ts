@@ -239,10 +239,10 @@ const OLIKELLA_MANUAL_EXIT_COOLDOWN_MS = 45_000;
 const SCALP_MIN_POSITION_NOTIONAL_USD = 1;
 const SCALP_MIN_POSITION_SIZE_FALLBACK = 1e-6;
 const PRO_MTF_FIBO_GATE_NAMES = [
-  "4H trend confirmed (SMA50 + swing sequence)",
+  "1H trend confirmed (SMA50 + swing sequence)",
   "Fib proximity <= 1% (38.2/61.8)",
-  "15m swing near Fib <= 0.50%",
-  "15m trigger valid (engulfing/pin/breakout+vol)",
+  "5m swing near Fib <= 0.50%",
+  "5m trigger valid (engulfing/pin/breakout+vol)",
   "Volatility gate ATR >= 0.8x 20d avg",
   "RR gate >= 1.5",
 ] as const;
@@ -263,10 +263,10 @@ const TREND_DAY_ADX_MIN = 20;
 const TREND_GATE_STRONG_SCORE = 3;
 const TREND_GATE_REVERSE_ADX = 19;
 const TREND_GATE_REVERSE_SCORE = 1;
-const HTF_TIMEFRAMES_MIN = [5];
-const AI_MATIC_HTF_TIMEFRAMES_MIN = [5];
+const HTF_TIMEFRAMES_MIN = [60];
+const AI_MATIC_HTF_TIMEFRAMES_MIN = [60];
 const AI_MATIC_LTF_TIMEFRAMES_MIN = [5];
-const SCALP_LTF_TIMEFRAMES_MIN = [15];
+const SCALP_LTF_TIMEFRAMES_MIN = [3];
 const DEFAULT_AUTO_REFRESH_MINUTES = 3;
 const EMA_TREND_PERIOD = 200;
 const MIN_EMA_TREND_PERIOD = 10;
@@ -2805,7 +2805,7 @@ const evaluateAiMaticGatesCore = (args: {
 
   const hardGates: AiMaticGate[] = [
     { name: "HTF trend alignment", ok: htfAligned },
-    { name: "15m BOS/CHOCH", ok: mtfStructureOk },
+    { name: "5m BOS/CHOCH", ok: mtfStructureOk },
     { name: "OB/FVG zone", ok: inPoiZoneOk },
     { name: `RRR >= ${AI_MATIC_MIN_RR} (fees)`, ok: rrAfterFeesOk },
   ];
@@ -4312,7 +4312,7 @@ const evaluateScalpGuards = (
   const driftReasons: string[] = [];
   if (core.m15DriftBlocked) driftReasons.push("EMA drift blocked");
   if (core.m15MacdWeak3) driftReasons.push("MACD weakening");
-  if (core.m15OverlapWicky) driftReasons.push("15m overlap/wicky");
+  if (core.m15OverlapWicky) driftReasons.push("5m overlap/wicky");
   const driftBlocked = driftReasons.length > 0;
 
   const fakeReasons: string[] = [];
@@ -4574,7 +4574,7 @@ function resolveH1M15TrendGate(
   const againstM15 =
     (m15Dir === "BULL" || m15Dir === "BEAR") && m15Dir !== signalDir;
   const ok = !againstH1 && !againstM15;
-  const detail = `1h ${h1Dir} | 15m ${m15Dir}${fallbackUsed ? " | fallback" : ""}`;
+  const detail = `1h ${h1Dir} | 5m ${m15Dir}${fallbackUsed ? " | fallback" : ""}`;
   return { ok, detail };
 }
 
@@ -5216,9 +5216,9 @@ export function useTradingBot(
         signalTimeframe: "5m",
         aiMaticMultiTf: true,
         aiMaticHtfTimeframe: "1h",
-        aiMaticMidTimeframe: "15m",
+        aiMaticMidTimeframe: "5m",
         aiMaticEntryTimeframe: "5m",
-        aiMaticExecTimeframe: "1m",
+        aiMaticExecTimeframe: "5m",
         entryStrictness: strictness,
         partialSteps: [
           { r: 1.0, exitFraction: 0.35 },
@@ -5245,9 +5245,9 @@ export function useTradingBot(
         signalTimeframe: "5m",
         aiMaticMultiTf: true,
         aiMaticHtfTimeframe: "1h",
-        aiMaticMidTimeframe: "15m",
+        aiMaticMidTimeframe: "5m",
         aiMaticEntryTimeframe: "5m",
-        aiMaticExecTimeframe: "1m",
+        aiMaticExecTimeframe: "5m",
         entryStrictness: strictness,
         partialSteps: [
           { r: 1.0, exitFraction: 0.35 },
@@ -5274,9 +5274,9 @@ export function useTradingBot(
         signalTimeframe: "5m",
         aiMaticMultiTf: true,
         aiMaticHtfTimeframe: "1h",
-        aiMaticMidTimeframe: "15m",
+        aiMaticMidTimeframe: "5m",
         aiMaticEntryTimeframe: "5m",
-        aiMaticExecTimeframe: "1m",
+        aiMaticExecTimeframe: "5m",
         entryStrictness: strictness,
         cooldownBars: 0,
       };
@@ -7469,7 +7469,7 @@ export function useTradingBot(
         const targetDir = String(bbo?.direction ?? "NONE").toUpperCase();
         const h1Dir = String(bbo?.h1Context ?? "RANGE").toUpperCase();
         const adx = toNumber(bbo?.metrics?.h1Adx);
-        const detail = `1h ${h1Dir} | 15m ${m15Dir} | ADX ${formatNumber(adx, 1)}`;
+        const detail = `1h ${h1Dir} | 5m ${m15Dir} | ADX ${formatNumber(adx, 1)}`;
         if (!signal) return { ok: true, detail };
         const sideRaw = String(signal.intent?.side ?? "").toLowerCase();
         const signalDir =
@@ -11848,7 +11848,7 @@ export function useTradingBot(
       if (!isScalpProfile && !isAmdProfile) {
         const trendCore = (decision as any)?.coreV2 as CoreV2Metrics | undefined;
         const trendGate = resolveH1M15TrendGate(trendCore, signal, decision);
-        appendTrace("Trend1h15m", {
+        appendTrace("Trend1h5m", {
           ok: trendGate.ok,
           code: trendGate.ok ? "OK" : "TREND_GATE",
           reason: trendGate.detail,
@@ -11859,7 +11859,7 @@ export function useTradingBot(
               id: `signal:trend-gate:${signalId}`,
               timestamp: new Date(now).toISOString(),
               action: "RISK_BLOCK",
-              message: `${symbol} trend gate 1h/15m [TREND_GATE]: ${trendGate.detail}`,
+              message: `${symbol} trend gate 1h/5m [TREND_GATE]: ${trendGate.detail}`,
             },
           ]);
           return;

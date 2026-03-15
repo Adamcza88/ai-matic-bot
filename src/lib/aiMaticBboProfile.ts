@@ -1,7 +1,7 @@
 export const AI_MATIC_BBO_QUALITY_THRESHOLD = 60;
 export const AI_MATIC_BBO_GATE_NAMES = [
   "1H market regime",
-  "4H bias",
+  "1H bias",
   "Trend family",
   "5m trend alignment",
   "EMA pullback",
@@ -18,7 +18,7 @@ export const AI_MATIC_BBO_GATE_NAMES = [
 
 export const AI_MATIC_BBO_CHECKLIST_DEFAULTS: Record<string, boolean> = {
   "1H market regime": true,
-  "4H bias": true,
+  "1H bias": true,
   "Trend family": true,
   "5m trend alignment": true,
   "EMA pullback": true,
