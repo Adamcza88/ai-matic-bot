@@ -660,7 +660,7 @@ function createSession(args) {
     limits,
   } = args;
 
-  const timeframe = riskMode === "ai-matic-olikella" ? "5" : "1";
+  const timeframe = "5";
   const decisionFn = selectDecisionFn(riskMode);
   const engineSymbols = symbols.length ? symbols : [...DEFAULT_SELECTED_SYMBOLS];
   const ws = new WebsocketClient({

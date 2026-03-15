@@ -215,7 +215,7 @@ export function startPriceFeed(
   opts?: PriceFeedOptions
 ): () => void {
   const ws = new WebSocket(opts?.useTestnet ? FEED_URL_TESTNET : FEED_URL_MAINNET);
-  const timeframe = opts?.timeframe ?? "1";
+  const timeframe = opts?.timeframe ?? "5";
   const maxCandles = opts?.maxCandles ?? 500;
   const decisionFn = opts?.decisionFn ?? evaluateStrategyForSymbol;
   const backfill = opts?.backfill;

@@ -107,12 +107,12 @@ const LOG_DEDUPE_WINDOW_MS = 1500;
 const DATA_HEALTH_LAG_FACTOR = 2;
 const FEED_TIMEFRAME_MS_BY_RISK_MODE: Record<AISettings["riskMode"], number> = {
   "ai-matic": 5 * 60_000,
-  "ai-matic-x": 60_000,
-  "ai-matic-amd": 60_000,
+  "ai-matic-x": 5 * 60_000,
+  "ai-matic-amd": 5 * 60_000,
   "ai-matic-olikella": 5 * 60_000,
-  "ai-matic-bbo": 60_000,
-  "ai-matic-tree": 60_000,
-  "ai-matic-pro": 60_000,
+  "ai-matic-bbo": 5 * 60_000,
+  "ai-matic-tree": 5 * 60_000,
+  "ai-matic-pro": 5 * 60_000,
 };
 const OLIKELLA_BASE_BACKFILL_LOOKBACK_MINUTES = 60 * 24 * 7;
 const OLIKELLA_HTF_PRELOAD_LOOKBACK_MINUTES = 60 * 24 * 14;

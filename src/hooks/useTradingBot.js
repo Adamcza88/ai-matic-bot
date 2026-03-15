@@ -5366,19 +5366,19 @@ export function useTradingBot(mode, useTestnet = false, authToken) {
         };
         const maxCandles = isAiMaticX || isAiMatic || isAmd || isPro ? 5000 : undefined;
         const backfill = isAiMaticX
-            ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
+            ? { enabled: true, interval: "5", lookbackMinutes: 4320, limit: 1000 }
             : isAiMatic
-                ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
+                ? { enabled: true, interval: "5", lookbackMinutes: 4320, limit: 1000 }
                 : isAmd
-                    ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
+                    ? { enabled: true, interval: "5", lookbackMinutes: 4320, limit: 1000 }
                 : isPro
-                    ? { enabled: true, interval: "1", lookbackMinutes: 4320, limit: 1000 }
+                    ? { enabled: true, interval: "5", lookbackMinutes: 4320, limit: 1000 }
                     : undefined;
         const stop = startPriceFeed(feedSymbols, (symbol, decision) => {
             handleDecisionRef.current?.(symbol, decision);
         }, {
             useTestnet,
-            timeframe: "1",
+            timeframe: "5",
             configOverrides: engineConfig,
             decisionFn,
             maxCandles,
