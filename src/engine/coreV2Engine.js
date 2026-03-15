@@ -107,11 +107,11 @@ const resolveTimeframePair = (riskMode) => {
     case 'ai-matic-scalp':
       return { ltfMin: 3, htfMin: 60 };
     case 'ai-matic-olikella':
-      return { ltfMin: 5, htfMin: 60 };
+      return { ltfMin: 15, htfMin: 240 };
     case 'ai-matic-bbo':
-      return { ltfMin: 5, htfMin: 60 };
+      return { ltfMin: 5, htfMin: 240 };
     case 'ai-matic-pro':
-      return { ltfMin: 5, htfMin: 60 };
+      return { ltfMin: 15, htfMin: 240 };
     case 'ai-matic-amd':
     case 'ai-matic-tree':
     case 'ai-matic':
@@ -126,7 +126,7 @@ export function resolveCoreV2Params(riskMode, overrides = {}) {
     riskMode: String(riskMode ?? 'ai-matic'),
     ltfMin: pair.ltfMin,
     htfMin: pair.htfMin,
-    m15Min: 15,
+    m15Min: 5,
     emaTrendPeriod: clampEmaTrendPeriod(overrides?.emaTrendPeriod),
     lookbacks: {
       minOhlcvBars: CORE_MIN_OHLCV_BARS,
