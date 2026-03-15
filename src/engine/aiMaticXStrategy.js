@@ -25,6 +25,13 @@ const MODE_CONFIG = {
         emaFilter: true,
     },
 };
+export function resolveAiMaticXTimeframes() {
+    const cfg = MODE_CONFIG[ACTIVE_MODE];
+    return {
+        ltfMinutes: cfg.ltfMinutes,
+        htfMinutes: cfg.htfMinutes,
+    };
+}
 const EMA_FAST_PERIOD = 50;
 const EMA_SLOW_PERIOD = 200;
 const ATR_PERIOD = 14;

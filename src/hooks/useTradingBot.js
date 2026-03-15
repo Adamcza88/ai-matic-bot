@@ -11,6 +11,7 @@ import { evaluateHTFMultiTrend } from "../engine/htfTrendFilter.js";
 import { computeEma, computeRsi, findPivotsHigh, findPivotsLow } from "../engine/ta.js";
 import { CandlestickAnalyzer } from "../engine/universal-candlestick-analyzer.js";
 import { computeMarketProfile } from "../engine/marketProfile.js";
+import { computeCoreV2 } from "../engine/coreV2.js";
 import { updateOpenInterest } from "../engine/orderflow.js";
 import { TradingMode } from "../types.js";
 import { SUPPORTED_SYMBOLS, filterSupportedSymbols, } from "../constants/symbols.js";
@@ -1535,8 +1536,13 @@ export const __scalpTest = {
     resolveScalpFibTarget,
 };
 const computeCoreV2Metrics = (candles, riskMode, opts) => {
-    const ltfTimeframeMin = resolveEntryTfMin(riskMode);
     const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
+    return computeCoreV2(candles, {
+        riskMode,
+        resample,
+        emaTrendPeriod: opts?.emaTrendPeriod,
+    });
+    const ltfTimeframeMin = resolveEntryTfMin(riskMode);
     const ltf = resample(ltfTimeframeMin);
     const ltfLast = ltf.length ? ltf[ltf.length - 1] : undefined;
     const ltfClose = ltfLast ? ltfLast.close : Number.NaN;

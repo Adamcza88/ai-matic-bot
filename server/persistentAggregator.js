@@ -10,19 +10,13 @@ import {
   DEFAULT_SELECTED_SYMBOLS,
   resolveSelectedSymbols,
 } from "../src/constants/symbols.js";
-import { evaluateStrategyForSymbol, resampleCandles } from "../src/engine/botEngine.js";
+import { evaluateStrategyForSymbol } from "../src/engine/botEngine.js";
 import { evaluateAiMaticXStrategyForSymbol } from "../src/engine/aiMaticXStrategy.js";
 import { evaluateAiMaticAmdStrategyForSymbol } from "../src/engine/aiMaticAmdStrategy.js";
 import { evaluateAiMaticProStrategyForSymbol } from "../src/engine/aiMaticProStrategy.js";
 import { evaluateAiMaticOliKellaStrategyForSymbol } from "../src/engine/aiMaticOliKellaStrategy.js";
 import { evaluateAiMaticBboStrategyForSymbol } from "../src/engine/aiMaticBboStrategy.js";
-import {
-  computeEma,
-  computeATR,
-  computeRsi,
-  findPivotsHigh,
-  findPivotsLow,
-} from "../src/engine/ta.js";
+import { computeCoreV2 } from "../src/engine/coreV2.js";
 import { getSymbolCatalog } from "./symbolCatalog.js";
 
 const FAST_POLL_MS = 30_000;
@@ -37,14 +31,6 @@ const BACKFILL_PAGE_LIMIT = 1000;
 const BACKFILL_MAX_PAGES = 10;
 const ENGINE_MAX_CANDLES_DEFAULT = 5000;
 const ENGINE_MAX_CANDLES_OLIKELLA = 2500;
-const CORE_LTF_TIMEFRAME_MIN = 5;
-const CORE_HTF_TIMEFRAME_MIN = 5;
-const CORE_M15_TIMEFRAME_MIN = 15;
-const CORE_EMA_TREND_PERIOD = 200;
-const CORE_EMA_CONFIRM_BARS = 2;
-const CORE_EMA_BREAKOUT_LOOKBACK = 8;
-const CORE_VOLUME_LOOKBACK = 200;
-const CORE_PULLBACK_LOOKBACK = 12;
 
 const sessions = new Map();
 
@@ -254,431 +240,18 @@ function mergeCandles(existing, incoming, maxCandles) {
   return sorted.slice(-maxCandles);
 }
 
-function percentile(values, p) {
-  if (!Array.isArray(values) || values.length === 0) return Number.NaN;
-  const sorted = [...values].sort((a, b) => a - b);
-  const rank = Math.min(
-    sorted.length - 1,
-    Math.max(0, Math.ceil((p / 100) * sorted.length) - 1)
-  );
-  return sorted[rank];
+function computeCoreV2FromCandles(candles, riskMode) {
+  if (!Array.isArray(candles)) return null;
+  return computeCoreV2(candles, { riskMode });
 }
 
-function resolveEma200BreakoutState(candles) {
-  const closes = candles.map((c) => Number(c?.close));
-  if (
-    closes.length <
-    Math.max(CORE_EMA_TREND_PERIOD + 2, CORE_EMA_CONFIRM_BARS + 2)
-  ) {
-    return {
-      direction: "NONE",
-      ema: Number.NaN,
-      close: Number.NaN,
-      breakoutBull: false,
-      breakoutBear: false,
-      confirmedBull: false,
-      confirmedBear: false,
-    };
-  }
-
-  const emaArr = computeEma(closes, CORE_EMA_TREND_PERIOD);
-  const lastIdx = closes.length - 1;
-  const close = closes[lastIdx];
-  const ema = emaArr[lastIdx];
-  const start = Math.max(1, closes.length - CORE_EMA_BREAKOUT_LOOKBACK);
-  let bullBreakoutIdx = -1;
-  let bearBreakoutIdx = -1;
-
-  for (let i = start; i <= lastIdx; i++) {
-    const prevClose = closes[i - 1];
-    const prevEma = emaArr[i - 1];
-    const currClose = closes[i];
-    const currEma = emaArr[i];
-    if (!Number.isFinite(prevClose) || !Number.isFinite(prevEma)) continue;
-    if (!Number.isFinite(currClose) || !Number.isFinite(currEma)) continue;
-    if (prevClose <= prevEma && currClose > currEma) bullBreakoutIdx = i;
-    if (prevClose >= prevEma && currClose < currEma) bearBreakoutIdx = i;
-  }
-
-  const confirmedBull =
-    bullBreakoutIdx >= 0 &&
-    lastIdx - bullBreakoutIdx + 1 >= CORE_EMA_CONFIRM_BARS &&
-    (() => {
-      const from = Math.max(
-        bullBreakoutIdx,
-        lastIdx - CORE_EMA_CONFIRM_BARS + 1
-      );
-      for (let i = from; i <= lastIdx; i++) {
-        if (closes[i] <= emaArr[i]) return false;
-      }
-      return true;
-    })();
-  const confirmedBear =
-    bearBreakoutIdx >= 0 &&
-    lastIdx - bearBreakoutIdx + 1 >= CORE_EMA_CONFIRM_BARS &&
-    (() => {
-      const from = Math.max(
-        bearBreakoutIdx,
-        lastIdx - CORE_EMA_CONFIRM_BARS + 1
-      );
-      for (let i = from; i <= lastIdx; i++) {
-        if (closes[i] >= emaArr[i]) return false;
-      }
-      return true;
-    })();
-
-  let direction = "NONE";
-  if (confirmedBull && !confirmedBear) direction = "BULL";
-  else if (confirmedBear && !confirmedBull) direction = "BEAR";
-  else if (confirmedBull && confirmedBear) {
-    direction = bullBreakoutIdx >= bearBreakoutIdx ? "BULL" : "BEAR";
-  }
-
-  return {
-    direction,
-    ema,
-    close,
-    breakoutBull: bullBreakoutIdx >= 0,
-    breakoutBear: bearBreakoutIdx >= 0,
-    confirmedBull,
-    confirmedBear,
-  };
-}
-
-function resolveMacdState(closes) {
-  if (!Array.isArray(closes) || closes.length < 35) {
-    return { macdHist: Number.NaN, macdSignal: Number.NaN };
-  }
-  const ema12 = computeEma(closes, 12);
-  const ema26 = computeEma(closes, 26);
-  const macd = ema12.map((value, idx) => value - (ema26[idx] ?? Number.NaN));
-  const signal = computeEma(macd, 9);
-  const hist = macd.map((value, idx) => value - (signal[idx] ?? Number.NaN));
-  return {
-    macdHist: hist[hist.length - 1] ?? Number.NaN,
-    macdSignal: signal[signal.length - 1] ?? Number.NaN,
-  };
-}
-
-function computeCoreV2FromCandles(candles) {
-  if (!Array.isArray(candles) || candles.length < 20) return null;
-
-  const ltf = resampleCandles(candles, CORE_LTF_TIMEFRAME_MIN);
-  if (!Array.isArray(ltf) || ltf.length < 2) return null;
-  const ltfLast = ltf[ltf.length - 1];
-  const ltfPrev = ltf[ltf.length - 2];
-  const ltfCloses = ltf.map((c) => Number(c?.close));
-  const ltfHighs = ltf.map((c) => Number(c?.high));
-  const ltfLows = ltf.map((c) => Number(c?.low));
-  const ltfVolumes = ltf.map((c) => Number(c?.volume));
-  const ltfMacdState = resolveMacdState(ltfCloses);
-  const ltfRsiArr = computeRsi(ltfCloses, 14);
-  const ltfRsi = ltfRsiArr[ltfRsiArr.length - 1] ?? Number.NaN;
-
-  const ema8Arr = computeEma(ltfCloses, 8);
-  const ema12Arr = computeEma(ltfCloses, 12);
-  const ema21Arr = computeEma(ltfCloses, 21);
-  const ema26Arr = computeEma(ltfCloses, 26);
-  const ema50Arr = computeEma(ltfCloses, 50);
-  const ema200Arr = computeEma(ltfCloses, CORE_EMA_TREND_PERIOD);
-  const ema8 = ema8Arr[ema8Arr.length - 1] ?? Number.NaN;
-  const ema12 = ema12Arr[ema12Arr.length - 1] ?? Number.NaN;
-  const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
-  const ema26 = ema26Arr[ema26Arr.length - 1] ?? Number.NaN;
-  const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
-  const ema200 = ema200Arr[ema200Arr.length - 1] ?? Number.NaN;
-  const ema200State = resolveEma200BreakoutState(ltf);
-
-  const atrArr = computeATR(ltfHighs, ltfLows, ltfCloses, 14);
-  const atr14 = atrArr[atrArr.length - 1] ?? Number.NaN;
-  const ltfClose = Number(ltfLast?.close ?? Number.NaN);
-  const atrPct =
-    Number.isFinite(atr14) && Number.isFinite(ltfClose) && ltfClose > 0
-      ? atr14 / ltfClose
-      : Number.NaN;
-  const sep1 =
-    Number.isFinite(atr14) && atr14 > 0
-      ? Math.abs(ema8 - ema21) / atr14
-      : Number.NaN;
-  const sep2 =
-    Number.isFinite(atr14) && atr14 > 0
-      ? Math.abs(ema21 - ema50) / atr14
-      : Number.NaN;
-
-  const recentVolumes = ltfVolumes
-    .slice(-CORE_VOLUME_LOOKBACK)
-    .filter((value) => Number.isFinite(value));
-  const volumeCurrent = recentVolumes[recentVolumes.length - 1] ?? Number.NaN;
-  const volumeP50 = percentile(recentVolumes, 50);
-  const volumeP60 = percentile(recentVolumes, 60);
-  const volumeP65 = percentile(recentVolumes, 65);
-  const volumeP70 = percentile(recentVolumes, 70);
-
-  const htf = resampleCandles(candles, CORE_HTF_TIMEFRAME_MIN);
-  const htfCloses = htf.map((c) => Number(c?.close));
-  const htfHighs = htf.map((c) => Number(c?.high));
-  const htfLows = htf.map((c) => Number(c?.low));
-  const htfClose = htfCloses[htfCloses.length - 1] ?? Number.NaN;
-  const htfState = resolveEma200BreakoutState(htf);
-  const htfAtrArr = computeATR(htfHighs, htfLows, htfCloses, 14);
-  const htfAtr14 = htfAtrArr[htfAtrArr.length - 1] ?? Number.NaN;
-  const htfAtrPct =
-    Number.isFinite(htfAtr14) && Number.isFinite(htfClose) && htfClose > 0
-      ? htfAtr14 / htfClose
-      : Number.NaN;
-  const htfPivotsHigh = findPivotsHigh(htf, 2, 2);
-  const htfPivotsLow = findPivotsLow(htf, 2, 2);
-
-  const m15 = resampleCandles(candles, CORE_M15_TIMEFRAME_MIN);
-  const m15Closes = m15.map((c) => Number(c?.close));
-  const m15Highs = m15.map((c) => Number(c?.high));
-  const m15Lows = m15.map((c) => Number(c?.low));
-  const m15Last = m15[m15.length - 1];
-  const m15Close = Number(m15Last?.close ?? Number.NaN);
-  const ema15m12Arr = computeEma(m15Closes, 12);
-  const ema15m26Arr = computeEma(m15Closes, 26);
-  const ema15m12 = ema15m12Arr[ema15m12Arr.length - 1] ?? Number.NaN;
-  const ema15m26 = ema15m26Arr[ema15m26Arr.length - 1] ?? Number.NaN;
-  const ema15mTrend =
-    Number.isFinite(ema15m12) && Number.isFinite(ema15m26)
-      ? ema15m12 > ema15m26
-        ? "BULL"
-        : ema15m12 < ema15m26
-          ? "BEAR"
-          : "NONE"
-      : "NONE";
-  const m15Sma20 =
-    m15Closes.length >= 20
-      ? m15Closes.slice(-20).reduce((sum, value) => sum + value, 0) / 20
-      : Number.NaN;
-  const m15Sma50 =
-    m15Closes.length >= 50
-      ? m15Closes.slice(-50).reduce((sum, value) => sum + value, 0) / 50
-      : Number.NaN;
-  const m15SmaTrend =
-    Number.isFinite(m15Sma20) &&
-    Number.isFinite(m15Sma50) &&
-    Number.isFinite(m15Close)
-      ? m15Sma20 > m15Sma50 && m15Close > m15Sma20
-        ? "BULL"
-        : m15Sma20 < m15Sma50 && m15Close < m15Sma20
-          ? "BEAR"
-          : "NONE"
-      : "NONE";
-  const m15AtrArr = computeATR(m15Highs, m15Lows, m15Closes, 14);
-  const m15Atr14 = m15AtrArr[m15AtrArr.length - 1] ?? Number.NaN;
-  const m15AtrPct =
-    Number.isFinite(m15Atr14) && Number.isFinite(m15Close) && m15Close > 0
-      ? m15Atr14 / m15Close
-      : Number.NaN;
-  const m15EmaSpreadPct =
-    Number.isFinite(ema15m12) &&
-    Number.isFinite(ema15m26) &&
-    Number.isFinite(m15Close) &&
-    m15Close > 0
-      ? Math.abs(ema15m12 - ema15m26) / m15Close
-      : Number.NaN;
-  const m15MacdState = resolveMacdState(m15Closes);
-
-  const pivotsHigh = findPivotsHigh(ltf, 2, 2);
-  const pivotsLow = findPivotsLow(ltf, 2, 2);
-  const lastLow = pivotsLow[pivotsLow.length - 1];
-  const lastHigh = pivotsHigh[pivotsHigh.length - 1];
-  const prevHigh =
-    lastLow ? pivotsHigh.filter((p) => p.idx < lastLow.idx).pop() : undefined;
-  const prevLow =
-    lastHigh ? pivotsLow.filter((p) => p.idx < lastHigh.idx).pop() : undefined;
-  const prevLowPivot = pivotsLow[pivotsLow.length - 2];
-  const prevHighPivot = pivotsHigh[pivotsHigh.length - 2];
-  const microBreakLong =
-    Boolean(prevHigh && lastLow) &&
-    Number.isFinite(ltfClose) &&
-    ltfClose > prevHigh.price;
-  const microBreakShort =
-    Boolean(prevLow && lastHigh) &&
-    Number.isFinite(ltfClose) &&
-    ltfClose < prevLow.price;
-
-  let pullbackLong = false;
-  let pullbackShort = false;
-  for (
-    let i = Math.max(0, ltf.length - CORE_PULLBACK_LOOKBACK);
-    i < ltf.length;
-    i++
-  ) {
-    const candle = ltf[i];
-    const ema12At = ema12Arr[i];
-    const ema26At = ema26Arr[i];
-    if (!candle || !Number.isFinite(ema12At) || !Number.isFinite(ema26At)) {
-      continue;
-    }
-    const lowZone = Math.min(ema12At, ema26At);
-    const highZone = Math.max(ema12At, ema26At);
-    if (
-      candle.close <= ema12At ||
-      (candle.close >= lowZone && candle.close <= highZone)
-    ) {
-      pullbackLong = true;
-    }
-    if (
-      candle.close >= ema12At ||
-      (candle.close >= lowZone && candle.close <= highZone)
-    ) {
-      pullbackShort = true;
-    }
-  }
-
-  const m15TrendLongOk =
-    htfState.direction === "BULL" &&
-    htfState.breakoutBull &&
-    htfState.confirmedBull;
-  const m15TrendShortOk =
-    htfState.direction === "BEAR" &&
-    htfState.breakoutBear &&
-    htfState.confirmedBear;
-
-  const ltfOpen = Number(ltfLast?.open ?? Number.NaN);
-  const ltfHigh = Number(ltfLast?.high ?? Number.NaN);
-  const ltfLow = Number(ltfLast?.low ?? Number.NaN);
-
-  return {
-    ltfTimeframeMin: CORE_LTF_TIMEFRAME_MIN,
-    ltfOpenTime: Number(ltfLast?.openTime ?? Number.NaN),
-    ltfClose,
-    ltfOpen,
-    ltfHigh,
-    ltfLow,
-    ltfVolume: Number(ltfLast?.volume ?? Number.NaN),
-    ltfPrevClose: Number(ltfPrev?.close ?? Number.NaN),
-    ltfPrevHigh: Number(ltfPrev?.high ?? Number.NaN),
-    ltfPrevLow: Number(ltfPrev?.low ?? Number.NaN),
-    ltfPrevVolume: Number(ltfPrev?.volume ?? Number.NaN),
-    ema8,
-    ema12,
-    ema21,
-    ema26,
-    ema50,
-    ema200,
-    ema200BreakoutBull: ema200State.breakoutBull,
-    ema200BreakoutBear: ema200State.breakoutBear,
-    ema200ConfirmBull: ema200State.confirmedBull,
-    ema200ConfirmBear: ema200State.confirmedBear,
-    atr14,
-    atrPct,
-    sep1,
-    sep2,
-    volumeCurrent,
-    volumeP50,
-    volumeP60,
-    volumeP65,
-    volumeP70,
-    volumeTodBaseline: Number.NaN,
-    volumeTodThreshold: Number.NaN,
-    volumeTodRatio: Number.NaN,
-    volumeTodSampleCount: 0,
-    volumeTodSlotMinute: Number.NaN,
-    volumeTodFallback: true,
-    volumeSma: Number.NaN,
-    volumeStd: Number.NaN,
-    volumeZ: Number.NaN,
-    volumeSpike: false,
-    ltfRange:
-      Number.isFinite(ltfHigh) && Number.isFinite(ltfLow) ? ltfHigh - ltfLow : Number.NaN,
-    ltfRangeSma: Number.NaN,
-    ltfRangeExpansionSma: false,
-    ltfUp3:
-      ltfCloses.length >= 3 &&
-      ltfCloses[ltfCloses.length - 1] > ltfCloses[ltfCloses.length - 2] &&
-      ltfCloses[ltfCloses.length - 2] > ltfCloses[ltfCloses.length - 3],
-    ltfDown3:
-      ltfCloses.length >= 3 &&
-      ltfCloses[ltfCloses.length - 1] < ltfCloses[ltfCloses.length - 2] &&
-      ltfCloses[ltfCloses.length - 2] < ltfCloses[ltfCloses.length - 3],
-    ltfVolDown3:
-      recentVolumes.length >= 3 &&
-      recentVolumes[recentVolumes.length - 1] < recentVolumes[recentVolumes.length - 2] &&
-      recentVolumes[recentVolumes.length - 2] < recentVolumes[recentVolumes.length - 3],
-    ltfFakeBreakHigh: false,
-    ltfFakeBreakLow: false,
-    volumeSpikeCurrent: Number.NaN,
-    volumeSpikePrev: Number.NaN,
-    volumeSpikeFading: false,
-    volumeFalling: false,
-    volumeRising: false,
-    ltfRangeExpansion: false,
-    ltfRangeExpVolume: false,
-    ltfSweepBackInside: false,
-    ltfRsi: ltfRsi,
-    ltfMacdHist: ltfMacdState.macdHist,
-    ltfMacdSignal: ltfMacdState.macdSignal,
-    ltfRsiNeutral: Number.isFinite(ltfRsi) ? ltfRsi >= 45 && ltfRsi <= 55 : false,
-    ltfNoNewHigh: false,
-    ltfNoNewLow: false,
-    htfClose,
-    htfEma200: htfState.ema,
-    htfBias:
-      htfState.direction === "BULL"
-        ? "BULL"
-        : htfState.direction === "BEAR"
-          ? "BEAR"
-          : "NONE",
-    htfBreakoutBull: htfState.breakoutBull,
-    htfBreakoutBear: htfState.breakoutBear,
-    htfConfirmBull: htfState.confirmedBull,
-    htfConfirmBear: htfState.confirmedBear,
-    htfAtr14,
-    htfAtrPct,
-    htfPivotHigh: htfPivotsHigh[htfPivotsHigh.length - 1]?.price,
-    htfPivotLow: htfPivotsLow[htfPivotsLow.length - 1]?.price,
-    m15Close,
-    m15Sma20,
-    m15Sma50,
-    m15SmaTrend,
-    m15Atr14,
-    m15AtrPct,
-    m15EmaSpreadPct,
-    m15OverlapWicky: false,
-    m15TrendLongOk,
-    m15TrendShortOk,
-    m15DriftBlocked: false,
-    m15EmaCompression: false,
-    m15EmaCompressionSoft: false,
-    m15MacdHist: m15MacdState.macdHist,
-    m15MacdHistPrev: Number.NaN,
-    m15MacdHistPrev2: Number.NaN,
-    m15MacdWeak3: false,
-    m15MacdWeak2: false,
-    m15ImpulseWeak: false,
-    m15WickIndecision: false,
-    m15WickIndecisionSoft: false,
-    ema15m12,
-    ema15m26,
-    ema15mTrend,
-    emaCrossDir: "NONE",
-    emaCrossBarsAgo: undefined,
-    pullbackLong,
-    pullbackShort,
-    pivotHigh: prevHigh?.price,
-    pivotLow: prevLow?.price,
-    lastPivotHigh: lastHigh?.price,
-    lastPivotLow: lastLow?.price,
-    prevPivotHigh: prevHighPivot?.price,
-    prevPivotLow: prevLowPivot?.price,
-    microBreakLong,
-    microBreakShort,
-    rsiBullDiv: false,
-    rsiBearDiv: false,
-    ltfCrossRsiAgainst: false,
-  };
-}
-
-function enrichDecisionWithCore(decision, candles) {
+function enrichDecisionWithCore(decision, candles, riskMode) {
   if (!decision || typeof decision !== "object") return decision;
   const existingCore =
     decision.coreV2 && typeof decision.coreV2 === "object"
       ? decision.coreV2
       : null;
-  const derivedCore = computeCoreV2FromCandles(candles);
+  const derivedCore = computeCoreV2FromCandles(candles, riskMode);
   if (!existingCore && !derivedCore) return decision;
   return {
     ...decision,
@@ -943,7 +516,7 @@ async function initEngineBackfill(session) {
       }
       try {
         const rawDecision = session.engine.decisionFn(symbol, candles);
-        const decision = enrichDecisionWithCore(rawDecision, candles);
+        const decision = enrichDecisionWithCore(rawDecision, candles, session.engine.riskMode);
         session.engine.decisions.set(symbol, { decision, ts });
         session.engine.lastDecisionAt = ts;
         if (fetchError) {
@@ -955,7 +528,8 @@ async function initEngineBackfill(session) {
         try {
           const fallbackDecision = enrichDecisionWithCore(
             session.engine.decisionFn(symbol, []),
-            []
+            [],
+            session.engine.riskMode
           );
           session.engine.decisions.set(symbol, {
             decision: fallbackDecision,
@@ -998,7 +572,7 @@ function onWsUpdate(session, event) {
     session.engine.candlesBySymbol.set(symbol, merged);
     try {
       const rawDecision = session.engine.decisionFn(symbol, merged);
-      const decision = enrichDecisionWithCore(rawDecision, merged);
+      const decision = enrichDecisionWithCore(rawDecision, merged, session.engine.riskMode);
       session.engine.decisions.set(symbol, { decision, ts });
       session.engine.lastDecisionAt = ts;
       session.engine.lastError = null;
@@ -1171,7 +745,7 @@ function createSession(args) {
   const bootstrapTs = Date.now();
   for (const symbol of engineSymbols) {
     try {
-      const fallbackDecision = enrichDecisionWithCore(decisionFn(symbol, []), []);
+      const fallbackDecision = enrichDecisionWithCore(decisionFn(symbol, []), [], riskMode);
       session.engine.decisions.set(symbol, {
         decision: fallbackDecision,
         ts: bootstrapTs,

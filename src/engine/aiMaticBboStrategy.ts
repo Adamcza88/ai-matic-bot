@@ -13,6 +13,7 @@ import {
   findPivotsHigh,
   findPivotsLow,
 } from "./ta";
+import { computeCoreV2 } from "./coreV2";
 
 type Direction = "BULL" | "BEAR" | "NONE";
 type Bias4H = "LONG" | "SHORT" | "NEUTRAL";
@@ -586,139 +587,27 @@ export function evaluateAiMaticBboStrategyForSymbol(
     };
   }
 
+  const baseCoreV2 = computeCoreV2(candles, {
+    riskMode: "ai-matic-bbo",
+  });
   const coreV2 = {
-    ltfTimeframeMin: 5,
-    ltfOpenTime: latestM5?.openTime ?? Number.NaN,
-    ltfClose: latestM5?.close ?? Number.NaN,
-    ltfOpen: latestM5?.open ?? Number.NaN,
-    ltfHigh: latestM5?.high ?? Number.NaN,
-    ltfLow: latestM5?.low ?? Number.NaN,
-    ltfVolume: latestM5?.volume ?? Number.NaN,
-    ltfPrevClose: previousM5?.close ?? Number.NaN,
-    ltfPrevHigh: previousM5?.high ?? Number.NaN,
-    ltfPrevLow: previousM5?.low ?? Number.NaN,
-    ltfPrevVolume: previousM5?.volume ?? Number.NaN,
-    ema8: last(computeEma(m5Closes, 8)) ?? Number.NaN,
-    ema12,
-    ema21: last(computeEma(m5Closes, 21)) ?? Number.NaN,
-    ema26,
-    ema50,
-    ema200,
-    ema200BreakoutBull: direction === "BULL" && trendAligned,
-    ema200BreakoutBear: direction === "BEAR" && trendAligned,
-    ema200ConfirmBull: direction === "BULL" && trendAligned,
-    ema200ConfirmBear: direction === "BEAR" && trendAligned,
-    atr14: atr5,
-    atrPct:
-      Number.isFinite(atr5) && Number.isFinite(entry) && entry > 0 ? atr5 / entry : Number.NaN,
-    sep1:
-      Number.isFinite(atr5) && atr5 > 0 && Number.isFinite(ema12) && Number.isFinite(ema26)
-        ? Math.abs(ema12 - ema26) / atr5
-        : Number.NaN,
-    sep2:
-      Number.isFinite(atr5) && atr5 > 0 && Number.isFinite(ema26) && Number.isFinite(ema50)
-        ? Math.abs(ema26 - ema50) / atr5
-        : Number.NaN,
-    volumeCurrent,
-    volumeP50: Number.NaN,
-    volumeP60: Number.NaN,
-    volumeP65: Number.NaN,
-    volumeP70: Number.NaN,
-    volumeTodBaseline: recentVolumeAvg,
-    volumeTodThreshold:
-      Number.isFinite(recentVolumeAvg) ? recentVolumeAvg * VOLUME_SPIKE_MIN : Number.NaN,
-    volumeTodRatio: volumeRatio,
-    volumeTodSampleCount: Math.min(20, m5Volumes.length),
-    volumeTodSlotMinute: 5,
-    volumeTodFallback: false,
-    volumeSma: recentVolumeAvg,
-    volumeStd: Number.NaN,
-    volumeZ: Number.NaN,
-    volumeSpike: volumeSpikeOk,
-    ltfRange:
-      Number.isFinite(latestM5?.high) && Number.isFinite(latestM5?.low)
-        ? (latestM5?.high ?? 0) - (latestM5?.low ?? 0)
-        : Number.NaN,
-    ltfRangeSma: mean(m5.slice(-20).map((candle) => candle.high - candle.low)),
-    ltfRangeExpansionSma: atrExpansionOk,
-    ltfUp3:
-      m5Closes.length >= 3 &&
-      m5Closes[m5Closes.length - 1] > m5Closes[m5Closes.length - 2] &&
-      m5Closes[m5Closes.length - 2] > m5Closes[m5Closes.length - 3],
-    ltfDown3:
-      m5Closes.length >= 3 &&
-      m5Closes[m5Closes.length - 1] < m5Closes[m5Closes.length - 2] &&
-      m5Closes[m5Closes.length - 2] < m5Closes[m5Closes.length - 3],
-    ltfVolDown3: false,
-    ltfFakeBreakHigh: false,
-    ltfFakeBreakLow: false,
-    volumeSpikeCurrent: volumeCurrent,
-    volumeSpikePrev: Number.NaN,
-    volumeSpikeFading: false,
-    volumeFalling: false,
-    volumeRising: volumeSpikeOk,
-    ltfRangeExpansion: atrExpansionOk,
-    ltfRangeExpVolume: volumeSpikeOk,
-    ltfSweepBackInside: false,
-    ltfRsi: Number.NaN,
-    ltfMacdHist: ema12 - ema26,
-    ltfMacdSignal: Number.NaN,
-    ltfRsiNeutral: false,
-    ltfNoNewHigh: false,
-    ltfNoNewLow: false,
-    htfClose: last(h1.map((candle) => candle.close)) ?? Number.NaN,
-    htfEma200: bias4h.ema200,
-    htfBias: direction === "NONE" ? "NONE" : direction,
-    htfBreakoutBull: direction === "BULL",
-    htfBreakoutBear: direction === "BEAR",
-    htfConfirmBull: direction === "BULL",
-    htfConfirmBear: direction === "BEAR",
-    htfAtr14: atr4,
-    htfAtrPct: h4AtrPct,
-    htfPivotHigh: last(findPivotsHigh(h1, 2, 2))?.price,
-    htfPivotLow: last(findPivotsLow(h1, 2, 2))?.price,
-    m15Close: last(m15.map((candle) => candle.close)) ?? Number.NaN,
-    m15Atr14: last(computeATR(m15.map((c) => c.high), m15.map((c) => c.low), m15.map((c) => c.close), 14)) ?? Number.NaN,
-    m15AtrPct: Number.NaN,
-    m15EmaSpreadPct:
-      Number.isFinite(m15Trend.fastNow) &&
-      Number.isFinite(m15Trend.slowNow) &&
-      Number.isFinite(last(m15.map((c) => c.close)))
-        ? Math.abs(m15Trend.fastNow - m15Trend.slowNow) /
-          (last(m15.map((c) => c.close)) ?? 1)
-        : Number.NaN,
-    m15OverlapWicky: false,
-    m15TrendLongOk: m15Trend.direction === "BULL",
-    m15TrendShortOk: m15Trend.direction === "BEAR",
-    m15DriftBlocked: false,
-    m15EmaCompression: false,
-    m15EmaCompressionSoft: false,
-    m15MacdHist: Number.NaN,
-    m15MacdHistPrev: Number.NaN,
-    m15MacdHistPrev2: Number.NaN,
-    m15MacdWeak3: false,
-    m15MacdWeak2: false,
-    m15ImpulseWeak: false,
-    m15WickIndecision: false,
-    m15WickIndecisionSoft: false,
-    ema15m12: m15Trend.fastNow,
-    ema15m26: m15Trend.slowNow,
-    ema15mTrend: m15Trend.direction,
-    emaCrossDir: m5Trend.direction,
-    emaCrossBarsAgo: 0,
+    ...baseCoreV2,
     pullbackLong: direction === "BULL" && pullback.touched,
     pullbackShort: direction === "BEAR" && pullback.touched,
-    pivotHigh: microBreak.correctionHigh,
-    pivotLow: microBreak.correctionLow,
-    lastPivotHigh: microBreak.correctionHigh,
-    lastPivotLow: microBreak.correctionLow,
-    prevPivotHigh: Number.NaN,
-    prevPivotLow: Number.NaN,
     microBreakLong: direction === "BULL" && microBreak.breakOk,
     microBreakShort: direction === "BEAR" && microBreak.breakOk,
-    rsiBullDiv: false,
-    rsiBearDiv: false,
-    ltfCrossRsiAgainst: false,
+    pivotHigh: Number.isFinite(microBreak.correctionHigh)
+      ? microBreak.correctionHigh
+      : baseCoreV2.pivotHigh,
+    pivotLow: Number.isFinite(microBreak.correctionLow)
+      ? microBreak.correctionLow
+      : baseCoreV2.pivotLow,
+    lastPivotHigh: Number.isFinite(microBreak.correctionHigh)
+      ? microBreak.correctionHigh
+      : baseCoreV2.lastPivotHigh,
+    lastPivotLow: Number.isFinite(microBreak.correctionLow)
+      ? microBreak.correctionLow
+      : baseCoreV2.lastPivotLow,
   };
 
   const bboContext: AiMaticBboContext = {

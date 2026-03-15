@@ -77,6 +77,14 @@ const MODE_CONFIG: Record<AiMaticXMode, ModeConfig> = {
   },
 };
 
+export function resolveAiMaticXTimeframes(): { ltfMinutes: number; htfMinutes: number } {
+  const cfg = MODE_CONFIG[ACTIVE_MODE];
+  return {
+    ltfMinutes: cfg.ltfMinutes,
+    htfMinutes: cfg.htfMinutes,
+  };
+}
+
 const EMA_FAST_PERIOD = 50;
 const EMA_SLOW_PERIOD = 200;
 const ATR_PERIOD = 14;

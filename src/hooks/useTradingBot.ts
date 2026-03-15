@@ -43,6 +43,7 @@ import {
 } from "../engine/bybitKline";
 import { TradingMode } from "../types";
 import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy";
+import { computeCoreV2 } from "../engine/coreV2";
 import { getOrderFlowSnapshot } from "../engine/orderflow";
 import {
   DEFAULT_SELECTED_SYMBOLS,
@@ -3525,8 +3526,14 @@ const computeCoreV2Metrics = (
   riskMode: AISettings["riskMode"],
   opts?: { resample?: ResampleFn; emaTrendPeriod?: number }
 ): CoreV2Metrics => {
+  const resample = opts?.resample ?? ((tf: number) => resampleCandles(candles, tf));
+  return computeCoreV2(candles, {
+    riskMode,
+    resample,
+    emaTrendPeriod: opts?.emaTrendPeriod,
+  }) as CoreV2Metrics;
+
   const ltfTimeframeMin = resolveEntryTfMin(riskMode);
-  const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
   const emaTrendPeriod = Math.max(
     CORE_V2_MIN_EMA_BARS,
     clampEmaTrendPeriod(opts?.emaTrendPeriod, EMA_TREND_PERIOD)
@@ -4115,7 +4122,7 @@ const computeCoreV2Metrics = (
         buildScalpFibData({
           m15Highs: m15PivotsHigh,
           m15Lows: m15PivotsLow,
-          direction: fibDirection,
+          direction: fibDirection as "BULL" | "BEAR",
         }) ?? undefined;
     }
     scalpConfirm = resolveScalpConfirmation({
