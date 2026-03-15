@@ -160,7 +160,7 @@ function resolveH4TimeframeSync(args: {
       h1OpenTime,
       h4OpenTime,
       h4SyncOk: false,
-      detail: "missing timeframe timestamps (H4 vs 5m)",
+      detail: "missing timeframe timestamps (H1 vs 5m)",
     };
   }
   const expectedH4Open = Math.floor(ltfOpenTime / H4_MS) * H4_MS;
@@ -173,7 +173,7 @@ function resolveH4TimeframeSync(args: {
     h4SyncOk,
     detail: h4SyncOk
       ? `H4 synced to 5m (${Math.round(driftMs / 60_000)}m drift)`
-      : `H4/5m desync ${Math.round(driftMs / 60_000)}m`,
+      : `H1/5m desync ${Math.round(driftMs / 60_000)}m`,
   };
 }
 
@@ -743,7 +743,7 @@ export function evaluateAiMaticOliKellaStrategyForSymbol(
           h1OpenTime: Number.NaN,
           h4OpenTime: Number.NaN,
           h4SyncOk: false,
-          detail: "missing timeframe timestamps (H4 vs 5m)",
+          detail: "missing timeframe timestamps (H1 vs 5m)",
         },
         canScaleIn: false,
       } satisfies AiMaticOliKellaContext,

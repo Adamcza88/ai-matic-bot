@@ -8878,7 +8878,7 @@ export function useTradingBot(
         );
       }
       if (timeframeSyncOk === false) {
-        dataHealthReasons.push(timeframeSyncDetail ?? "H4/5m timeframe desync");
+        dataHealthReasons.push(timeframeSyncDetail ?? "H1/5m timeframe desync");
       }
       const dataHealthStatus: "SAFE" | "UNSAFE" =
         dataHealthReasons.length > 0 ? "UNSAFE" : "SAFE";

@@ -263,7 +263,7 @@ export default function OverviewTab({
               <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{feedAgeText}</div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
-              <div className="text-xs text-muted-foreground">Synchronizace H4 vs 5m</div>
+              <div className="text-xs text-muted-foreground">Synchronizace H1 vs 5m</div>
               <div className="mt-1 text-sm text-foreground">{tfSyncDetail}</div>
             </div>
             <div className="rounded-lg border border-border/60 bg-background/30 p-3">
