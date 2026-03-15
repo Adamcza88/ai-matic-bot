@@ -4,7 +4,6 @@ import { sendIntent } from "../api/botApi";
 import { EntryType, Profile, Symbol } from "../api/types";
 import { getApiBase } from "../engine/networkConfig";
 import {
-  computeTimeOfDayVolumeGate,
   computeCorrelatedExposureScale,
   computeRsiBollingerEnvelope,
   evaluateAltseasonRegime,
@@ -35,6 +34,13 @@ import type {
   Candle,
   PortfolioExposure,
 } from "../engine/botEngine";
+import {
+  buildTodBaseline,
+  candleToBybitKline,
+  highest,
+  lowest,
+  sign,
+} from "../engine/bybitKline";
 import { TradingMode } from "../types";
 import { evaluateAiMaticProStrategyForSymbol } from "../engine/aiMaticProStrategy";
 import { getOrderFlowSnapshot } from "../engine/orderflow";
@@ -147,8 +153,24 @@ const CORE_V2_VOLUME_PCTL: Record<AISettings["riskMode"], number> = {
   "ai-matic-tree": 65,
   "ai-matic-pro": 65,
 };
-const CORE_V2_VOLUME_TOD_LOOKBACK_DAYS = 10;
-const CORE_V2_VOLUME_TOD_MIN_SAMPLES = 6;
+const CORE_V2_VOLUME_TOD_LOOKBACK_DAYS = 20;
+const CORE_V2_VOLUME_TOD_MIN_SAMPLES = 10;
+const CORE_V2_MIN_OHLCV_BARS = 250;
+const CORE_V2_MIN_EMA_BARS = 200;
+const CORE_V2_MIN_INDICATOR_BARS = 35;
+const CORE_V2_VOLUME_PERCENTILE_WINDOW = 120;
+const CORE_V2_VOLUME_STATS_WINDOW = 50;
+const CORE_V2_RANGE_SMA_WINDOW = 20;
+const CORE_V2_FAKE_BREAK_LOOKBACK = 5;
+const CORE_V2_RANGE_EXPANSION_MULT = 1.25;
+const CORE_V2_EMA_BREAKOUT_ATR_MULT = 0.1;
+const CORE_V2_EMA_CONFIRM_ATR_MULT = 0.05;
+const CORE_V2_TOD_THRESHOLD_MULT = 1.2;
+const CORE_V2_TOD_FALLBACK_P50_MULT = 1.1;
+const CORE_V2_TOD_MIN_RATIO = 1.1;
+const CORE_V2_EMA_COMPRESSION_HARD_PCT = 0.12;
+const CORE_V2_EMA_COMPRESSION_SOFT_PCT = 0.2;
+const CORE_V2_M15_IMPULSE_WEAK_SPREAD_PCT = 0.25;
 const CORE_V2_SCORE_GATE: Record<
   AISettings["riskMode"],
   { major: number; alt: number }
@@ -252,36 +274,16 @@ const SCALP_EMA_PERIOD = 21;
 const SCALP_SWING_LOOKBACK = 2;
 const SCALP_EMA_FLAT_PCT = 0.02;
 const SCALP_EMA_CROSS_LOOKBACK = 6;
-const SCALP_DIV_LOOKBACK = 20;
-const SCALP_PIVOT_MIN_GAP = 5;
-const SCALP_PIVOT_MAX_GAP = 20;
 const SCALP_FIB_LEVELS = [0.382, 0.5, 0.618] as const;
 const SCALP_FIB_EXT = [0.618, 1.0, 1.618] as const;
-const SCALP_FIB_TOL_ATR = 0.2;
-const SCALP_FIB_TOL_PCT = 0.0005;
-const SCALP_VOL_LEN = 20;
 const SCALP_VOL_SPIKE_MULT = 1.8;
-const SCALP_VOL_Z_MIN = 2.0;
-const SCALP_RANGE_SMA_LEN = 20;
-const SCALP_RANGE_EXP_MULT = 1.8;
-const SCALP_TREND_MIN_SPREAD = 0.0015;
-const SCALP_OVERLAP_RATIO = 0.6;
-const SCALP_OVERLAP_BARS = 4;
 const SCALP_COOLDOWN_MS = 5 * 60_000;
 const SCALP_RISK_OFF_MULT = 0.25;
 const SCALP_ATR_MULT_INITIAL = 1.3;
 const SCALP_MAX_LOSSES_IN_ROW = 2;
 const SCALP_MAX_DAILY_LOSS_R = -2.0;
-const SCALP_M15_EMA_COMPRESSION_ATR = 0.35;
-const SCALP_M15_EMA_COMPRESSION_SOFT_ATR = 0.55;
-const SCALP_M15_WICK_RATIO = 0.6;
-const SCALP_M15_WICK_MIN_COUNT = 2;
-const SCALP_M15_WICK_MIN_COUNT_SOFT = 1;
-const SCALP_M15_IMPULSE_LOOKBACK = 8;
-const SCALP_FAKE_RANGE_LOOKBACK = 10;
-const SCALP_VOLUME_SPIKE_LOOKBACK = 20;
-const SCALP_RANGE_EXP_ATR = 1.4;
-const SCALP_TIME_DECAY_MAX_BARS = 8;
+const SCALP_M15_EMA_COMPRESSION_ATR = CORE_V2_EMA_COMPRESSION_HARD_PCT;
+const SCALP_M15_EMA_COMPRESSION_SOFT_ATR = CORE_V2_EMA_COMPRESSION_SOFT_PCT;
 const SCALP_RSI_NEUTRAL_LOW = 45;
 const SCALP_RSI_NEUTRAL_HIGH = 55;
 const SCALP_VOLUME_TREND_LOOKBACK = 3;
@@ -3005,25 +3007,36 @@ type ScalpContext = {
 type ScalpFibLevel = "38.2" | "50" | "61.8";
 type ScalpFibExtLevel = "61.8" | "100" | "161.8";
 type ScalpFibData = {
-  direction: "BULL" | "BEAR";
   swingHigh: number;
   swingLow: number;
   range: number;
-  retrace: Record<ScalpFibLevel, number>;
-  ext: Record<ScalpFibExtLevel, number>;
-  m5InZone: boolean;
-  ltfInZone: boolean;
-  hitLevel?: ScalpFibLevel;
-  m5Level?: ScalpFibLevel;
-  ltfLevel?: ScalpFibLevel;
+  fib236: number;
+  fib382: number;
+  fib500: number;
+  fib618: number;
+  fib705: number;
+  fib786: number;
+  longEntryZoneLow: number;
+  longEntryZoneHigh: number;
+  shortEntryZoneLow: number;
+  shortEntryZoneHigh: number;
+  trend: "BULL" | "BEAR" | "NONE";
+  valid: boolean;
 };
 
 type ScalpConfirm = {
-  obTouch: boolean;
-  gapTouch: boolean;
-  vpConfirm: boolean;
-  tlPullback: boolean;
-  any: boolean;
+  trendAligned: boolean;
+  pullbackValid: boolean;
+  microBreakValid: boolean;
+  volumeValid: boolean;
+  rangeValid: boolean;
+  rsiValid: boolean;
+  macdValid: boolean;
+  noCompression: boolean;
+  noIndecision: boolean;
+  noRsiAgainst: boolean;
+  score: number;
+  confirmed: boolean;
 };
 
 function buildScalpTrend(candles: Candle[], timeframeMin: number): ScalpTrend | undefined {
@@ -3236,6 +3249,9 @@ const percentile = (values: number[], p: number) => {
   return sorted[rank];
 };
 
+const average = (values: number[]) =>
+  values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : Number.NaN;
+
 const resolveEntryTfMin = (_riskMode: AISettings["riskMode"]) => 5;
 
 const resolveBboAgeLimit = (symbol: Symbol) =>
@@ -3339,72 +3355,168 @@ const buildScalpFibData = (args: {
   m15Highs: { idx: number; price: number }[];
   m15Lows: { idx: number; price: number }[];
   direction: "BULL" | "BEAR";
-  m5Close: number;
-  ltfClose: number;
-  atr: number;
 }): ScalpFibData | null => {
   const swing = resolveScalpSwing(args.m15Highs, args.m15Lows, args.direction);
   if (!swing) return null;
-  const levels = resolveScalpFibLevels(swing, args.direction);
-  const price = Number.isFinite(args.ltfClose) ? args.ltfClose : args.m5Close;
-  const tolAtr =
-    Number.isFinite(args.atr) && args.atr > 0 ? args.atr * SCALP_FIB_TOL_ATR : 0;
-  const tolPct =
-    Number.isFinite(price) && price > 0 ? price * SCALP_FIB_TOL_PCT : 0;
-  const tolerance = Math.max(tolAtr, tolPct);
-  const m5Level = resolveFibHitLevel(args.m5Close, levels.retrace, tolerance);
-  const ltfLevel = resolveFibHitLevel(args.ltfClose, levels.retrace, tolerance);
-  const m5InZone = Boolean(m5Level);
-  const ltfInZone = Boolean(ltfLevel);
-  const hitLevel = ltfLevel ?? m5Level;
+  const fib236 =
+    args.direction === "BULL"
+      ? swing.high - 0.236 * swing.range
+      : swing.low + 0.236 * swing.range;
+  const fib382 =
+    args.direction === "BULL"
+      ? swing.high - 0.382 * swing.range
+      : swing.low + 0.382 * swing.range;
+  const fib500 =
+    args.direction === "BULL"
+      ? swing.high - 0.5 * swing.range
+      : swing.low + 0.5 * swing.range;
+  const fib618 =
+    args.direction === "BULL"
+      ? swing.high - 0.618 * swing.range
+      : swing.low + 0.618 * swing.range;
+  const fib705 =
+    args.direction === "BULL"
+      ? swing.high - 0.705 * swing.range
+      : swing.low + 0.705 * swing.range;
+  const fib786 =
+    args.direction === "BULL"
+      ? swing.high - 0.786 * swing.range
+      : swing.low + 0.786 * swing.range;
+  const entryZoneLow = Math.min(fib500, fib705);
+  const entryZoneHigh = Math.max(fib500, fib705);
+  const valid =
+    Number.isFinite(swing.high) &&
+    Number.isFinite(swing.low) &&
+    Number.isFinite(swing.range) &&
+    swing.range > 0;
   return {
-    direction: args.direction,
     swingHigh: swing.high,
     swingLow: swing.low,
     range: swing.range,
-    retrace: levels.retrace,
-    ext: levels.ext,
-    m5InZone,
-    ltfInZone,
-    hitLevel,
-    m5Level,
-    ltfLevel,
+    fib236,
+    fib382,
+    fib500,
+    fib618,
+    fib705,
+    fib786,
+    longEntryZoneLow: entryZoneLow,
+    longEntryZoneHigh: entryZoneHigh,
+    shortEntryZoneLow: entryZoneLow,
+    shortEntryZoneHigh: entryZoneHigh,
+    trend: args.direction,
+    valid,
   };
 };
 
 const resolveScalpConfirmation = (args: {
-  pois: AiMaticPoi[];
-  price: number;
-  direction: "BULL" | "BEAR";
-  vpConfirm: boolean;
-  tlPullback: boolean;
+  htfBias: "BULL" | "BEAR" | "NONE";
+  pullbackLong: boolean;
+  pullbackShort: boolean;
+  microBreakLong: boolean;
+  microBreakShort: boolean;
+  volumeSpike: boolean;
+  volumeTodRatio: number;
+  ltfRangeExpansionSma: boolean;
+  ltfRangeExpVolume: boolean;
+  ltfRsiNeutral: boolean;
+  ltfMacdHist: number;
+  m15EmaCompression: boolean;
+  m15WickIndecision: boolean;
+  m15OverlapWicky: boolean;
+  ltfCrossRsiAgainst: boolean;
 }): ScalpConfirm => {
-  const priceOk = Number.isFinite(args.price);
-  const dirOk = (poi: AiMaticPoi) => {
-    const poiDir = String(poi.direction ?? "").toLowerCase();
-    return args.direction === "BULL"
-      ? poiDir === "bullish" || poiDir === "bull"
-      : poiDir === "bearish" || poiDir === "bear";
-  };
-  const inZone = (poi: AiMaticPoi) =>
-    priceOk && Number.isFinite(poi.low) && Number.isFinite(poi.high)
-      ? args.price >= poi.low && args.price <= poi.high
+  const trendAligned =
+    (args.pullbackLong && args.htfBias === "BULL") ||
+    (args.pullbackShort && args.htfBias === "BEAR");
+  const pullbackValid = args.pullbackLong || args.pullbackShort;
+  const microBreakValid = args.microBreakLong || args.microBreakShort;
+  const volumeValid =
+    args.volumeSpike ||
+    (Number.isFinite(args.volumeTodRatio) && args.volumeTodRatio >= CORE_V2_TOD_MIN_RATIO);
+  const rangeValid = args.ltfRangeExpansionSma || args.ltfRangeExpVolume;
+  const rsiValid = !args.ltfRsiNeutral;
+  const macdValid = args.pullbackLong
+    ? args.ltfMacdHist > 0
+    : args.pullbackShort
+      ? args.ltfMacdHist < 0
       : false;
-  const obTouch = args.pois.some(
-    (poi) => String(poi.type).toLowerCase() === "ob" && dirOk(poi) && inZone(poi)
-  );
-  const gapTouch = args.pois.some((poi) => {
-    const type = String(poi.type ?? "").toLowerCase();
-    return (type === "fvg" || type.includes("gap")) && dirOk(poi) && inZone(poi);
-  });
-  const vpConfirm = Boolean(args.vpConfirm);
-  const tlPullback = Boolean(args.tlPullback);
+  const noCompression = !args.m15EmaCompression;
+  const noIndecision = !args.m15WickIndecision && !args.m15OverlapWicky;
+  const noRsiAgainst = !args.ltfCrossRsiAgainst;
+  const scoreFields = [
+    pullbackValid,
+    microBreakValid,
+    volumeValid,
+    rangeValid,
+    rsiValid,
+    macdValid,
+    noCompression,
+    noIndecision,
+    noRsiAgainst,
+  ];
+  const score = scoreFields.filter(Boolean).length;
+  const confirmed =
+    score >= 7 &&
+    trendAligned &&
+    microBreakValid &&
+    volumeValid &&
+    noCompression;
   return {
-    obTouch,
-    gapTouch,
-    vpConfirm,
-    tlPullback,
-    any: obTouch || gapTouch || vpConfirm || tlPullback,
+    trendAligned,
+    pullbackValid,
+    microBreakValid,
+    volumeValid,
+    rangeValid,
+    rsiValid,
+    macdValid,
+    noCompression,
+    noIndecision,
+    noRsiAgainst,
+    score,
+    confirmed,
+  };
+};
+
+const resolveCoreV2TimeOfDayVolume = (args: {
+  ltf: Candle[];
+  volumeCurrent: number;
+  volumeP50: number;
+  volumeP60: number;
+}) => {
+  const latest = args.ltf.length ? args.ltf[args.ltf.length - 1] : undefined;
+  if (!latest) {
+    return {
+      baselineVolume: Number.NaN,
+      thresholdVolume: Number.NaN,
+      currentToBaselineRatio: Number.NaN,
+      sampleCount: 0,
+      slotMinuteOfDay: Number.NaN,
+      fallbackUsed: true,
+    };
+  }
+  const currentBar = candleToBybitKline(latest);
+  const lookbackStart =
+    currentBar.startTime - CORE_V2_VOLUME_TOD_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  const history = args.ltf
+    .slice(0, -1)
+    .map(candleToBybitKline)
+    .filter((k) => Number.isFinite(k.startTime) && k.startTime >= lookbackStart);
+  const tod = buildTodBaseline({
+    currentBar,
+    history,
+    volumeCurrent: args.volumeCurrent,
+    volumeP50: args.volumeP50,
+    volumeP60: args.volumeP60,
+    multiplier: CORE_V2_TOD_THRESHOLD_MULT,
+    minSamples: CORE_V2_VOLUME_TOD_MIN_SAMPLES,
+  });
+  return {
+    baselineVolume: tod.volumeTodBaseline,
+    thresholdVolume: tod.volumeTodThreshold,
+    currentToBaselineRatio: tod.volumeTodRatio,
+    sampleCount: tod.volumeTodSampleCount,
+    slotMinuteOfDay: tod.volumeTodSlotMinute,
+    fallbackUsed: tod.volumeTodFallback,
   };
 };
 
@@ -3415,11 +3527,17 @@ const computeCoreV2Metrics = (
 ): CoreV2Metrics => {
   const ltfTimeframeMin = resolveEntryTfMin(riskMode);
   const resample = opts?.resample ?? ((tf) => resampleCandles(candles, tf));
-  const emaTrendPeriod = clampEmaTrendPeriod(
-    opts?.emaTrendPeriod,
-    EMA_TREND_PERIOD
+  const emaTrendPeriod = Math.max(
+    CORE_V2_MIN_EMA_BARS,
+    clampEmaTrendPeriod(opts?.emaTrendPeriod, EMA_TREND_PERIOD)
   );
   const ltf = resample(ltfTimeframeMin);
+  const htf = resample(5);
+  const m15 = resample(15);
+  const ltfReady = ltf.length >= CORE_V2_MIN_OHLCV_BARS;
+  const htfReady = htf.length >= CORE_V2_MIN_OHLCV_BARS;
+  const m15Ready = m15.length >= CORE_V2_MIN_OHLCV_BARS;
+
   const ltfLast = ltf.length ? ltf[ltf.length - 1] : undefined;
   const ltfPrev = ltf.length > 1 ? ltf[ltf.length - 2] : undefined;
   const ltfOpenTime = ltfLast ? toNumber(ltfLast.openTime) : Number.NaN;
@@ -3435,281 +3553,330 @@ const computeCoreV2Metrics = (
   const ltfCloses = ltf.map((c) => c.close);
   const ltfHighs = ltf.map((c) => c.high);
   const ltfLows = ltf.map((c) => c.low);
+  const ltfVolumes = ltf.map((c) => toNumber(c.volume));
+  const hasLtfIndicators = ltfReady && ltfCloses.length >= CORE_V2_MIN_INDICATOR_BARS;
+  const hasLtfEma = ltfReady && ltfCloses.length >= CORE_V2_MIN_EMA_BARS;
+
   const ema8Arr = computeEma(ltfCloses, 8);
   const ema12Arr = computeEma(ltfCloses, 12);
   const ema21Arr = computeEma(ltfCloses, 21);
   const ema26Arr = computeEma(ltfCloses, 26);
   const ema50Arr = computeEma(ltfCloses, 50);
   const ema200Arr = computeEma(ltfCloses, emaTrendPeriod);
-  const ema8 = ema8Arr[ema8Arr.length - 1] ?? Number.NaN;
-  const ema12 = ema12Arr[ema12Arr.length - 1] ?? Number.NaN;
-  const ema21 = ema21Arr[ema21Arr.length - 1] ?? Number.NaN;
-  const ema26 = ema26Arr[ema26Arr.length - 1] ?? Number.NaN;
-  const ema50 = ema50Arr[ema50Arr.length - 1] ?? Number.NaN;
-  const ema200 = ema200Arr[ema200Arr.length - 1] ?? Number.NaN;
-  const ema200BreakoutState = resolveEma200BreakoutState(ltf, {
-    emaPeriod: emaTrendPeriod,
-    breakoutLookback: EMA_TREND_TOUCH_LOOKBACK,
-    confirmBars: EMA_TREND_CONFIRM_BARS,
-  });
-  const emaCrossLookback = Math.min(
-    Math.max(4, SCALP_EMA_CROSS_LOOKBACK + 2),
-    Math.min(ema12Arr.length, ema26Arr.length)
-  );
-  let emaCrossDir: CoreV2Metrics["emaCrossDir"] = "NONE";
-  let emaCrossBarsAgo: number | undefined;
-  if (emaCrossLookback >= 3) {
-    const size = Math.min(ema12Arr.length, ema26Arr.length);
-    let prevSign = Math.sign(
-      ema12Arr[size - emaCrossLookback] - ema26Arr[size - emaCrossLookback]
-    );
-    for (let i = size - emaCrossLookback + 1; i < size; i++) {
-      const sign = Math.sign(ema12Arr[i] - ema26Arr[i]);
-      if (sign !== 0 && prevSign !== 0 && sign !== prevSign) {
-        emaCrossDir = sign > 0 ? "BULL" : "BEAR";
-        emaCrossBarsAgo = size - 1 - i;
-      }
-      if (sign !== 0) prevSign = sign;
-    }
-  }
-  const atrArr = computeATR(ltfHighs, ltfLows, ltfCloses, 14);
-  const atr14 = atrArr[atrArr.length - 1] ?? Number.NaN;
+  const ema8 = hasLtfEma ? (ema8Arr[ema8Arr.length - 1] ?? Number.NaN) : Number.NaN;
+  const ema12 = hasLtfEma ? (ema12Arr[ema12Arr.length - 1] ?? Number.NaN) : Number.NaN;
+  const ema21 = hasLtfEma ? (ema21Arr[ema21Arr.length - 1] ?? Number.NaN) : Number.NaN;
+  const ema26 = hasLtfEma ? (ema26Arr[ema26Arr.length - 1] ?? Number.NaN) : Number.NaN;
+  const ema50 = hasLtfEma ? (ema50Arr[ema50Arr.length - 1] ?? Number.NaN) : Number.NaN;
+  const ema200 = hasLtfEma ? (ema200Arr[ema200Arr.length - 1] ?? Number.NaN) : Number.NaN;
+  const ema200Prev =
+    hasLtfEma && ema200Arr.length > 1 ? (ema200Arr[ema200Arr.length - 2] ?? Number.NaN) : Number.NaN;
+
+  const atrArr = hasLtfIndicators ? computeATR(ltfHighs, ltfLows, ltfCloses, 14) : [];
+  const atr14 = hasLtfIndicators ? (atrArr[atrArr.length - 1] ?? Number.NaN) : Number.NaN;
   const atrPct =
     Number.isFinite(atr14) && Number.isFinite(ltfClose) && ltfClose > 0
       ? atr14 / ltfClose
       : Number.NaN;
+  const ema200BreakoutBull =
+    ltfReady &&
+    Number.isFinite(ltfPrevClose) &&
+    Number.isFinite(ema200Prev) &&
+    Number.isFinite(ltfClose) &&
+    Number.isFinite(ema200) &&
+    Number.isFinite(atr14) &&
+    ltfPrevClose <= ema200Prev &&
+    ltfClose >= ema200 + CORE_V2_EMA_BREAKOUT_ATR_MULT * atr14;
+  const ema200BreakoutBear =
+    ltfReady &&
+    Number.isFinite(ltfPrevClose) &&
+    Number.isFinite(ema200Prev) &&
+    Number.isFinite(ltfClose) &&
+    Number.isFinite(ema200) &&
+    Number.isFinite(atr14) &&
+    ltfPrevClose >= ema200Prev &&
+    ltfClose <= ema200 - CORE_V2_EMA_BREAKOUT_ATR_MULT * atr14;
+  const ema200ConfirmBull =
+    ltfReady &&
+    Number.isFinite(ltfClose) &&
+    Number.isFinite(ema200) &&
+    Number.isFinite(ltfLow) &&
+    Number.isFinite(atr14) &&
+    ltfClose >= ema200 + CORE_V2_EMA_CONFIRM_ATR_MULT * atr14 &&
+    ltfLow >= ema200 - CORE_V2_EMA_CONFIRM_ATR_MULT * atr14;
+  const ema200ConfirmBear =
+    ltfReady &&
+    Number.isFinite(ltfClose) &&
+    Number.isFinite(ema200) &&
+    Number.isFinite(ltfHigh) &&
+    Number.isFinite(atr14) &&
+    ltfClose <= ema200 - CORE_V2_EMA_CONFIRM_ATR_MULT * atr14 &&
+    ltfHigh <= ema200 + CORE_V2_EMA_CONFIRM_ATR_MULT * atr14;
   const sep1 =
-    Number.isFinite(atr14) && atr14 > 0
-      ? Math.abs(ema8 - ema21) / atr14
+    Number.isFinite(ema8) &&
+    Number.isFinite(ema21) &&
+    Number.isFinite(ltfClose) &&
+    ltfClose > 0
+      ? (Math.abs(ema8 - ema21) / ltfClose) * 100
       : Number.NaN;
   const sep2 =
-    Number.isFinite(atr14) && atr14 > 0
-      ? Math.abs(ema21 - ema50) / atr14
+    Number.isFinite(ema21) &&
+    Number.isFinite(ema50) &&
+    Number.isFinite(ltfClose) &&
+    ltfClose > 0
+      ? (Math.abs(ema21 - ema50) / ltfClose) * 100
       : Number.NaN;
 
-  const vols = ltf.map((c) => toNumber(c.volume));
-  const recentVols = vols.slice(-200).filter((v) => Number.isFinite(v));
-  const volumeCurrent = recentVols[recentVols.length - 1] ?? Number.NaN;
-  const volumeP50 = percentile(recentVols, 50);
-  const volumeP60 = percentile(recentVols, 60);
-  const volumeP65 = percentile(recentVols, 65);
-  const volumeP70 = percentile(recentVols, 70);
-  const volumeTod = computeTimeOfDayVolumeGate(
-    ltf,
-    CORE_V2_VOLUME_PCTL[riskMode] / 100,
-    {
-      lookbackDays: CORE_V2_VOLUME_TOD_LOOKBACK_DAYS,
-      minSamples: CORE_V2_VOLUME_TOD_MIN_SAMPLES,
-      slotMinutes: ltfTimeframeMin,
-    }
-  );
-  const volSlice = recentVols.slice(-SCALP_VOL_LEN);
+  const volumeCurrent = Number.isFinite(ltfVolume) ? ltfVolume : Number.NaN;
+  const percentileVolumes =
+    ltfReady && ltfVolumes.length >= CORE_V2_VOLUME_PERCENTILE_WINDOW
+      ? ltfVolumes.slice(-CORE_V2_VOLUME_PERCENTILE_WINDOW).filter(Number.isFinite)
+      : [];
+  const volumeP50 = percentile(percentileVolumes, 50);
+  const volumeP60 = percentile(percentileVolumes, 60);
+  const volumeP65 = percentile(percentileVolumes, 65);
+  const volumeP70 = percentile(percentileVolumes, 70);
+  const volumeTod = ltfReady
+    ? resolveCoreV2TimeOfDayVolume({
+        ltf,
+        volumeCurrent,
+        volumeP50,
+        volumeP60,
+      })
+    : {
+        baselineVolume: Number.NaN,
+        thresholdVolume: Number.NaN,
+        currentToBaselineRatio: Number.NaN,
+        sampleCount: 0,
+        slotMinuteOfDay: Number.NaN,
+        fallbackUsed: true,
+      };
+  const volSlice =
+    ltfReady && ltfVolumes.length >= CORE_V2_VOLUME_STATS_WINDOW
+      ? ltfVolumes.slice(-CORE_V2_VOLUME_STATS_WINDOW).filter(Number.isFinite)
+      : [];
   const volumeSma =
-    volSlice.length > 0
-      ? volSlice.reduce((s, v) => s + v, 0) / volSlice.length
+    volSlice.length === CORE_V2_VOLUME_STATS_WINDOW
+      ? average(volSlice)
       : Number.NaN;
   const volumeStd =
-    volSlice.length > 1 && Number.isFinite(volumeSma)
+    volSlice.length === CORE_V2_VOLUME_STATS_WINDOW && Number.isFinite(volumeSma)
       ? Math.sqrt(
           volSlice.reduce((s, v) => s + Math.pow(v - volumeSma, 2), 0) /
             volSlice.length
         )
       : Number.NaN;
+  const prevVolSlice =
+    ltfReady && ltfVolumes.length >= CORE_V2_VOLUME_STATS_WINDOW + 1
+      ? ltfVolumes
+          .slice(-CORE_V2_VOLUME_STATS_WINDOW - 1, -1)
+          .filter(Number.isFinite)
+      : [];
+  const prevVolumeSma =
+    prevVolSlice.length === CORE_V2_VOLUME_STATS_WINDOW
+      ? average(prevVolSlice)
+      : Number.NaN;
   const volumeZ =
     Number.isFinite(volumeStd) && volumeStd > 0 && Number.isFinite(volumeCurrent)
       ? (volumeCurrent - volumeSma) / volumeStd
       : Number.NaN;
+  const volumeThresholdCandidates = [
+    volumeP70,
+    Number.isFinite(volumeSma) && Number.isFinite(volumeStd) ? volumeSma + volumeStd : Number.NaN,
+    volumeTod.thresholdVolume,
+  ].filter((value) => Number.isFinite(value)) as number[];
+  const volumeSpikeThreshold = volumeThresholdCandidates.length
+    ? Math.max(...volumeThresholdCandidates)
+    : Number.NaN;
   const volumeSpike =
     Number.isFinite(volumeCurrent) &&
-    Number.isFinite(volumeSma) &&
-    volumeSma > 0 &&
-    (volumeCurrent >= volumeSma * SCALP_VOL_SPIKE_MULT ||
-      (Number.isFinite(volumeZ) && volumeZ >= SCALP_VOL_Z_MIN));
-  let volumeSpikeCurrent = Number.NaN;
-  let volumeSpikePrev = Number.NaN;
-  let volumeSpikeFading = false;
-  if (recentVols.length >= 2 && Number.isFinite(volumeP70)) {
-    const start = Math.max(0, recentVols.length - SCALP_VOLUME_SPIKE_LOOKBACK);
-    for (let i = start; i < recentVols.length; i++) {
-      const v = recentVols[i];
-      if (!Number.isFinite(v) || v < volumeP70) continue;
-      volumeSpikePrev = volumeSpikeCurrent;
-      volumeSpikeCurrent = v;
-      if (i === recentVols.length - 1 && Number.isFinite(volumeSpikePrev)) {
-        volumeSpikeFading = volumeSpikeCurrent < volumeSpikePrev;
-      }
-    }
-  }
-  const volTrendLookback = SCALP_VOLUME_TREND_LOOKBACK;
-  const recentSlice = recentVols.slice(-volTrendLookback);
-  const prevSlice = recentVols.slice(-volTrendLookback * 2, -volTrendLookback);
-  const avg = (list: number[]) =>
-    list.length ? list.reduce((s, v) => s + v, 0) / list.length : Number.NaN;
-  const recentAvgVol = avg(recentSlice);
-  const prevAvgVol = avg(prevSlice);
+    Number.isFinite(volumeSpikeThreshold) &&
+    volumeCurrent >= volumeSpikeThreshold;
+  const volumeSpikeCurrent =
+    Number.isFinite(volumeCurrent) && Number.isFinite(volumeSma)
+      ? volumeCurrent / Math.max(volumeSma, 1e-9)
+      : Number.NaN;
+  const volumeSpikePrev =
+    Number.isFinite(ltfPrevVolume) && Number.isFinite(prevVolumeSma)
+      ? ltfPrevVolume / Math.max(prevVolumeSma, 1e-9)
+      : Number.NaN;
+  const volumeSpikeFading =
+    Number.isFinite(volumeSpikePrev) &&
+    Number.isFinite(volumeSpikeCurrent) &&
+    volumeSpikePrev > volumeSpikeCurrent;
+  const vol0 = ltfVolumes[ltfVolumes.length - 1];
+  const vol1 = ltfVolumes[ltfVolumes.length - 2];
+  const vol2 = ltfVolumes[ltfVolumes.length - 3];
   const volumeFalling =
-    Number.isFinite(recentAvgVol) && Number.isFinite(prevAvgVol)
-      ? recentAvgVol < prevAvgVol
+    Number.isFinite(vol0) && Number.isFinite(vol1) && Number.isFinite(vol2)
+      ? vol0 < vol1 && vol1 < vol2
       : false;
   const volumeRising =
-    Number.isFinite(recentAvgVol) && Number.isFinite(prevAvgVol)
-      ? recentAvgVol > prevAvgVol
+    Number.isFinite(vol0) && Number.isFinite(vol1) && Number.isFinite(vol2)
+      ? vol0 > vol1 && vol1 > vol2
       : false;
+
   const ltfRange =
     Number.isFinite(ltfHigh) && Number.isFinite(ltfLow)
       ? ltfHigh - ltfLow
       : Number.NaN;
   const rangeSlice = ltf
-    .slice(-SCALP_RANGE_SMA_LEN)
+    .slice(-CORE_V2_RANGE_SMA_WINDOW)
     .map((c) => c.high - c.low)
     .filter((v) => Number.isFinite(v));
   const ltfRangeSma =
-    rangeSlice.length > 0
-      ? rangeSlice.reduce((s, v) => s + v, 0) / rangeSlice.length
+    rangeSlice.length === CORE_V2_RANGE_SMA_WINDOW
+      ? average(rangeSlice)
       : Number.NaN;
   const ltfRangeExpansionSma =
     Number.isFinite(ltfRange) &&
     Number.isFinite(ltfRangeSma) &&
-    ltfRangeSma > 0 &&
-    ltfRange > ltfRangeSma * SCALP_RANGE_EXP_MULT;
+    ltfRange > ltfRangeSma;
   const ltfRangeExpansion =
-    Number.isFinite(atr14) &&
-    Number.isFinite(ltfHigh) &&
-    Number.isFinite(ltfLow) &&
-    atr14 > 0 &&
-    ltfHigh - ltfLow >= atr14 * SCALP_RANGE_EXP_ATR;
-  const ltfRangeExpVolume =
-    Number.isFinite(volumeCurrent) &&
-    Number.isFinite(volumeP70) &&
-    volumeCurrent > volumeP70;
-  const ltfSweepBackInside = (() => {
-    if (ltf.length <= 1) return false;
-    const lookback = Math.min(
-      SCALP_FAKE_RANGE_LOOKBACK,
-      Math.max(0, ltf.length - 1)
-    );
-    if (lookback <= 1) return false;
-    const rangeHigh = Math.max(
-      ...ltfHighs.slice(-lookback - 1, -1)
-    );
-    const rangeLow = Math.min(
-      ...ltfLows.slice(-lookback - 1, -1)
-    );
-    if (!Number.isFinite(rangeHigh) || !Number.isFinite(rangeLow)) return false;
-    const sweepHigh =
-      Number.isFinite(ltfHigh) &&
-      Number.isFinite(ltfClose) &&
-      ltfHigh > rangeHigh &&
-      ltfClose <= rangeHigh;
-    const sweepLow =
-      Number.isFinite(ltfLow) &&
-      Number.isFinite(ltfClose) &&
-      ltfLow < rangeLow &&
-      ltfClose >= rangeLow;
-    return sweepHigh || sweepLow;
-  })();
-  const ltfNoNewHigh = (() => {
-    if (ltf.length < SCALP_TIME_DECAY_MAX_BARS * 2) return false;
-    const recentHigh = Math.max(
-      ...ltfHighs.slice(-SCALP_TIME_DECAY_MAX_BARS)
-    );
-    const prevHigh = Math.max(
-      ...ltfHighs.slice(
-        -SCALP_TIME_DECAY_MAX_BARS * 2,
-        -SCALP_TIME_DECAY_MAX_BARS
-      )
-    );
-    return (
-      Number.isFinite(recentHigh) &&
-      Number.isFinite(prevHigh) &&
-      recentHigh <= prevHigh
-    );
-  })();
-  const ltfNoNewLow = (() => {
-    if (ltf.length < SCALP_TIME_DECAY_MAX_BARS * 2) return false;
-    const recentLow = Math.min(
-      ...ltfLows.slice(-SCALP_TIME_DECAY_MAX_BARS)
-    );
-    const prevLow = Math.min(
-      ...ltfLows.slice(
-        -SCALP_TIME_DECAY_MAX_BARS * 2,
-        -SCALP_TIME_DECAY_MAX_BARS
-      )
-    );
-    return (
-      Number.isFinite(recentLow) &&
-      Number.isFinite(prevLow) &&
-      recentLow >= prevLow
-    );
-  })();
+    Number.isFinite(ltfRange) &&
+    Number.isFinite(ltfRangeSma) &&
+    ltfRange >= CORE_V2_RANGE_EXPANSION_MULT * ltfRangeSma;
+  const ltfRangeExpVolume = ltfRangeExpansion && volumeSpike;
+
   const ltfUp3 =
+    ltfReady &&
     ltfCloses.length >= 3 &&
     ltfCloses[ltfCloses.length - 1] > ltfCloses[ltfCloses.length - 2] &&
     ltfCloses[ltfCloses.length - 2] > ltfCloses[ltfCloses.length - 3];
   const ltfDown3 =
+    ltfReady &&
     ltfCloses.length >= 3 &&
     ltfCloses[ltfCloses.length - 1] < ltfCloses[ltfCloses.length - 2] &&
     ltfCloses[ltfCloses.length - 2] < ltfCloses[ltfCloses.length - 3];
   const ltfVolDown3 =
-    recentVols.length >= 3 &&
-    recentVols[recentVols.length - 1] < recentVols[recentVols.length - 2] &&
-    recentVols[recentVols.length - 2] < recentVols[recentVols.length - 3];
+    ltfReady &&
+    ltfVolumes.length >= 3 &&
+    ltfVolumes[ltfVolumes.length - 1] < ltfVolumes[ltfVolumes.length - 2] &&
+    ltfVolumes[ltfVolumes.length - 2] < ltfVolumes[ltfVolumes.length - 3];
 
-  const htf = resample(5);
+  const ltfFakeRefHigh =
+    ltfReady && ltfHighs.length > CORE_V2_FAKE_BREAK_LOOKBACK
+      ? highest(ltfHighs.slice(-CORE_V2_FAKE_BREAK_LOOKBACK - 1, -1))
+      : Number.NaN;
+  const ltfFakeRefLow =
+    ltfReady && ltfLows.length > CORE_V2_FAKE_BREAK_LOOKBACK
+      ? lowest(ltfLows.slice(-CORE_V2_FAKE_BREAK_LOOKBACK - 1, -1))
+      : Number.NaN;
+  const ltfFakeBreakHigh =
+    Number.isFinite(ltfHigh) &&
+    Number.isFinite(ltfClose) &&
+    Number.isFinite(ltfFakeRefHigh) &&
+    ltfHigh > ltfFakeRefHigh &&
+    ltfClose < ltfFakeRefHigh;
+  const ltfFakeBreakLow =
+    Number.isFinite(ltfLow) &&
+    Number.isFinite(ltfClose) &&
+    Number.isFinite(ltfFakeRefLow) &&
+    ltfLow < ltfFakeRefLow &&
+    ltfClose > ltfFakeRefLow;
+  const ltfSweepBackInside = ltfFakeBreakHigh || ltfFakeBreakLow;
+
+  const htfLast = htf.length ? htf[htf.length - 1] : undefined;
+  const htfPrev = htf.length > 1 ? htf[htf.length - 2] : undefined;
   const htfCloses = htf.map((c) => c.close);
   const htfHighs = htf.map((c) => c.high);
   const htfLows = htf.map((c) => c.low);
-  const htfClose = htf.length ? htf[htf.length - 1].close : Number.NaN;
-  const htfEma200State = resolveEma200BreakoutState(htf, {
-    emaPeriod: emaTrendPeriod,
-    breakoutLookback: EMA_TREND_TOUCH_LOOKBACK,
-    confirmBars: EMA_TREND_CONFIRM_BARS,
-  });
-  const htfEma200 = htfEma200State.ema;
-  const htfBias =
-    htfEma200State.direction === "BULL"
-      ? "BULL"
-      : htfEma200State.direction === "BEAR"
-        ? "BEAR"
-        : "NONE";
-  const htfAtrArr = computeATR(htfHighs, htfLows, htfCloses, 14);
-  const htfAtr14 = htfAtrArr[htfAtrArr.length - 1] ?? Number.NaN;
+  const htfClose = htfLast ? htfLast.close : Number.NaN;
+  const prevHtfClose = htfPrev ? htfPrev.close : Number.NaN;
+  const hasHtfIndicators = htfReady && htfCloses.length >= CORE_V2_MIN_INDICATOR_BARS;
+  const hasHtfEma = htfReady && htfCloses.length >= CORE_V2_MIN_EMA_BARS;
+  const htfEma200Arr = computeEma(htfCloses, emaTrendPeriod);
+  const htfEma200 = hasHtfEma
+    ? (htfEma200Arr[htfEma200Arr.length - 1] ?? Number.NaN)
+    : Number.NaN;
+  const htfEma200Prev =
+    hasHtfEma && htfEma200Arr.length > 1
+      ? (htfEma200Arr[htfEma200Arr.length - 2] ?? Number.NaN)
+      : Number.NaN;
+  const htfAtrArr = hasHtfIndicators ? computeATR(htfHighs, htfLows, htfCloses, 14) : [];
+  const htfAtr14 = hasHtfIndicators ? (htfAtrArr[htfAtrArr.length - 1] ?? Number.NaN) : Number.NaN;
   const htfAtrPct =
     Number.isFinite(htfAtr14) && Number.isFinite(htfClose) && htfClose > 0
       ? htfAtr14 / htfClose
       : Number.NaN;
-  const htfPivotsHigh = findPivotsHigh(htf, 2, 2);
-  const htfPivotsLow = findPivotsLow(htf, 2, 2);
+  const htfBreakoutBull =
+    htfReady &&
+    Number.isFinite(prevHtfClose) &&
+    Number.isFinite(htfEma200Prev) &&
+    Number.isFinite(htfClose) &&
+    Number.isFinite(htfEma200) &&
+    Number.isFinite(htfAtr14) &&
+    prevHtfClose <= htfEma200Prev &&
+    htfClose >= htfEma200 + CORE_V2_EMA_BREAKOUT_ATR_MULT * htfAtr14;
+  const htfBreakoutBear =
+    htfReady &&
+    Number.isFinite(prevHtfClose) &&
+    Number.isFinite(htfEma200Prev) &&
+    Number.isFinite(htfClose) &&
+    Number.isFinite(htfEma200) &&
+    Number.isFinite(htfAtr14) &&
+    prevHtfClose >= htfEma200Prev &&
+    htfClose <= htfEma200 - CORE_V2_EMA_BREAKOUT_ATR_MULT * htfAtr14;
+  const htfLastLow = htfLast?.low;
+  const htfLastHigh = htfLast?.high;
+  const htfConfirmBull =
+    htfReady &&
+    Number.isFinite(htfClose) &&
+    Number.isFinite(htfEma200) &&
+    Number.isFinite(htfLastLow) &&
+    Number.isFinite(htfAtr14) &&
+    htfClose >= htfEma200 + CORE_V2_EMA_CONFIRM_ATR_MULT * htfAtr14 &&
+    (htfLastLow as number) >= htfEma200 - CORE_V2_EMA_CONFIRM_ATR_MULT * htfAtr14;
+  const htfConfirmBear =
+    htfReady &&
+    Number.isFinite(htfClose) &&
+    Number.isFinite(htfEma200) &&
+    Number.isFinite(htfLastHigh) &&
+    Number.isFinite(htfAtr14) &&
+    htfClose <= htfEma200 - CORE_V2_EMA_CONFIRM_ATR_MULT * htfAtr14 &&
+    (htfLastHigh as number) <= htfEma200 + CORE_V2_EMA_CONFIRM_ATR_MULT * htfAtr14;
+  const htfBias =
+    Number.isFinite(htfClose) &&
+    Number.isFinite(htfEma200) &&
+    htfClose > htfEma200 &&
+    htfConfirmBull
+      ? "BULL"
+      : Number.isFinite(htfClose) &&
+          Number.isFinite(htfEma200) &&
+          htfClose < htfEma200 &&
+          htfConfirmBear
+        ? "BEAR"
+        : "NONE";
+  const htfPivotsHigh = htfReady ? findPivotsHigh(htf, 3, 3) : [];
+  const htfPivotsLow = htfReady ? findPivotsLow(htf, 3, 3) : [];
   const htfPivotHigh = htfPivotsHigh[htfPivotsHigh.length - 1]?.price;
   const htfPivotLow = htfPivotsLow[htfPivotsLow.length - 1]?.price;
 
-  const m15 = resample(15);
   const m15Last = m15.length ? m15[m15.length - 1] : undefined;
   const m15Closes = m15.map((c) => c.close);
   const m15Highs = m15.map((c) => c.high);
   const m15Lows = m15.map((c) => c.low);
-  const m15PivotsHigh = findPivotsHigh(m15, 2, 2);
-  const m15PivotsLow = findPivotsLow(m15, 2, 2);
+  const m15PivotsHigh = m15Ready ? findPivotsHigh(m15, 2, 2) : [];
+  const m15PivotsLow = m15Ready ? findPivotsLow(m15, 2, 2) : [];
   const ema15m12Arr = computeEma(m15Closes, 12);
   const ema15m26Arr = computeEma(m15Closes, 26);
-  const ema15m12 = ema15m12Arr[ema15m12Arr.length - 1] ?? Number.NaN;
-  const ema15m26 = ema15m26Arr[ema15m26Arr.length - 1] ?? Number.NaN;
+  const hasM15Ema = m15Ready && m15Closes.length >= CORE_V2_MIN_EMA_BARS;
+  const ema15m12 = hasM15Ema ? (ema15m12Arr[ema15m12Arr.length - 1] ?? Number.NaN) : Number.NaN;
+  const ema15m26 = hasM15Ema ? (ema15m26Arr[ema15m26Arr.length - 1] ?? Number.NaN) : Number.NaN;
   const m15Close = m15Last ? m15Last.close : Number.NaN;
   const m15Sma20 =
-    m15Closes.length >= 20
+    m15Ready && m15Closes.length >= 20
       ? m15Closes.slice(-20).reduce((sum, value) => sum + value, 0) / 20
       : Number.NaN;
   const m15Sma50 =
-    m15Closes.length >= 50
+    m15Ready && m15Closes.length >= 50
       ? m15Closes.slice(-50).reduce((sum, value) => sum + value, 0) / 50
       : Number.NaN;
   const m15SmaTrend =
-    Number.isFinite(m15Sma20) &&
-    Number.isFinite(m15Sma50) &&
-    Number.isFinite(m15Close)
-      ? m15Sma20 > m15Sma50 && m15Close > m15Sma20
+    Number.isFinite(m15Sma20) && Number.isFinite(m15Sma50)
+      ? m15Sma20 > m15Sma50
         ? "BULL"
-        : m15Sma20 < m15Sma50 && m15Close < m15Sma20
+        : m15Sma20 < m15Sma50
           ? "BEAR"
           : "NONE"
       : "NONE";
@@ -3721,8 +3888,9 @@ const computeCoreV2Metrics = (
           ? "BEAR"
           : "NONE"
       : "NONE";
-  const m15AtrArr = computeATR(m15Highs, m15Lows, m15Closes, 14);
-  const m15Atr14 = m15AtrArr[m15AtrArr.length - 1] ?? Number.NaN;
+  const hasM15Indicators = m15Ready && m15Closes.length >= CORE_V2_MIN_INDICATOR_BARS;
+  const m15AtrArr = hasM15Indicators ? computeATR(m15Highs, m15Lows, m15Closes, 14) : [];
+  const m15Atr14 = hasM15Indicators ? (m15AtrArr[m15AtrArr.length - 1] ?? Number.NaN) : Number.NaN;
   const m15AtrPct =
     Number.isFinite(m15Atr14) && Number.isFinite(m15Close) && m15Close > 0
       ? m15Atr14 / m15Close
@@ -3732,284 +3900,241 @@ const computeCoreV2Metrics = (
     Number.isFinite(ema15m26) &&
     Number.isFinite(m15Close) &&
     m15Close > 0
-      ? Math.abs(ema15m12 - ema15m26) / m15Close
-      : Number.NaN;
-  let m15OverlapWicky = false;
-  if (m15.length >= SCALP_OVERLAP_BARS + 1) {
-    let overlapCount = 0;
-    for (let i = m15.length - SCALP_OVERLAP_BARS; i < m15.length; i++) {
-      const curr = m15[i];
-      const prev = m15[i - 1];
-      if (!curr || !prev) continue;
-      const overlap =
-        Math.min(curr.high, prev.high) - Math.max(curr.low, prev.low);
-      const range = Math.max(curr.high - curr.low, 1e-8);
-      if (overlap / range >= SCALP_OVERLAP_RATIO) overlapCount += 1;
-    }
-    m15OverlapWicky = overlapCount >= SCALP_OVERLAP_BARS - 1;
-  }
-  const m15TrendLongOk =
-    htfEma200State.direction === "BULL" &&
-    htfEma200State.breakoutBull &&
-    htfEma200State.confirmedBull;
-  const m15TrendShortOk =
-    htfEma200State.direction === "BEAR" &&
-    htfEma200State.breakoutBear &&
-    htfEma200State.confirmedBear;
-  const m15EmaSep =
-    Number.isFinite(ema15m12) && Number.isFinite(ema15m26)
-      ? Math.abs(ema15m12 - ema15m26)
-      : Number.NaN;
-  const m15EmaSepAtr =
-    Number.isFinite(m15EmaSep) && Number.isFinite(m15Atr14) && m15Atr14 > 0
-      ? m15EmaSep / m15Atr14
+      ? (Math.abs(ema15m12 - ema15m26) / m15Close) * 100
       : Number.NaN;
   const m15EmaCompression =
-    Number.isFinite(m15EmaSepAtr) &&
-    m15EmaSepAtr <= SCALP_M15_EMA_COMPRESSION_ATR;
+    Number.isFinite(m15EmaSpreadPct) && m15EmaSpreadPct <= SCALP_M15_EMA_COMPRESSION_ATR;
   const m15EmaCompressionSoft =
-    Number.isFinite(m15EmaSepAtr) &&
-    m15EmaSepAtr <= SCALP_M15_EMA_COMPRESSION_SOFT_ATR;
+    Number.isFinite(m15EmaSpreadPct) && m15EmaSpreadPct <= SCALP_M15_EMA_COMPRESSION_SOFT_ATR;
+  const m15TrendLongOk =
+    m15SmaTrend === "BULL" && ema15mTrend === "BULL" && !m15EmaCompression;
+  const m15TrendShortOk =
+    m15SmaTrend === "BEAR" && ema15mTrend === "BEAR" && !m15EmaCompression;
   const m15Macd = ema15m12Arr.map((v, i) => v - (ema15m26Arr[i] ?? 0));
   const m15Signal = computeEma(m15Macd, 9);
   const m15Hist = m15Macd.map((v, i) => v - (m15Signal[i] ?? 0));
-  const m15MacdHist = m15Hist[m15Hist.length - 1] ?? Number.NaN;
-  const m15MacdHistPrev = m15Hist[m15Hist.length - 2] ?? Number.NaN;
-  const m15MacdHistPrev2 = m15Hist[m15Hist.length - 3] ?? Number.NaN;
-  const macdAligned = (value: number) =>
-    ema15mTrend === "BULL"
-      ? value > 0
-      : ema15mTrend === "BEAR"
-        ? value < 0
-        : false;
-  const m15MacdWeak3 =
-    [m15MacdHist, m15MacdHistPrev, m15MacdHistPrev2].every(Number.isFinite) &&
-    macdAligned(m15MacdHist) &&
-    macdAligned(m15MacdHistPrev) &&
-    macdAligned(m15MacdHistPrev2) &&
+  const hasM15Macd = m15Ready && m15Closes.length >= CORE_V2_MIN_INDICATOR_BARS;
+  const m15MacdHist = hasM15Macd ? (m15Hist[m15Hist.length - 1] ?? Number.NaN) : Number.NaN;
+  const m15MacdHistPrev = hasM15Macd ? (m15Hist[m15Hist.length - 2] ?? Number.NaN) : Number.NaN;
+  const m15MacdHistPrev2 = hasM15Macd ? (m15Hist[m15Hist.length - 3] ?? Number.NaN) : Number.NaN;
+  const m15MacdWeak2 =
+    Number.isFinite(m15MacdHist) &&
+    Number.isFinite(m15MacdHistPrev) &&
+    Number.isFinite(m15MacdHistPrev2) &&
     Math.abs(m15MacdHist) < Math.abs(m15MacdHistPrev) &&
     Math.abs(m15MacdHistPrev) < Math.abs(m15MacdHistPrev2);
-  const m15MacdWeak2 =
-    [m15MacdHist, m15MacdHistPrev].every(Number.isFinite) &&
-    macdAligned(m15MacdHist) &&
-    macdAligned(m15MacdHistPrev) &&
-    Math.abs(m15MacdHist) < Math.abs(m15MacdHistPrev);
-  let m15ImpulseWeak = false;
-  if (m15.length >= 3) {
-    const impulses: Candle[] = [];
-    const lookback = Math.min(SCALP_M15_IMPULSE_LOOKBACK, m15.length);
-    for (let i = m15.length - 1; i >= m15.length - lookback; i--) {
-      const candle = m15[i];
-      if (!candle) continue;
-      const isImpulse =
-        ema15mTrend === "BULL"
-          ? candle.close > candle.open
-          : ema15mTrend === "BEAR"
-            ? candle.close < candle.open
-            : false;
-      if (isImpulse) impulses.push(candle);
-      if (impulses.length >= 2) break;
-    }
-    if (impulses.length >= 2) {
-      const last = impulses[0];
-      const prev = impulses[1];
-      const lastBody = Math.abs(last.close - last.open);
-      const prevBody = Math.abs(prev.close - prev.open);
-      const lastVol = toNumber(last.volume);
-      const prevVol = toNumber(prev.volume);
-      m15ImpulseWeak =
-        Number.isFinite(lastBody) &&
-        Number.isFinite(prevBody) &&
-        Number.isFinite(lastVol) &&
-        Number.isFinite(prevVol) &&
-        lastBody < prevBody &&
-        lastVol < prevVol;
-    }
-  }
-  let m15WickIndecision = false;
-  let m15WickIndecisionSoft = false;
-  if (m15.length >= 2) {
-    const checkCount = Math.min(3, m15.length);
-    let wickCount = 0;
-    for (let i = m15.length - checkCount; i < m15.length; i++) {
-      const candle = m15[i];
-      if (!candle) continue;
-      const body = Math.max(Math.abs(candle.close - candle.open), 1e-8);
-      const upper = candle.high - Math.max(candle.open, candle.close);
-      const lower = Math.min(candle.open, candle.close) - candle.low;
-      if (
-        upper >= body * SCALP_M15_WICK_RATIO &&
-        lower >= body * SCALP_M15_WICK_RATIO
-      ) {
-        wickCount += 1;
-      }
-    }
-    m15WickIndecision = wickCount >= SCALP_M15_WICK_MIN_COUNT;
-    m15WickIndecisionSoft = wickCount >= SCALP_M15_WICK_MIN_COUNT_SOFT;
-  }
+  const m15MacdWeak3 =
+    m15MacdWeak2 && sign(m15MacdHist) === sign(m15MacdHistPrev);
+  const m15ImpulseWeak =
+    m15MacdWeak2 &&
+    Number.isFinite(m15EmaSpreadPct) &&
+    m15EmaSpreadPct < CORE_V2_M15_IMPULSE_WEAK_SPREAD_PCT;
+  const m15Range = Number.isFinite(m15Last?.high) && Number.isFinite(m15Last?.low)
+    ? (m15Last!.high - m15Last!.low)
+    : Number.NaN;
+  const m15UpperWick =
+    Number.isFinite(m15Last?.high) &&
+    Number.isFinite(m15Last?.open) &&
+    Number.isFinite(m15Last?.close)
+      ? Math.max(0, (m15Last!.high - Math.max(m15Last!.open, m15Last!.close)))
+      : Number.NaN;
+  const m15LowerWick =
+    Number.isFinite(m15Last?.low) &&
+    Number.isFinite(m15Last?.open) &&
+    Number.isFinite(m15Last?.close)
+      ? Math.max(0, (Math.min(m15Last!.open, m15Last!.close) - m15Last!.low))
+      : Number.NaN;
+  const m15Body =
+    Number.isFinite(m15Last?.open) && Number.isFinite(m15Last?.close)
+      ? Math.abs(m15Last!.close - m15Last!.open)
+      : Number.NaN;
+  const upperWickPct =
+    Number.isFinite(m15UpperWick) && Number.isFinite(m15Range) && m15Range > 0
+      ? m15UpperWick / m15Range
+      : Number.NaN;
+  const lowerWickPct =
+    Number.isFinite(m15LowerWick) && Number.isFinite(m15Range) && m15Range > 0
+      ? m15LowerWick / m15Range
+      : Number.NaN;
+  const bodyPct =
+    Number.isFinite(m15Body) && Number.isFinite(m15Range) && m15Range > 0
+      ? m15Body / m15Range
+      : Number.NaN;
+  const m15WickIndecision =
+    m15Ready &&
+    Number.isFinite(upperWickPct) &&
+    Number.isFinite(lowerWickPct) &&
+    Number.isFinite(bodyPct) &&
+    upperWickPct >= 0.35 &&
+    lowerWickPct >= 0.35 &&
+    bodyPct <= 0.3;
+  const m15WickIndecisionSoft =
+    m15Ready &&
+    Number.isFinite(upperWickPct) &&
+    Number.isFinite(lowerWickPct) &&
+    Number.isFinite(bodyPct) &&
+    upperWickPct >= 0.25 &&
+    lowerWickPct >= 0.25 &&
+    bodyPct <= 0.4;
+  const last3M15 = m15.slice(-3);
+  const m15OverlapWicky =
+    m15Ready && last3M15.length === 3
+      ? (() => {
+          const highs = last3M15.map((c) => c.high);
+          const lows = last3M15.map((c) => c.low);
+          const ranges = last3M15.map((c) => c.high - c.low);
+          const overlap = Math.max(0, (Math.min(...highs) - Math.max(...lows)));
+          const avgRange = average(ranges);
+          const overlapPct3 =
+            Number.isFinite(avgRange) && avgRange > 0 ? overlap / avgRange : Number.NaN;
+          const wickRatios = last3M15.map((c) => {
+            const range = c.high - c.low;
+            if (!Number.isFinite(range) || range <= 0) return Number.NaN;
+            const upper = Math.max(0, c.high - Math.max(c.open, c.close));
+            const lower = Math.max(0, Math.min(c.open, c.close) - c.low);
+            return (upper + lower) / range;
+          });
+          const wickAvgPct3 = average(wickRatios.filter(Number.isFinite));
+          return (
+            Number.isFinite(overlapPct3) &&
+            Number.isFinite(wickAvgPct3) &&
+            overlapPct3 >= 0.6 &&
+            wickAvgPct3 >= 0.3
+          );
+        })()
+      : false;
   const m15DriftBlocked =
-    (Number.isFinite(m15EmaSpreadPct) &&
-      m15EmaSpreadPct < SCALP_TREND_MIN_SPREAD) ||
-    m15MacdWeak3 ||
-    m15OverlapWicky;
+    m15EmaCompression &&
+    Number.isFinite(m15MacdHist) &&
+    Math.abs(m15MacdHist) <
+      0.5 * Math.abs(Number.isFinite(m15MacdHistPrev) ? m15MacdHistPrev : 0);
 
-  const pullbackLookback = 12;
-  let pullbackLong = false;
-  let pullbackShort = false;
-  for (let i = Math.max(0, ltf.length - pullbackLookback); i < ltf.length; i++) {
-    const candle = ltf[i];
-    const ema12At = ema12Arr[i];
-    const ema26At = ema26Arr[i];
-    if (!candle || !Number.isFinite(ema12At) || !Number.isFinite(ema26At)) continue;
-    const lowZone = Math.min(ema12At, ema26At);
-    const highZone = Math.max(ema12At, ema26At);
-    if (candle.close <= ema12At || (candle.close >= lowZone && candle.close <= highZone)) {
-      pullbackLong = true;
-    }
-    if (candle.close >= ema12At || (candle.close >= lowZone && candle.close <= highZone)) {
-      pullbackShort = true;
+  let emaCrossDir: CoreV2Metrics["emaCrossDir"] = "NONE";
+  let emaCrossBarsAgo: number | undefined;
+  const emaCrossSize = Math.min(ema15m12Arr.length, ema15m26Arr.length);
+  if (m15Ready && emaCrossSize >= 2) {
+    for (let i = 1; i < emaCrossSize; i++) {
+      const prevDiff = (ema15m12Arr[i - 1] ?? Number.NaN) - (ema15m26Arr[i - 1] ?? Number.NaN);
+      const currDiff = (ema15m12Arr[i] ?? Number.NaN) - (ema15m26Arr[i] ?? Number.NaN);
+      const prevSign = sign(prevDiff);
+      const currSign = sign(currDiff);
+      if (currSign !== 0 && prevSign !== 0 && currSign !== prevSign) {
+        emaCrossDir = currSign > 0 ? "BULL" : "BEAR";
+        emaCrossBarsAgo = emaCrossSize - 1 - i;
+      }
     }
   }
 
-  const pivotsHigh = findPivotsHigh(ltf, 2, 2);
-  const pivotsLow = findPivotsLow(ltf, 2, 2);
-  const rsiArr = computeRsi(ltfCloses, 14);
-  const ltfMacdState = resolveMacdState(ltfCloses);
-  const lastLow = pivotsLow[pivotsLow.length - 1];
-  const lastHigh = pivotsHigh[pivotsHigh.length - 1];
-  const prevHigh =
-    lastLow ? pivotsHigh.filter((p) => p.idx < lastLow.idx).pop() : undefined;
-  const prevLow =
-    lastHigh ? pivotsLow.filter((p) => p.idx < lastHigh.idx).pop() : undefined;
-  const prevLowPivot = pivotsLow[pivotsLow.length - 2];
-  const prevHighPivot = pivotsHigh[pivotsHigh.length - 2];
+  const pivotsHigh = ltfReady ? findPivotsHigh(ltf, 2, 2) : [];
+  const pivotsLow = ltfReady ? findPivotsLow(ltf, 2, 2) : [];
+  const lastPivotHigh = pivotsHigh[pivotsHigh.length - 1]?.price;
+  const lastPivotLow = pivotsLow[pivotsLow.length - 1]?.price;
+  const prevPivotHigh = pivotsHigh[pivotsHigh.length - 2]?.price;
+  const prevPivotLow = pivotsLow[pivotsLow.length - 2]?.price;
+  const ltfNoNewHigh =
+    Number.isFinite(lastPivotHigh) && Number.isFinite(ltfHigh) && ltfHigh <= (lastPivotHigh as number);
+  const ltfNoNewLow =
+    Number.isFinite(lastPivotLow) && Number.isFinite(ltfLow) && ltfLow >= (lastPivotLow as number);
   const microBreakLong =
-    Boolean(prevHigh && lastLow) &&
+    Number.isFinite(lastPivotHigh) &&
     Number.isFinite(ltfClose) &&
-    ltfClose > prevHigh!.price;
+    ltfClose > (lastPivotHigh as number);
   const microBreakShort =
-    Boolean(prevLow && lastHigh) &&
+    Number.isFinite(lastPivotLow) &&
     Number.isFinite(ltfClose) &&
-    ltfClose < prevLow!.price;
-  const rsiBullDiv = (() => {
-    if (!pivotsLow.length || ltfCloses.length < SCALP_DIV_LOOKBACK) return false;
-    const startIdx = Math.max(0, ltfCloses.length - SCALP_DIV_LOOKBACK);
-    const candidates = pivotsLow.filter((p) => p.idx >= startIdx);
-    if (candidates.length < 2) return false;
-    const last = candidates[candidates.length - 1];
-    let prev: typeof last | undefined;
-    for (let i = candidates.length - 2; i >= 0; i--) {
-      const cand = candidates[i];
-      const gap = last.idx - cand.idx;
-      if (gap >= SCALP_PIVOT_MIN_GAP && gap <= SCALP_PIVOT_MAX_GAP) {
-        prev = cand;
-        break;
-      }
-    }
-    if (!prev) return false;
-    return (
-      last.price < prev.price &&
-      Number.isFinite(rsiArr[last.idx]) &&
-      Number.isFinite(rsiArr[prev.idx]) &&
-      rsiArr[last.idx] > rsiArr[prev.idx]
-    );
-  })();
-  const rsiBearDiv = (() => {
-    if (!pivotsHigh.length || ltfCloses.length < SCALP_DIV_LOOKBACK) return false;
-    const startIdx = Math.max(0, ltfCloses.length - SCALP_DIV_LOOKBACK);
-    const candidates = pivotsHigh.filter((p) => p.idx >= startIdx);
-    if (candidates.length < 2) return false;
-    const last = candidates[candidates.length - 1];
-    let prev: typeof last | undefined;
-    for (let i = candidates.length - 2; i >= 0; i--) {
-      const cand = candidates[i];
-      const gap = last.idx - cand.idx;
-      if (gap >= SCALP_PIVOT_MIN_GAP && gap <= SCALP_PIVOT_MAX_GAP) {
-        prev = cand;
-        break;
-      }
-    }
-    if (!prev) return false;
-    return (
-      last.price > prev.price &&
-      Number.isFinite(rsiArr[last.idx]) &&
-      Number.isFinite(rsiArr[prev.idx]) &&
-      rsiArr[last.idx] < rsiArr[prev.idx]
-    );
-  })();
-  const ltfRsi = rsiArr[rsiArr.length - 1] ?? Number.NaN;
+    ltfClose < (lastPivotLow as number);
+
+  const rsiArr = hasLtfIndicators ? computeRsi(ltfCloses, 14) : [];
+  const ltfRsi = hasLtfIndicators ? (rsiArr[rsiArr.length - 1] ?? Number.NaN) : Number.NaN;
   const ltfRsiNeutral =
     Number.isFinite(ltfRsi) &&
     ltfRsi >= SCALP_RSI_NEUTRAL_LOW &&
     ltfRsi <= SCALP_RSI_NEUTRAL_HIGH;
-  const ltfCrossRsiAgainst =
-    (emaCrossDir === "BULL" && rsiBearDiv) ||
-    (emaCrossDir === "BEAR" && rsiBullDiv);
-  const ltfFakeBreakHigh =
-    Number.isFinite(lastHigh?.price) &&
-    Number.isFinite(ltfHigh) &&
-    Number.isFinite(ltfClose) &&
-    ltfHigh > (lastHigh?.price as number) &&
-    ltfClose < (lastHigh?.price as number);
-  const ltfFakeBreakLow =
-    Number.isFinite(lastLow?.price) &&
+
+  const ltfMacdState = hasLtfIndicators
+    ? resolveMacdState(ltfCloses)
+    : {
+        macdHist: Number.NaN,
+        macdSignal: Number.NaN,
+        macdCrossUp: false,
+        macdCrossDown: false,
+        macdAlignedUp: false,
+        macdAlignedDown: false,
+      };
+
+  const recentLowPivots = pivotsLow.slice(-2);
+  const recentHighPivots = pivotsHigh.slice(-2);
+  const rsiBullDiv =
+    recentLowPivots.length === 2 &&
+    Number.isFinite(rsiArr[recentLowPivots[1].idx]) &&
+    Number.isFinite(rsiArr[recentLowPivots[0].idx]) &&
+    recentLowPivots[1].price < recentLowPivots[0].price &&
+    rsiArr[recentLowPivots[1].idx] > rsiArr[recentLowPivots[0].idx];
+  const rsiBearDiv =
+    recentHighPivots.length === 2 &&
+    Number.isFinite(rsiArr[recentHighPivots[1].idx]) &&
+    Number.isFinite(rsiArr[recentHighPivots[0].idx]) &&
+    recentHighPivots[1].price > recentHighPivots[0].price &&
+    rsiArr[recentHighPivots[1].idx] < rsiArr[recentHighPivots[0].idx];
+
+  const pullbackLong =
+    ltfReady &&
+    htfReady &&
+    m15Ready &&
+    htfBias === "BULL" &&
+    m15TrendLongOk &&
     Number.isFinite(ltfLow) &&
     Number.isFinite(ltfClose) &&
-    ltfLow < (lastLow?.price as number) &&
-    ltfClose > (lastLow?.price as number);
-  const lastPivotHigh = lastHigh?.price;
-  const lastPivotLow = lastLow?.price;
-  const prevPivotHigh = prevHighPivot?.price;
-  const prevPivotLow = prevLowPivot?.price;
+    Number.isFinite(ema21) &&
+    ltfLow <= ema21 &&
+    ltfClose >= ema21;
+  const pullbackShort =
+    ltfReady &&
+    htfReady &&
+    m15Ready &&
+    htfBias === "BEAR" &&
+    m15TrendShortOk &&
+    Number.isFinite(ltfHigh) &&
+    Number.isFinite(ltfClose) &&
+    Number.isFinite(ema21) &&
+    ltfHigh >= ema21 &&
+    ltfClose <= ema21;
+  const ltfCrossRsiAgainst = pullbackLong
+    ? Number.isFinite(ltfRsi) && ltfRsi < 50
+    : pullbackShort
+      ? Number.isFinite(ltfRsi) && ltfRsi > 50
+      : false;
 
   let scalpFib: ScalpFibData | undefined;
   let scalpConfirm: ScalpConfirm | undefined;
   if (riskMode === "ai-matic-olikella") {
-    const direction =
-      m15TrendLongOk ? "BULL" : m15TrendShortOk ? "BEAR" : "NONE";
-    if (direction !== "NONE") {
-      const m5 = resample(5);
-      const m5Last = m5.length ? m5[m5.length - 1] : undefined;
-      const m5Close = m5Last ? m5Last.close : Number.NaN;
+    const fibDirection =
+      htfBias === "BULL" ? "BULL" : htfBias === "BEAR" ? "BEAR" : "NONE";
+    if (fibDirection !== "NONE") {
       scalpFib =
         buildScalpFibData({
           m15Highs: m15PivotsHigh,
           m15Lows: m15PivotsLow,
-          direction,
-          m5Close,
-          ltfClose,
-          atr: atr14,
+          direction: fibDirection,
         }) ?? undefined;
-      const m15Pois = m15.length
-        ? (new CandlestickAnalyzer(
-            toAnalyzerCandles(m15)
-          ).getPointsOfInterest() as AiMaticPoi[])
-        : [];
-      const m5Pois = m5.length
-        ? (new CandlestickAnalyzer(
-            toAnalyzerCandles(m5)
-          ).getPointsOfInterest() as AiMaticPoi[])
-        : [];
-      const profile = m15.length ? computeMarketProfile({ candles: m15 }) : null;
-      const price = ltfClose;
-      const pocNear =
-        profile &&
-        Number.isFinite(price) &&
-        Number.isFinite(profile.poc) &&
-        Math.abs(price - profile.poc) <= price * AI_MATIC_POI_DISTANCE_PCT;
-      const lvnRejection = resolveLvnRejection(profile, ltfLast);
-      const lvnOk =
-        direction === "BULL" ? lvnRejection.bull : lvnRejection.bear;
-      const vpConfirm = Boolean(pocNear || lvnOk);
-      const tlPullback = direction === "BULL" ? pullbackLong : pullbackShort;
-      scalpConfirm = resolveScalpConfirmation({
-        pois: [...m15Pois, ...m5Pois],
-        price,
-        direction,
-        vpConfirm,
-        tlPullback,
-      });
     }
+    scalpConfirm = resolveScalpConfirmation({
+      htfBias,
+      pullbackLong,
+      pullbackShort,
+      microBreakLong,
+      microBreakShort,
+      volumeSpike,
+      volumeTodRatio: volumeTod.currentToBaselineRatio,
+      ltfRangeExpansionSma,
+      ltfRangeExpVolume,
+      ltfRsiNeutral,
+      ltfMacdHist: ltfMacdState.macdHist,
+      m15EmaCompression,
+      m15WickIndecision,
+      m15OverlapWicky,
+      ltfCrossRsiAgainst,
+    });
   }
 
   return {
@@ -4030,10 +4155,10 @@ const computeCoreV2Metrics = (
     ema26,
     ema50,
     ema200,
-    ema200BreakoutBull: ema200BreakoutState.breakoutBull,
-    ema200BreakoutBear: ema200BreakoutState.breakoutBear,
-    ema200ConfirmBull: ema200BreakoutState.confirmedBull,
-    ema200ConfirmBear: ema200BreakoutState.confirmedBear,
+    ema200BreakoutBull,
+    ema200BreakoutBear,
+    ema200ConfirmBull,
+    ema200ConfirmBear,
     atr14,
     atrPct,
     sep1,
@@ -4078,10 +4203,10 @@ const computeCoreV2Metrics = (
     htfClose,
     htfEma200,
     htfBias,
-    htfBreakoutBull: htfEma200State.breakoutBull,
-    htfBreakoutBear: htfEma200State.breakoutBear,
-    htfConfirmBull: htfEma200State.confirmedBull,
-    htfConfirmBear: htfEma200State.confirmedBear,
+    htfBreakoutBull,
+    htfBreakoutBear,
+    htfConfirmBull,
+    htfConfirmBear,
     htfAtr14,
     htfAtrPct,
     htfPivotHigh,
@@ -4114,8 +4239,8 @@ const computeCoreV2Metrics = (
     emaCrossBarsAgo,
     pullbackLong,
     pullbackShort,
-    pivotHigh: prevHigh?.price,
-    pivotLow: prevLow?.price,
+    pivotHigh: prevPivotHigh,
+    pivotLow: prevPivotLow,
     lastPivotHigh,
     lastPivotLow,
     prevPivotHigh,
@@ -4131,12 +4256,12 @@ const computeCoreV2Metrics = (
 };
 
 const computeScalpPrimaryChecklist = (core: CoreV2Metrics | undefined) => {
-  const ltfOk = core?.ltfTimeframeMin === 1;
+  const ltfOk = core?.ltfTimeframeMin === 5;
   const trendLongOk = Boolean(core?.m15TrendLongOk);
   const trendShortOk = Boolean(core?.m15TrendShortOk);
   const primaryOk = ltfOk && (trendLongOk || trendShortOk);
-  const fibOk = Boolean(core?.scalpFib?.m5InZone && core?.scalpFib?.ltfInZone);
-  const confirmOk = Boolean(core?.scalpConfirm?.any);
+  const fibOk = Boolean(core?.scalpFib?.valid);
+  const confirmOk = Boolean(core?.scalpConfirm?.confirmed);
   const entryOk = primaryOk && fibOk && confirmOk;
   const exitOk = Number.isFinite(core?.atr14);
   return {
@@ -4175,12 +4300,7 @@ const evaluateScalpGuards = (
     };
   }
   const driftReasons: string[] = [];
-  if (
-    Number.isFinite(core.m15EmaSpreadPct) &&
-    core.m15EmaSpreadPct < SCALP_TREND_MIN_SPREAD
-  ) {
-    driftReasons.push("EMA spread low");
-  }
+  if (core.m15DriftBlocked) driftReasons.push("EMA drift blocked");
   if (core.m15MacdWeak3) driftReasons.push("MACD weakening");
   if (core.m15OverlapWicky) driftReasons.push("15m overlap/wicky");
   const driftBlocked = driftReasons.length > 0;
@@ -4279,19 +4399,13 @@ const resolveScalpFibStop = (
   atr: number,
   structure?: number
 ) => {
-  if (!fib || !Number.isFinite(entry) || entry <= 0) return Number.NaN;
-  const hit = fib.hitLevel;
-  if (!hit) return Number.NaN;
+  if (!fib || !fib.valid || !Number.isFinite(entry) || entry <= 0) return Number.NaN;
   const buffer =
     Number.isFinite(atr) && atr > 0 ? atr * SCALP_SL_ATR_BUFFER : 0;
-  let stop = Number.NaN;
-  if (hit === "38.2") {
-    stop = fib.retrace["50"];
-  } else if (hit === "50") {
-    stop = fib.retrace["61.8"];
-  } else if (hit === "61.8") {
-    stop = side === "Buy" ? fib.swingLow : fib.swingHigh;
-  }
+  let stop =
+    side === "Buy"
+      ? Math.min(fib.fib786, fib.swingLow)
+      : Math.max(fib.fib786, fib.swingHigh);
   if (!Number.isFinite(stop) || stop <= 0) {
     stop = Number.isFinite(structure) ? structure : Number.NaN;
   }
@@ -4309,7 +4423,7 @@ const resolveScalpFibTarget = (
   fib: ScalpFibData | undefined,
   core: CoreV2Metrics | undefined
 ) => {
-  if (!fib || !Number.isFinite(entry) || entry <= 0) return Number.NaN;
+  if (!fib || !fib.valid || !Number.isFinite(entry) || entry <= 0) return Number.NaN;
   const trendOk = Boolean(core?.m15TrendLongOk || core?.m15TrendShortOk);
   const trendWeak =
     Boolean(core?.m15MacdWeak2) ||
@@ -4317,12 +4431,11 @@ const resolveScalpFibTarget = (
     Boolean(core?.m15EmaCompression) ||
     Boolean(core?.m15WickIndecisionSoft) ||
     Boolean(core?.m15ImpulseWeak);
-  const extLevel: ScalpFibExtLevel = trendWeak
-    ? "61.8"
-    : trendOk
-      ? "161.8"
-      : "100";
-  const target = fib.ext[extLevel];
+  const extMult = trendWeak ? 0.618 : trendOk ? 1.618 : 1.0;
+  const target =
+    side === "Buy"
+      ? fib.swingHigh + fib.range * extMult
+      : fib.swingLow - fib.range * extMult;
   if (!Number.isFinite(target) || target <= 0) return Number.NaN;
   if (side === "Buy" && target <= entry) return Number.NaN;
   if (side === "Sell" && target >= entry) return Number.NaN;
