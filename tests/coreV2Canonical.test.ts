@@ -30,27 +30,34 @@ function buildCandles(count: number, tfMin: number, startMs = Date.UTC(2026, 0, 
 
 test('coreV2 params map ai-matic-x to active mode timeframe', () => {
   const p = resolveCoreV2Params('ai-matic-x');
-  assert.equal(p.ltfMin, 1);
-  assert.equal(p.htfMin, 15);
+  assert.equal(p.ltfMin, 5);
+  assert.equal(p.htfMin, 60);
 });
 
-test('coreV2 params map bbo/pro/olikella to expected timeframe pairs', () => {
-  const bbo = resolveCoreV2Params('ai-matic-bbo');
-  const pro = resolveCoreV2Params('ai-matic-pro');
-  const oli = resolveCoreV2Params('ai-matic-olikella');
-  assert.deepEqual({ ltf: bbo.ltfMin, htf: bbo.htfMin }, { ltf: 5, htf: 240 });
-  assert.deepEqual({ ltf: pro.ltfMin, htf: pro.htfMin }, { ltf: 5, htf: 240 });
-  assert.deepEqual({ ltf: oli.ltfMin, htf: oli.htfMin }, { ltf: 15, htf: 240 });
+test('coreV2 params map all strategy profiles to expected timeframe pairs', () => {
+  const expected: Record<string, { ltf: number; htf: number }> = {
+    'ai-matic': { ltf: 5, htf: 60 },
+    'ai-matic-tree': { ltf: 5, htf: 60 },
+    'ai-matic-amd': { ltf: 5, htf: 60 },
+    'ai-matic-olikella': { ltf: 5, htf: 60 },
+    'ai-matic-bbo': { ltf: 5, htf: 60 },
+    'ai-matic-pro': { ltf: 5, htf: 60 },
+    'ai-matic-scalp': { ltf: 3, htf: 60 },
+  };
+  for (const [riskMode, pair] of Object.entries(expected)) {
+    const p = resolveCoreV2Params(riskMode as any);
+    assert.deepEqual({ ltf: p.ltfMin, htf: p.htfMin }, pair);
+  }
 });
 
 test('computeCoreV2 uses mapped timeframe in output snapshot', () => {
   const candles = buildCandles(10_000, 1);
   const x = computeCoreV2(candles, { riskMode: 'ai-matic-x' as any });
   const bbo = computeCoreV2(candles, { riskMode: 'ai-matic-bbo' as any });
-  assert.equal(x.ltfTimeframeMin, 1);
-  assert.equal(x.htfTimeframeMin, 15);
+  assert.equal(x.ltfTimeframeMin, 5);
+  assert.equal(x.htfTimeframeMin, 60);
   assert.equal(bbo.ltfTimeframeMin, 5);
-  assert.equal(bbo.htfTimeframeMin, 240);
+  assert.equal(bbo.htfTimeframeMin, 60);
 });
 
 test('computeCoreV2 builds ToD baseline without fallback when 20d slot history exists', () => {

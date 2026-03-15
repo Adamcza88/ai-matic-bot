@@ -58,8 +58,8 @@ export type AiMaticXContext = {
 const ACTIVE_MODE: AiMaticXMode = "SCALPING";
 const MODE_CONFIG: Record<AiMaticXMode, ModeConfig> = {
   SCALPING: {
-    htfMinutes: 15,
-    ltfMinutes: 1,
+    htfMinutes: 60,
+    ltfMinutes: 5,
     toleranceAtrMult: 0.25,
     ttlBars: 7,
     m2WindowBars: 20,
@@ -67,8 +67,8 @@ const MODE_CONFIG: Record<AiMaticXMode, ModeConfig> = {
     emaFilter: true,
   },
   INTRADAY: {
-    htfMinutes: 60,
-    ltfMinutes: 5,
+    htfMinutes: 240,
+    ltfMinutes: 15,
     toleranceAtrMult: 0.2,
     ttlBars: 12,
     m2WindowBars: 40,

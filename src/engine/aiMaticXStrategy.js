@@ -7,8 +7,8 @@ import { computeATR, computeEma } from "./ta.js";
 const ACTIVE_MODE = "SCALPING";
 const MODE_CONFIG = {
     SCALPING: {
-        htfMinutes: 15,
-        ltfMinutes: 1,
+        htfMinutes: 60,
+        ltfMinutes: 5,
         toleranceAtrMult: 0.25,
         ttlBars: 7,
         m2WindowBars: 20,
@@ -16,8 +16,8 @@ const MODE_CONFIG = {
         emaFilter: true,
     },
     INTRADAY: {
-        htfMinutes: 60,
-        ltfMinutes: 5,
+        htfMinutes: 240,
+        ltfMinutes: 15,
         toleranceAtrMult: 0.2,
         ttlBars: 12,
         m2WindowBars: 40,

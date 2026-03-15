@@ -99,19 +99,19 @@ const keepClosedCandles = (candles, tfMin, nowMs) => {
 
 const resolveTimeframePair = (riskMode) => {
   const x = resolveAiMaticXTimeframes();
-  const xLtf = Number.isFinite(x?.ltfMinutes) ? Number(x.ltfMinutes) : 1;
-  const xHtf = Number.isFinite(x?.htfMinutes) ? Number(x.htfMinutes) : 15;
+  const xLtf = Number.isFinite(x?.ltfMinutes) ? Number(x.ltfMinutes) : 5;
+  const xHtf = Number.isFinite(x?.htfMinutes) ? Number(x.htfMinutes) : 60;
   switch (String(riskMode ?? 'ai-matic')) {
     case 'ai-matic-x':
       return { ltfMin: xLtf, htfMin: xHtf };
     case 'ai-matic-scalp':
-      return { ltfMin: 1, htfMin: 15 };
+      return { ltfMin: 3, htfMin: 60 };
     case 'ai-matic-olikella':
-      return { ltfMin: 15, htfMin: 240 };
+      return { ltfMin: 5, htfMin: 60 };
     case 'ai-matic-bbo':
-      return { ltfMin: 5, htfMin: 240 };
+      return { ltfMin: 5, htfMin: 60 };
     case 'ai-matic-pro':
-      return { ltfMin: 5, htfMin: 240 };
+      return { ltfMin: 5, htfMin: 60 };
     case 'ai-matic-amd':
     case 'ai-matic-tree':
     case 'ai-matic':
@@ -1197,4 +1197,3 @@ export function computeCoreV2(candles, opts = {}) {
 
   return out;
 }
-

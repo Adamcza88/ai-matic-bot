@@ -85,7 +85,7 @@ const CORE_V2_BBO_AGE_BY_SYMBOL = {
     SOLUSDT: 700,
 };
 const CORE_V2_BBO_AGE_DEFAULT_MS = 1000;
-const SCALP_PRIMARY_GATE = "Primary Timeframe: 15m for trend, 1m for entry.";
+const SCALP_PRIMARY_GATE = "Primary Timeframe: 15m for trend, 3m for entry.";
 const SCALP_ENTRY_GATE = "Entry Logic: Fibo retracement + 1 confirmation (OB/GAP/VP/EMA TL).";
 const SCALP_EXIT_GATE = "Exit Logic: Fibo extension TP (dynamic) or ATR trailing (2.5x).";
 const MAX_OPEN_POSITIONS_CAP = 55000;
@@ -1335,7 +1335,7 @@ function percentile(values, p) {
     const rank = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
     return sorted[rank];
 }
-const resolveEntryTfMin = (riskMode) => riskMode === "ai-matic-scalp" ? 1 : 5;
+const resolveEntryTfMin = (riskMode) => riskMode === "ai-matic-scalp" ? 3 : 5;
 const resolveBboAgeLimit = (symbol) => CORE_V2_BBO_AGE_BY_SYMBOL[symbol] ?? CORE_V2_BBO_AGE_DEFAULT_MS;
 const createResampleCache = (candles) => {
     const cache = new Map();
@@ -1761,7 +1761,7 @@ const computeCoreV2Metrics = (candles, riskMode, opts) => {
     };
 };
 const computeScalpPrimaryChecklist = (core) => {
-    const ltfOk = core?.ltfTimeframeMin === 1;
+    const ltfOk = core?.ltfTimeframeMin === 3;
     const trendLongOk = core?.ema15mTrend === "BULL";
     const trendShortOk = core?.ema15mTrend === "BEAR";
     const primaryOk = ltfOk && (trendLongOk || trendShortOk);
