@@ -59,12 +59,13 @@ const CORE_V2_VOLUME_PCTL = {
     "ai-matic-pro": 65,
 };
 const CORE_V2_SCORE_GATE = {
-    "ai-matic": { major: 11, alt: 12 },
-    "ai-matic-x": { major: 12, alt: 13 },
-    "ai-matic-amd": { major: 12, alt: 12 },
-    "ai-matic-scalp": { major: 10, alt: 99 },
-    "ai-matic-tree": { major: 11, alt: 13 },
-    "ai-matic-pro": { major: 10, alt: 10 },
+    "ai-matic": { major: 8, alt: 13 },
+    "ai-matic-x": { major: 8, alt: 13 },
+    "ai-matic-amd": { major: 7, alt: 12 },
+    "ai-matic-scalp": { major: 7, alt: 99 },
+    "ai-matic-bbo": { major: 8, alt: 13 },
+    "ai-matic-tree": { major: 8, alt: 13 },
+    "ai-matic-pro": { major: 7, alt: 10 },
 };
 const MIN_CHECKLIST_PASS = 8;
 const REENTRY_COOLDOWN_MS = 15000;
