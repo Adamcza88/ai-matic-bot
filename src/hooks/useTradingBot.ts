@@ -233,6 +233,9 @@ const OLIKELLA_TRAIL_RETRACE_MIN_RATE = 0.002;
 const OLIKELLA_TRAIL_RETRACE_MAX_RATE = 0.01;
 const OLIKELLA_TRAIL_RETRACE_ATR_MULT = 0.8;
 const AUTO_MANUAL_EXITS_ENABLED = false;
+const OLIKELLA_MANUAL_EXIT_ENABLED = true;
+const OLIKELLA_MANUAL_EXIT_MIN_CONFIRMATIONS = 2;
+const OLIKELLA_MANUAL_EXIT_COOLDOWN_MS = 45_000;
 const SCALP_MIN_POSITION_NOTIONAL_USD = 1;
 const SCALP_MIN_POSITION_SIZE_FALLBACK = 1e-6;
 const PRO_MTF_FIBO_GATE_NAMES = [
@@ -10510,19 +10513,96 @@ export function useTradingBot(
         context.exhaustion.active &&
         ((side === "Buy" && exhaustionDirection === "BUY") ||
           (side === "Sell" && exhaustionDirection === "SELL"));
+      const contextDirection = String(context.direction ?? "NONE").toUpperCase();
+      const trendAgainst =
+        (side === "Buy" && contextDirection === "SELL") ||
+        (side === "Sell" && contextDirection === "BUY");
+      const htfBiasAgainst =
+        side === "Buy"
+          ? core?.htfBias === "BEAR" && Boolean(core?.htfConfirmBear)
+          : core?.htfBias === "BULL" && Boolean(core?.htfConfirmBull);
+      const oppositeSignalSide = side === "Buy" ? "sell" : "buy";
+      const opposingSignalConfirmed =
+        String((decision as any)?.signal?.intent?.side ?? "").toLowerCase() ===
+        oppositeSignalSide;
+      const microBreakAgainst =
+        side === "Buy" ? Boolean(core?.microBreakShort) : Boolean(core?.microBreakLong);
+      const srBreakConfirmed =
+        side === "Buy"
+          ? (Number.isFinite(core?.lastPivotLow) &&
+              Number.isFinite(core?.ltfClose) &&
+              core!.ltfClose < (core!.lastPivotLow as number)) ||
+            (Number.isFinite(core?.htfPivotLow) &&
+              Number.isFinite(core?.ltfClose) &&
+              core!.ltfClose < (core!.htfPivotLow as number))
+          : (Number.isFinite(core?.lastPivotHigh) &&
+              Number.isFinite(core?.ltfClose) &&
+              core!.ltfClose > (core!.lastPivotHigh as number)) ||
+            (Number.isFinite(core?.htfPivotHigh) &&
+              Number.isFinite(core?.ltfClose) &&
+              core!.ltfClose > (core!.htfPivotHigh as number));
+      const poiRejectConfirmed =
+        side === "Buy"
+          ? (Boolean(core?.ltfFakeBreakHigh) || Boolean(core?.ltfSweepBackInside)) &&
+            (Boolean(core?.volumeSpike) || Boolean(core?.ltfRangeExpVolume))
+          : (Boolean(core?.ltfFakeBreakLow) || Boolean(core?.ltfSweepBackInside)) &&
+            (Boolean(core?.volumeSpike) || Boolean(core?.ltfRangeExpVolume));
+      const confirmations: string[] = [];
+      if (trendAgainst) confirmations.push("trend flip");
+      if (htfBiasAgainst) confirmations.push("HTF flip");
+      if (opposingSignalConfirmed) confirmations.push("opposite signal");
+      if (oppositeCross) confirmations.push("opposite EMA cross");
+      if (microBreakAgainst) confirmations.push("micro break against");
+      if (wedgeDrop) confirmations.push("wedge drop");
+      if (exhaustionMatches) confirmations.push("exhaustion");
+      if (srBreakConfirmed) confirmations.push("S/R break");
+      if (poiRejectConfirmed) confirmations.push("POI rejection");
+      const trendChangeConfirmed =
+        (trendAgainst || htfBiasAgainst) &&
+        (oppositeCross || microBreakAgainst || opposingSignalConfirmed);
+      const srOrPoiConfirmed =
+        (srBreakConfirmed || poiRejectConfirmed) &&
+        (oppositeCross || microBreakAgainst || wedgeDrop || exhaustionMatches);
+      const manualExitConfirmed =
+        Boolean(context.gates?.exitConditionsOk) &&
+        confirmations.length >= OLIKELLA_MANUAL_EXIT_MIN_CONFIRMATIONS &&
+        (trendChangeConfirmed || srOrPoiConfirmed);
       if (
-        !AUTO_MANUAL_EXITS_ENABLED &&
-        (oppositeCross || wedgeDrop || exhaustionMatches) &&
-        allowAction("olikella-manual-exit-disabled", 60_000)
+        manualExitConfirmed &&
+        allowAction("olikella-manual-exit", OLIKELLA_MANUAL_EXIT_COOLDOWN_MS)
       ) {
-        addLogEntries([
-          {
-            id: `olikella:manual-exit:disabled:${symbol}:${now}`,
-            timestamp: new Date(now).toISOString(),
-            action: "STATUS",
-            message: `${symbol} OLIkella manual exits disabled (TP/SL/TS only)`,
-          },
-        ]);
+        if (!OLIKELLA_MANUAL_EXIT_ENABLED) {
+          addLogEntries([
+            {
+              id: `olikella:manual-exit:disabled:${symbol}:${now}`,
+              timestamp: new Date(now).toISOString(),
+              action: "STATUS",
+              message: `${symbol} OLIkella manual exits disabled (TP/SL/TS only)`,
+            },
+          ]);
+        } else {
+          try {
+            await submitReduceOnlyOrder(pos, sizeRaw);
+            addLogEntries([
+              {
+                id: `olikella:manual-exit:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "RISK_BLOCK",
+                message: `${symbol} OLIkella manual exit -> ${confirmations.join(" | ")}`,
+              },
+            ]);
+            return;
+          } catch (err) {
+            addLogEntries([
+              {
+                id: `olikella:manual-exit:error:${symbol}:${now}`,
+                timestamp: new Date(now).toISOString(),
+                action: "ERROR",
+                message: `${symbol} OLIkella manual exit failed: ${asErrorMessage(err)}`,
+              },
+            ]);
+          }
+        }
       }
 
       if (Number.isFinite(rMultiple) && rMultiple >= 1 && allowAction("olikella-be", 20_000)) {
